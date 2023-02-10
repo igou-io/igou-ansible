@@ -1,0 +1,8 @@
+---
+- name: Update all hosts
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - role: robertdebock.update
