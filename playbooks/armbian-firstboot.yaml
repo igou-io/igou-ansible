@@ -1,5 +1,5 @@
 ---
-- hosts: all
+- hosts: "{{ host }}"
 
   tasks:
   - name: Add local user
