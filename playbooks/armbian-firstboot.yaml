@@ -14,7 +14,7 @@
   - name: Add SSH public key for user
     authorized_key:
       user: igou
-      key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+      key: "{{ public_key }}"
       state: present
 
   - name: Allow 'sudo' group to have passwordless sudo
