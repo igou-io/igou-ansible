@@ -1,14 +1,16 @@
+---
 - hosts: k3s_storage 
   become: true
   tasks:
    - name: install some packages
-     package:
-       - build-essential
-       - make
-       - autogen
-       - autoconf
-       - libtool
-     state: latest
+     ansible.builtin.package:
+       name:
+         - build-essential
+         - make
+         - autogen
+         - autoconf
+         - libtool
+       state: latest
 
   roles:
     - role: robertdebock.update
