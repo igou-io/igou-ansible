@@ -44,7 +44,9 @@
       password: !
 
   - name: Harden OS
+    hosts: "{{ host }}"
     ansible.builtin.import_playbook: system-harden.yaml
 
   - name: Update packages
+    hosts: "{{ host }}"
     ansible.builtin.import_playbook: system-update.yaml
