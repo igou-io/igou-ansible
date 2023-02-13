@@ -1,0 +1,13 @@
+---
+- hosts: all
+
+  tasks:
+  - name: Harden ssh
+    ansible.builtin.include_role:
+      name: devsec.hardening.ssh_hardening
+
+  - name: Harden os
+    ansible.builtin.include_role:
+      name: devsec.hardening.os_hardening
+    vars:
+      os_auth_pam_passwdqc_enable : false

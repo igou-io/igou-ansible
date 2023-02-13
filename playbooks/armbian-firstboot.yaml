@@ -1,0 +1,50 @@
+---
+- hosts: all
+
+  tasks:
+  - name: Add local user
+    user:
+      name: igou
+      group: sudo
+      shell: /bin/bash
+      home: /home/igou
+      create_home: yes
+      state: present
+  
+  - name: Add SSH public key for user
+    authorized_key:
+      user: igou
+      key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+      state: present
+
+  - name: Allow 'sudo' group to have passwordless sudo
+    lineinfile:
+      dest: /etc/sudoers
+      state: present
+      regexp: "^%sudo"
+      line: "%sudo ALL=(ALL) NOPASSWD: ALL"
+      validate: "visudo -cf %s"
+
+  - name: Remove root prompt
+    ansible.builtin.file:
+      path: /root/.not_logged_in_yet
+      state: absent
+  
+  - name: Disable Root Login via ssh
+    lineinfile:
+      dest: /etc/ssh/sshd_config
+      regexp: '^PermitRootLogin'
+      line: "PermitRootLogin no"
+      state: present
+      backup: yes
+
+  - name: Disable root user 
+    ansible.builtin.user:
+      name: root
+      password: !
+
+  - name: Harden OS
+    ansible.builtin.import_playbook: system-harden.yaml
+
+  - name: Update packages
+    ansible.builtin.import_playbook: system-update.yaml
