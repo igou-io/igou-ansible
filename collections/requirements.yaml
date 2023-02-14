@@ -1,6 +1,6 @@
 ---
 collections:
   - name: community.general
-#    source: https://hub.igou.systems
+    source: https://hub.igou.systems/api/galaxy/content/community/
   - name: devsec.hardening
-#    source: https://hub.igou.systems
+    source: https://hub.igou.systems/api/galaxy/content/community/
