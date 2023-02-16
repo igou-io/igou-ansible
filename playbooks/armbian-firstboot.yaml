@@ -17,6 +17,11 @@
       key: "{{ public_key }}"
       state: present
 
+  - name: Ensure sudo is installed
+    package:
+      name: sudo
+      state: present
+
   - name: Allow 'sudo' group to have passwordless sudo
     lineinfile:
       dest: /etc/sudoers
