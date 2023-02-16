@@ -1,6 +1,5 @@
 ---
-- name: Update all hosts
-  hosts: all
+- hosts: "{{ host }}"
   become: yes
   gather_facts: yes
 
