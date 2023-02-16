@@ -42,9 +42,9 @@
     ansible.builtin.user:
       name: root
       password: !
-#
-#- name: Harden OS
-#  ansible.builtin.import_playbook: system-harden.yaml
-#
-#- name: Update packages
-#  ansible.builtin.import_playbook: system-update.yaml
+
+- name: Harden OS
+  ansible.builtin.import_playbook: system-harden.yaml
+
+- name: Update packages
+  ansible.builtin.import_playbook: system-update.yaml
