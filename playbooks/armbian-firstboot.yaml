@@ -1,6 +1,6 @@
 ---
 - hosts: "{{ host }}"
-
+  become: yes
   tasks:
   - name: Add local user
     user:
