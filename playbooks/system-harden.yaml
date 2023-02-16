@@ -1,6 +1,6 @@
 ---
 - hosts: "{{ host }}"
-
+  become: yes
   tasks:
   - name: Harden ssh
     ansible.builtin.include_role:
