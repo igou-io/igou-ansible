@@ -11,3 +11,4 @@
       name: devsec.hardening.os_hardening
     vars:
       os_auth_pam_passwdqc_enable : false
+      os_user_pw_ageing: false
