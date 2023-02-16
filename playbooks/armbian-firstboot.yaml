@@ -28,7 +28,7 @@
       state: present
       regexp: "^%sudo"
       line: "%sudo ALL=(ALL) NOPASSWD: ALL"
-      validate: "visudo -cf %s"
+      validate: "sudo visudo -cf %s"
 
   - name: Remove root prompt
     ansible.builtin.file:
