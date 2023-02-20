@@ -10,6 +10,7 @@
       home: /home/igou
       create_home: yes
       state: present
+      password: !
   
   - name: Add SSH public key for user
     authorized_key:
