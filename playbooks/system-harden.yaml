@@ -1,5 +1,5 @@
 ---
-- hosts: "{{ host }}"
+- hosts: all
   become: yes
   tasks:
   - name: Harden ssh

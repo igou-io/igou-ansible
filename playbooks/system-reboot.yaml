@@ -1,5 +1,5 @@
 ---
-- name: Update all hosts
+- name: reboot all hosts
   hosts: all
   become: yes
   gather_facts: no
