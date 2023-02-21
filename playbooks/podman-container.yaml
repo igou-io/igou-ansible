@@ -1,0 +1,24 @@
+---
+- hosts: transmission
+  name: Deploy podman container
+  become: true
+  tasks:
+    - name: Ensure podman is installed
+      ansible.builtin.package:
+        name: podman
+        state: latest
+
+    - name: Run httpd podman container
+      containers.podman.podman_container:
+        name: my_web_server
+        image: docker.io/nginx:stable-alpine
+        state: started
+        recreate: false
+        detach: true
+        exposed_ports:
+          - 80
+        ports:
+          - 1234:80
+        generate_systemd:
+          restart_policy: "always"
+          names: true
