@@ -1,3 +1,7 @@
 igou-inventory
 igou-inventory/
 igou-inventory/*
+.password
+ansible.cfg
+ansible-navigator.log
+*.json

@@ -1,16 +1,16 @@
 ---
-- hosts:
-   - localhost
-  gather_facts: no
+- hosts: localhost
+  name: Taint kuberenetes nodes
+  gather_facts: false
   roles:
-    - role: node-taint
+    - role: node_taint
       node_group: "{{ groups['camera'] }}"
       kube_taints:
         - effect: NoSchedule
           key: iot
           value: "true"
 
-    - role: node-taint
+    - role: node_taint
       node_group: "{{ groups['climate'] }}"
       kube_taints:
         - effect: NoSchedule

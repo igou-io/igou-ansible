@@ -1,19 +1,23 @@
 ---
-# This role installs HAProxy and configures it.
-
 - name: Run the equivalent of "apt-get update" as a separate step
-  apt:
-    update_cache: yes
+  ansible.builtin.apt:
+    update_cache: true
   when: ansible_os_family == "Debian"
 
 - name: Install haproxy
-  package:
+  ansible.builtin.package:
     name: haproxy
     state: present
 
 - name: Configure the haproxy cnf file with hosts
-  template: src=haproxy.cfg.j2 dest=/etc/haproxy/haproxy.cfg
-  notify: restart haproxy
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: 0750
+  notify: Restart haproxy
 
 - name: Start the haproxy service
-  service: name=haproxy state=started enabled=yes
+  ansible.builtin.service:
+    name: haproxy
+    state: started
+    enabled: true

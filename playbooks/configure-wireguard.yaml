@@ -1,15 +1,17 @@
-- hosts: cluster_vpn_gateway 
+---
+- hosts: cluster_vpn_gateway
+  name: Configure Wireguard gateway
   become: true
   pre_tasks:
-   - name: whats my public ip
-     set_fact:
-       wireguard_endpoint: "{{ public_ip_address }}"
-     when: public_ip_address is defined
+    - name: Whats my public ip
+      ansible.builtin.set_fact:
+        wireguard_endpoint: "{{ public_ip_address }}"
+      when: public_ip_address is defined
 
-   - name: Ensure ufw is present
-     ansible.builtin.package:
-       name: ufw
-       state: present
+    - name: Ensure ufw is present
+      ansible.builtin.package:
+        name: ufw
+        state: present
 
   roles:
     - role: githubixx.ansible_role_wireguard

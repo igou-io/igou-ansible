@@ -1,5 +1,6 @@
-- hosts: 
-    - loadbalancer
+---
+- hosts: loadbalancer
+  name: Configure HAProxy Loadbalancer for k8s ingress traffic and api
   become: true
   roles:
     - role: haproxy
