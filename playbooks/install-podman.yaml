@@ -1,0 +1,8 @@
+---
+- hosts: all
+  name: Install Podman
+  become: true
+  tasks:
+    - name: Install Podman via role
+      ansible.builtin.include_role:
+        name: alvistack.podman

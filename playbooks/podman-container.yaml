@@ -22,3 +22,12 @@
         generate_systemd:
           restart_policy: "always"
           names: true
+
+    - name: Reload Systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable the Systemd unit
+      systemd:
+        name: "container-my_web_server.service"
+        enabled: yes
