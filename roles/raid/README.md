@@ -15,9 +15,7 @@ The following variables are available for configuring the role:
 |--------------------------|---------|-----------------------------------------------------------------------------------------------|
 | `raid_devices`           | `[]`    | List of devices to include in the RAID array                                                  |
 | `raid_device_partitions` | `[]`    | List of device partitions to use in the RAID array                                            |
-| `mount_point`            | `/mnt/raid` | Mount point for the RAID array                                                              |
 | `raid_level`             | `10`    | RAID level (1, 6, or 10)                                                                     |
-| `add_to_fstab`           | `true`  | Whether to add the RAID array to the `/etc/fstab` file (with options `defaults,nofail,discard`) |
 | `rebuild_raid_array`     | `false` | Whether to zero the devices and rebuild the array from scratch                                |
 
 ## Dependencies
@@ -46,9 +44,7 @@ Here's an example playbook that uses the `raid` role:
       - /dev/sdb1
       - /dev/sdc1
       - /dev/sdd1
-    mount_point: /mnt/raid
     raid_level: 10
-    add_to_fstab: true
 ```
 
 ## Example Inventory
@@ -73,7 +69,5 @@ all:
             - /dev/sdb1
             - /dev/sdc1
             - /dev/sdd1
-          mount_point: /mnt/raid
           raid_level: 10
-          add_to_fstab: true
 ```
