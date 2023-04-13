@@ -1,37 +1,41 @@
----
 - name: Install required packages
-  package:
+  ansible.builtin.package:
     name:
       - mdadm
       - parted
     state: present
 
-- name: Stop existing RAID array
-  community.general.mdadm:
+- block:
+    - name: Remove any existing partitions on devices
+      ansible.builtin.parted:
+        device: "{{ item }}"
+        state: absent
+      loop: "{{ raid_devices }}"
+
+    - name: Wipe filesystem metadata from devices
+      ansible.builtin.command:
+        cmd: "wipefs --all --force {{ item }}"
+      loop: "{{ raid_devices }}"
+
+    - name: Create partitions on devices
+      ansible.builtin.parted:
+        device: "{{ item }}"
+        number: 1
+        state: present
+      loop: "{{ raid_devices }}"
+
+    - name: Rebuild RAID array
+      ansible.builtin.mdadm:
+        name: /dev/md0
+        level: "{{ raid_level }}"
+        devices: "{{ raid_device_partitions }}"
+        state: present
+  when: wipe | default(false)
+
+- name: Verify RAID array is present
+  ansible.builtin.mdadm:
     name: /dev/md0
-    state: stopped
-  ignore_errors: yes
-  when: rebuild_raid_array | default(false) | bool
-
-- name: Zero devices and remove RAID superblock
-  command: "mdadm --zero-superblock {{ item }}"
-  loop: "{{ raid_devices }}"
-  when: rebuild_raid_array | default(false) | bool
-
-- name: Create partitions for RAID devices
-  parted:
-    device: "{{ item }}"
-    number: 1
+    level: "{{ raid_level }}"
+    devices: "{{ raid_device_partitions }}"
     state: present
-    label: gpt
-    part_start: 0%
-    part_end: 100%
-    part_type: primary
-  loop: "{{ raid_devices }}"
-
-- name: Create the RAID10 array
-  community.general.mdadm:
-    name: /dev/md0
-    level: 10
-    raid_devices: "{{ raid_device_partitions }}"
-    state: present
+  when: not (wipe | default(false))
