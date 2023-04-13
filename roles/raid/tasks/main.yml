@@ -35,25 +35,3 @@
     level: 10
     raid_devices: "{{ raid_device_partitions }}"
     state: present
-
-- name: Create filesystem on the RAID array
-  ansible.builtin.filesystem:
-    dev: /dev/md0
-    fstype: ext4
-    force: "{{ rebuild_raid_array | default(false) | bool }}"
-
-- name: Create a mount point for the RAID array
-  ansible.builtin.file:
-    path: "{{ mount_point }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Mount the RAID array
-  ansible.builtin.mount:
-    path: "{{ mount_point }}"
-    src: /dev/md0
-    fstype: ext4
-    opts: defaults
-    state: mounted
