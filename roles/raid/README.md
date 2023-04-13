@@ -1,6 +1,6 @@
 # RAID Role
 
-This Ansible role is designed to configure RAID arrays on Linux systems. It supports creating RAID arrays of levels 1, 6, or 10, and adding the array to the `/etc/fstab` file with specified mount options.
+This Ansible role is designed to configure RAID arrays on Linux systems. It supports creating RAID arrays of levels 1, 6, or 10. It can conditionally wipe filesystems, metadata, and preexisting partitions based on the `wipe` variable.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ The following variables are available for configuring the role:
 | `raid_devices`           | `[]`    | List of devices to include in the RAID array                                                  |
 | `raid_device_partitions` | `[]`    | List of device partitions to use in the RAID array                                            |
 | `raid_level`             | `10`    | RAID level (1, 6, or 10)                                                                     |
-| `rebuild_raid_array`     | `false` | Whether to zero the devices and rebuild the array from scratch                                |
+| `wipe`                   | `false` | Whether to wipe filesystems, metadata, and preexisting partitions, and rebuild the array      |
 
 ## Dependencies
 
@@ -45,29 +45,5 @@ Here's an example playbook that uses the `raid` role:
       - /dev/sdc1
       - /dev/sdd1
     raid_level: 10
-```
-
-## Example Inventory
-
-Here's an example inventory that sets host variables for the RAID configuration:
-
-```yaml
-all:
-  children:
-    storage:
-      hosts:
-        raid.mynode.com:
-          sysctl_overwrite:
-            vm.mmap_rnd_bits: 16
-          raid_devices:
-            - /dev/sda
-            - /dev/sdb
-            - /dev/sdc
-            - /dev/sdd
-          raid_device_partitions:
-            - /dev/sda1
-            - /dev/sdb1
-            - /dev/sdc1
-            - /dev/sdd1
-          raid_level: 10
+    wipe: true
 ```
