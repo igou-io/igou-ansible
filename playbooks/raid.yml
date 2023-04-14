@@ -1,0 +1,19 @@
+---
+- name: Configure RAID array
+  hosts: "{{ hosts }}"
+  become: yes
+  roles:
+    - raid
+  vars:
+    raid_devices:
+      - /dev/sda
+      - /dev/sdb
+      - /dev/sdc
+      - /dev/sdd
+    raid_device_partitions:
+      - /dev/sda1
+      - /dev/sdb1
+      - /dev/sdc1
+      - /dev/sdd1
+    raid_level: 10
+    wipe: true
