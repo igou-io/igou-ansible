@@ -1,5 +1,5 @@
 ---
-- hosts: {{ hosts }}
+- hosts: "{{ hosts }}"
   name: Set up Armbian host on first boot
   become: true
   tasks:
