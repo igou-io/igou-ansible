@@ -1,41 +1,43 @@
+---
 - name: Install required packages
   ansible.builtin.package:
     name:
       - mdadm
-      - parted
     state: present
 
-- block:
-    - name: Remove any existing partitions on devices
-      ansible.builtin.parted:
-        device: "{{ item }}"
-        state: absent
-      loop: "{{ raid_devices }}"
+- name: Prepare device paths
+  set_fact:
+    device_paths: "{{ raid_devices | map('regex_replace', '^UUID=([a-fA-F0-9-]+)$', '/dev/disk/by-uuid/\\1') | list }}"
 
-    - name: Wipe filesystem metadata from devices
-      ansible.builtin.command:
-        cmd: "wipefs --all --force {{ item }}"
-      loop: "{{ raid_devices }}"
+- name: Get RAID array information
+  ansible.builtin.command:
+    cmd: "mdadm --detail /dev/{{ raid_name }}"
+  register: raid_info
+  changed_when: false
+  failed_when: false
 
-    - name: Create partitions on devices
-      ansible.builtin.parted:
-        device: "{{ item }}"
-        number: 1
-        state: present
-      loop: "{{ raid_devices }}"
+- name: Check if RAID array exists and matches the desired configuration
+  set_fact:
+    raid_needs_update: >
+      raid_info.rc != 0 or
+      raid_level not in raid_info.stdout or
+      (device_paths | difference(raid_info.stdout_lines | regex_findall('/dev/\\S+', multiline=True))) | length > 0
+  tags: always
 
-    - name: Rebuild RAID array
-      ansible.builtin.mdadm:
-        name: /dev/md0
-        level: "{{ raid_level }}"
-        devices: "{{ raid_device_partitions }}"
-        state: present
-  when: wipe | default(false)
+- name: Stop existing RAID array (if wipe is true and RAID needs update)
+  ansible.builtin.command:
+    cmd: "mdadm --stop /dev/{{ raid_name }}"
+  register: stop_raid
+  failed_when: "stop_raid.rc != 0 and 'no such file or directory' not in stop_raid.stderr|lower"
+  when: wipe | default(false) and raid_needs_update
 
-- name: Verify RAID array is present
-  ansible.builtin.mdadm:
-    name: /dev/md0
-    level: "{{ raid_level }}"
-    devices: "{{ raid_device_partitions }}"
-    state: present
-  when: not (wipe | default(false))
+- name: Zero superblock on devices (if RAID needs update)
+  ansible.builtin.command:
+    cmd: "mdadm --zero-superblock {{ item }}"
+  loop: "{{ device_paths }}"
+  when: raid_needs_update and stop_raid is changed
+
+- name: Create RAID array (if RAID needs update)
+  ansible.builtin.command:
+    cmd: "mdadm --create /dev/{{ raid_name }} --level={{ raid_level }} --raid-devices={{ device_paths | length }} {{ device_paths | join(' ') }}"
+  when: raid_needs_update and stop_raid is changed
