@@ -1,5 +1,5 @@
 ---
-- hosts: loadbalancer
+- hosts: {{ hosts }}
   name: Configure HAProxy Loadbalancer for k8s ingress traffic and api
   become: true
   roles:
