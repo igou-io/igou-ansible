@@ -11,7 +11,7 @@
 
 - name: Get RAID array information
   ansible.builtin.command:
-    cmd: "mdadm --detail /dev/{{ raid_name }}"
+    cmd: "mdadm --detail /dev/{{ raid_name | default('md0') }}"
   register: raid_info
   changed_when: false
   failed_when: false
@@ -26,7 +26,7 @@
 
 - name: Stop existing RAID array (if wipe is true and RAID needs update)
   ansible.builtin.command:
-    cmd: "mdadm --stop /dev/{{ raid_name }}"
+    cmd: "mdadm --stop /dev/{{ raid_name | default('md0') }}"
   register: stop_raid
   failed_when: "stop_raid.rc != 0 and 'no such file or directory' not in stop_raid.stderr|lower"
   when: wipe | default(false) and raid_needs_update
@@ -39,5 +39,5 @@
 
 - name: Create RAID array (if RAID needs update)
   ansible.builtin.command:
-    cmd: "mdadm --create /dev/{{ raid_name }} --level={{ raid_level }} --raid-devices={{ device_paths | length }} {{ device_paths | join(' ') }}"
+    cmd: "mdadm --create /dev/{{ raid_name | default('md0') }} --level={{ raid_level }} --raid-devices={{ device_paths | length }} {{ device_paths | join(' ') }}"
   when: raid_needs_update and stop_raid is changed
