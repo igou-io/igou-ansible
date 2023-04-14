@@ -1,5 +1,5 @@
 ---
-- hosts: armbian
+- hosts: {{ hosts }}
   name: Set up Armbian host on first boot
   become: true
   tasks:
@@ -49,9 +49,3 @@
       ansible.builtin.user:
         name: root
         password: !
-
-- name: Harden OS
-  ansible.builtin.import_playbook: system-harden.yaml
-
-- name: Update packages
-  ansible.builtin.import_playbook: system-update.yaml
