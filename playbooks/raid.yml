@@ -16,5 +16,4 @@
           - /dev/sdc1
           - /dev/sdd1
         raid_level: 10
-        raid_name: md0
         wipe: true
