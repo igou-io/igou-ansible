@@ -1,6 +1,6 @@
 ---
 - name: Configure RAID array
-  hosts: {{ hosts }}
+  hosts: "{{ hosts }}"
   become: yes
   roles:
     - raid
