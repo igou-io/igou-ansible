@@ -37,7 +37,24 @@
   loop: "{{ device_paths }}"
   when: raid_needs_update and stop_raid is changed
 
+- name: Wipe filesystem signatures (if wipe is true)
+  ansible.builtin.command:
+    cmd: "wipefs -a {{ item }}"
+  loop: "{{ device_paths }}"
+  when: wipe | default(false) and raid_needs_update and stop_raid is changed
+
 - name: Create RAID array (if RAID needs update)
   ansible.builtin.command:
     cmd: "mdadm --create /dev/{{ raid_name | default('md0') }} --level={{ raid_level }} --raid-devices={{ device_paths | length }} {{ device_paths | join(' ') }}"
   when: raid_needs_update and stop_raid is changed
+
+- name: Get RAID array information (after changes)
+  ansible.builtin.command:
+    cmd: "mdadm --detail /dev/{{ raid_name | default('md0') }}"
+  register: raid_info_after_changes
+  changed_when: false
+  failed_when: false
+
+- name: Display RAID array details
+  ansible.builtin.debug:
+    var: raid_info_after_changes.stdout_lines
