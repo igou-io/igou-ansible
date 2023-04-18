@@ -5,3 +5,5 @@ igou-inventory/*
 ansible.cfg
 ansible-navigator.log
 *.json
+roles/*
+!roles/requirements.yml

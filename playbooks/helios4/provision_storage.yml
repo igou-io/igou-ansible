@@ -1,0 +1,6 @@
+- name: Configure LVM with multiple volume groups, logical volumes, and thin pools
+  hosts: "{{ hosts }}"
+  become: yes
+  roles:
+    - lvm
+    - githubixx.iscsi_target
