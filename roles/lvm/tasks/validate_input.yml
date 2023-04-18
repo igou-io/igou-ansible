@@ -1,0 +1,8 @@
+---
+- name: Check if lvm_vgs is a list
+  ansible.builtin.assert:
+    that: lvm_vgs is iterable
+    fail_msg: "The 'lvm_vgs' variable must be a list."
+  tags:
+    - lvm_validate_input
+

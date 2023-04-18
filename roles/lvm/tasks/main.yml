@@ -1,0 +1,25 @@
+---
+- name: Install required packages
+  ansible.builtin.package:
+    name: "{{ package_list }}"
+    state: present
+  vars:
+    package_list: "{{ ['lvm2'] if ansible_os_family == 'Debian' or ansible_os_family == 'RedHat' else [] }}"
+  tags:
+    - lvm_packages
+    - lvm
+
+- name: Validate input
+  include_tasks: validate_input.yml
+  tags:
+    - lvm_validate_input
+    - lvm
+
+- name: Create volume groups and manage logical volumes
+  include_tasks: create_lvm_vg.yml
+  loop: "{{ lvm_vgs }}"
+  loop_control:
+    loop_var: lvm_vg
+  tags:
+    - lvm_vgs
+    - lvm

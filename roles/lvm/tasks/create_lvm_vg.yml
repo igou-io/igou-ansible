@@ -1,0 +1,50 @@
+---
+- name: Create volume group "{{ lvm_vg.name }}"
+  ansible.builtin.lvg:
+    vg: "{{ lvm_vg.name }}"
+    pvs: "{{ lvm_vg.pv_devices }}"
+    state: present
+  tags:
+    - lvm_vg_create
+
+- name: Manage logical volumes for volume group "{{ lvm_vg.name }}"
+  ansible.builtin.lvol:
+    vg: "{{ lvm_vg.name }}"
+    lv: "{{ lvm_lv.name }}"
+    size: "{{ lvm_lv.size }}"
+    state: "{{ lvm_lv.state | default('present') }}"
+    force: "{{ lvm_lv.force | default('no') }}"
+    opts: "{{ lvm_lv.opts | default(omit) }}"
+  loop: "{{ lvm_vg.logical_volumes }}"
+  loop_control:
+    loop_var: lvm_lv
+  tags:
+    - lvm_lv_manage
+
+- name: Create thin pools for volume group "{{ lvm_vg.name }}"
+  ansible.builtin.lvol:
+    vg: "{{ lvm_vg.name }}"
+    lv: "{{ lvm_thin_pool.name }}"
+    size: "{{ lvm_thin_pool.size }}"
+    state: "{{ lvm_thin_pool.state | default('present') }}"
+    opts: "{{ lvm_thin_pool.opts | default(omit) }}"
+  loop: "{{ lvm_vg.thin_pools | default([]) }}"
+  loop_control:
+    loop_var: lvm_thin_pool
+  tags:
+    - lvm_thin_pool_create
+
+- name: Create thin logical volumes for volume group "{{ lvm_vg.name }}"
+  ansible.builtin.lvol:
+    vg: "{{ lvm_vg.name }}"
+    lv: "{{ lvm_thin_lv.name }}"
+    size: "{{ lvm_thin_lv.size }}"
+    state: "{{ lvm_thin_lv.state | default('present') }}"
+    thinpool: "{{ lvm_thin_lv.thin_pool }}"
+    opts: "{{ lvm_thin_lv.opts | default(omit) }}"
+  loop: "{{ lvm_vg.thin_volumes | default([]) }}"
+  loop_control:
+    loop_var: lvm_thin_lv
+  tags:
+    - lvm_thin_lv_create
+
