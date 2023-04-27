@@ -1,0 +1,46 @@
+---
+- hosts: "{{ hosts }}"
+  name: Set up Fedora host on first boot
+  become: true
+  tasks:
+    - name: Add local user
+      ansible.builtin.user:
+        name: igou
+        group: wheel
+        shell: /bin/bash
+        home: /home/igou
+        create_home: true
+        state: present
+        password: !
+
+    - name: Add SSH public key for user
+      ansible.builtin.authorized_key:
+        user: igou
+        key: "{{ public_key }}"
+        state: present
+
+    - name: Ensure sudo is installed
+      ansible.builtin.package:
+        name: sudo
+        state: present
+
+    - name: Allow 'sudo' group to have passwordless sudo
+      ansible.builtin.lineinfile:
+        dest: /etc/sudoers
+        state: present
+        regexp: "^%sudo"
+        line: "%sudo ALL=(ALL) NOPASSWD: ALL"
+        validate: "sudo visudo -cf %s"
+
+    - name: Disable Root Login via ssh
+      ansible.builtin.lineinfile:
+        dest: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: "PermitRootLogin no"
+        state: present
+        backup: true
+
+    - name: Disable root user
+      ansible.builtin.user:
+        name: root
+        password: !
