@@ -1,0 +1,13 @@
+---
+- hosts: transmission
+  become: true
+  tasks:
+  - name: "Configure sshd"
+    include_role:
+      name: redhat.rhel_system_roles.sshd
+    vars:
+      sshd_skip_defaults: false
+      sshd:
+        Compression: true
+        ListenAddress:
+          - "0.0.0.0"
