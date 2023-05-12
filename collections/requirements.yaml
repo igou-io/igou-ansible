@@ -8,5 +8,3 @@ collections:
 #    version: 1.10.1
   - name: devsec.hardening
     version: 8.6.0
-  - name: redhat.rhel_system_roles
-    version: 1.21.1
