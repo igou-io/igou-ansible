@@ -1,0 +1,8 @@
+---
+- hosts: k8s_internal
+  name: Install k3s cluster
+  become: true
+  vars:
+    k3s_registration_address: master-internal.igou.systems  # Typically a load balancer.
+  roles:
+    - role: xanmanning.k3s

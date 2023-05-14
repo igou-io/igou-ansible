@@ -1,7 +1,7 @@
 ---
 roles:
   - name: xanmanning.k3s
-    version: v2.10.6
+    version: v3.3.1
   - name: githubixx.iscsi_target
     version: 1.2.0
   - name: githubixx.ansible_role_wireguard
