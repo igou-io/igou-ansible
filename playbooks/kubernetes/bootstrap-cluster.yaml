@@ -1,0 +1,11 @@
+---
+- hosts: localhost
+  name: Install k3s cluster
+  gather_facts: false
+  vars:
+    kubeconfig_path: "/Users/igou/.kube/internal-config"
+  tasks:
+    - name: Deploy ArgoCD
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('kubernetes.core.kustomize', dir='https://github.com/igou-io/igou-kubernetes/bootstrap/argocd?ref=master') }}"
