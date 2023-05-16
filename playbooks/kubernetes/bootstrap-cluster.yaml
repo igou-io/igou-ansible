@@ -1,11 +1,81 @@
 ---
-- hosts: localhost
-  name: Install k3s cluster
+- hosts: master-internal.igou.systems
+  connection: local
+  name: Bootstrap k3s cluster
   gather_facts: false
-  vars:
-    kubeconfig_path: "/Users/igou/.kube/internal-config"
+  environment:
+    K8S_AUTH_KUBECONFIG: "/Users/igou/.kube/internal-config"
   tasks:
-    - name: Deploy ArgoCD
-      kubernetes.core.k8s:
-        state: present
-        definition: "{{ lookup('kubernetes.core.kustomize', dir='https://github.com/igou-io/igou-kubernetes/bootstrap/argocd?ref=master') }}"
+    - block: 
+      - name: Create a temporary directory
+        ansible.builtin.tempfile:
+          state: directory
+        register: temp_dir
+  
+      - name: Clone a repo with separate git directory
+        ansible.builtin.git:
+          repo: https://github.com/igou-io/igou-kubernetes.git
+          dest: "{{ temp_dir.path }}"
+          clone: true
+  
+      - name: Create external secrets namespace
+        kubernetes.core.k8s:
+          name: external-secrets
+          api_version: v1
+          kind: Namespace
+          state: present
+  
+      - name: Create Credentials secret for OPC
+        kubernetes.core.k8s:
+          state: present
+          definition:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: 1p-credentials
+              namespace: external-secrets
+            type: Opaque
+            data:
+              1password-credentials.json: "{{ onepassword_credentials | b64encode | b64encode}}"
+
+      - name: Create Token secret for OPC
+        kubernetes.core.k8s:
+          state: present
+          definition:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: onepassword-connect-token
+              namespace: external-secrets
+            type: Opaque
+            data:
+              token: "{{ onepassword_token | b64encode }}"
+
+      - name: Deploy prometheus operator CRDs
+        kubernetes.core.helm:
+          name: prometheus-operator-crds
+          chart_ref: "{{ temp_dir.path }}/bootstrap/prometheus-operator-crds"
+          namespace: default
+          dependency_update: true
+
+      - name: Deploy OPC + ESO
+        kubernetes.core.helm:
+          name: external-secrets
+          chart_ref: "{{ temp_dir.path }}/apps/external-secrets"
+          namespace: external-secrets
+          dependency_update: true
+          force: true
+
+      - name: Create argocd namespace
+        kubernetes.core.k8s:
+          name: argocd
+          api_version: v1
+          kind: Namespace
+          state: present
+
+      - name: Deploy ArgoCD
+        kubernetes.core.k8s:
+          state: present
+          definition: "{{ lookup('kubernetes.core.kustomize', dir='https://github.com/igou-io/igou-kubernetes/bootstrap/argocd?ref=master') }}"
+
+      delegate_to: localhost  
