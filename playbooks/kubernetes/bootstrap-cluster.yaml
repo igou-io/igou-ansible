@@ -16,6 +16,20 @@
             dest: "{{ temp_dir.path }}"
             clone: true
 
+        - name: Download Helm install script
+          ansible.builtin.get_url:
+            url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+            dest: "{{ temp_dir.path }}/get_helm.sh"
+            mode: '0700'
+
+        - name: Download and install Helm
+          ansible.builtin.command:
+            cmd: "./get_helm.sh --no-sudo"
+          args:
+            chdir: "{{ temp_dir.path }}"
+          environment:
+            HELM_INSTALL_DIR: "{{ temp_dir.path }}"
+
         - name: Get kubeconfig
           ansible.builtin.copy:
             content: "{{ kubeconfig }}"
@@ -66,6 +80,7 @@
             chart_ref: "{{ temp_dir.path }}/bootstrap/prometheus-operator-crds"
             namespace: default
             dependency_update: true
+            binary_path: "{{ temp_dir.path }}"
 
         - name: Deploy OPC + ESO
           kubernetes.core.helm:
@@ -74,6 +89,7 @@
             namespace: external-secrets
             dependency_update: true
             force: true
+            binary_path: "{{ temp_dir.path }}"
 
         - name: Create argocd namespace
           kubernetes.core.k8s:
