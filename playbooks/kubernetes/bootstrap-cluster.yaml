@@ -28,7 +28,7 @@
           args:
             chdir: "{{ temp_dir.path }}"
           environment:
-            HELM_INSTALL_DIR: "."
+            HELM_INSTALL_DIR: "{{ temp_dir.path }}"
 
         - name: Get kubeconfig
           ansible.builtin.copy:
