@@ -28,6 +28,7 @@
           environment:
             HELM_INSTALL_DIR: "{{ temp_dir.path }}"
             USE_SUDO: false
+          ignore_errors: true
 
         - name: Get kubeconfig
           ansible.builtin.copy:
