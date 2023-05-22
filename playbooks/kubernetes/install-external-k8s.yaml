@@ -1,5 +1,5 @@
 ---
-- hosts: private_cluster_ingress
+- hosts: ingress_nodes
   name: Hack around no ddns, add master to ingress nodes /etc/hosts
   become: true
   tasks:
