@@ -51,6 +51,7 @@
         - name: Create Credentials secret for OPC
           kubernetes.core.k8s:
             state: present
+            force: true
             definition:
               apiVersion: v1
               kind: Secret
@@ -64,6 +65,7 @@
         - name: Create Token secret for OPC
           kubernetes.core.k8s:
             state: present
+            force: true
             definition:
               apiVersion: v1
               kind: Secret
@@ -83,13 +85,41 @@
             binary_path: "{{ temp_dir.path }}/helm"
 
         - name: Deploy OPC + ESO
-          kubernetes.core.helm:
+          kubernetes.core.helm_template:
             name: external-secrets
             chart_ref: "{{ temp_dir.path }}/apps/external-secrets"
-            namespace: external-secrets
+            release_namespace: external-secrets
             dependency_update: true
-            force: true
             binary_path: "{{ temp_dir.path }}/helm"
+
+        - name: Construct the data dictionary
+          ansible.builtin.set_fact:
+            data_dict: >
+              {
+                "{{ onepassword_vault }}": 1
+              }
+
+        - name: Create ClusterSecretStore
+          kubernetes.core.k8s:
+            state: present
+            apply: true
+            definition:
+              apiVersion: external-secrets.io/v1beta1
+              kind: ClusterSecretStore
+              metadata:
+                name: onepassword
+                namespace: external-secrets
+              spec:
+                provider:
+                  onepassword:
+                    connectHost: http://onepassword-connect:8080
+                    vaults: "{{ data_dict }}"
+                    auth:
+                      secretRef:
+                        connectTokenSecretRef:
+                          name: onepassword-connect-token
+                          key: token
+                          namespace: external-secrets
 
         - name: Create argocd namespace
           kubernetes.core.k8s:
