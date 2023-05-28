@@ -5,5 +5,5 @@
   roles:
     - role: haproxy
       ingress_hosts: "{{ groups['private_cluster_ingress'] }}"
-      masters:
-        - 10.10.1.10
+      masters: "{{ master_ips }}"
+...
