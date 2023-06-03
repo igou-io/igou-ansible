@@ -133,6 +133,11 @@
             state: present
             definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-kubernetes/bootstrap/argocd/overlays/" + overlay + "?ref=master") }}'
 
+        - name: Create app of apps
+          kubernetes.core.k8s:
+            state: present
+            src: '{{ "https://raw.githubusercontent.com/igou-io/igou-kubernetes/master/bootstrap/applications/" + overlay + "/application-of-applications-application.yml" }}'
+
         - name: Remove temp_dir
           ansible.builtin.file:
             path: "{{ temp_dir.path }}"
