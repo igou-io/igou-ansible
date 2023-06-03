@@ -90,7 +90,7 @@ backend ingress-https
     balance source
     mode tcp
 {% for host in ingress_hosts %}
-    server {{ host }} {{ host }}:443 check send-proxy
+    server {{ host }} {{ host }}:30443 check send-proxy
 {% endfor %}
 
 
