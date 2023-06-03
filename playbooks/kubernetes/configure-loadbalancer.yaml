@@ -4,5 +4,5 @@
   become: true
   roles:
     - role: haproxy
-      ingress_hosts: "{{ groups['private_cluster_ingress'] }}"
+      ingress_hosts: "{{ ingress_ips }}"
       masters: "{{ master_ips }}"
