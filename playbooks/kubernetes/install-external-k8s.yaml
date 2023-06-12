@@ -6,12 +6,12 @@
     - name: Add master to /etc/hosts of ingress node
       ansible.builtin.lineinfile:
         path: /etc/hosts
-        line: "10.10.1.10 master.igou.io"
+        line: "10.10.1.10 master.dmz.igou.systems
 
 - hosts: k8s_external
   name: Install k3s cluster
   become: true
   vars:
-    k3s_registration_address: master.igou.io  # Typically a load balancer.
+    k3s_registration_address: master.dmz.igou.systems  # Typically a load balancer.
   roles:
     - role: xanmanning.k3s
