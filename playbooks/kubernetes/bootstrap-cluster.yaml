@@ -79,6 +79,7 @@
         - name: Deploy prometheus operator CRDs
           kubernetes.core.helm_template:
             name: prometheus-operator-crds
+            update_repo_cache: true
             include_crds: true
             chart_ref: "{{ temp_dir.path }}/bootstrap/prometheus-operator-crds"
             release_namespace: default
@@ -88,6 +89,7 @@
         - name: Deploy OPC + ESO
           kubernetes.core.helm_template:
             name: external-secrets
+            update_repo_cache: true
             include_crds: true
             chart_ref: "{{ temp_dir.path }}/apps/external-secrets"
             release_namespace: external-secrets
