@@ -77,7 +77,7 @@
                 token: "{{ onepassword_token | b64encode }}"
 
         - name: Deploy prometheus operator CRDs
-          kubernetes.core.helm:
+          kubernetes.core.helm_template:
             name: prometheus-operator-crds
             chart_ref: "{{ temp_dir.path }}/bootstrap/prometheus-operator-crds"
             namespace: default
