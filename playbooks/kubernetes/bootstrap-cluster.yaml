@@ -80,7 +80,7 @@
           kubernetes.core.helm_template:
             name: prometheus-operator-crds
             chart_ref: "{{ temp_dir.path }}/bootstrap/prometheus-operator-crds"
-            namespace: default
+            release_namespace: default
             dependency_update: true
             binary_path: "{{ temp_dir.path }}/helm"
 
