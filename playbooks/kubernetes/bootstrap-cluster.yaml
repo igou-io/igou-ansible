@@ -78,38 +78,24 @@
                 token: "{{ onepassword_token | b64encode }}"
 
         - name: Deploy prometheus operator CRDs
-          kubernetes.core.helm_template:
+          kubernetes.core.helm:
             name: prometheus-operator-crds
             include_crds: true
             chart_ref: "{{ temp_dir.path }}/bootstrap/prometheus-operator-crds"
-            release_namespace: default
+            namespace: default
             dependency_update: true
             binary_path: "{{ temp_dir.path }}/helm"
           register: helm_output
 
-        - name: test
-          debug:
-            var: helm_output.stdout
-
-        - name: Create the rendered objects
-          kubernetes.core.k8s:
-            state: present
-            definition: "{{ helm_output.stdout }}"
-
         - name: Deploy OPC + ESO
-          kubernetes.core.helm_template:
+          kubernetes.core.helm:
             name: external-secrets
             include_crds: true
             chart_ref: "{{ temp_dir.path }}/apps/external-secrets"
-            release_namespace: external-secrets
+            namespace: external-secrets
             dependency_update: true
             binary_path: "{{ temp_dir.path }}/helm"
           register: helm_output
-
-        - name: Create the rendered objects
-          kubernetes.core.k8s:
-            state: present
-            definition: "{{ helm_output.stdout }}"
 
         - name: Construct the data dictionary
           ansible.builtin.set_fact:
