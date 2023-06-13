@@ -86,7 +86,11 @@
             dependency_update: true
             binary_path: "{{ temp_dir.path }}/helm"
           register: helm_output
-          
+
+        - name: test
+          debug:
+            var: helm_output.stdout
+
         - name: Create the rendered objects
           kubernetes.core.k8s:
             state: present
