@@ -80,7 +80,6 @@
         - name: Deploy prometheus operator CRDs
           kubernetes.core.helm:
             name: prometheus-operator-crds
-            include_crds: true
             chart_ref: "{{ temp_dir.path }}/bootstrap/prometheus-operator-crds"
             namespace: default
             dependency_update: true
@@ -90,7 +89,6 @@
         - name: Deploy OPC + ESO
           kubernetes.core.helm:
             name: external-secrets
-            include_crds: true
             chart_ref: "{{ temp_dir.path }}/apps/external-secrets"
             namespace: external-secrets
             dependency_update: true
