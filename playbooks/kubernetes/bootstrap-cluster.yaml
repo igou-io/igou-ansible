@@ -47,6 +47,7 @@
             api_version: v1
             kind: Namespace
             state: present
+          register: stdout
 
         - name: Create Credentials secret for OPC
           kubernetes.core.k8s:
@@ -84,6 +85,12 @@
             release_namespace: default
             dependency_update: true
             binary_path: "{{ temp_dir.path }}/helm"
+          register: helm_output
+          
+        - name: Create the rendered objects
+          kubernetes.core.k8s:
+            state: present
+            definition: "{{ helm_output.stdout }}"
 
         - name: Deploy OPC + ESO
           kubernetes.core.helm_template:
@@ -93,6 +100,12 @@
             release_namespace: external-secrets
             dependency_update: true
             binary_path: "{{ temp_dir.path }}/helm"
+          register: helm_output
+
+        - name: Create the rendered objects
+          kubernetes.core.k8s:
+            state: present
+            definition: "{{ helm_output.stdout }}"
 
         - name: Construct the data dictionary
           ansible.builtin.set_fact:
