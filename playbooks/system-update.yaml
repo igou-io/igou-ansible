@@ -1,5 +1,5 @@
 ---
-- hosts: all
+- hosts: {{ host }}
   name: Update all systems
   become: true
   gather_facts: true
