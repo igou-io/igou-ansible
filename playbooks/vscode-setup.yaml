@@ -1,0 +1,55 @@
+---
+- hosts: vscode.igou.systems
+  name: Configure remote vscode server
+  gather_facts: true
+  vars:
+    bashrc_exports:
+      - { variable: "ANSIBLE_INVENTORY", value: "/home/igou/igou-inventory" }
+      - { variable: "ANSIBLE_HOST_KEY_CHECKING", value: "False" }
+      - { variable: "SSH_AUTH_SOCK", value: '$(readlink -f "$SSH_AUTH_SOCK")' }
+  tasks:
+
+    - name: Install system packages
+      become: true
+      block:
+        - name: Install packages
+          ansible.builtin.package:
+            name:
+              - git
+              - vim
+              - pipx
+              - podman
+              - tree
+              - curl
+            update_cache: true
+
+    - name: Install pipx dependencies
+      block:
+        - name: Install ansible via pipx
+          community.general.pipx:
+            state: present
+            name: ansible
+            install_deps: true
+
+        - name: Install other packages via pipx
+          community.general.pipx:
+            state: present
+            name: "{{ item }}"
+          loop:
+            - ansible-navigator
+            - ansible-builder
+            - awxkit
+
+    - name: Append multiple export commands to .bashrc
+      ansible.builtin.lineinfile:
+        path: "~/.bashrc"
+        line: "export {{ item.variable }}={{ item.value }}"
+        create: yes
+        state: present
+      loop: "{{ bashrc_exports }}"
+
+    - name: Create symbolic link for ansible-navigator
+      ansible.builtin.file:
+        src: /home/igou/igou-ansible/ansible-navigator.yml
+        dest: /home/igou/ansible-navigator.yml
+        state: link
