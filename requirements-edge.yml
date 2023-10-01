@@ -1,0 +1,11 @@
+---
+roles:
+  - name: xanmanning.k3s
+  - name: githubixx.iscsi_target
+  - name: githubixx.ansible_role_wireguard
+  - name: robertdebock.update
+collections:
+  - name: community.general
+  - name: kubernetes.core
+  - name: containers.podman
+  - name: devsec.hardening
