@@ -1,11 +1,19 @@
 ---
 roles:
   - name: xanmanning.k3s
+    version: v3.4.2
   - name: githubixx.iscsi_target
+    version: 1.2.0
   - name: githubixx.ansible_role_wireguard
+    version: 14.0.0
   - name: robertdebock.update
+    version: 3.1.7
 collections:
   - name: community.general
+    version: 6.3.0
   - name: kubernetes.core
+    version: 2.4.0
   - name: containers.podman
+    version: 1.10.3
   - name: devsec.hardening
+    version: 8.6.0
