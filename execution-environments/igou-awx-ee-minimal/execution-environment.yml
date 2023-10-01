@@ -9,21 +9,6 @@ dependencies:
     package_pip: ansible-core>=2.15.0rc2,<2.16
   ansible_runner:
     package_pip: ansible-runner
-  galaxy: |
-    ---
-    collections:
-      - name: awx.awx
-      - name: azure.azcollection
-      - name: amazon.aws
-      - name: theforeman.foreman
-      - name: google.cloud
-      - name: openstack.cloud
-      - name: community.vmware
-      - name: ovirt.ovirt
-      - name: kubernetes.core
-      - name: ansible.posix
-      - name: ansible.windows
-      - name: redhatinsights.insights
   system: |
     git-core [platform:rpm]
     python3.9-devel [platform:rpm compile]
