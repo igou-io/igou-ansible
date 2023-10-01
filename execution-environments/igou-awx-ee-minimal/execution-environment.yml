@@ -10,6 +10,7 @@ dependencies:
   ansible_runner:
     package_pip: ansible-runner
   system: |
+    gcc [platform:rpm]
     git-core [platform:rpm]
     python3.9-devel [platform:rpm compile]
     libcurl-devel [platform:rpm compile]
