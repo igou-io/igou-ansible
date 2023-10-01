@@ -76,7 +76,7 @@ jobs:
           password: ${{ secrets.QUAY_PASSWORD }}
 
       - name: Print summary
-        working-directory: ${{ inputs.EE_FOLDER_NAME }}
+        working-directory: execution-environments/${{ inputs.EE_FOLDER_NAME }}
         run: |
           echo "## :rocket: Usage" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
