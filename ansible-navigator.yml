@@ -1,0 +1,17 @@
+ansible-navigator:
+  ansible:
+    config:
+      path: ansible.cfg
+  logging:
+    level: debug
+    file: ~/ansible-navigator/ansible-navigator.log
+  mode: stdout
+  ansible-runner:
+    artifact-dir: ~/ansible-navigator
+  playbook-artifact:
+    enable: true
+    save-as: ~/ansible-navigator/{playbook_name}-artifact-{time_stamp}.json
+  execution-environment:
+    container-engine: podman
+    enabled: true
+    image: quay.io/igou/igou-ee:latest
