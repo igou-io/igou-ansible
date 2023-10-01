@@ -6,7 +6,6 @@ roles:
   - name: robertdebock.update
 collections:
   - name: community.general
-  - name: kubernetes.core
   - name: containers.podman
   - name: devsec.hardening
   - name: awx.awx
