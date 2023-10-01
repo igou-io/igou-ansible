@@ -9,7 +9,6 @@ on:
       - main
     paths:
       - 'execution-environments/igou-awx-ee-minimal/**'
-      - 'requirements.yml'
 
   # Schedule workflow run at 00:00 on Sunday
   schedule:
