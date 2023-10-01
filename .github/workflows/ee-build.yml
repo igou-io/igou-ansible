@@ -55,7 +55,7 @@ jobs:
 
       - name: Build image
         id: build-image
-        working-directory: ${{ inputs.EE_FOLDER_NAME }}
+        working-directory: execution-environments/${{ inputs.EE_FOLDER_NAME }}
         run: |
           ansible-builder build -v 3 \
           --build-arg AH_TOKEN=${{ secrets.AH_TOKEN }} \
