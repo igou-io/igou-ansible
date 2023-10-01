@@ -14,4 +14,4 @@ ansible-navigator:
   execution-environment:
     container-engine: podman
     enabled: true
-    image: quay.io/igou/igou-ee:latest
+    image: quay.io/igou/igou-awx-ee:latest
