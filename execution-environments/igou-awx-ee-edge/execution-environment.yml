@@ -9,8 +9,9 @@ dependencies:
     package_pip: ansible-core
   ansible_runner:
     package_pip: ansible-runner
-  galaxy: ../../requirements.yml
+  galaxy: ../../requirements-edge.yml
   system: |
+    gcc  [platform:rpm]
     git-core [platform:rpm]
     python3.9-devel [platform:rpm compile]
     libcurl-devel [platform:rpm compile]
