@@ -3,12 +3,15 @@
   name: Configure remote vscode server
   gather_facts: true
   vars:
+    kustomize_version: v5.1.1
+    kustomize_url: "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/{{ kustomize_version }}/kustomize_{{ kustomize_version }}_linux_amd64.tar.gz"
     bashrc_exports:
       - { variable: "ANSIBLE_INVENTORY", value: "/home/igou/igou-inventory" }
       - { variable: "ANSIBLE_HOST_KEY_CHECKING", value: "False" }
       - { variable: "SSH_AUTH_SOCK", value: '$(readlink -f "$SSH_AUTH_SOCK")' }
-  tasks:
+      - { variable: "PATH", value: '$PATH:/home/igou/.local/bin:/home/igou/bin' }
 
+  tasks:
     - name: Install system packages
       become: true
       block:
@@ -21,7 +24,20 @@
               - podman
               - tree
               - curl
+              - unzip
             update_cache: true
+
+        - name: Install Terraform
+          ansible.builtin.import_role:
+            name: robertdebock.terraform
+
+        - name: Install Kubectl
+          ansible.builtin.import_role:
+            name: robertdebock.kubectl
+
+        - name: Install Helm
+          ansible.builtin.import_role:
+            name: geerlingguy.helm
 
     - name: Install pipx dependencies
       block:
@@ -53,3 +69,19 @@
         src: /home/igou/igou-ansible/ansible-navigator.yml
         dest: /home/igou/ansible-navigator.yml
         state: link
+
+    - name: Ensure /home/igou/bin exists
+      ansible.builtin.file:
+        path: /home/igou/bin
+        state: directory
+        mode: 0755
+
+    - name: Install Kustomize to /home/igou/bin
+      ansible.builtin.unarchive:
+        src: "{{ kustomize_url }}"
+        dest: "/home/igou/bin"
+        remote_src: yes
+        creates: "/home/igou/bin/kustomize"
+
+
+        #todo podman login to quay, get kubeconfigs from 1p
