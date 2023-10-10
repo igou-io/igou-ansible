@@ -25,6 +25,7 @@
               - tree
               - curl
               - unzip
+              - jq
             update_cache: true
 
         - name: Install Terraform
@@ -55,6 +56,7 @@
             - ansible-navigator
             - ansible-builder
             - awxkit
+            - yq
 
     - name: Append multiple export commands to .bashrc
       ansible.builtin.lineinfile:
@@ -63,6 +65,13 @@
         create: yes
         state: present
       loop: "{{ bashrc_exports }}"
+
+    - name: source ~/.vpwd
+      ansible.builtin.lineinfile:
+        path: "~/.bashrc"
+        line: "source /home/igou/.vpwd"
+        create: yes
+        state: present
 
     - name: Create symbolic link for ansible-navigator
       ansible.builtin.file:
