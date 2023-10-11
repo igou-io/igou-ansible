@@ -1,6 +1,6 @@
 ---
 - hosts: localhost
-  name: Configure awx
+  name: Configure AWX with my igou org
   gather_facts: false
   environment:
     CONTROLLER_HOST: "https://awx.apps.igou.systems"
@@ -112,3 +112,15 @@
       scm_type: git
       default_environment: igou-awx-ee
       update_project: true
+
+  - name: Create example template
+    awx.awx.job_template:
+      name: example-ping-template
+      job_type: run
+      playbook: playbooks/ping.yaml
+      project: igou-ansible
+      inventory: igou-inventory
+      extra_vars:
+        host: changeme
+      ask_variables_on_launch: true
+      credentials: igou-ssh
