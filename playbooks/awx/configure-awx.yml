@@ -58,24 +58,6 @@
       organization: "igou"
       state: present
 
-  - name: Create igou-inventory git source
-    awx.awx.inventory_source:
-      name: igou-inventory-git-source
-      inventory: igou-inventory
-      source: scm
-      source_project: igou-inventory
-      verbosity: 2
-      update_on_launch: false
-      overwrite: true
-      overwrite_vars: true
-
-  - name: Update a igou-inventory-git-source
-    awx.awx.inventory_source_update:
-      name: "igou-inventory-git-source"
-      inventory: "igou-inventory"
-      organization: igou
-      wait: true
-
   - name: Create igou-inventory aws source
     awx.awx.inventory_source:
       name: igou-inventory-aws-source
@@ -99,6 +81,24 @@
   - name: Update a igou-inventory-aws-source
     awx.awx.inventory_source_update:
       name: "igou-inventory-aws-source"
+      inventory: "igou-inventory"
+      organization: igou
+      wait: true
+
+  - name: Create igou-inventory git source
+    awx.awx.inventory_source:
+      name: igou-inventory-git-source
+      inventory: igou-inventory
+      source: scm
+      source_project: igou-inventory
+      verbosity: 2
+      update_on_launch: false
+      overwrite: true
+      overwrite_vars: true
+
+  - name: Update a igou-inventory-git-source
+    awx.awx.inventory_source_update:
+      name: "igou-inventory-git-source"
       inventory: "igou-inventory"
       organization: igou
       wait: true

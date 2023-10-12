@@ -1,0 +1,28 @@
+---
+- hosts: awx
+  name: Create awx templates
+  gather_facts: false
+  tasks:
+
+  - name: Create job template loop
+    awx.awx.job_template:
+      controller_host: "{{ awx_hostname }}"
+      name: "{{ item.name }}"
+      allow_simultaneous: "{{ item.allow_simultaneous | default('false') }}"
+      ask_credential_on_launch: "{{ item.ask_credential_on_launch | default('false') }}"
+      description: "{{ item.description | default('Default Description') }}"
+      job_type: "{{ item.job_type | default('run') }}"
+      job_slice_count: "{{ item.job_slice_count | default(omit) }}"
+      become_enabled: "{{ item.become_enabled | default(omit) }}"
+      inventory: "{{ item.inventory | default('igou-inventory') }}"
+      project: "{{ item.project | default('igou-ansible') }}"
+      forks: "{{ item.forks | default(15) }}"
+      execution_environment: "{{ item.execution_environment | default(omit) }}"
+      playbook: "{{ item.playbook }}"
+      organization: "{{ item.organization | default('igou') }}"
+      credentials: "{{ item.credential | default(['igou-ssh'])}}"
+      state: "{{ item.state | default('present') }}"
+      diff_mode: "{{ item.diff_mode | default('false') }}"
+      verbosity: "{{ item.verbosity | default(2) }}"
+      extra_vars: "{{ item.extra_vars | default(omit) }}"
+    loop: "{{ job_templates }}"
