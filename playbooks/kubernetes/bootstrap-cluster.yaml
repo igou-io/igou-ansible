@@ -28,6 +28,17 @@
         K8S_AUTH_KUBECONFIG: "{{ temp_dir.path }}/kubeconfig"
       block:
 
+        - name: Download external-secrets crds manifest to the cluster.
+          ansible.builtin.get_url:
+            url: https://raw.githubusercontent.com/external-secrets/external-secrets/main/deploy/crds/bundle.yaml
+            dest: eso-crds.yml
+            mode: '0664'
+
+        - name: Apply crds manifest to the cluster.
+          kubernetes.core.k8s:
+            state: present
+            src: eso-crds.yml
+
         - name: Create argocd namespace
           kubernetes.core.k8s:
             name: argocd
@@ -38,7 +49,7 @@
         - name: Deploy ArgoCD
           kubernetes.core.k8s:
             state: present
-            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-kubernetes/bootstrap/argocd/overlays/bootstrap?ref=master") }}'
+            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-kubernetes/bootstrap/argocd/overlays/" + overlay + "?ref=master") }}'
 
         - name: Create app of apps
           kubernetes.core.k8s:
