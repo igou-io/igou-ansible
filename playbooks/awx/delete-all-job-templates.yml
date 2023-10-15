@@ -1,0 +1,20 @@
+---
+- hosts: awx
+  name: Delete all job templates
+  gather_facts: false
+  vars:
+    delete_org: igou
+  environment:
+    CONTROLLER_HOST: "{{ awx_hostname }}"
+
+  tasks:
+    - ansible.builtin.set_fact:
+        org_id: "{{ query('awx.awx.controller_api', 'organizations', host=awx_hostname, query_params={ 'name': delete_org })[0]['id'] }}"
+
+    - ansible.builtin.set_fact:
+        template_blob: "{{ query('awx.awx.controller_api', 'job_templates', host=awx_hostname, query_params={ 'organization': org_id }) }}"
+
+    - awx.awx.job_template:
+        name: "{{ item.name }}"
+        state: absent
+      loop: "{{ template_blob }}"

@@ -1,0 +1,11 @@
+---
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Generate rrule for a daily recurrence
+      set_fact:
+        daily_rrule: "{{ query('awx.awx.schedule_rrule', 'day', start_date='1979-09-13 01:00:00') }}"
+
+    - name: Display the generated rrule
+      debug:
+        var: daily_rrule
