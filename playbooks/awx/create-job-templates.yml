@@ -20,7 +20,7 @@
       execution_environment: "{{ item.execution_environment | default(omit) }}"
       playbook: "{{ item.playbook }}"
       organization: "{{ item.organization | default('igou') }}"
-      credentials: "{{ item.credential | default(['igou-ssh'])}}"
+      credentials: "{{ item.credentials | default(['igou-ssh'])}}"
       state: "{{ item.state | default('present') }}"
       diff_mode: "{{ item.diff_mode | default('false') }}"
       verbosity: "{{ item.verbosity | default(2) }}"

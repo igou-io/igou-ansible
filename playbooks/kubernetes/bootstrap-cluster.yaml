@@ -38,7 +38,7 @@
         - name: Deploy ArgoCD
           kubernetes.core.k8s:
             state: present
-            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-kubernetes/bootstrap/argocd/overlays/" + overlay + "?ref=master") }}'
+            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-kubernetes/bootstrap/argocd/overlays/bootstrap?ref=master") }}'
 
         - name: Create app of apps
           kubernetes.core.k8s:
