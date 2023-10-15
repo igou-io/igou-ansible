@@ -26,3 +26,12 @@
       verbosity: "{{ item.verbosity | default(2) }}"
       extra_vars: "{{ item.extra_vars | default(omit) }}"
     loop: "{{ job_templates }}"
+
+  - name: Create schedule for templates with schedule key
+    awx.awx.schedule:
+      controller_host: "{{ awx_hostname }}"
+      name: "Schedule for {{ item.name }}"
+      unified_job_template: "{{ item.name }}"
+      rrule: "{{ item.schedule }}"
+    loop: "{{ job_templates }}"
+    when: "'schedule' in item"
