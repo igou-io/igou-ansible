@@ -26,6 +26,8 @@
               - curl
               - unzip
               - jq
+              - p7zip
+              - nfs-common
             update_cache: true
 
         - name: Install Terraform
