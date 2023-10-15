@@ -38,7 +38,7 @@
         - name: Apply crds manifest to the cluster.
           kubernetes.core.k8s:
             state: present
-            src: eso-crds.yml
+            src: ./eso-crds.yml
 
         - name: Create argocd namespace
           kubernetes.core.k8s:
