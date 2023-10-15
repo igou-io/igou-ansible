@@ -33,6 +33,7 @@
             url: https://raw.githubusercontent.com/external-secrets/external-secrets/main/deploy/crds/bundle.yaml
             dest: eso-crds.yml
             mode: '0664'
+            force: true
 
         - name: Apply crds manifest to the cluster.
           kubernetes.core.k8s:
