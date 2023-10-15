@@ -31,7 +31,7 @@
         - name: Download external-secrets crds manifest to the cluster.
           ansible.builtin.get_url:
             url: https://raw.githubusercontent.com/external-secrets/external-secrets/main/deploy/crds/bundle.yaml
-            dest: eso-crds.yml
+            dest: ./eso-crds.yml
             mode: '0664'
             force: true
 
