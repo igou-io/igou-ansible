@@ -111,6 +111,10 @@
                 name: onepassword
                 namespace: external-secrets
               spec:
+                conditions:
+                  - namespaceSelector:
+                    matchLabels:
+                      external.secrets.io/enabled: true
                 provider:
                   onepassword:
                     connectHost: http://onepassword-connect:8080
