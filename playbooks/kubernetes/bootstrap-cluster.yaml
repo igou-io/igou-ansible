@@ -113,8 +113,8 @@
               spec:
                 conditions:
                   - namespaceSelector:
-                    matchLabels:
-                      external.secrets.io/enabled: true
+                      matchLabels:
+                        external.secrets.io/enabled: true
                 provider:
                   onepassword:
                     connectHost: http://onepassword-connect:8080
