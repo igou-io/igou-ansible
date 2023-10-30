@@ -5,6 +5,9 @@ images:
     name: quay.io/ansible/awx-ee:latest
 dependencies:
   galaxy: ../../requirements.yml
+  python: |
+    boto3
+    botocore
 additional_build_steps:
   prepend_final: |
     RUN curl -L -o /usr/local/bin/kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.1.1/kustomize_v5.1.1_linux_amd64.tar.gz && \
