@@ -22,4 +22,4 @@ collections:
   - name: containers.podman
     version: 1.10.3
   - name: devsec.hardening
-    version: 8.8.0
+    version: 9.0.0
