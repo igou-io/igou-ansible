@@ -16,7 +16,7 @@ roles:
     version: 1.0.1
 collections:
   - name: community.general
-    version: 7.4.0
+    version: 7.5.2
   - name: kubernetes.core
     version: 2.4.0
   - name: containers.podman
