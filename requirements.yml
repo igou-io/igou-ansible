@@ -7,7 +7,7 @@ roles:
   - name: githubixx.ansible_role_wireguard
     version: 15.0.0
   - name: robertdebock.kubectl
-    version: 1.0.0
+    version: 2.1.5
   - name: robertdebock.update
     version: 3.1.7
   - name: robertdebock.terraform
