@@ -15,3 +15,7 @@ ansible-navigator:
     container-engine: podman
     enabled: true
     image: quay.io/igou/igou-awx-ee:latest
+    environment-variables:
+      pass:
+        - AWS_ACCESS_KEY 
+        - AWS_SECRET_KEY 

@@ -28,6 +28,7 @@
               - jq
               - p7zip
               - nfs-common
+              - sshpass
             update_cache: true
 
         - name: Install Terraform
@@ -41,6 +42,8 @@
         - name: Install Helm
           ansible.builtin.import_role:
             name: geerlingguy.helm
+          vars:
+            helm_version: v3.13.2
 
     - name: Install pipx dependencies
       block:
@@ -54,11 +57,13 @@
           community.general.pipx:
             state: present
             name: "{{ item }}"
+            install_deps: true
           loop:
             - ansible-navigator
             - ansible-builder
             - awxkit
             - yq
+            - mkdocs-material
 
     - name: Append multiple export commands to .bashrc
       ansible.builtin.lineinfile:
