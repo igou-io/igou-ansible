@@ -17,5 +17,6 @@ ansible-navigator:
     image: quay.io/igou/igou-awx-ee:latest
     environment-variables:
       pass:
-        - AWS_ACCESS_KEY 
-        - AWS_SECRET_KEY 
+        - AWS_ACCESS_KEY
+        - AWS_SECRET_KEY
+        - OP_SERVICE_ACCOUNT_TOKEN
