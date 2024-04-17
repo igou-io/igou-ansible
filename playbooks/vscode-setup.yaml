@@ -10,6 +10,10 @@
       - { variable: "ANSIBLE_HOST_KEY_CHECKING", value: "False" }
       - { variable: "SSH_AUTH_SOCK", value: '$(readlink -f "$SSH_AUTH_SOCK")' }
       - { variable: "PATH", value: '$PATH:/home/igou/.local/bin:/home/igou/bin' }
+    bashrc_aliases:
+      - { variable: "k", value: "kubectl" }
+
+
 
   tasks:
     - name: Install system packages
@@ -72,6 +76,14 @@
         create: yes
         state: present
       loop: "{{ bashrc_exports }}"
+
+    - name: Append multiple alias commands to .bashrc
+      ansible.builtin.lineinfile:
+        path: "~/.bashrc"
+        line: "alias {{ item.variable }}={{ item.value }}"
+        create: yes
+        state: present
+      loop: "{{ bashrc_aliases }}"
 
     - name: source ~/.vpwd
       ansible.builtin.lineinfile:
