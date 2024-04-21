@@ -1,0 +1,40 @@
+---
+- name: Playbook to configure ansible controller post installation
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Set Up Directory
+      block:
+        - name: Create a temporary directory
+          ansible.builtin.tempfile:
+            state: directory
+          register: temp_dir
+
+        - name: Clone a repo with separate git directory
+          ansible.builtin.git:
+            repo: https://github.com/igou-io/igou-infrastructure.git
+            dest: "{{ temp_dir.path }}"
+            clone: true
+
+        - name: Render tfvars from secret store
+          ansible.builtin.copy:
+            content: "{{ lookup('community.general.onepassword', 'terraform', field='tfvars', vault='awx') }}"
+            mode: 0644
+            dest: "{{ temp_dir.path }}/terraform/terraform.tfvars"
+          no_log: false
+
+    - name: Define the backend configuration at init
+      community.general.terraform:
+        project_path: "{{ temp_dir.path }}/terraform"
+        state: "present"
+        force_init: true
+        backend_config:
+          region: "{{ lookup('community.general.onepassword', 'terraform', field='backend_region', vault='awx') }}"
+          bucket: "{{ lookup('community.general.onepassword', 'terraform', field='backend_bucket', vault='awx') }}"
+          key: "{{ lookup('community.general.onepassword', 'terraform', field='backend_key', vault='awx') }}"
+      check_mode: true
+      register: results
+
+    - name: debug output
+      ansible.builtin.debug:
+        var: results
