@@ -1,5 +1,5 @@
 ---
-- name: Terraform Plan and output result via debug module
+- name: Terraform apply for igou-infrastructure
   hosts: localhost
   gather_facts: false
   environment:
@@ -34,9 +34,3 @@
           region: "{{ lookup('community.general.onepassword', 'terraform', field='backend_region', vault='awx') }}"
           bucket: "{{ lookup('community.general.onepassword', 'terraform', field='backend_bucket', vault='awx') }}"
           key: "{{ lookup('community.general.onepassword', 'terraform', field='backend_key', vault='awx') }}"
-      check_mode: true
-      register: results
-
-    - name: debug output
-      ansible.builtin.debug:
-        var: results
