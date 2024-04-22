@@ -22,6 +22,6 @@ collections:
   - name: kubernetes.core
     version: 3.0.0
   - name: containers.podman
-    version: 1.11.0
+    version: 1.13.0
   - name: devsec.hardening
     version: 9.0.0
