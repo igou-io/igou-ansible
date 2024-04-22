@@ -18,7 +18,7 @@ collections:
   - name: infra.controller_configuration
     version: 2.7.1
   - name: community.general
-    version: 8.5.0
+    version: 8.6.0
   - name: kubernetes.core
     version: 3.0.0
   - name: containers.podman
