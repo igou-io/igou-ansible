@@ -15,6 +15,11 @@ ansible-navigator:
     container-engine: podman
     enabled: true
     image: quay.io/igou/igou-awx-ee:latest
+    volume-mounts:
+      # Ugly as hell.. I don't know a better solution yet
+      - src: "/home/igou/.kube"
+        dest: "/root/.kube"
+        options: "Z"
     environment-variables:
       pass:
         - AWS_ACCESS_KEY
@@ -23,3 +28,6 @@ ansible-navigator:
         - CONTROLLER_HOST
         - CONTROLLER_PASSWORD
         - CONTROLLER_USERNAME
+        - K8S_AUTH_API_KEY
+        - K8S_AUTH_HOST
+        - K8S_AUTH_VERIFY_SSL
