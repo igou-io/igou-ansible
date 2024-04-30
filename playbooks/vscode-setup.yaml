@@ -1,5 +1,5 @@
 ---
-- hosts: vscode.igou.systems
+- hosts: "{{ host }}"
   name: Configure remote vscode server
   gather_facts: true
   vars:
