@@ -1,0 +1,13 @@
+---
+# tasks file for kubevirt_vm_launch
+
+- name: debug template
+  debug:
+    msg: "{{ lookup('ansible.builtin.template', './kubevirt_vm.yaml.j2') | to_json }}"
+
+- name: Create a Virtual Machine
+  kubevirt.core.kubevirt_vm:
+    state: "{{ vm_state }}"
+    name: "{{ vm_name }}"
+    namespace: "{{ vm_namespace }}"
+    spec: "{{ lookup('ansible.builtin.template', './kubevirt_vm.yaml.j2') | to_json }}"
