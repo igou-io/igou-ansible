@@ -11,6 +11,9 @@ domain:
     - name: emptydisk
       disk:
         bus: virtio
+    - name: cloudinitdisk
+      disk:
+        bus: virtio
   volumes:
   - name: containerdisk
     containerDisk:
@@ -18,3 +21,9 @@ domain:
   - name: emptydisk
     emptyDisk:
     capacity: "22Gi"
+  - name: cloudinitdisk
+    cloudInitNoCloud:
+      userData: |-
+        #cloud-config
+        password: fedora
+        chpasswd: { expire: False }
