@@ -2,13 +2,13 @@ terminationGracePeriodSeconds: 30
 domain:
   resources:
     requests:
-    memory: 1024M
+      memory: 1024M
   devices:
     disks:
     - name: containerdisk
       disk:
         bus: virtio
-    - name: emptydisk
+    - name: emptydisks
       disk:
         bus: virtio
     - name: cloudinitdisk
@@ -20,10 +20,4 @@ domain:
     image: kubevirt/fedora-cloud-container-disk-demo:latest
   - name: emptydisk
     emptyDisk:
-    capacity: "22Gi"
-  - name: cloudinitdisk
-    cloudInitNoCloud:
-      userData: |-
-        #cloud-config
-        password: fedora
-        chpasswd: { expire: False }
+    capacity: "2Gi"
