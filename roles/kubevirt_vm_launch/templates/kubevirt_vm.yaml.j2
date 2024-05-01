@@ -6,14 +6,11 @@ domain:
   devices:
     disks:
     - name: containerdisk
-        disk:
+      disk:
         bus: virtio
     - name: emptydisk
-          disk:
-          bus: virtio
-    - disk:
-          bus: virtio
-          name: cloudinitdisk
+      disk:
+        bus: virtio
   volumes:
   - name: containerdisk
     containerDisk:
