@@ -1,0 +1,28 @@
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: "{{ vm_name }}"
+  namespace: "{{ vm_namespace }}"
+  annotations:
+    cdi.kubevirt.io/storage.bind.immediate.requested: ""
+spec:
+  source:
+{% if vm_dv_source_type == 'http' %}
+    http:
+      url: "{{ vm_dv_source_url }}"
+{% elif vm_dv_source_type == 's3' %}
+    s3:
+      url: "{{ vm_dv_source_url }}"
+{% elif vm_dv_source_type == 'gcs' %}
+    gcs:
+      url: "{{ vm_dv_source_url }}"
+{% elif vm_dv_source_type == 'registry' %}
+    registry:
+      url: "{{ vm_dv_source_url }}"
+{% endif %}
+  pvc:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: "{{ vm_storage }}"
