@@ -13,5 +13,6 @@
     state: "{{ vm_state }}"
     name: "{{ vm_name }}"
     namespace: "{{ vm_namespace }}"
+    wait: true
     spec: "{{ lookup('ansible.builtin.template', './kubevirt_vm.yaml.j2') | from_yaml }}"
 
