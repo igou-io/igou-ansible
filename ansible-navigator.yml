@@ -20,6 +20,8 @@ ansible-navigator:
       - src: "/home/igou/.kube"
         dest: "/root/.kube"
         options: "Z"
+      - src: /tmp
+        dest: /tmp
     environment-variables:
       pass:
         - AWS_ACCESS_KEY
