@@ -1,0 +1,6 @@
+---
+- name: Deploy Kubevirt VM
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - kubevirt_vm_launch
