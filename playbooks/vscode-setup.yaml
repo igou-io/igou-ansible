@@ -41,6 +41,7 @@
           ansible.builtin.git:
             accept_hostkey: true
             repo: "git@github.com:igou-io/igou-inventory.git"
+            dest: /home/igou
 
         - name: Install Terraform
           ansible.builtin.import_role:
