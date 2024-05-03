@@ -4,3 +4,10 @@
   gather_facts: false
   roles:
     - kubevirt_vm_launch
+
+  tasks:
+    - name: set host stat
+      ansible.builtin.set_stats:
+        data:
+          host: "{{ vm_namespace }}-{{ vm_name }}"
+        per_host: false
