@@ -1,4 +1,10 @@
 ---
+- hosts: localhost
+  tasks:
+    name: debug
+    ansible.builtin.debug:
+      msg: "{{ host }}"
+      
 - hosts: "{{ host }}"
   name: Configure remote vscode server
   gather_facts: true
