@@ -11,3 +11,7 @@
         data:
           host: "{{ vm_namespace }}-{{ vm_name }}"
         per_host: false
+
+    - name: sleep 20 seconds so inventory can catch up
+      ansible.builtin.pause:
+        seconds: 20
