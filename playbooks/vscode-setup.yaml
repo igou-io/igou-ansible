@@ -1,11 +1,4 @@
 ---
-- hosts: localhost
-  gather_facts: false
-  tasks:
-    - name: debug
-      ansible.builtin.debug:
-        msg: "{{ host }}"
-      
 - hosts: "{{ host }}"
   name: Configure remote vscode server
   gather_facts: true
@@ -43,6 +36,11 @@
               - nfs-common
               - sshpass
             update_cache: true
+
+        - name: Clone working repos
+          ansible.builtin.git:
+            accept_hostkey: true
+            repo: "git@github.com:igou-io/igou-inventory.git"
 
         - name: Install Terraform
           ansible.builtin.import_role:
