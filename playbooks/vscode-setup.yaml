@@ -37,12 +37,6 @@
               - sshpass
             update_cache: true
 
-        - name: Clone working repos
-          ansible.builtin.git:
-            accept_hostkey: true
-            repo: "git@github.com:igou-io/igou-inventory.git"
-            dest: /home/igou
-
         - name: Install Terraform
           ansible.builtin.import_role:
             name: robertdebock.terraform
@@ -107,6 +101,7 @@
         src: /home/igou/igou-ansible/ansible-navigator.yml
         dest: /home/igou/ansible-navigator.yml
         state: link
+        force: true
 
     - name: Ensure /home/igou/bin exists
       ansible.builtin.file:
