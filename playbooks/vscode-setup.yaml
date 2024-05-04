@@ -10,12 +10,10 @@
     bashrc_exports:
       - { variable: "ANSIBLE_INVENTORY", value: "/home/igou/igou-inventory" }
       - { variable: "ANSIBLE_HOST_KEY_CHECKING", value: "False" }
-      - { variable: "SSH_AUTH_SOCK", value: '$(readlink -f "$SSH_AUTH_SOCK")' }
+      - { variable: "SSH_AUTH_SOCK", value: '$(ls -t /tmp/ssh-**/* | head -1)' }
       - { variable: "PATH", value: '$PATH:/home/igou/.local/bin:/home/igou/bin' }
     bashrc_aliases:
       - { variable: "k", value: "kubectl" }
-
-
 
   tasks:
     - name: Install system packages
