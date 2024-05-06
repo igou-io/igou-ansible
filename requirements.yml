@@ -5,7 +5,7 @@ roles:
   - name: githubixx.iscsi_target
     version: 2.0.0
   - name: githubixx.ansible_role_wireguard
-    version: 15.0.0
+    version: 16.0.2
   - name: robertdebock.kubectl
     version: 2.1.5
   - name: robertdebock.update
