@@ -1,0 +1,18 @@
+---
+- hosts: aerohive
+  name: show interfaces
+  gather_facts: false
+  tasks:
+  - name: Router config
+    ansible.builtin.expect:
+      command: "{{ router_connect }}"
+      responses:
+        (?i)password*:
+          - "{{ cli_password }}"
+        (.*)#:
+          - no user foo
+          - exit
+          - exit
+    no_log: false
+    vars:
+      router_connect: "ssh -o StrictHostKeyChecking=no admin@{{ inventory_hostname }}"
