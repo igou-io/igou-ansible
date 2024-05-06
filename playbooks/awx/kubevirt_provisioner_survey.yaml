@@ -1,0 +1,27 @@
+---
+- name: Run kubevirt provisioner survey generator role
+  hosts: awx
+  gather_facts: false
+  vars:
+    kubevirt_source_urls:
+      - https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2
+      - https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
+      - https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2
+      - https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2
+      - https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
+      - https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-nocloud-amd64.qcow2
+      - https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/nocloud_alpine-3.19.1-x86_64-bios-tiny-r0.qcow2
+      - docker://quay.io/fedora/fedora-coreos-kubevirt:stable
+    organization: igou
+    project: igou_ansible
+    playbook: playbooks/kubevirt/kubevirt_vm.yaml
+    verbosity: 2
+    credentials:
+     - kubevirt-deployer-sa-token
+    name: kubevirt-deploy_vm_survey_generated
+    description: Deploy or Destroy a vm with kubevirt
+    inventory: igou_inventory
+  tasks:
+    - name: Create Kubevirt provisioning job template
+      ansible.builtin.include_role:
+        name: kubevirt_provision_survey

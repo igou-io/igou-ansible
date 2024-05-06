@@ -1,0 +1,79 @@
+name: Simple Survey
+description: Description of the simple survey
+spec:
+  - type: text
+    question_name: VM Name
+    variable: vm_name
+    required: false
+  - type: multiplechoice
+    question_name: Namespace
+    variable: vm_namespace
+    choices:
+{% for ns in namespaces.resources %}
+      - {{ ns.metadata.name }}
+{% endfor %}
+    required: true
+    default: default
+  - type: multiplechoice
+    question_name: VM State
+    variable: vm_state
+    required: true
+    choices:
+      - present
+      - absent
+  - type: multiplechoice
+    question_name: VM DV StorageClass
+    variable: vm_dv_storageclass
+    choices:
+{% for sc in storage_classes.resources %}
+      - {{ sc.metadata.name }}
+{% endfor %}
+    required: false
+{% if vm_instance_types.resources | length > 0 %}
+  - type: multiplechoice
+    question_name: VM InstanceType
+    variable: vm_instancetype
+    choices:
+{% for vmit in vm_instance_types.resources %}
+    - {{ vmit.metadata.name }}
+{% endfor %}
+    required: false
+{% endif %}
+  - type: multiplechoice
+    question_name: DV Source Type
+    variable: vm_dv_source_type
+    choices:
+      - http
+      - registry
+      - gcs
+      - s3
+    required: false
+    default: http
+{% if kubevirt_source_urls | length > 0 %}
+  - type: multiplechoice
+    question_name: DV Source URL
+    variable: vm_dv_source_url
+    choices:
+{% for url in kubevirt_source_urls %}
+    - {{ url }}
+{% endfor %}
+    required: false
+{% endif %}
+  - type: text
+    question_name: DV Source URL Override
+    variable: vm_dv_source_url_override
+    required: false
+  - type: text
+    question_name: VM Memory
+    variable: vm_memory
+    required: false
+    default: 2Gi
+  - type: text
+    question_name: VM CPU Cores
+    variable: vm_cpu_cores
+    required: false
+    default: "2"
+  - type: textarea
+    question_name: user_data
+    variable: vm_user_data
+    required: false

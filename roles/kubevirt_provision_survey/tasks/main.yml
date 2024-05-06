@@ -1,0 +1,35 @@
+---
+- name: Get all namespaces
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+  register: namespaces
+
+- name: Get all StorageClasses
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: StorageClass
+  register: storage_classes
+
+- name: Get all VirtualMachineInstanceTypes
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstanceType
+  register: vm_instance_types
+
+- name: Use infra collection to create job template
+  ansible.builtin.import_role:
+    name: infra.controller_configuration.job_templates
+  vars:
+    controller_templates:
+    - name: "{{ name }}"
+      description: "{{ description }}"
+      playbook: "{{ playbook }}"
+      credentials: "{{ credentials }}"
+      project: "{{ project }}"
+      job_type: run
+      inventory: "{{ inventory }}"
+      verbosity: "{{ verbosity }}"
+      survey_enabled: true
+      survey_spec: "{{ lookup('ansible.builtin.template', './surveyspec.yaml.j2') | from_yaml }}"
+
