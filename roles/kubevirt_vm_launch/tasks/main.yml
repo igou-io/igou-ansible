@@ -1,18 +1,13 @@
 ---
 # tasks file for kubevirt_vm_launch
-
-- name: create dv manifest
-  kubernetes.core.k8s:
-    state: "{{ vm_state }}"
-    definition: "{{ lookup('ansible.builtin.template', './kubevirt_dv.yaml.j2') }}"
-
-# I need logic here to handle this
-
 - name: Create a Virtual Machine
   kubevirt.core.kubevirt_vm:
     state: "{{ vm_state }}"
     name: "{{ vm_name }}"
     namespace: "{{ vm_namespace }}"
-    wait: true
+    wait: "{{ vm_wait | default(true) }}"
+    wait_timeout: "{{ vm_wait_timeout | default(300) }}"
+    data_volume_templates:
+      - "{{ lookup('ansible.builtin.template', './kubevirt_dv.yaml.j2') | from_yaml }}" # Omit if emphemeral?
     spec: "{{ lookup('ansible.builtin.template', './kubevirt_vm.yaml.j2') | from_yaml }}"
 

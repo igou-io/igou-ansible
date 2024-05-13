@@ -1,0 +1,6 @@
+---
+- name: Create a Kubevirt DV from a defined source
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - kubevirt_create_datavolume

@@ -4,11 +4,12 @@
   gather_facts: false
   vars:
     vm_name: "testvm"
+    vm_namespace: "default"
     vm_ephemeral: "false"
     vm_dv_source_url: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
     vm_dv_source_type: "http"
+    vm_dv_storageclass: "freenas-iscsi-csi"
     vm_storage: "30Gi"
-    vm_namespace: "default"
     vm_memory: "4Gi"
     vm_cpu_cores: "2"
     vm_state: "present"

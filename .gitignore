@@ -8,3 +8,4 @@ ansible-navigator.log
 *.json
 !roles/requirements.yml
 .vaultpassword.sh
+testvars.yml

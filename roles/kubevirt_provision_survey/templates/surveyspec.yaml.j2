@@ -29,6 +29,11 @@ spec:
       - {{ sc.metadata.name }}
 {% endfor %}
     required: false
+  - type: text
+    question_name: VM Storage
+    variable: vm_storage
+    required: false
+    default: 2Gi
 {% if vm_instance_types.resources | length > 0 %}
   - type: multiplechoice
     question_name: VM InstanceType

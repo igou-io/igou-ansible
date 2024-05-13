@@ -1,8 +1,7 @@
-apiVersion: cdi.kubevirt.io/v1beta1
-kind: DataVolume
 metadata:
   name: "{{ vm_name }}"
   namespace: "{{ vm_namespace }}"
+  creationTimestamp: null
   annotations:
     cdi.kubevirt.io/storage.bind.immediate.requested: ""
 spec:
@@ -19,10 +18,15 @@ spec:
 {% elif vm_dv_source_type == 'registry' %}
     registry:
       url: "{{ vm_dv_source_url }}"
+{% elif vm_dv_source_type == 'pvc' %}
+    pvc:
+      name: "{{ vm_dv_source_pvc_name }}"
+      namespace: "{{ vm_dv_source_pvc_namespace }}"
 {% endif %}
   pvc:
     accessModes:
       - ReadWriteOnce
     resources:
       requests:
-        storage: "{{ vm_storage }}"
+        storage: "{{ vm_dv_storage }}"
+    storageClassName: "{{ vm_dv_storageclass }}"

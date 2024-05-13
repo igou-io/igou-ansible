@@ -1,0 +1,11 @@
+---
+# tasks file for kubevirt_create_datavolume
+
+# If the dv exists, it should be recreated
+
+- name: create dv manifest
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('ansible.builtin.template', './datavolume.yml.j2') }}"
+
+# Health checks on object
