@@ -9,7 +9,7 @@ roles:
   - name: robertdebock.kubectl
     version: 2.1.5
   - name: robertdebock.update
-    version: 3.1.8
+    version: 3.1.9
   - name: robertdebock.terraform
     version: 4.1.7
   - name: geerlingguy.helm
