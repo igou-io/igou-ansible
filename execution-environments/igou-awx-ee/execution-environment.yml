@@ -11,7 +11,6 @@ dependencies:
   system: |
     1password-cli
     terraform
-    podman
 additional_build_steps:
   append_base: |
     RUN echo "Target architecture is: $TARGETARCH"
