@@ -41,9 +41,12 @@
                         startMiB: 300000
                         typeGuid: E6D6D379-F507-44C2-A23C-238F2A3DF928
   tasks:
+
     - name: Create SNO ISO
       ansible.builtin.include_role:
         name: davidigou.single_node_ocp_iso
+      tags:
+        - build
 
 # Add block and make this unmount any disks
 
@@ -57,3 +60,14 @@
         method: POST
         src: "{{ single_node_ocp_iso_output_dir }}/rhcos-live.iso"
       register: result
+      tags: upload
+
+- name: Copy auth directory to build server
+  hosts: vscode.igou.systems
+  gather_facts: false
+  tasks:
+    - name: Copy auth directory
+      ansible.builtin.copy:
+        src: /tmp/sno_iso/auth
+        dest: "/home/igou/sno-auth/auth-{{ now(utc=true,fmt='%Y%m%d%H%M') }}"
+      tags: copy
