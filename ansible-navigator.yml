@@ -22,6 +22,8 @@ ansible-navigator:
         options: "Z"
       - src: /tmp
         dest: /tmp
+      - src: /home/igou/roles
+        dest: /home/igou/roles
     environment-variables:
       pass:
         - AWS_ACCESS_KEY
