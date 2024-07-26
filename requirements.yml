@@ -32,7 +32,7 @@ collections:
   - name: kubernetes.core
     version: 5.0.0
   - name: containers.podman
-    version: 1.13.0
+    version: 1.15.4
   - name: devsec.hardening
     version: 9.0.1
   - name: kubevirt.core
