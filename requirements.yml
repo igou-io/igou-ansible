@@ -24,7 +24,7 @@ roles:
     src: https://github.com/David-Igou/ansible-role-single_node_ocp_iso.git
 collections:
   - name: infra.controller_configuration
-    version: 2.7.1
+    version: 2.9.0
   - name: community.general
     version: 8.6.0
   - name: ansible.posix
