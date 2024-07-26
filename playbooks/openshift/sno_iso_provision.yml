@@ -50,17 +50,54 @@
 
 # Add block and make this unmount any disks
 
-    - name: Upload image to PiKVM
-      ansible.builtin.uri:
-        url: "https://pikvm.igou.systems/api/msd/write?image=rhcos-sno-{{ now(utc=true,fmt='%Y%m%d%H%M') }}.iso"
-        validate_certs: false
-        headers:
-          X-KVMD-User: "{{ lookup('community.general.onepassword', 'pikvm', field='username', vault='awx') }}"
-          X-KVMD-Passwd: "{{ lookup('community.general.onepassword', 'pikvm', field='password', vault='awx') }}"
-        method: POST
-        src: "{{ single_node_ocp_iso_output_dir }}/rhcos-live.iso"
-      register: result
+    - name: Upload ISO image to PiKVM
+      block:
+
+      - name: Ensure no images are currently mounted
+        ansible.builtin.uri:
+          url: "https://pikvm.igou.systems/api/msd/set_connected?connected=0"
+          validate_certs: false
+          headers:
+            X-KVMD-User: "{{ lookup('community.general.onepassword', 'pikvm', field='username', vault='awx') }}"
+            X-KVMD-Passwd: "{{ lookup('community.general.onepassword', 'pikvm', field='password', vault='awx') }}"
+          method: POST
+
+      - name: Upload image to PiKVM
+        ansible.builtin.uri:
+          url: "https://pikvm.igou.systems/api/msd/write?image=rhcos-sno-{{ now(utc=true,fmt='%Y%m%d%H%M') }}.iso"
+          validate_certs: false
+          headers:
+            X-KVMD-User: "{{ lookup('community.general.onepassword', 'pikvm', field='username', vault='awx') }}"
+            X-KVMD-Passwd: "{{ lookup('community.general.onepassword', 'pikvm', field='password', vault='awx') }}"
+          method: POST
+          src: "{{ single_node_ocp_iso_output_dir }}/rhcos-live.iso"
+        register: result
       tags: upload
+
+    - name: Save secrets to 1password
+      block:
+      - name: Create a backup of kubeconfig
+        ansible.builtin.copy:
+          src: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig"
+          dest: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig-no-ca"
+
+      - name: Remove CA from kubeconfig-noca
+        ansible.builtin.lineinfile:
+          path: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig-no-ca"
+          regexp: '^.*certificate-authority-data:.*$'
+          state: absent
+
+      - name: Set item name
+        ansible.builtin.set_fact:
+          op_item_name: "SNO-Kubeconfig-{{ now(utc=true,fmt='%Y%m%d%H%M') }}"
+
+      - name: Save auth info to 1password
+        ansible.builtin.shell:
+          cmd: >
+            op item create --category=login --title {{ op_item_name }} --vault=awx \
+            kubeconfig[file]={{ single_node_ocp_iso_output_dir }}/auth/kubeconfig \
+            kubeconfig-no-ca[file]={{ single_node_ocp_iso_output_dir }}/auth/kubeconfig-no-ca</dev/null
+      tags: op-save
 
 - name: Copy auth directory to build server
   hosts: vscode.igou.systems
