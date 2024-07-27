@@ -76,27 +76,26 @@
 
     - name: Save secrets to 1password
       block:
-      - name: Create a backup of kubeconfig
+      - name: Create a backup of kubeconfig as kubeconfig-self-signed
         ansible.builtin.copy:
           src: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig"
-          dest: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig-no-ca"
+          dest: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig-self-signed"
 
-      - name: Remove CA from kubeconfig-noca
+      - name: Remove CA from kubeconfig
         ansible.builtin.lineinfile:
-          path: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig-no-ca"
+          path: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig"
           regexp: '^.*certificate-authority-data:.*$'
           state: absent
 
-      - name: Set item name
+      - name: Set facts for password
         ansible.builtin.set_fact:
-          op_item_name: "SNO-Kubeconfig-{{ now(utc=true,fmt='%Y%m%d%H%M') }}"
+          op_item_name: "sno-kubeconfig-{{ now(utc=true,fmt='%Y%m%d%H%M') }}"
+          kubeconfig_contents: "{{ lookup('ansible.builtin.file', single_node_ocp_iso_output_dir + '/auth/kubeconfig') }}"
+          kubeconfig_self_signed_contents: "{{ lookup('ansible.builtin.file', single_node_ocp_iso_output_dir + '/auth/kubeconfig-self-signed') }}"
 
       - name: Save auth info to 1password
         ansible.builtin.shell:
-          cmd: >
-            op item create --category=login --title {{ op_item_name }} --vault=awx \
-            kubeconfig[file]={{ single_node_ocp_iso_output_dir }}/auth/kubeconfig \
-            kubeconfig-no-ca[file]={{ single_node_ocp_iso_output_dir }}/auth/kubeconfig-no-ca</dev/null
+          cmd: op item create --category=login --title {{ op_item_name }} --vault=awx kubeconfig[password]={{ kubeconfig_contents | b64encode }} kubeconfig-self-signed[password]={{ kubeconfig_self_signed_contents | b64encode }}</dev/null
       tags: op-save
 
 - name: Copy auth directory to build server
