@@ -89,3 +89,5 @@
           kubernetes.core.k8s:
             state: present
             definition: "{{ lookup('file', temp_dir.path + '/config/sno/live/base-config/base-config-application.yaml') | from_yaml }}"
+          retries: 50
+          delay: 30
