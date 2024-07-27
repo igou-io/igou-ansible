@@ -1,0 +1,91 @@
+---
+- hosts: localhost
+  name: Bootstrap Openshift Gitops
+  gather_facts: false
+  tasks:
+    - name: Set Up Directory
+      block:
+        - name: Create a temporary directory
+          ansible.builtin.tempfile:
+            state: directory
+          register: temp_dir
+
+        - name: Clone a repo with separate git directory
+          ansible.builtin.git:
+            repo: https://github.com/igou-io/igou-openshift.git
+            dest: "{{ temp_dir.path }}"
+            clone: true
+
+        - name: Get kubeconfig
+          ansible.builtin.copy:
+            content: "{{ lookup('community.general.onepassword', 'sno-kubeconfig', field='kubeconfig', vault='awx') | b64decode }}"
+            mode: 0644
+            dest: "{{ temp_dir.path }}/kubeconfig"
+          no_log: false
+
+    - name: Create 1P Connect secrets, deploy and cluster-config application
+      environment:
+        K8S_AUTH_KUBECONFIG: "{{ temp_dir.path }}/kubeconfig"
+      block:
+
+        - name: Create Gitops namespace
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: openshift-gitops-operator
+                labels:
+                  openshift.io/cluster-monitoring: 'true'
+
+        - name: Create Gitops Subscription
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: operators.coreos.com/v1alpha1
+              kind: Subscription
+              metadata:
+                name: openshift-gitops-operator
+                namespace: openshift-operators
+              spec:
+                channel: latest
+                installPlanApproval: Automatic
+                name: openshift-gitops-operator
+                source: redhat-operators
+                sourceNamespace: openshift-marketplace
+
+        - name: Create Gitops OperatorGroup
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: operators.coreos.com/v1
+              kind: OperatorGroup
+              metadata:
+                name: openshift-gitops-operator
+                namespace: openshift-gitops-operator
+              spec:
+                upgradeStrategy: Default
+
+
+        - name: Create Gitops ClusterRoleBinding
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              kind: ClusterRoleBinding
+              apiVersion: rbac.authorization.k8s.io/v1
+              metadata:
+                name: gitops-cluster-admin
+              subjects:
+                - kind: ServiceAccount
+                  name: openshift-gitops-argocd-application-controller
+                  namespace: openshift-gitops
+              roleRef:
+                apiGroup: rbac.authorization.k8s.io
+                kind: ClusterRole
+                name: cluster-admin
+
+        - name: Create cluster-config application
+          kubernetes.core.k8s:
+            state: present
+            definition: "{{ lookup('file', temp_dir.path + '/config/sno/live/base-config/base-config-application.yaml') | from_yaml }}"
