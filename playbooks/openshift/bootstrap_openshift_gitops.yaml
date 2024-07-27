@@ -16,7 +16,7 @@
             dest: "{{ temp_dir.path }}"
             clone: true
 
-        - name: Get kubeconfig
+        - name: Get kubeconfig # Make cluster agnostic
           ansible.builtin.copy:
             content: "{{ lookup('community.general.onepassword', 'sno-kubeconfig', field='kubeconfig', vault='awx') | b64decode }}"
             mode: 0644
@@ -85,7 +85,7 @@
                 kind: ClusterRole
                 name: cluster-admin
 
-        - name: Create cluster-config application
+        - name: Create cluster-config application # Make cluster agnostic
           kubernetes.core.k8s:
             state: present
             definition: "{{ lookup('file', temp_dir.path + '/config/sno/live/base-config/base-config-application.yaml') | from_yaml }}"
