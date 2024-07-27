@@ -53,7 +53,17 @@
     - name: Upload ISO image to PiKVM
       block:
 
-      - name: Ensure no images are currently mounted
+      - name: Get image state
+        ansible.builtin.uri:
+          url: "https://pikvm.igou.systems/api/msd"
+          validate_certs: false
+          headers:
+            X-KVMD-User: "{{ lookup('community.general.onepassword', 'pikvm', field='username', vault='awx') }}"
+            X-KVMD-Passwd: "{{ lookup('community.general.onepassword', 'pikvm', field='password', vault='awx') }}"
+          method: GET
+        register: result
+
+      - name: Unmount image if necessary
         ansible.builtin.uri:
           url: "https://pikvm.igou.systems/api/msd/set_connected?connected=0"
           validate_certs: false
@@ -61,6 +71,7 @@
             X-KVMD-User: "{{ lookup('community.general.onepassword', 'pikvm', field='username', vault='awx') }}"
             X-KVMD-Passwd: "{{ lookup('community.general.onepassword', 'pikvm', field='password', vault='awx') }}"
           method: POST
+        when: result.json.result.drive.connected == true
 
       - name: Upload image to PiKVM
         ansible.builtin.uri:
