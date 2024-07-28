@@ -18,7 +18,7 @@
 
         - name: Get kubeconfig # Make cluster agnostic
           ansible.builtin.copy:
-            content: "{{ lookup('community.general.onepassword', 'sno-kubeconfig', field='kubeconfig', vault='awx') | b64decode }}"
+            content: "{{ lookup('community.general.onepassword', 'sno-kubeconfig', field='kubeconfig-self-signed', vault='awx') | b64decode }}"
             mode: 0644
             dest: "{{ temp_dir.path }}/kubeconfig"
           no_log: false
