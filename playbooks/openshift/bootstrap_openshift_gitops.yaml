@@ -105,4 +105,4 @@
         - name: Deploy 1password Connect
           kubernetes.core.k8s:
             state: present
-            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-openshift/tree/main/config/sno/live/1password-connect?ref=main") }}'
+            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-openshift/main/config/sno/live/1password-connect?ref=main") }}'
