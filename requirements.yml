@@ -18,10 +18,10 @@ roles:
     version: master
     scm: git
     src: https://github.com/mrlesmithjr/ansible-zfs.git
-  - name: davidigou.single_node_ocp_iso
+  - name: David-Igou.single_node_openshift_iso
     version: main
     scm: git
-    src: https://github.com/David-Igou/ansible-role-single_node_ocp_iso.git
+    src: https://github.com/David-Igou/ansible-role-single_node_openshift_iso.git
 collections:
   - name: infra.controller_configuration
     version: 2.9.0
