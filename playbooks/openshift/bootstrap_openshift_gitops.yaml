@@ -1,5 +1,5 @@
 ---
-- hosts: localhost
+- hosts: sno
   name: Bootstrap Openshift Gitops
   gather_facts: false
   tasks:
@@ -27,6 +27,17 @@
       environment:
         K8S_AUTH_KUBECONFIG: "{{ temp_dir.path }}/kubeconfig"
       block:
+
+        - name: Check if node is Ready
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Node
+            name: "{{ inventory_hostname }}"
+          until: node_info.resources | length > 0 and node_info.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0
+          register: node_info
+          failed_when: node_info.resources | length == 0
+          retries: 120
+          delay: 30
 
         - name: Create Gitops namespace
           kubernetes.core.k8s:
