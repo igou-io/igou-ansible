@@ -12,7 +12,6 @@ dependencies:
     1password-cli
     terraform
     coreos-installer
-    helm
 additional_build_steps:
   append_base: |
     RUN echo "Target architecture is: $TARGETARCH"
