@@ -9,7 +9,7 @@
 
     - name: Create SNO ISO
       ansible.builtin.include_role:
-        name: davidigou.single_node_ocp_iso
+        name: David-Igou.single_node_openshift_iso
       tags:
         - build
 
