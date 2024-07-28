@@ -101,3 +101,8 @@
             definition: "{{ lookup('file', temp_dir.path + '/config/sno/live/base-config/base-config-application.yaml') | from_yaml }}"
           retries: 50
           delay: 15
+
+        - name: Deploy 1password Connect
+          kubernetes.core.k8s:
+            state: present
+            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-openshift/tree/main/config/sno/live/1password-connect?ref=main") }}'
