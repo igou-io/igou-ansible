@@ -37,5 +37,6 @@ collections:
     version: 9.0.1
   - name: kubevirt.core
     version: 2.0.0
-  - name: infra.osbuild
-    version: 2.3.0
+  - name: https://github.com/redhat-cop/infra.osbuild.git
+    version: main
+    type: git
