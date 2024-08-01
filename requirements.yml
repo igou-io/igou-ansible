@@ -14,6 +14,8 @@ roles:
     version: 4.1.8
   - name: geerlingguy.helm
     version: 1.0.1
+  - name: infra.osbuild
+    version: 2.3.0
   - name: ansible-zfs
     version: master
     scm: git
