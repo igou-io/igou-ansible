@@ -1,0 +1,104 @@
+---
+#Ensure K8S_AUTH_API_KEY and K8S_AUTH_HOST UNSET when bootstrapping
+- hosts: sno
+  name: Create ansible robot SA and save the credentials to 1password
+  gather_facts: false
+  tasks:
+    - name: Set Up Directory
+      block:
+        - name: Create a temporary directory
+          ansible.builtin.tempfile:
+            state: directory
+          register: temp_dir
+
+        - name: Get kubeconfig # Make cluster agnostic
+          ansible.builtin.copy:
+            content: "{{ lookup('community.general.onepassword', 'sno-kubeconfig', field='kubeconfig', vault='awx') | b64decode }}"
+            mode: 0644
+            dest: "{{ temp_dir.path }}/kubeconfig"
+          no_log: true
+      tags: kubeconfig-setup
+
+    - name: Create 1P Connect secrets, deploy and cluster-config application
+      block:
+        - name: create ansible-robot namespace
+          kubernetes.core.k8s:
+            kubeconfig: "{{ temp_dir.path }}/kubeconfig"
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: ansible-robot
+
+        - name: create ansible-robot serviceaccount
+          kubernetes.core.k8s:
+            kubeconfig: "{{ temp_dir.path }}/kubeconfig"
+            state: present
+            definition:
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                name: ansible
+                namespace: ansible-robot
+
+        - name: create ansible serviceaccount token secret
+          kubernetes.core.k8s:
+            kubeconfig: "{{ temp_dir.path }}/kubeconfig"
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: ansible-secret
+                namespace: ansible-robot
+                annotations:
+                  kubernetes.io/service-account.name: ansible
+              type: kubernetes.io/service-account-token
+
+        - name: Make ansible-robot a cluster-admin
+          kubernetes.core.k8s:
+            kubeconfig: "{{ temp_dir.path }}/kubeconfig"
+            state: present
+            definition:
+              apiVersion: rbac.authorization.k8s.io/v1
+              kind: ClusterRoleBinding
+              metadata:
+                name: ansible-cluster-admin-binding
+              subjects:
+              - kind: ServiceAccount
+                name: ansible
+                namespace: ansible-robot
+              roleRef:
+                kind: ClusterRole
+                name: cluster-admin
+                apiGroup: rbac.authorization.k8s.io
+      tags: create-objects
+
+    - name: Check for and delete old SA entries
+      block:
+        - name: Get onepassword items from vault
+          ansible.builtin.shell:
+            cmd: op item list --vault awx --format=json</dev/null
+          register: result
+
+        - name: Get entries with common name
+          ansible.builtin.set_fact:
+            op_list: "{{ result.stdout | from_json | selectattr('title', 'search', 'ansible-robot-token') | map(attribute='id') }}"
+
+        - name: Delete old entries
+          ansible.builtin.shell:
+            cmd: "op item delete --vault awx --archive {{ item }}</dev/null"
+          loop: "{{ op_list }}"
+      tags: op-clean
+
+    - name: Save token to 1password
+      block:
+        - name: Set ansible-secret fact #environment does not work for lookups, have to reference kubeconfig file directly
+          ansible.builtin.set_fact:
+            ansible_secret: "{{ query('kubernetes.core.k8s', api_version='v1', kind='Secret', namespace='ansible-robot', resource_name='ansible-secret', kubeconfig=temp_dir.path + '/kubeconfig') }}"
+
+        - name: Save auth info to 1password
+          ansible.builtin.shell:
+            cmd: op item create --category=login --title ansible-robot-token --vault=awx sa_token[password]={{ ansible_secret[0].data.token | b64decode }} api_url[password]={{ lookup('community.general.onepassword', 'sno-kubeconfig', field='api_url', vault='awx') }}</dev/null
+      tags: op-save
