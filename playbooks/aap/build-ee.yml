@@ -7,6 +7,8 @@
     ee_builder_dir: "."
     ee_update_base_images: true
     ee_base_image: registry.redhat.io/ansible-automation-platform-24/ee-minimal-rhel9:latest
+    ee_base_registry_username: "{{ lookup('community.general.onepassword', 'redhat-registry', field='username', vault='awx') }}"
+    ee_base_registry_password: "{{ lookup('community.general.onepassword', 'redhat-registry', field='password', vault='awx') }}"
     ee_pull_collections_from_hub: true
     ansiblecfg_override: "{{ lookup('community.general.onepassword', 'aap_ansiblecfg', field='file', vault='awx') }}"
     ee_registry_dest: quay.io/igou
