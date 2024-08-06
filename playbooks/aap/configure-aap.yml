@@ -3,6 +3,17 @@
   hosts: aap
   gather_facts: false
   tasks:
+# I don't think this is actually needed
+    - name: Refresh projects
+      ansible.builtin.include_role:
+        name: infra.controller_configuration.project_update
+      when: controller_projects is defined
+
+    - name: Refresh inventory sources
+      ansible.builtin.include_role:
+        name: infra.controller_configuration.inventory_source_update
+      when: controller_inventory_sources is defined
+
     - name: Configure AAP
       ansible.builtin.include_role:
         name: infra.controller_configuration.dispatch
