@@ -1,0 +1,81 @@
+---
+- name: Playbook to configure execution environments
+  hosts: ansible-automation-platform-rhel-builder
+  gather_facts: true
+  vars:
+    ee_builder_dir_clean: false
+    ee_builder_dir: "."
+    ee_update_base_images: true
+    ee_reg_credential: Automation Hub Container Registry
+    ee_base_image: registry.redhat.io/ansible-automation-platform-24/ee-minimal-rhel9:latest
+    ee_pull_collections_from_hub: false
+    ah_host: console.redhat.com
+    ah_token: ec28091dfebd9fb4c7ddc59d34cddb35350b71cb
+    ee_registry_dest: quay.io
+    ee_registry_username: {{}}
+    ee_registry_password: {{}}
+    ee_verbosity: 2
+    ee_list:
+      - name: custom_ee
+        alt_name: Custom EE
+        tag: 1-11-21-2
+        dependencies:
+          system:
+          - python-requests
+          - python-pyyaml
+          python:
+            - pytz  # for schedule_rrule lookup plugin
+            - python-dateutil>=2.7.0  # schedule_rrule
+            - awxkit  # For import and export modules
+          galaxy:
+            collections:
+              - name: awx.awx
+                version: 22.4.0
+              - infra.controller_configuration
+              - ansible.controller
+              - infra.ah_configuration
+        build_items:
+          - files/
+          - test.yml
+        build_files:
+          - src: files/stuff.txt
+            dest: folders
+          - src: test.yml
+            dest: folders
+        build_steps:
+          prepend_final:
+            - ADD _build/folders/stuff.txt /etc/ansible/stuff.txt
+            - ADD _build/folders/test.yml /etc/ansible/test.yml
+          append_final:
+            - RUN echo This is a post-install command!
+  pre_tasks:
+    - name: Validate that ansible-builder is installed on target system
+      block:
+        - name: Try command
+          ansible.builtin.command: ansible-builder --version
+          register: r_builder
+          changed_when: false
+      rescue:
+        - name: Try to install with rpms
+          block:
+            - name: Install ansible-builder from rpm
+              ansible.builtin.dnf:
+                name:
+                  - ansible-builder
+                  - ansible-core
+                enablerepo: ansible-automation-platform-2.4-for-rhel-8-x86_64-rpms
+                state: present
+              become: true
+          rescue:
+            - name: Install ansible-builder from pip # noqa package-latest
+              ansible.builtin.pip:
+                name:
+                  - ansible-builder
+                  - ansible-core
+                state: latest
+
+  tasks:
+    - name: Include ee_builder role
+      ansible.builtin.include_role:
+        name: infra.ee_utilities.ee_builder
+...
