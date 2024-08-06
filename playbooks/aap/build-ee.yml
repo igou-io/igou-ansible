@@ -59,7 +59,6 @@
               - name: azure.azcollection
               - name: f5networks.f5_modules
               - name: netscaler.adc
-              - name: redhat.rhv
               - name: redhat.satellite
               - name: redhat.insights
               - name: ansible.controller
