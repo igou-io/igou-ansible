@@ -1,6 +1,7 @@
 ---
 - name: Register RHEL system
   hosts: "{{ host }}"
+  become: true
   gather_facts: true
   tasks:
     - name: Register RHEL System
@@ -8,3 +9,4 @@
         state: present
         username: "{{ lookup('community.general.onepassword', 'rhsm', field='username', vault='awx') }}"
         password: "{{ lookup('community.general.onepassword', 'rhsm', field='password', vault='awx') }}"
+      no_log: true
