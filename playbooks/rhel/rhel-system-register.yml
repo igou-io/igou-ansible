@@ -1,0 +1,10 @@
+---
+- name: Register RHEL system
+  hosts: "{{ host }}"
+  gather_facts: true
+  tasks:
+    - name: Register RHEL System
+      community.general.redhat_subscription:
+        state: present
+        username: "{{ lookup('community.general.onepassword', 'rhsm', field='username', vault='awx') }}"
+        password: "{{ lookup('community.general.onepassword', 'rhsm', field='password', vault='awx') }}"
