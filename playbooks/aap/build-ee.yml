@@ -6,19 +6,17 @@
     ee_builder_dir_clean: false
     ee_builder_dir: "."
     ee_update_base_images: true
-    ee_reg_credential: Automation Hub Container Registry
     ee_base_image: registry.redhat.io/ansible-automation-platform-24/ee-minimal-rhel9:latest
-    ee_pull_collections_from_hub: false
-    ah_host: console.redhat.com
-    ah_token: ec28091dfebd9fb4c7ddc59d34cddb35350b71cb
-    ee_registry_dest: quay.io
-    ee_registry_username: {{}}
-    ee_registry_password: {{}}
+    ee_pull_collections_from_hub: true
+    ansiblecfg_override: "{{ lookup('community.general.onepassword', 'aap_ansiblecfg', field='file', vault='awx') }}"
+    ee_registry_dest: quay.io/igou
+    ee_registry_username: "{{ lookup('community.general.onepassword', 'quay', field='username', vault='awx') }}"
+    ee_registry_password: "{{ lookup('community.general.onepassword', 'quay', field='password', vault='awx') }}"
     ee_verbosity: 2
     ee_list:
-      - name: custom_ee
-        alt_name: Custom EE
-        tag: 1-11-21-2
+      - name: aap-ee-supported
+        alt_name: Suported EE
+        tag: "1234"
         dependencies:
           system:
           - python-requests
@@ -34,20 +32,21 @@
               - infra.controller_configuration
               - ansible.controller
               - infra.ah_configuration
-        build_items:
-          - files/
-          - test.yml
-        build_files:
-          - src: files/stuff.txt
-            dest: folders
-          - src: test.yml
-            dest: folders
-        build_steps:
-          prepend_final:
-            - ADD _build/folders/stuff.txt /etc/ansible/stuff.txt
-            - ADD _build/folders/test.yml /etc/ansible/test.yml
-          append_final:
-            - RUN echo This is a post-install command!
+              - redhat.openshift_virtualization
+        # build_items:
+        #   - files/
+        #   - test.yml
+        # build_files:
+        #   - src: files/stuff.txt
+        #     dest: folders
+        #   - src: test.yml
+        #     dest: folders
+        # build_steps:
+        #   prepend_final:
+        #     - ADD _build/folders/stuff.txt /etc/ansible/stuff.txt
+        #     - ADD _build/folders/test.yml /etc/ansible/test.yml
+        #   append_final:
+        #     - RUN echo This is a post-install command!
   pre_tasks:
     - name: Validate that ansible-builder is installed on target system
       block:
