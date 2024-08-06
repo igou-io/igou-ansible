@@ -42,6 +42,6 @@ collections:
   - name: https://github.com/redhat-cop/infra.osbuild.git
     version: main
     type: git
-  - name: https://github.com/redhat-cop/infra.ee_utilities.git
+  - name: https://github.com/David-Igou/ee_utilities.git
     version: devel
     type: git
