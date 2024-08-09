@@ -8,11 +8,11 @@ dependencies:
   python: |
     boto3
     botocore
-    libguestfs
   system: |
     1password-cli
     terraform
     coreos-installer
+    python3-libguestfs
 additional_build_steps:
   append_base: |
     RUN echo "Target architecture is: $TARGETARCH"
