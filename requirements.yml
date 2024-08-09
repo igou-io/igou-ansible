@@ -45,3 +45,5 @@ collections:
   - name: https://github.com/David-Igou/ee_utilities.git
     version: devel
     type: git
+  - name: vkhitrin.libguestfs
+    version: 1.1.5
