@@ -8,6 +8,7 @@ dependencies:
   python: |
     boto3
     botocore
+    libguestfs
   system: |
     1password-cli
     terraform
