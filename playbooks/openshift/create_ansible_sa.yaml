@@ -100,5 +100,5 @@
 
         - name: Save auth info to 1password
           ansible.builtin.shell:
-            cmd: op item create --category=login --title ansible-robot-token --vault=awx sa_token[password]={{ ansible_secret[0].data.token | b64decode }} api_url[password]={{ lookup('community.general.onepassword', 'sno-kubeconfig', field='api_url', vault='awx') }}</dev/null
+            cmd: op item create --category=login --title ansible-robot-token --vault=awx sa_token[password]={{ ansible_secret[0].data.token | b64decode }} api_url[password]={{ lookup('community.general.onepassword', 'sno-kubeconfig', field='api_url', vault='awx') }} notesPlain="Maintained with Ansible" --tags ansible</dev/null
       tags: op-save

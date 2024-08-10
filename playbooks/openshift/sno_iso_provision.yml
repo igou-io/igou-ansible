@@ -13,8 +13,6 @@
       tags:
         - build
 
-# Add block and make this unmount any disks
-
     - name: Upload ISO image to PiKVM
       block:
 
@@ -55,7 +53,7 @@
       - name: Create a backup of kubeconfig as kubeconfig-self-signed
         ansible.builtin.copy:
           src: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig"
-          dest: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig-self-signed"
+          dest: "{{ single_node_ocp_iso_output_dir }}/auth/kubeconfig_self_signed"
 
       - name: Remove CA from kubeconfig
         ansible.builtin.lineinfile:
@@ -63,15 +61,22 @@
           regexp: '^.*certificate-authority-data:.*$'
           state: absent
 
+      - name: Create kubeconfig facts
+        ansible.builtin.set_fact:
+          kubeconfig_contents: "{{ lookup('ansible.builtin.file', single_node_ocp_iso_output_dir + '/auth/kubeconfig') }}"
+          kubeconfig_self_signed_contents: "{{ lookup('ansible.builtin.file', single_node_ocp_iso_output_dir + '/auth/kubeconfig_self_signed') }}"
+          kubeconfig_dict: "{{ lookup('ansible.builtin.file', single_node_ocp_iso_output_dir + '/auth/kubeconfig') | from_yaml }}"
+
       - name: Set facts for password
         ansible.builtin.set_fact:
           op_item_name: "sno-kubeconfig-{{ now(utc=true,fmt='%Y%m%d%H%M') }}"
-          kubeconfig_contents: "{{ lookup('ansible.builtin.file', single_node_ocp_iso_output_dir + '/auth/kubeconfig') }}"
-          kubeconfig_self_signed_contents: "{{ lookup('ansible.builtin.file', single_node_ocp_iso_output_dir + '/auth/kubeconfig-self-signed') }}"
+          client_certificate_data: "{{ kubeconfig_dict.users[0].user['client-certificate-data'] }}"
+          client_key_data: "{{ kubeconfig_dict.users[0].user['client-key-data'] }}"
+          api_url: "{{ kubeconfig_dict.clusters[0].cluster.server }}"
 
       - name: Save auth info to 1password
         ansible.builtin.shell:
-          cmd: op item create --category=login --title {{ op_item_name }} --vault=awx kubeconfig[password]={{ kubeconfig_contents | b64encode }} kubeconfig-self-signed[password]={{ kubeconfig_self_signed_contents | b64encode }}</dev/null
+          cmd: op item create --category=login --title {{ op_item_name }} --vault=awx kubeconfig[password]={{ kubeconfig_contents | b64encode }} kubeconfig_self_signed[password]={{ kubeconfig_self_signed_contents | b64encode }} client_certificate_data[password]={{ client_certificate_data }} client_key_data[password]={{ client_key_data }} api_url[password]={{ api_url }}</dev/null
       tags: op-save
 
 - name: Copy auth directory to build server
