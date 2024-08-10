@@ -1,0 +1,71 @@
+---
+- name: Deploy a RHEL9 "build server" in the ansible-automation-platform namespace
+  hosts: sno
+  gather_facts: false
+  vars:
+    vm_state: "present"
+    vm_instancetype: "u1.small"
+  tasks:
+    - name: Ensure ssh auth secret exists
+      kubernetes.core.k8s:
+        resource_definition:
+          apiVersion: v1
+          stringData:
+            key: "{{ lookup('community.general.onepassword', 'ansible-ssh', field='private key', vault='awx') }}"
+          kind: Secret
+          metadata:
+            name: digouredhatcom
+            namespace: ansible-automation-platform
+          type: Opaque
+
+    - name: Ensure rhel-builder exists
+      kubevirt.core.kubevirt_vm:
+        name: rhel-builder
+        state: "{{ present }}"
+        namespace: ansible-automation-platform
+        labels:
+          server: builder
+        instancetype:
+          kind: virtualmachineclusterinstancetype
+          name: "{{ vm_instancetype }}"
+        preference:
+          kind: virtualmachineclusterpreference
+          name: rhel.9
+        data_volume_templates:
+          - metadata:
+              creationTimestamp: null
+              name: rhel-builder-volume
+            spec:
+              sourceRef:
+                kind: DataSource
+                name: rhel9
+                namespace: openshift-virtualization-os-images
+              storage:
+                resources: {}
+        spec:
+          accessCredentials:
+          - sshPublicKey:
+              propagationMethod:
+                noCloud: {}
+              source:
+                secret:
+                  secretName: digouredhatcom
+          architecture: amd64
+          domain:
+            devices: {}
+            machine:
+              type: pc-q35-rhel9.4.0
+            resources: {}
+          subdomain: headless
+          volumes:
+          - dataVolume:
+              name: rhel-builder-volume
+            name: rootdisk
+          - cloudInitNoCloud:
+              userData: |
+                #cloud-config
+                chpasswd:
+                  expire: false
+                user: igou
+            name: cloudinitdisk
+

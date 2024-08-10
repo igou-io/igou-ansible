@@ -1,0 +1,12 @@
+---
+- name: Playbook to configure ansible controller templates
+  hosts: aap
+  gather_facts: false
+  tasks:
+
+    - name: Configure AAP
+      ansible.builtin.include_role:
+        name: infra.controller_configuration.dispatch
+      vars:
+        assign_galaxy_credentials_to_org: false
+        assign_default_ee_to_org: false
