@@ -1,0 +1,52 @@
+---
+- hosts: nanopc-cm3588-nas.igou.systems
+  name: Setup zfs
+  become: true
+  gather_facts: true
+  roles:
+    - role: ansible-zfs
+      vars:
+        update_autoremove: false
+        debian_use_backports: false
+        debian_release: "trixie"
+        ansible_kernel: "edge-rockchip-rk3588"
+        zfs_create_pools: true
+        zfs_create_filesystems: true
+        zfs_pools:
+          - name: 'tank'
+            action: 'create'
+            compression: 'off'  # on | off (default) | lzjb | gzip | gzip-1 | gzip-2 | gzip-3 | gzip-4 | gzip-5 | gzip-6 | gzip-7 | gzip-8 | gzip-9 | lz4 | zle
+            devices:  #define devices to create pool with...can define multiple by | sdb sdc sdd sde sdf | all on one line w/spaces
+              - 'nvme0n1'
+              - 'nvme1n1'
+              - 'nvme2n1'
+              - 'nvme3n1'
+            type: 'mirror'
+            state: 'present'
+        zfs_filesystems:
+          - name: k8s/pvs
+            pool: tank
+            quota: 100G
+            state: present
+          - name: k8s/pvs-snapshots
+            pool: tank
+            quota: 100G
+            state: present
+
+  tasks:
+    - name: Install required packages
+      ansible.builtin.package:
+        name:
+          - open-iscsi
+          - nfs-server
+
+    - name: Create csi user
+      ansible.builtin.user:
+        name: csi
+        group: sudo
+
+    - name: Add ssh key to csi user
+      ansible.posix.authorized_key:
+        user: csi
+        state: present
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoq7vpTkF9oB5Bp5joXce0Sz9lPNzC8E/hW9hIpWO3Y"

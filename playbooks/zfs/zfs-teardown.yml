@@ -1,0 +1,11 @@
+---
+- hosts: nanopc-cm3588-nas.igou.systems
+  name: Tear down ZFS
+  become: true
+  gather_facts: true
+  tasks:
+
+  - name: delete zfs pool
+    community.general.zfs:
+      name: SSD-TANK
+      state: absent

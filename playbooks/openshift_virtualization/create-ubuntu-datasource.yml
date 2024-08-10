@@ -1,0 +1,74 @@
+---
+- name: Create dataimportcrons
+  hosts: vscode.igou.systems
+  gather_facts: false
+  tasks:
+
+    - name: Download Ubuntu cloudimg
+      ansible.builtin.get_url:
+        url: http://servicenode.igou.systems/noble-server-cloudimg-amd64.img
+        dest: /tmp
+
+    - name: install cloud qemu agent to image
+      vkhitrin.libguestfs.guestfs_package:
+        image: /tmp/noble-server-cloudimg-amd64.img
+        name: qemu-guest-agent
+        state: present
+      become: true
+
+- name: Copy to http server
+  hosts: servicenode.igou.systems
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Copy auth directory
+      ansible.builtin.copy:
+        src: /tmp/noble-server-cloudimg-amd64.img
+        dest: "/var/www/html/noble-server-cloudimg-guestagent-amd64.img"
+
+
+- name: Create DV Objects
+  hosts: sno
+  gather_facts: false
+  tasks:
+
+    - name: Create DataVolume
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: cdi.kubevirt.io/v1beta1
+          kind: DataVolume
+          metadata:
+            annotations:
+              cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+              cdi.kubevirt.io/storage.usePopulator: "true"
+            labels:
+              instancetype.kubevirt.io/default-instancetype: u1.small
+              instancetype.kubevirt.io/default-preference: ubuntu
+            name: ubuntu-lts-24
+            namespace: openshift-virtualization-os-images
+          spec:
+            source:
+              http:
+                url: http://servicenode.igou.systems/noble-server-cloudimg-guestagent-amd64.img
+            storage:
+              resources:
+                requests:
+                  storage: 30Gi
+              storageClassName: lvms-vg1-immediate
+
+    - name: Create DataSource
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: cdi.kubevirt.io/v1beta1
+          kind: DataSource
+          metadata:
+            name: ubuntu-lts-24
+            namespace: openshift-virtualization-os-images
+            labels:
+              instancetype.kubevirt.io/default-instancetype: u1.small
+              instancetype.kubevirt.io/default-preference: ubuntu
+          spec:
+            source:
+              pvc:
+                name: ubuntu-lts-24
+                namespace: openshift-virtualization-os-images
