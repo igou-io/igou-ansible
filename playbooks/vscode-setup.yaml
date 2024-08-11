@@ -87,13 +87,6 @@
         state: present
       loop: "{{ bashrc_aliases }}"
 
-    - name: source ~/.vpwd
-      ansible.builtin.lineinfile:
-        path: "~/.bashrc"
-        line: "source /home/igou/.vpwd"
-        create: yes
-        state: present
-
     - name: Create symbolic link for ansible-navigator
       ansible.builtin.file:
         src: /home/igou/igou-ansible/ansible-navigator.yml
@@ -120,3 +113,83 @@
         dest: "/home/igou/bin/virtctl"
         mode: 0755
         #todo podman login to quay, get kubeconfigs from 1p
+
+    - name: Write homelab project
+      ansible.builtin.copy:
+        dest: homelab-test.code-workspace
+        content: |
+          {
+                  "folders": [
+                          {
+                                  "path": "igou-ansible"
+                          },
+                          {
+                                  "path": "igou-inventory"
+                          },
+                          {
+                                  "path": "igou-infrastructure"
+                          },
+                          {
+                                  "path": "igou-kubernetes"
+                          },
+                          {
+                                  "path": "igou-kubernetes-private"
+                          },
+                          {
+                                  "path": "aap-ocpvirt-provisioning"
+                          },
+                          {
+                                  "path": "igou-openshift"
+                          },
+                          {
+                                  "path": "roles"
+                          }
+                  ],
+                  "settings": {
+                          "ansible.python.interpreterPath": "/usr/bin/python3",
+                          "files.trimTrailingWhitespace": true,
+                  "files.associations": {
+                      "**/group_vars/**/*": "jinja-yaml",
+                      "**/host_vars/**/*": "jinja-yaml",
+                      "**/roles/**/*.yml": "ansible",
+                      "**/playbooks/**/*.yml": "ansible",
+                      "**/roles/**/*.yaml": "ansible",
+                                  "**/playbooks/**/*.yaml": "ansible",
+                      "ansible.cfg": "ini",
+                      "**/*.yaml": "yaml",
+                                  "**/*.yml": "yaml"
+                          },
+                          "ansible.validation.lint.enabled": false,
+                          "ansible.validation.enabled": false,
+                          "yaml.schemas": {
+                                  "https://squidfunk.github.io/mkdocs-material/schema.json": "mkdocs.yml",
+                                  "kubernetes://schema/v1@pod": "file:///home/igou/igou-kubernetes/apps/democratic-csi/benchmark-interactive.yml",
+                                  "https://json.schemastore.org/helmfile.json": "file:///home/igou/igou-openshift/charts/ocp-base-config/templates/cert-manager/clusterissuer.yaml"
+                          },
+                          "ansible.lightspeed.suggestions.enabled": true
+                  }
+          }
+
+    - name: write .vaultpassword.sh
+      ansible.builtin.copy:
+        dest: .vaultpassword.sh
+        content: |
+          #!/bin/sh
+          echo ${ANSIBLE_VAULT_PASSWORD}
+
+    - name: Create 1p env dir
+      ansible.builtin.file:
+        state: directory
+        path: 1p-envs
+
+    - name: write .vaultpassword.sh
+      ansible.builtin.copy:
+        dest: 1p-envs/ocp.env
+        content: |
+          export CONTROLLER_HOST=op://awx/aap/host
+          export CONTROLLER_PASSWORD=op://awx/aap/password
+          export CONTROLLER_USERNAME=op://awx/aap/username
+          export ANSIBLE_VAULT_PASSWORD_FILE=/home/igou/igou-ansible/.vaultpassword.sh
+          export ANSIBLE_VAULT_PASSWORD=op://awx/vault/password
+          export K8S_AUTH_API_KEY=op://awx/ansible-robot-token/sa_token
+          export K8S_AUTH_HOST=op://awx/ansible-robot-token/api_url
