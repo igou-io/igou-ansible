@@ -1,0 +1,21 @@
+---
+- hosts: localhost
+  tasks:
+  - name: Print a message
+    ansible.builtin.debug:
+      msg: "Always runs"
+    tags:
+    - always
+
+  - name: Print a message
+    ansible.builtin.debug:
+      msg: "runs when you use specify tag1, all(default) or tagged"
+    tags:
+    - tag1
+
+  - name: Print a message
+    ansible.builtin.debug:
+      msg: "always runs unless you explicitly skip, like if you use ``--skip-tags tag2``"
+    tags:
+      - always
+      - tag2
