@@ -1,0 +1,8 @@
+---
+- hosts: k8s_internal_api
+  name: Install k3s cluster
+
+  tasks:
+    - name: test ping
+      ansible.builtin.debug:
+        var: kubeconfig

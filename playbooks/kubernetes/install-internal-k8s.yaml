@@ -1,8 +1,44 @@
 ---
 - hosts: k8s_internal
   name: Install k3s cluster
+  tags: install
   become: true
   vars:
     k3s_registration_address: master-internal.igou.systems  # Typically a load balancer.
   roles:
     - role: xanmanning.k3s
+
+- hosts: master-internal.igou.systems
+  name: Create secret store kubeconfig entry
+  no_log: false
+  gather_facts: false
+  tasks:
+    - name: Get Kubeconfig from master
+      tags: get_kubeconfig
+      become: true
+      block:
+      - name: Slurp kubeconfig
+        ansible.builtin.slurp:
+          src: '/etc/rancher/k3s/k3s.yaml'
+        register: kubeconfig
+
+    - name: Save secrets to 1password
+      delegate_to: localhost
+      tags: op_save
+      block:
+      - name: Create kubeconfig facts
+        ansible.builtin.set_fact:
+          kubeconfig_contents: "{{ kubeconfig.content | b64decode | regex_replace('https://127.0.0.1:6443', 'https://' + inventory_hostname + ':6443') }}"
+          kubeconfig_dict: "{{ kubeconfig.content | b64decode | from_yaml }}"
+
+      - name: Set facts for password
+        ansible.builtin.set_fact:
+          op_item_name: "k8s_internal-kubeconfig-{{ now(utc=true,fmt='%Y%m%d%H%M') }}"
+          client_certificate_data: "{{ kubeconfig_dict.users[0].user['client-certificate-data'] }}"
+          client_key_data: "{{ kubeconfig_dict.users[0].user['client-key-data'] }}"
+          api_url: "https://{{ inventory_hostname }}:6443"
+
+      - name: Save auth info to 1password
+        ansible.builtin.shell:
+          cmd: op item create --category=login --title {{ op_item_name }} --vault=awx kubeconfig[password]={{ kubeconfig_contents | b64encode }} client_certificate_data[password]={{ client_certificate_data }} client_key_data[password]={{ client_key_data }} api_url[password]={{ api_url }}</dev/null
+        delegate_to: localhost

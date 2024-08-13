@@ -1,9 +1,18 @@
 ---
 #Ensure K8S_AUTH_API_KEY and K8S_AUTH_HOST UNSET when bootstrapping
-- hosts: sno
+- hosts: localhost
   name: Create ansible robot SA and save the credentials to 1password
   gather_facts: false
   tasks:
+
+    - name: Fail if env vars are set
+      ansible.builtin.assert:
+        that:
+          - "lookup('env', 'K8S_AUTH_API_KEY') == ''"
+          - "lookup('env', 'K8S_AUTH_HOST') == ''"
+        fail_msg: "Environment variable set - Failing"
+        success_msg: "Environment variable not set - Continuing"
+
     - name: Set Up Directory
       block:
         - name: Create a temporary directory
@@ -13,10 +22,10 @@
 
         - name: Get kubeconfig # Make cluster agnostic
           ansible.builtin.copy:
-            content: "{{ lookup('community.general.onepassword', 'sno-kubeconfig', field='kubeconfig', vault='awx') | b64decode }}"
+            content: "{{ lookup('community.general.onepassword', host + '-kubeconfig', field='kubeconfig', vault='awx') | b64decode }}"
             mode: 0644
             dest: "{{ temp_dir.path }}/kubeconfig"
-          no_log: true
+          no_log: false
       tags: kubeconfig-setup
 
     - name: Create 1P Connect secrets, deploy and cluster-config application
@@ -84,7 +93,7 @@
 
         - name: Get entries with common name
           ansible.builtin.set_fact:
-            op_list: "{{ result.stdout | from_json | selectattr('title', 'search', 'ansible-robot-token') | map(attribute='id') }}"
+            op_list: "{{ result.stdout | from_json | selectattr('title', 'search', host + '-ansible-robot-token') | map(attribute='id') }}"
 
         - name: Delete old entries
           ansible.builtin.shell:
@@ -100,5 +109,5 @@
 
         - name: Save auth info to 1password
           ansible.builtin.shell:
-            cmd: op item create --category=login --title ansible-robot-token --vault=awx sa_token[password]={{ ansible_secret[0].data.token | b64decode }} api_url[password]={{ lookup('community.general.onepassword', 'sno-kubeconfig', field='api_url', vault='awx') }} notesPlain="Maintained with Ansible" --tags ansible</dev/null
+            cmd: op item create --category=login --title {{ host }}-ansible-robot-token --vault=awx sa_token[password]={{ ansible_secret[0].data.token | b64decode }} api_url[password]={{ lookup('community.general.onepassword', host + '-kubeconfig', field='api_url', vault='awx') }} notesPlain="Maintained with Ansible" --tags ansible</dev/null
       tags: op-save
