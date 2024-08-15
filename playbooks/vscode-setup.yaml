@@ -3,10 +3,12 @@
   name: Configure remote vscode server
   gather_facts: true
   vars:
+    ansible_ssh_common_args: "-A"
     kustomize_version: v5.1.1
     kustomize_url: "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/{{ kustomize_version }}/kustomize_{{ kustomize_version }}_linux_amd64.tar.gz"
     virtctl_version: v1.2.0
     virtctl_url: "https://github.com/kubevirt/kubevirt/releases/download/{{ virtctl_version }}/virtctl-{{ virtctl_version }}-linux-amd64"
+    oc_url: https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/linux/oc.tar.gz
     bashrc_exports:
       - { variable: "ANSIBLE_INVENTORY", value: "/home/igou/igou-inventory" }
       - { variable: "ANSIBLE_HOST_KEY_CHECKING", value: "False" }
@@ -18,12 +20,27 @@
   tasks:
     - name: Install system packages
       become: true
+      tags: system
       block:
+
+        - name: Download and add the 1Password GPG key
+          ansible.builtin.apt_key:
+            url: https://downloads.1password.com/linux/keys/1password.asc
+            state: present
+            keyring: /usr/share/keyrings/1password-archive-keyring.gpg
+
+        - name: Add 1Password APT repository
+          ansible.builtin.apt_repository:
+            repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main"
+            filename: "1password"
+
         - name: Install packages
           ansible.builtin.package:
             name:
               - git
               - vim
+              - 1password-cli
+              - openjdk-17-jdk
               - pipx
               - podman
               - tree
@@ -52,6 +69,7 @@
             helm_version: v3.13.2
 
     - name: Install pipx dependencies
+      tags: pip
       block:
         - name: Install ansible via pipx
           community.general.pipx:
@@ -67,129 +85,167 @@
           loop:
             - ansible-navigator
             - ansible-builder
+            - ansible-rulebook
+            - ansible-runner
             - awxkit
             - yq
             - mkdocs-material
 
-    - name: Append multiple export commands to .bashrc
-      ansible.builtin.lineinfile:
-        path: "~/.bashrc"
-        line: "export {{ item.variable }}={{ item.value }}"
-        create: yes
-        state: present
-      loop: "{{ bashrc_exports }}"
+    - name: Configure home directory
+      tags: home
+      block:
+      - name: Append multiple export commands to .bashrc
+        ansible.builtin.lineinfile:
+          path: "~/.bashrc"
+          line: "export {{ item.variable }}={{ item.value }}"
+          create: yes
+          state: present
+        loop: "{{ bashrc_exports }}"
 
-    - name: Append multiple alias commands to .bashrc
-      ansible.builtin.lineinfile:
-        path: "~/.bashrc"
-        line: "alias {{ item.variable }}={{ item.value }}"
-        create: yes
-        state: present
-      loop: "{{ bashrc_aliases }}"
+      - name: Append multiple alias commands to .bashrc
+        ansible.builtin.lineinfile:
+          path: "~/.bashrc"
+          line: "alias {{ item.variable }}={{ item.value }}"
+          create: yes
+          state: present
+        loop: "{{ bashrc_aliases }}"
 
-    - name: Create symbolic link for ansible-navigator
-      ansible.builtin.file:
-        src: /home/igou/igou-ansible/ansible-navigator.yml
-        dest: /home/igou/ansible-navigator.yml
-        state: link
-        force: true
+      - name: Create symbolic link for ansible-navigator
+        ansible.builtin.file:
+          src: /home/igou/igou-ansible/ansible-navigator.yml
+          dest: /home/igou/ansible-navigator.yml
+          state: link
+          force: true
 
-    - name: Ensure /home/igou/bin exists
-      ansible.builtin.file:
-        path: /home/igou/bin
-        state: directory
-        mode: 0755
+      - name: Ensure /home/igou/bin exists
+        ansible.builtin.file:
+          path: /home/igou/bin
+          state: directory
+          mode: 0755
 
-    - name: Install Kustomize to /home/igou/bin
-      ansible.builtin.unarchive:
-        src: "{{ kustomize_url }}"
-        dest: "/home/igou/bin"
-        remote_src: yes
-        creates: "/home/igou/bin/kustomize"
+      - name: Install Kustomize to /home/igou/bin
+        ansible.builtin.unarchive:
+          src: "{{ kustomize_url }}"
+          dest: "/home/igou/bin"
+          remote_src: yes
+          creates: "/home/igou/bin/kustomize"
 
-    - name: Install virtctl
-      ansible.builtin.get_url:
-        url: "{{ virtctl_url }}"
-        dest: "/home/igou/bin/virtctl"
-        mode: 0755
-        #todo podman login to quay, get kubeconfigs from 1p
+      - name: Install oc to /home/igou/bin
+        ansible.builtin.unarchive:
+          src: "{{ oc_url }}"
+          dest: "/home/igou/bin"
+          remote_src: yes
+          creates: "/home/igou/bin/oc"
 
-    - name: Write homelab project
-      ansible.builtin.copy:
-        dest: homelab-test.code-workspace
-        content: |
-          {
-                  "folders": [
-                          {
-                                  "path": "igou-ansible"
-                          },
-                          {
-                                  "path": "igou-inventory"
-                          },
-                          {
-                                  "path": "igou-infrastructure"
-                          },
-                          {
-                                  "path": "igou-kubernetes"
-                          },
-                          {
-                                  "path": "igou-kubernetes-private"
-                          },
-                          {
-                                  "path": "aap-ocpvirt-provisioning"
-                          },
-                          {
-                                  "path": "igou-openshift"
-                          },
-                          {
-                                  "path": "roles"
-                          }
-                  ],
-                  "settings": {
-                          "ansible.python.interpreterPath": "/usr/bin/python3",
-                          "files.trimTrailingWhitespace": true,
-                  "files.associations": {
-                      "**/group_vars/**/*": "jinja-yaml",
-                      "**/host_vars/**/*": "jinja-yaml",
-                      "**/roles/**/*.yml": "ansible",
-                      "**/playbooks/**/*.yml": "ansible",
-                      "**/roles/**/*.yaml": "ansible",
-                                  "**/playbooks/**/*.yaml": "ansible",
-                      "ansible.cfg": "ini",
-                      "**/*.yaml": "yaml",
-                                  "**/*.yml": "yaml"
-                          },
-                          "ansible.validation.lint.enabled": false,
-                          "ansible.validation.enabled": false,
-                          "yaml.schemas": {
-                                  "https://squidfunk.github.io/mkdocs-material/schema.json": "mkdocs.yml",
-                                  "kubernetes://schema/v1@pod": "file:///home/igou/igou-kubernetes/apps/democratic-csi/benchmark-interactive.yml",
-                                  "https://json.schemastore.org/helmfile.json": "file:///home/igou/igou-openshift/charts/ocp-base-config/templates/cert-manager/clusterissuer.yaml"
-                          },
-                          "ansible.lightspeed.suggestions.enabled": true
-                  }
-          }
+      - name: Install virtctl
+        ansible.builtin.get_url:
+          url: "{{ virtctl_url }}"
+          dest: "/home/igou/bin/virtctl"
+          mode: 0755
 
-    - name: write .vaultpassword.sh
-      ansible.builtin.copy:
-        dest: .vaultpassword.sh
-        content: |
-          #!/bin/sh
-          echo ${ANSIBLE_VAULT_PASSWORD}
+      - name: Clone repositories
+        ansible.builtin.git:
+          repo: "{{ item.repo }}"
+          dest: "{{ item.dest }}"
+        loop:
+          - repo: git@github.com:igou-io/igou-kubernetes.git
+            dest: igou-kubernetes
+          - repo: git@github.com:igou-io/igou-ansible.git
+            dest: igou-ansible
+          - repo: git@github.com:igou-io/igou-inventory.git
+            dest: igou-inventory
+          - repo: git@github.com:igou-io/igou-kubernetes-private.git
+            dest: igou-kubernetes-private
+          - repo: git@github.com:igou-io/igou-openshift.git
+            dest: igou-openshift
 
-    - name: Create 1p env dir
-      ansible.builtin.file:
-        state: directory
-        path: 1p-envs
+      - name: Write homelab project
+        ansible.builtin.copy:
+          dest: homelab.code-workspace
+          content: |
+            {
+                    "folders": [
+                            {
+                                    "path": "igou-ansible"
+                            },
+                            {
+                                    "path": "igou-inventory"
+                            },
+                            {
+                                    "path": "igou-kubernetes"
+                            },
+                            {
+                                    "path": "igou-kubernetes-private"
+                            },
+                            {
+                                    "path": "igou-openshift"
+                            },
+                            {
+                                    "path": "roles"
+                            }
+                    ],
+                    "settings": {
+                            "ansible.python.interpreterPath": "/usr/bin/python3",
+                            "files.trimTrailingWhitespace": true,
+                    "files.associations": {
+                        "**/group_vars/**/*": "jinja-yaml",
+                        "**/host_vars/**/*": "jinja-yaml",
+                        "**/roles/**/*.yml": "ansible",
+                        "**/playbooks/**/*.yml": "ansible",
+                        "**/roles/**/*.yaml": "ansible",
+                                    "**/playbooks/**/*.yaml": "ansible",
+                        "ansible.cfg": "ini",
+                        "**/*.yaml": "yaml",
+                                    "**/*.yml": "yaml"
+                            },
+                            "ansible.validation.lint.enabled": false,
+                            "ansible.validation.enabled": false,
+                            "yaml.schemas": {
+                                    "https://squidfunk.github.io/mkdocs-material/schema.json": "mkdocs.yml"
+                            },
+                            "ansible.lightspeed.suggestions.enabled": true
+                    }
+            }
 
-    - name: write .vaultpassword.sh
-      ansible.builtin.copy:
-        dest: 1p-envs/ocp.env
-        content: |
-          export CONTROLLER_HOST=op://awx/aap/host
-          export CONTROLLER_PASSWORD=op://awx/aap/password
-          export CONTROLLER_USERNAME=op://awx/aap/username
-          export ANSIBLE_VAULT_PASSWORD_FILE=/home/igou/igou-ansible/.vaultpassword.sh
-          export ANSIBLE_VAULT_PASSWORD=op://awx/vault/password
-          export K8S_AUTH_API_KEY=op://awx/ansible-robot-token/sa_token
-          export K8S_AUTH_HOST=op://awx/ansible-robot-token/api_url
+      - name: write .vaultpassword.sh
+        ansible.builtin.copy:
+          dest: .vaultpassword.sh
+          content: |
+            #!/bin/sh
+            echo ${ANSIBLE_VAULT_PASSWORD}
+
+# Make this a block
+
+      - name: Create 1p env dir
+        ansible.builtin.file:
+          state: directory
+          path: 1p-envs
+
+      - name: write 1password env file
+        ansible.builtin.copy:
+          dest: 1p-envs/ocp.env
+          content: |
+            export CONTROLLER_HOST=op://awx/aap/host
+            export CONTROLLER_PASSWORD=op://awx/aap/password
+            export CONTROLLER_USERNAME=op://awx/aap/username
+            export ANSIBLE_VAULT_PASSWORD_FILE=/home/igou/igou-ansible/.vaultpassword.sh
+            export ANSIBLE_VAULT_PASSWORD=op://awx/vault/password
+            export K8S_AUTH_API_KEY=op://awx/ansible-robot-token/sa_token
+            export K8S_AUTH_HOST=op://awx/ansible-robot-token/api_url
+            export KUBECONFIG=/home/igou/.kube/config_sno
+
+  # This could be replaced with some 1p inject templating
+
+      - name: Write kubeconfigs
+        ansible.builtin.copy:
+          dest: /home/igou/.kube/config_sno
+          content: "{{ lookup('community.general.onepassword', 'sno-kubeconfig', field='kubeconfig', vault='awx') | b64decode }}"
+
+    - name: Set up Tailscale
+      tags: tailscale
+      block:
+        - name: Set up Tailscale
+          ansible.builtin.include_role:
+            name: artis3n.tailscale
+          vars:
+            tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-authkey', field='password', vault='awx') }}"
