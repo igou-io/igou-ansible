@@ -28,7 +28,7 @@ collections:
   - name: infra.controller_configuration
     version: 2.11.0
   - name: community.general
-    version: 9.4.0
+    version: 9.5.0
   - name: ansible.posix
     version: 1.6.0
   - name: kubernetes.core
