@@ -2,9 +2,7 @@
 version: 3
 images:
   base_image:
-    name: quay.io/centos/centos:stream9-minimal
-options:
-  package_manager_path: /usr/bin/microdnf
+    name: quay.io/fedora/fedora:latest
 dependencies:
   python_interpreter:
     package_system: python3.11
@@ -14,8 +12,25 @@ dependencies:
     package_pip: ansible-core
   ansible_runner:
     package_pip: ansible-runner
-  galaxy: ../../requirements.yml
+  galaxy: |
+    ---
+    collections:
+      - name: awx.awx
+      - name: azure.azcollection
+        version: ">=2.1.0"
+      - name: amazon.aws
+      - name: theforeman.foreman
+      - name: google.cloud
+      - name: openstack.cloud
+      - name: community.vmware
+      - name: ovirt.ovirt
+      - name: kubernetes.core
+      - name: ansible.posix
+      - name: ansible.windows
+      - name: redhatinsights.insights
+      - name: kubevirt.core
   system: |
+    git-core [platform:rpm]
     python3.11-devel [platform:rpm compile]
     libcurl-devel [platform:rpm compile]
     krb5-devel [platform:rpm compile]
@@ -25,7 +40,6 @@ dependencies:
     git-lfs [platform:rpm]
     sshpass [platform:rpm]
     rsync [platform:rpm]
-    epel-release [platform:rpm]
     unzip [platform:rpm]
     podman-remote [platform:rpm]
     cmake [platform:rpm compile]
@@ -33,6 +47,7 @@ dependencies:
     gcc-c++ [platform:rpm compile]
     make [platform:rpm compile]
     openssl-devel [platform:rpm compile]
+    openssl
     1password-cli
     terraform
     coreos-installer
@@ -54,15 +69,13 @@ dependencies:
     boto3
     botocore
 additional_build_steps:
-  prepend_base: |
-    RUN microdnf install -y git-core
   append_base: |
     RUN $PYCMD -m pip install -U pip
 
     RUN echo "Target architecture is: $TARGETARCH"
 
     # Configure Terraform Repo
-    RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+    RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
 
     RUN rpm --import https://downloads.1password.com/linux/keys/1password.asc && \
     sh -c 'echo -e "[1password]\nname=1Password Stable Channel\nbaseurl=https://downloads.1password.com/linux/rpm/stable/\$basearch\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://downloads.1password.com/linux/keys/1password.asc" > /etc/yum.repos.d/1password.repo'
