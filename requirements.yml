@@ -49,3 +49,15 @@ collections:
     type: git
   - name: vkhitrin.libguestfs
     version: 1.1.5
+  - name: awx.awx
+  - name: azure.azcollection
+    version: ">=2.1.0"
+  - name: amazon.aws
+  - name: theforeman.foreman
+  - name: kubernetes.core
+  - name: ansible.windows
+  - name: ansible.platform
+  - name: ansible.hub
+  - name: ansible.controller
+  - name: ansible.eda
+  - name: infra.aap_configuration
