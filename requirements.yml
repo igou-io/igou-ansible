@@ -54,3 +54,7 @@ collections:
   - name: theforeman.foreman
   - name: kubernetes.core
   - name: ansible.windows
+  - name: infra.controller_configuration
+  - name: https://github.com/redhat-cop/aap_configuration.git
+    version: devel
+    type: git
