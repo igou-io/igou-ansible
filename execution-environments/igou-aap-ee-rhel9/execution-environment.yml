@@ -1,0 +1,74 @@
+---
+version: 3
+build_arg_defaults:
+  ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: '--pre'
+images:
+  base_image:
+    name: registry.redhat.io/ansible-automation-platform-24/ee-minimal-rhel9:latest
+additional_build_files:
+    - src: ansible.cfg
+      dest: configs
+options:
+  package_manager_path: /usr/bin/microdnf
+dependencies:
+  system:
+    - python3-jinja2 [platform:rpm]
+    - which [platform:rpm]
+    - git [platform:rpm]
+    - libcurl-devel [platform:rpm]
+    - gcc [platform:rpm]
+    - python3.11-devel [platform:rpm]
+    - openssl-devel [platform:rpm]
+    - libxml2-devel [platform:rpm]
+    - libxslt-devel [platform:rpm]
+  python:
+    - pytz  # for schedule_rrule lookup plugin
+    - python-dateutil>=2.7.0  # schedule_rrule
+    - awxkit  # For import and export modules
+  galaxy:
+    collections:
+      - name: redhat.openshift_virtualization
+      - name: ansible.windows
+      - name: community.windows
+      - name: microsoft.ad
+      - name: ansible.posix
+      - name: ansible.netcommon
+      - name: ansible.utils
+      - name: community.crypto
+      - name: community.general
+      - name: community.vmware
+      - name: cloud.terraform
+      - name: servicenow.itsm
+      - name: vyos.vyos
+      - name: cisco.ios
+      - name: arista.eos
+      - name: infra.osbuild
+      - name: azure.azcollection
+      - name: f5networks.f5_modules
+      - name: netscaler.adc
+      - name: redhat.satellite
+      - name: redhat.insights
+      - name: ibm.qradar
+      - name: containers.podman
+      - name: community.postgresql
+      - name: redhat.openshift
+      - name: datadog.dd
+      - name: infra.ah_configuration
+      - name: ansible.platform
+      - name: ansible.hub
+      - name: ansible.controller
+      - name: ansible.eda
+      - name: https://github.com/redhat-cop/infra.aap_configuration.git
+        version: devel
+        type: git
+additional_build_steps:
+  prepend_builder:
+    - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.13-for-rhel-9-x86_64-rpms"
+  prepend_final:
+    - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.13-for-rhel-9-x86_64-rpms"
+  prepend_galaxy:
+    - ADD _build/configs/ansible.cfg /etc/ansible/ansible.cfg
+  append_final:
+    - RUN microdnf reinstall tzdata -y
+    - RUN rm -f /etc/ansible/ansible.cfg
+    - RUN microdnf clean all
