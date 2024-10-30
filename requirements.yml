@@ -25,8 +25,6 @@ roles:
     scm: git
     src: https://github.com/David-Igou/ansible-role-single_node_openshift_iso.git
 collections:
-  - name: infra.controller_configuration
-    version: 2.11.0
   - name: community.general
     version: 9.5.0
   - name: ansible.posix
@@ -56,8 +54,3 @@ collections:
   - name: theforeman.foreman
   - name: kubernetes.core
   - name: ansible.windows
-  - name: ansible.platform
-  - name: ansible.hub
-  - name: ansible.controller
-  - name: ansible.eda
-  - name: infra.aap_configuration
