@@ -1,0 +1,6 @@
+---
+- name: Playbook to configure execution environments
+  hosts: "{{ host }}"
+  gather_facts: true
+  tasks:
+    - ansible.builtin.command: "{{ command }}"
