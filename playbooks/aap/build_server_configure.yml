@@ -1,5 +1,6 @@
 ---
 - hosts: "{{ host }}"
+  become: true
   vars:
     rhc_state: present
     rhc_auth:
