@@ -15,7 +15,6 @@ dependencies:
     package_system: python3.12
     python_path: /usr/bin/python3.12
   ansible_core:
-    # Require minimum of 2.15 to get ansible-inventory --limit option
     package_pip: ansible-core
   ansible_runner:
     package_pip: ansible-runner
