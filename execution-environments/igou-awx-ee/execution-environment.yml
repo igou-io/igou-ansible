@@ -38,6 +38,7 @@ dependencies:
     coreos-installer
     tar
   python: |
+    awxkit
     git+https://github.com/ansible/ansible-sign
     ncclient
     paramiko
@@ -78,5 +79,4 @@ additional_build_steps:
         chmod +x /usr/local/bin/kustomize
     # Output collections list for debugging
     RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-    RUN ansible-galaxy collection install git+https://github.com/redhat-cop/infra.aap_configuration.git,devel -p /usr/share/ansible/collections/ansible_collections
     RUN ansible-galaxy collection list

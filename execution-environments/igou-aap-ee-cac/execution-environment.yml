@@ -12,8 +12,8 @@ options:
   package_manager_path: /usr/bin/microdnf
 dependencies:
   python_interpreter:
-    package_system: python3.12
-    python_path: /usr/bin/python3.12
+    package_system: python3.11
+    python_path: /usr/bin/python3.11
   ansible_core:
     # Require minimum of 2.15 to get ansible-inventory --limit option
     package_pip: ansible-core
@@ -27,7 +27,7 @@ dependencies:
     - libcurl-devel [platform:rpm]
     - systemd-devel [platform:rpm]
     - gcc [platform:rpm]
-    - python3.12-devel [platform:rpm]
+    - python3.11-devel [platform:rpm]
     - openssl-devel [platform:rpm]
     - libxml2-devel [platform:rpm]
     - libxslt-devel [platform:rpm]
@@ -38,23 +38,9 @@ dependencies:
     - python-dateutil>=2.7.0  # schedule_rrule
     - awxkit  # For import and export modules
     - systemd-python
-    - boto3
-    - botocore
   galaxy:
     collections:
-      - name: ansible.windows
-      - name: community.windows
-      - name: ansible.posix
-      - name: ansible.netcommon
-      - name: ansible.utils
-      - name: community.crypto
       - name: community.general
-      - name: redhat.satellite
-      - name: redhat.insights
-      - name: containers.podman
-      - name: community.postgresql
-      - name: infra.ah_configuration
-      - name: redhat.rhel_system_roles
       - name: ansible.platform
       - name: ansible.hub
       - name: ansible.eda
@@ -65,10 +51,6 @@ dependencies:
 additional_build_steps:
   prepend_base: |
     RUN microdnf install -y git-core
-  # prepend_builder:
-  #   - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.13-for-rhel-9-x86_64-rpms"
-  # prepend_final:
-  #   - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.13-for-rhel-9-x86_64-rpms"
   append_base: |
     RUN $PYCMD -m pip install -U pip
 
@@ -79,7 +61,6 @@ additional_build_steps:
 
     RUN rpm --import https://downloads.1password.com/linux/keys/1password.asc && \
     sh -c 'echo -e "[1password]\nname=1Password Stable Channel\nbaseurl=https://downloads.1password.com/linux/rpm/stable/\$basearch\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://downloads.1password.com/linux/keys/1password.asc" > /etc/yum.repos.d/1password.repo'
-
   prepend_galaxy: |
     ADD _build/configs/ansible.cfg /etc/ansible/ansible.cfg
   append_final: |
