@@ -64,6 +64,12 @@
             dest: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}/ansible.cfg"
           no_log: false
 
+        - name: Hack around collection expecting execution_environment.yml
+          ansible.builtin.copy:
+            src: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}/execution-environment.yml"
+            dest: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}/execution_environment.yml"
+
+
     - name: Include ee_builder role
       ansible.builtin.include_role:
         name: infra.ee_utilities.ee_builder
