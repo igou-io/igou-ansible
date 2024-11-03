@@ -1,96 +1,22 @@
 ---
 - name: Playbook to configure execution environments
-  hosts: ansible-automation-platform-rhel-builder
+  hosts: aap-rhel-builder
   gather_facts: true
   vars:
-    ee_builder_dir_clean: false
-    ee_builder_dir: "."
+    ee_builder_dir: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}"
     ee_update_base_images: true
-    ee_base_image: registry.redhat.io/ansible-automation-platform-24/ee-minimal-rhel9:latest
     ee_base_registry_username: "{{ lookup('community.general.onepassword', 'redhat-registry', field='username', vault='awx') }}"
     ee_base_registry_password: "{{ lookup('community.general.onepassword', 'redhat-registry', field='password', vault='awx') }}"
-    ee_pull_collections_from_hub: true
-    ansiblecfg_override: "{{ lookup('community.general.onepassword', 'aap_ansiblecfg', field='file', vault='awx') }}"
+    ee_pull_collections_from_hub: false
     ee_registry_dest: quay.io/igou
     ee_registry_username: "{{ lookup('community.general.onepassword', 'quay', field='username', vault='awx') }}"
     ee_registry_password: "{{ lookup('community.general.onepassword', 'quay', field='password', vault='awx') }}"
-    ee_verbosity: 2
+    ee_verbosity: 3
     ee_list:
-      - name: aap-ee-supported
+      - name: igou-aap-ee-rhel9
         alt_name: Suported EE
         tag: "latest"
-        dependencies:
-          system:
-            - python3-jinja2 [platform:rpm]
-            - which [platform:rpm]
-            - git [platform:rpm]
-            - libcurl-devel [platform:rpm]
-            - gcc [platform:rpm]
-            - python3.11-devel [platform:rpm]
-            - openssl-devel [platform:rpm]
-            - libxml2-devel [platform:rpm]
-            - libxslt-devel [platform:rpm]
-          python:
-            - pytz  # for schedule_rrule lookup plugin
-            - python-dateutil>=2.7.0  # schedule_rrule
-            - awxkit  # For import and export modules
-          galaxy:
-            collections:
-              - name: awx.awx
-                version: 22.4.0
-              - name: infra.controller_configuration
-              - name: ansible.controller
-              - name: redhat.openshift_virtualization
-              - name: ansible.windows
-              - name: community.windows
-              - name: microsoft.ad
-              - name: ansible.posix
-              - name: ansible.netcommon
-              - name: ansible.utils
-              - name: community.crypto
-              - name: community.general
-              - name: community.vmware
-              - name: cloud.terraform
-              - name: servicenow.itsm
-              - name: vyos.vyos
-              - name: cisco.ios
-              - name: arista.eos
-              - name: infra.osbuild
-              - name: azure.azcollection
-              - name: f5networks.f5_modules
-              - name: netscaler.adc
-              - name: redhat.satellite
-              - name: redhat.insights
-              - name: ansible.controller
-              - name: ibm.qradar
-              - name: containers.podman
-              - name: community.postgresql
-              - name: redhat.openshift
-              - name: datadog.dd
-              - name: infra.ah_configuration
-        build_steps:
-          prepend_builder:
-            - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.13-for-rhel-9-x86_64-rpms"
-          prepend_final:
-            - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.13-for-rhel-9-x86_64-rpms"
-          append_final:
-            - RUN microdnf reinstall tzdata -y
-            - RUN rm -f /etc/ansible/ansible.cfg
-            - RUN microdnf clean all
-        # build_items:
-        #   - files/
-        #   - test.yml
-        # build_files:
-        #   - src: files/stuff.txt
-        #     dest: folders
-        #   - src: test.yml
-        #     dest: folders
-        # build_steps:
-        #   prepend_final:
-        #     - ADD _build/folders/stuff.txt /etc/ansible/stuff.txt
-        #     - ADD _build/folders/test.yml /etc/ansible/test.yml
-        #   append_final:
-        #     - RUN echo This is a post-install command!
+        skip_generation: true
   pre_tasks:
     - name: Validate that ansible-builder is installed on target system
       block:
@@ -106,7 +32,7 @@
                 name:
                   - ansible-builder
                   - ansible-core
-                enablerepo: ansible-automation-platform-2.4-for-rhel-9-x86_64-rpms
+                enablerepo: ansible-automation-platform-2.5-for-rhel-9-x86_64-rpms
                 state: present
               become: true
           rescue:
@@ -118,6 +44,26 @@
                 state: latest
 
   tasks:
+    - name: Set Up Directory
+      block:
+        - name: Create a temporary directory
+          ansible.builtin.tempfile:
+            state: directory
+          register: temp_dir
+
+        - name: Clone a repo with separate git directory
+          ansible.builtin.git:
+            repo: https://github.com/igou-io/igou-ansible.git
+            dest: "{{ temp_dir.path }}"
+            clone: true
+
+        - name: Create ansible.cfg
+          ansible.builtin.copy:
+            content: "{{ lookup('community.general.onepassword', 'aap_ansiblecfg', field='file', vault='awx') }}"
+            mode: 0644
+            dest: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}/ansible.cfg"
+          no_log: false
+
     - name: Include ee_builder role
       ansible.builtin.include_role:
         name: infra.ee_utilities.ee_builder
