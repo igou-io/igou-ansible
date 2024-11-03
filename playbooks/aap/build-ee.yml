@@ -67,6 +67,8 @@
         - name: Hack around collection expecting execution_environment.yml
           ansible.builtin.copy:
             src: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}/execution-environment.yml"
+            remote_src: true
+            mode: 0644
             dest: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}/execution_environment.yml"
 
 
