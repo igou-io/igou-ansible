@@ -4,7 +4,7 @@
   gather_facts: true
   vars:
     ee_builder_dir: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}"
-    ee_update_base_images: true
+    ee_update_base_images: false
     ee_base_registry_username: "{{ lookup('community.general.onepassword', 'redhat-registry', field='username', vault='awx') }}"
     ee_base_registry_password: "{{ lookup('community.general.onepassword', 'redhat-registry', field='password', vault='awx') }}"
     ee_pull_collections_from_hub: false
@@ -71,6 +71,11 @@
             mode: 0644
             dest: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}/execution_environment.yml"
 
+        - name: podman login
+          containers.podman.podman_login:
+            username: "{{ ee_base_registry_username }}"
+            password: "{{ ee_base_registry_password }}"
+            registry: registry.redhat.io
 
     - name: Include ee_builder role
       ansible.builtin.include_role:
