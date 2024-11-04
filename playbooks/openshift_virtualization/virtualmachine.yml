@@ -4,7 +4,8 @@
   gather_facts: false
   vars:
     create_namespace: false
-    vm_state: "running"
+    validate_ip: true
+    vm_state: "present"
     vm_labels:
       created_by: "ansible"
     vm_name: vmname
@@ -68,3 +69,13 @@
               userData: "{{ vm_user_data }}"
             name: cloudinitdisk
 
+    - name: Wait for VMI to have an IP address
+      kubevirt.core.kubevirt_vmi_info:
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+      register: vmi_info
+      until: vmi_info.resources[0].status.interfaces[0].ipAddress is defined
+      retries: 30
+      delay: 10
+      ignore_errors: yes
+      when: validate_ip is true
