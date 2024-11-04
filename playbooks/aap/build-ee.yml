@@ -9,6 +9,7 @@
     ee_base_registry_password: "{{ lookup('community.general.onepassword', 'redhat-registry', field='password', vault='awx') }}"
     ee_pull_collections_from_hub: false
     ee_registry_dest: quay.io/igou
+    ee_prune_images: false
     ee_registry_username: "{{ lookup('community.general.onepassword', 'quay', field='username', vault='awx') }}"
     ee_registry_password: "{{ lookup('community.general.onepassword', 'quay', field='password', vault='awx') }}"
     ee_verbosity: 3
