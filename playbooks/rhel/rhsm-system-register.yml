@@ -1,8 +1,8 @@
 ---
 - hosts: "{{ host }}"
   become: true
+  gather_facts: false
   vars:
-    ansible_ssh_retries: 20
     rhc_state: present
     rhc_insights:
       autoupdate: false
@@ -17,3 +17,10 @@
       - {name: "rhel-9-for-x86_64-appstream-rpms", state: enabled}
   roles:
     - redhat.rhel_system_roles.rhc
+  pre_tasks:
+    - name: Wait for system to become reachable over WinRM
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+
+    - name: Gather facts for first time
+      ansible.builtin.setup:
