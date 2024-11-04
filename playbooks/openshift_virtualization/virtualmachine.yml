@@ -4,7 +4,7 @@
   gather_facts: false
   vars:
     create_namespace: false
-    vm_state: "present"
+    vm_state: "running"
     vm_labels:
       created_by: "ansible"
     vm_name: vmname
@@ -34,6 +34,7 @@
         state: "{{ vm_state }}"
         namespace: "{{ vm_namespace }}"
         labels: "{{ vm_labels }}"
+        wait: true
         instancetype:
           kind: virtualmachineclusterinstancetype
           name: "{{ vm_instancetype }}"
