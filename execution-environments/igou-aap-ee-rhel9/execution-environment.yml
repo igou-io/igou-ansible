@@ -58,6 +58,7 @@ dependencies:
       - name: ansible.hub
       - name: ansible.eda
       - name: ansible.controller
+      - name: kubevirt.core
       - name: https://github.com/redhat-cop/infra.aap_configuration.git
         version: devel
         type: git
