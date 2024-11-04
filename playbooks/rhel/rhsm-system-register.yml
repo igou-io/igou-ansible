@@ -18,7 +18,7 @@
   roles:
     - redhat.rhel_system_roles.rhc
   pre_tasks:
-    - name: Wait for system to become reachable over WinRM
+    - name: Wait for system to become reachable over ssh
       ansible.builtin.wait_for_connection:
         timeout: 900
 
