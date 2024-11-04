@@ -2,6 +2,7 @@
 - hosts: "{{ host }}"
   become: true
   vars:
+    ansible_ssh_retries: 20
     rhc_state: present
     rhc_insights:
       autoupdate: false
