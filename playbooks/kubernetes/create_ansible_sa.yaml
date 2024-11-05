@@ -20,7 +20,7 @@
             state: directory
           register: temp_dir
 
-        - name: Get kubeconfig # Make cluster agnostic
+        - name: Get kubeconfig
           ansible.builtin.copy:
             content: "{{ lookup('community.general.onepassword', host + '-kubeconfig', field='kubeconfig', vault='awx') | b64decode }}"
             mode: 0644
