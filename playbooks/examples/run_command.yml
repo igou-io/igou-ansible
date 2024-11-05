@@ -1,5 +1,5 @@
 ---
-- name: Playbook to configure execution environments
+- name: Execute a command
   hosts: "{{ host }}"
   gather_facts: true
   tasks:

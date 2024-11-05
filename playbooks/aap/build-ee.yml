@@ -1,6 +1,6 @@
 ---
 - name: Playbook to configure execution environments
-  hosts: aap-rhel-builder
+  hosts: "{{ host }}"
   gather_facts: true
   vars:
     ee_builder_dir: "{{ temp_dir.path }}/execution-environments/{{ ee_list[0].name }}"

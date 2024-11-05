@@ -1,4 +1,4 @@
----
+--- # Execute CLI commands on a Guardium host
 - hosts: guardium
   gather_facts: false
   vars:
