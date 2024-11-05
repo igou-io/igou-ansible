@@ -30,7 +30,7 @@
         alt_name: Suported EE
         tags:
           - latest
-          - "{{ '%Y%m%d%H%M%' | strftime(ansible_date_time.epoch) }}"
+          - "{{ '%Y%m%d%H%M' | strftime(ansible_date_time.epoch) }}"
         skip_generation: true
   pre_tasks:
     - name: Validate that ansible-builder is installed on target system
