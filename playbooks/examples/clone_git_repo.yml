@@ -1,0 +1,13 @@
+---
+- hosts: localhost
+  vars:
+    ansible_ssh_common_args: "-A"
+  tasks:
+
+    - name: Print a message
+      ansible.builtin.git:
+        repo: git@github.com:igou-io/igou-kubernetes.git
+        dest: ~
+
+    - name: "ls the directory"
+      ansible.builtin.command: "ls ~/igou-kubernetes"
