@@ -1,0 +1,24 @@
+---
+- hosts: guardium
+  gather_facts: false
+  vars:
+    ansible_network_os: junipernetworks.junos.junos
+  tasks:
+
+    - name: debug ansible_network_os
+      debug:
+        var: ansible_network_os
+
+    - name: Delete client if exists
+      ansible.netcommon.cli_command:
+        command: grdapi delete_oauth_clients client_id=client1
+      register: register_grdapi
+
+    - name: grdapi register
+      ansible.netcommon.cli_command:
+        command: grdapi register_oauth_client client_id=client1 grant_types="password" scope="read,write"
+      register: register_grdapi
+
+    - name: debug
+      set_fact:
+        collector_client_secret: "{{ register_grdapi.stdout_lines | select('search', 'client_secret') | first | from_json | json_query('client_secret') }}"
