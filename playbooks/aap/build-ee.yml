@@ -4,10 +4,17 @@
   gather_facts: true
   vars:
     # # git vars
-    git_repo: "https://github.com/igou-io/igou-ansible.git"
-    git_repo_path: execution-environments/igou-aap-ee-rhel9
+    # git_repo: "https://github.com/igou-io/igou-ansible.git"
+    # git_repo_path: execution-environments/igou-aap-ee-rhel9
     # ansible galaxy vars
-    ansiblecfg: "{{ lookup('community.general.onepassword', 'aap_ansiblecfg', field='file', vault='awx') }}"
+    # ansiblecfg: "{{ lookup('community.general.onepassword', 'aap_ansiblecfg', field='file', vault='awx') }}"
+    # registries:
+    #   - registry: quay.io
+    #     username: "{{ lookup('community.general.onepassword', 'quay', field='username', vault='awx') }}"
+    #     password: "{{ lookup('community.general.onepassword', 'quay', field='password', vault='awx') }}"
+    #   - registry: registry.redhat.io
+    #     username: "{{ lookup('community.general.onepassword', 'redhat-registry', field='username', vault='awx') }}"
+    #     password: "{{ lookup('community.general.onepassword', 'redhat-registry', field='password', vault='awx') }}"
     # ee role vars
     ee_ansible_builder_paramters: "todo"
     ee_builder_dir: "{{ temp_dir.path }}/{{ git_repo_path }}"
@@ -17,13 +24,13 @@
     ee_prune_images: false
     ee_image_push: false # Push in the playbook and not in the role
     ee_verbosity: 3
-    ee_list:
-      - name: igou-aap-ee-rhel9
-        alt_name: Suported EE
-        tags:
-          - latest
+    # ee_list:
+    #   - name: igou-aap-ee-rhel9
+    #     alt_name: Suported EE
+    #     tags:
+    #       - latest
     #       - "{{ '%Y%m%d%H%M' | strftime(ansible_date_time.epoch) }}"
-        skip_generation: true
+    #     skip_generation: true
   pre_tasks:
     - name: Validate that ansible-builder is installed on target system
       block:
@@ -78,6 +85,16 @@
             remote_src: true
             mode: 0644
             dest: "{{ ee_builder_dir }}/execution_environment.yml"
+
+    - name: Login to container registries
+      block:
+      - name: podman login
+        containers.podman.podman_login:
+          username: "{{ item.username }}"
+          password: "{{ item.password }}"
+          registry: "{{ item.registry }}"
+        with_items: "{{ registries }}"
+        no_log: true
 
     - name: Include ee_builder role
       ansible.builtin.include_role:
