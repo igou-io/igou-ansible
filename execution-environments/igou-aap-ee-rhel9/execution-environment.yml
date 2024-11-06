@@ -63,10 +63,10 @@ dependencies:
 additional_build_steps:
   prepend_base: |
     RUN microdnf install -y git-core
-  # prepend_builder:
-  #   - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.13-for-rhel-9-x86_64-rpms"
-  # prepend_final:
-  #   - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.13-for-rhel-9-x86_64-rpms"
+  prepend_builder:
+    - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.17-for-rhel-9-x86_64-rpms"
+  prepend_final:
+    - ENV PKGMGR_OPTS "--nodocs --setopt install_weak_deps=0 --enablerepo=rhocp-4.17-for-rhel-9-x86_64-rpms"
   append_base: |
     RUN $PYCMD -m pip install -U pip
 
