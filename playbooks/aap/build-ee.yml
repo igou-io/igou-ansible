@@ -79,16 +79,6 @@
             mode: 0644
             dest: "{{ ee_builder_dir }}/execution_environment.yml"
 
-    - name: Login to container registries
-      block:
-
-      - name: podman login
-        containers.podman.podman_login:
-          username: "{{ item.username }}"
-          password: "{{ item.password }}"
-          registry: "{{ item.registry }}"
-        with_items: "{{ registries }}"
-
     - name: Include ee_builder role
       ansible.builtin.include_role:
         name: infra.ee_utilities.ee_builder
