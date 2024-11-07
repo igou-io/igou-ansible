@@ -41,6 +41,8 @@
             ansible_user: igou
             ansible_become: true
             admin_password: changeme # admin password for Automation Controller UI
+            postgresql_admin_username: pg_admin
+            postgresql_admin_password: pg_pass
             pg_host: '127.0.0.1'
             pg_port: '5432'
             pg_database: 'awx'
