@@ -4,6 +4,7 @@
   gather_facts: false
   vars:
     create_namespace: false
+    check_for_ip: true
     set_stat: true
     vm_state: "present"
     vm_labels:
