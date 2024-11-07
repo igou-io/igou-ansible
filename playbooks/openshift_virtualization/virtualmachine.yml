@@ -24,7 +24,7 @@
 
     - name: Create namespace if applicable
       kubernetes.core.k8s:
-        kind: namespace
+        kind: Namespace
         name: "{{ vm_namespace }}"
         state: present
       when: create_namespace
