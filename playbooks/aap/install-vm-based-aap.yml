@@ -43,7 +43,6 @@
           all:
             ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
             ansible_user: igou
-            ansible_become: true
             registry_auth: false
             receptor_listener_port: 27199
             postgresql_admin_username: pg_admin
