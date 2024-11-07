@@ -2,6 +2,7 @@
 - name: Playbook to configure ansible controller post installation
   hosts: "{{ host }}"
   gather_facts: false
+  become: false
   vars:
     ansible_ssh_common_args: "-A"
   tasks:
@@ -42,7 +43,7 @@
           all:
             ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
             ansible_user: igou
-            ansible_become: true
+            ansible_become: false
             registry_auth: false
             receptor_listener_port: 27199
             postgresql_admin_username: pg_admin
