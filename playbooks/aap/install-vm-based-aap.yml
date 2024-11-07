@@ -40,17 +40,17 @@
           all:
             ansible_user: igou
             ansible_become: true
-            controller_admin_password: changeme # admin password for Automation Controller UI
-            postgresql_admin_username: pg_admin
-            postgresql_admin_password: pg_pass
-            pg_host: '127.0.0.1'
-            pg_port: '5432'
-            pg_database: 'awx'
-            pg_username: 'awx'
-            pg_password: changeme
-            pg_sslmode: 'prefer'  # set to 'verify-full' for client-side enforced SSL
             registry_auth: false
             receptor_listener_port: 27199
+            postgresql_admin_username: pg_admin
+            postgresql_admin_password: pg_pass
+            controller_admin_password: password
+            controller_pg_host: 127.0.0.1
+            controller_pg_database: awx
+            controller_pg_username: awx
+            controller_pg_password: password
+            bundle_install: true
+            bundle_dir: "{{ aap_setup_prep_setup_dir }}bundle"
 
     - name: Install up AAP bundle
       ansible.builtin.include_role:
