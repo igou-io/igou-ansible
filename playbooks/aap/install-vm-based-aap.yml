@@ -47,7 +47,7 @@
             pg_username: 'awx'
             pg_password: changeme
             pg_sslmode: 'prefer'  # set to 'verify-full' for client-side enforced SSL
-            registry_url: 'registry.redhat.io'
+            registry_auth: false
             receptor_listener_port: 27199
 
     - name: Install up AAP bundle
