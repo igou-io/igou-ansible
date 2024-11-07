@@ -49,9 +49,7 @@
             postgresql_admin_password: pg_pass
             controller_admin_password: password
             controller_pg_host: 127.0.0.1
-            controller_pg_database: awx
-            controller_pg_username: awx
-            controller_pg_password: password
+            controller_pg_password: pg_pass
             bundle_install: true
             bundle_dir: "{{ aap_setup_prep_setup_dir }}bundle"
 
