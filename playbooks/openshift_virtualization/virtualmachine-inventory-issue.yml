@@ -1,0 +1,88 @@
+---
+- name: Set the state of an Openshift Virtualization Virtual Machine
+  hosts: sno
+  gather_facts: false
+  vars:
+    create_namespace: false
+    set_stat: true
+    vm_state: "present"
+    vm_labels:
+      created_by: "ansible"
+    vm_name: testvm-inventory
+    vm_instancetype: "u1.small"
+    vm_namespace: "default"
+    vm_os_image_datasource: rhel9
+    vm_virtualmachineclusterpreference: "rhel.9"
+    vm_user_data:  |
+      #cloud-config
+      chpasswd:
+        expire: false
+      user: igou
+      ssh_authorized_keys:
+        - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDumonWRoahxRVNYQT6dt76OkYyRThQ1e0Z/lAAMHcF4ffpZ138fZVWFHipT9f85EOqLkleqLWH6b3yj37+zOOCJ4lGoTSk0oFK92neiWLGV6ayTsvGojdV/cGrSefUP04FqleZirSiwv52FYEVA21vPNweaB70L3m4i7x7+VaHqVvtPh4qT0LnnWa2Yf6Oq6aQU0WUi7Sd388SVczcWVZlJ9L+iibjtir1sm0NUE4Z+sEwHYCOfO2m6YbN809z2GQz1q+DchM0cJhpwBmwH+MIv3wjahM4Khz+XNz4bjousak63BMnZwqROf4jkoQoMrvy3Q/4WZHvivkLTu/Bj51p7TtFPTN1XNHq4kt5qzLE63HsQyhOy9lGdZpLk8cigZe14aQ1NV5WbXm0YSgPIdXTNgpHtXxzUGHjioqEhoMx4q/YBbIHZAFrX8eYorE0nhSzE63HA4cJsjMS56zAs3gk6SaG2Vux04+NwhAOftbQpF8wzwbS0QzdPzw42XKHMVDmQEW/YtPw8XVC15mmHTu6QEYjzBBYU6Noi37PXWOrad2wkq5bInIdlH6VBRuOQ0tw+9VeUlnYUoS9fD8lxcsuGiN3iVaLH8R4kptirEnr0VUBblo3fe1M3YqNiuqXpcB4HJ7sEaKIcyqEetGFRYFmbnvj4iM9BJ5uDb3pgzzmYw== digou@redhat.com
+  tasks:
+
+    - name: Create namespace if applicable
+      kubernetes.core.k8s:
+        kind: Namespace
+        name: "{{ vm_namespace }}"
+        state: present
+      when: create_namespace
+
+    - name: Enforce vm state
+      kubevirt.core.kubevirt_vm:
+        name: "{{ vm_name }}"
+        state: "{{ vm_state }}"
+        namespace: "{{ vm_namespace }}"
+        labels: "{{ vm_labels }}"
+        wait: true
+        instancetype:
+          kind: virtualmachineclusterinstancetype
+          name: "{{ vm_instancetype }}"
+        preference:
+          kind: virtualmachineclusterpreference
+          name: "{{ vm_virtualmachineclusterpreference }}"
+        data_volume_templates:
+          - metadata:
+              creationTimestamp: null
+              name: "{{ vm_name }}-volume"
+            spec:
+              sourceRef:
+                kind: DataSource
+                name: "{{ vm_os_image_datasource }}"
+                namespace: openshift-virtualization-os-images
+              storage:
+                resources: {}
+        spec:
+          architecture: amd64
+          domain:
+            devices: {}
+            machine:
+              type: pc-q35-rhel9.4.0
+            resources: {}
+          subdomain: headless
+          volumes:
+          - dataVolume:
+              name: "{{ vm_name }}-volume"
+            name: rootdisk
+          - cloudInitNoCloud:
+              userData: "{{ vm_user_data }}"
+            name: cloudinitdisk
+      register: r_vm
+
+    - name: Set stat for vm name
+      ansible.builtin.set_stats:
+        data:
+          host: "{{ vm_namespace }}-{{ vm_name }}"
+        per_host: false
+      when: set_stat is true
+
+    - name: Wait for VMI to have an IP address
+      kubevirt.core.kubevirt_vmi_info:
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+      register: vmi_info
+      until: vmi_info.resources[0].status.interfaces[0].ipAddress is defined
+      retries: 30
+      delay: 10
+      ignore_errors: yes
