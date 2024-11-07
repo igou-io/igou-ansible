@@ -26,7 +26,7 @@
       kubernetes.core.k8s:
         kind: namespace
         name: "{{ vm_namespace }}"
-        state: exists
+        state: present
       when: create_namespace
 
     - name: Enforce vm state
