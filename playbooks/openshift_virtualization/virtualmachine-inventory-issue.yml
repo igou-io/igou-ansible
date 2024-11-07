@@ -68,6 +68,7 @@
           - cloudInitNoCloud:
               userData: "{{ vm_user_data }}"
             name: cloudinitdisk
+        wait_timeout: 600
       register: r_vm
 
     - name: Set stat for vm name
