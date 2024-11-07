@@ -1,6 +1,6 @@
 ---
 - name: Set the state of an Openshift Virtualization Virtual Machine
-  hosts: sno
+  hosts: "{{ host }}"
   gather_facts: false
   vars:
     create_namespace: false
