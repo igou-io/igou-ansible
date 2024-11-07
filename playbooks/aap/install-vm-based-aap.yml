@@ -1,0 +1,51 @@
+---
+- name: Playbook to configure ansible controller post installation
+  hosts: "{{ host }}"
+  gather_facts: false
+  tasks:
+
+    - name: Download AAP bundle
+      ansible.builtin.include_role:
+        name: infra.aap_utilities.aap_setup_download
+      vars:
+        aap_setup_containerized: true
+        aap_setup_down_dest_dir: /tmp
+        aap_setup_down_version: 2.4
+        aap_setup_down_type: containerized-setup-bundle
+        aap_setup_down_offline_token: "{{ lookup('community.general.onepassword', 'rhsm-api', field='password', vault='awx') }}"
+        aap_setup_working_dir: /tmp
+        aap_setup_rhel_version: 9
+
+    - name: Set up AAP bundle
+      ansible.builtin.include_role:
+        name: infra.aap_utilities.aap_setup_prepare
+      vars:
+        aap_setup_prep_installer_file: /tmp/ansible-automation-platform-containerized-setup-bundle-2.4-2-x86_64.tar.gz
+        aap_setup_prep_working_dir: /tmp/workingdir
+        aap_setup_prep_process_template: true
+        aap_setup_prep_containerized: true
+        aap_setup_prep_inv_nodes:  # a dictionary of dictionaries!
+          automationcontroller:
+            127.0.0.1:
+          database:
+            127.0.0.1:  # If using an already existing DB, remove this group/node
+          # execution_nodes:
+          #   execution-1.example.com:
+          #   execution-2.example.com:
+        aap_setup_prep_inv_vars:
+          automationcontroller: # denotes the automation controller nodes as hybrid nodes (controller and execution)
+            node_type: hybrid
+          # execution_nodes:
+          #   node_type: execution
+          all:
+            ansible_user: igou
+            ansible_become: true
+            admin_password: changeme # admin password for Automation Controller UI
+            pg_host: '127.0.0.1'
+            pg_port: '5432'
+            pg_database: 'awx'
+            pg_username: 'awx'
+            pg_password: changeme
+            pg_sslmode: 'prefer'  # set to 'verify-full' for client-side enforced SSL
+            registry_url: 'registry.redhat.io'
+            receptor_listener_port: 27199
