@@ -38,6 +38,7 @@
           # execution_nodes:
           #   node_type: execution
           all:
+            ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
             ansible_user: igou
             ansible_become: true
             registry_auth: false
