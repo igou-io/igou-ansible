@@ -45,7 +45,7 @@
             ansible_user: igou
             registry_auth: false
             receptor_listener_port: 27199
-            postgresql_admin_username: pg_admin
+            postgresql_admin_username: postgres
             postgresql_admin_password: pg_pass
             controller_admin_password: password
             controller_pg_host: 127.0.0.1
