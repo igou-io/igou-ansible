@@ -2,6 +2,8 @@
 - name: Playbook to configure ansible controller post installation
   hosts: "{{ host }}"
   gather_facts: false
+  vars:
+    ansible_ssh_common_args: "-A"
   tasks:
 
     - name: Download AAP bundle
