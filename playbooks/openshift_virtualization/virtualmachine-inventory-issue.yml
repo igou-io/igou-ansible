@@ -88,3 +88,4 @@
       retries: 30
       delay: 10
       ignore_errors: yes
+      when: check_for_ip is true
