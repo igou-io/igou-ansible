@@ -26,7 +26,7 @@ roles:
     src: https://github.com/David-Igou/ansible-role-single_node_openshift_iso.git
 collections:
   - name: community.general
-    version: 10.0.1
+    version: 10.1.0
   - name: ansible.posix
     version: 1.6.2
   - name: kubernetes.core
