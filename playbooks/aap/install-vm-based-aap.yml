@@ -7,40 +7,11 @@
     ansible_ssh_common_args: "-A"
     aap_setup_containerized: true
     aap_setup_down_dest_dir: /tmp
-    aap_setup_down_version: 2.4
-    aap_setup_down_type: containerized-setup-bundle
     aap_setup_down_offline_token: "{{ lookup('community.general.onepassword', 'rhsm-api', field='password', vault='awx') }}"
     aap_setup_working_dir: /tmp
-    aap_setup_rhel_version: 9
-    aap_setup_prep_installer_file: /tmp/ansible-automation-platform-containerized-setup-bundle-2.4-2-x86_64.tar.gz
     aap_setup_prep_working_dir: /tmp/workingdir
     aap_setup_prep_process_template: true
-    aap_setup_prep_containerized: true
-    aap_setup_prep_inv_nodes:  # a dictionary of dictionaries!
-      automationcontroller:
-        localhost:
-      database:
-        localhost:  # If using an already existing DB, remove this group/node
-      # execution_nodes:
-      #   execution-1.example.com:
-      #   execution-2.example.com:
-    aap_setup_prep_inv_vars:
-      automationcontroller: # denotes the automation controller nodes as hybrid nodes (controller and execution)
-        node_type: hybrid
-      # execution_nodes:
-      #   node_type: execution
-      all:
-        ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
-        ansible_user: igou
-        registry_auth: false
-        receptor_listener_port: 27199
-        postgresql_admin_username: postgres
-        postgresql_admin_password: pg_pass
-        controller_admin_password: password
-        controller_pg_host: localhost
-        controller_pg_password: pg_pass
-        bundle_install: true
-        bundle_dir: "{{ aap_setup_prep_setup_dir }}bundle"
+
   tasks:
     - name: Download AAP bundle
       ansible.builtin.include_role:
