@@ -29,9 +29,9 @@
         aap_setup_prep_containerized: true
         aap_setup_prep_inv_nodes:  # a dictionary of dictionaries!
           automationcontroller:
-            127.0.0.1:
+            localhost:
           database:
-            127.0.0.1:  # If using an already existing DB, remove this group/node
+            localhost:  # If using an already existing DB, remove this group/node
           # execution_nodes:
           #   execution-1.example.com:
           #   execution-2.example.com:
@@ -48,7 +48,7 @@
             postgresql_admin_username: postgres
             postgresql_admin_password: pg_pass
             controller_admin_password: password
-            controller_pg_host: 127.0.0.1
+            controller_pg_host: localhost
             controller_pg_password: pg_pass
             bundle_install: true
             bundle_dir: "{{ aap_setup_prep_setup_dir }}bundle"
