@@ -13,7 +13,7 @@
     vm_namespace: "default"
     vm_os_image_datasource: rhel9
   roles:
-    - ansible-role-kubevirt_vm_manage
+    - David-Igou.kubevirt_vm_manage
   tasks:
 
     - name: Set stat for vm name
