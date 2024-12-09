@@ -27,7 +27,7 @@ roles:
   - name: David-Igou.kubevirt_vm_manage
     version: main
     scm: git
-    src: https://github.com/David-Igou/ansible-role-kubevirt_manage_vm.git
+    src: https://github.com/David-Igou/ansible-role-kubevirt_vm_manage.git
 collections:
   - name: community.general
     version: 10.1.0
