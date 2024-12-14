@@ -25,9 +25,7 @@ roles:
     scm: git
     src: https://github.com/David-Igou/ansible-role-single_node_openshift_iso.git
   - name: David-Igou.kubevirt_vm_manage
-    version: main
-    scm: git
-    src: https://github.com/David-Igou/ansible-role-kubevirt_vm_manage.git
+    version: 0.0.3
 collections:
   - name: community.general
     version: 10.1.0
