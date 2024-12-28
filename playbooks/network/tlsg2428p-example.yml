@@ -1,0 +1,20 @@
+- hosts: tlsg2428p
+  gather_facts: false
+  name: Configure HAProxy Loadbalancer for external k8s cluster
+  become: true
+  vars:
+    ansible_network_os: junipernetworks.junos.junos # Not actually a juniper device
+    ansible_ssh_common_args: "-c aes256-cbc -oKexAlgorithms=+diffie-hellman-group1-sha1 -oHostKeyAlgorithms=+ssh-dss -o PreferredAuthentications=password"
+  tasks:
+
+
+  - name: run config mode command and handle prompt/answer
+    ansible.netcommon.cli_command:
+      command: "{{ item }}"
+      prompt:
+        - Exit with uncommitted changes
+      answer: y
+    loop:
+      - enable
+      - "?"
+      - exit
