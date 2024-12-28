@@ -6,6 +6,7 @@
     - role: artis3n.tailscale
       vars:
         verbose: true
+        state: present
         tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-loadbalancer-authkey', field='password', vault='awx') }}"
         tailscale_tags:
           - loadbalancer
