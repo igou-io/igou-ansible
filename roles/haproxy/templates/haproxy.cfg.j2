@@ -66,44 +66,17 @@ listen stats
     stats uri /
     monitor-uri /healthz
 
-
-frontend kubernetes-api-server
-    bind *:6443
-    default_backend kubernetes-api-server
-    mode tcp
-    option tcplog
-
-backend kubernetes-api-server
-    balance source
-    mode tcp
-{% for m in masters %}
-    server {{ m }} {{ m }}:6443 check
-{% endfor %}
-    
-frontend ingress-https
-    bind *:443
-    default_backend ingress-https
-    mode tcp
-    option tcplog
-
-backend ingress-https
-    balance source
-    mode tcp
-{% for host in ingress_hosts %}
-    server {{ host }} {{ host }}:30443 check send-proxy
-{% endfor %}
-
 # Extra frontend configurations
 {% for frontend in frontends %}
 frontend {{ frontend.name }}
     bind *:{{ frontend.port }}
     default_backend {{ frontend.default_backend }}
     mode {{ frontend.mode }}
-    {% if frontend.options %}
-    {% for option in frontend.options %}
+{% if frontend.options %}
+{% for option in frontend.options %}
     option {{ option }}
-    {% endfor %}
-    {% endif %}
+{% endfor %}
+{% endif %}
 {% endfor %}
 
 # Extra Backend configurations
@@ -111,9 +84,9 @@ frontend {{ frontend.name }}
 backend {{ backend.name }}
     balance {{ backend.balance }}
     mode {{ backend.mode }}
-    {% for host in ingress_hosts %}
+{% for host in backend.hosts %}
     server {{ host }} {{ host }}:{{ backend.port }} check send-proxy
-    {% endfor %}
+{% endfor %}
 {% endfor %}
 
 
