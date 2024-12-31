@@ -34,7 +34,7 @@
           op_item_name: "{{ host + '-kubeconfig-' + now(utc=true,fmt='%Y%m%d%H%M') }}"
           client_certificate_data: "{{ kubeconfig_dict.users[0].user['client-certificate-data'] }}"
           client_key_data: "{{ kubeconfig_dict.users[0].user['client-key-data'] }}"
-          api_url: "{{ 'https://' + ansible_host + '6443' }}"
+          api_url: "{{ 'https://' + ansible_host + ':6443' }}"
 
       - name: Save auth info to 1password
         ansible.builtin.shell:
