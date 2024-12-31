@@ -3,12 +3,10 @@
   name: Install k3s cluster
   become: true
   tags: install
-  vars:
-    k3s_registration_address: "{{ master_hostname }}"  # Typically a load balancer.
   roles:
     - role: xanmanning.k3s
 
-- hosts: "{{ master_hostname }}"
+- hosts: "{{ host }}"
   name: Create secret store kubeconfig entry
   no_log: false
   gather_facts: false
@@ -28,7 +26,7 @@
       block:
       - name: Create kubeconfig facts
         ansible.builtin.set_fact:
-          kubeconfig_contents: "{{ kubeconfig.content | b64decode | regex_replace('https://127.0.0.1:6443', 'https://' + master_hostname + '6443') }}"
+          kubeconfig_contents: "{{ kubeconfig.content | b64decode | regex_replace('https://127.0.0.1:6443', 'https://' + ansible_host + ':6443') }}"
           kubeconfig_dict: "{{ kubeconfig.content | b64decode | from_yaml }}"
 
       - name: Set facts for password
@@ -36,7 +34,7 @@
           op_item_name: "{{ host + '-kubeconfig-' + now(utc=true,fmt='%Y%m%d%H%M') }}"
           client_certificate_data: "{{ kubeconfig_dict.users[0].user['client-certificate-data'] }}"
           client_key_data: "{{ kubeconfig_dict.users[0].user['client-key-data'] }}"
-          api_url: "{{ 'https://' + master_hostname + '6443' }}"
+          api_url: "{{ 'https://' + ansible_host + '6443' }}"
 
       - name: Save auth info to 1password
         ansible.builtin.shell:

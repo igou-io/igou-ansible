@@ -1,7 +1,8 @@
 ---
 #Ensure K8S_AUTH_API_KEY and K8S_AUTH_HOST UNSET when bootstrapping
-- hosts: localhost
+- hosts: "{{ host }}"
   name: Create ansible robot SA and save the credentials to 1password
+  connection: local
   gather_facts: false
   tasks:
 
