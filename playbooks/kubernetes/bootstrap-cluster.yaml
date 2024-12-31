@@ -3,67 +3,43 @@
   name: Bootstrap k3s cluster
   gather_facts: false
   tasks:
-    - name: Set Up Directory
-      block:
-        - name: Create a temporary directory
-          ansible.builtin.tempfile:
-            state: directory
-          register: temp_dir
-
-        - name: Clone a repo with separate git directory
-          ansible.builtin.git:
-            repo: https://github.com/igou-io/igou-kubernetes.git
-            dest: "{{ temp_dir.path }}"
-            clone: true
-
-        - name: Get kubeconfig
-          ansible.builtin.copy:
-            content: "{{ kubeconfig }}"
-            mode: 0644
-            dest: "{{ temp_dir.path }}/kubeconfig"
-          no_log: false
-
     - name: Create objects
-      environment:
-        K8S_AUTH_KUBECONFIG: "{{ temp_dir.path }}/kubeconfig"
       block:
 
-        - name: Download external-secrets crds manifest to the cluster.
-          ansible.builtin.get_url:
-            url: https://raw.githubusercontent.com/external-secrets/external-secrets/main/deploy/crds/bundle.yaml
-            dest: ./eso-crds.yml
-            mode: '0664'
-            force: true
+        # - name: create external secrets namespace
+        #   kubernetes.core.k8s:
+        #     state: present
+        #     definition:
+        #       apiVersion: v1
+        #       kind: Namespace
+        #       metadata:
+        #         name: external-secrets
 
-        - name: Apply crds manifest to the cluster.
+        # - name: create argocd namespace
+        #   kubernetes.core.k8s:
+        #     state: present
+        #     definition:
+        #       apiVersion: v1
+        #       kind: Namespace
+        #       metadata:
+        #         name: argocd
+        #         labels:
+        #           external.secrets.io/enabled: "true"
+
+        - name: Apply external-secrets crds manifest to the cluster.
           kubernetes.core.k8s:
             state: present
-            src: ./eso-crds.yml
+            src: 'https://raw.githubusercontent.com/external-secrets/external-secrets/main/deploy/crds/bundle.yaml'
 
-        - name: Create argocd namespace
+        - name: Apply argocd crds manifest to the cluster.
           kubernetes.core.k8s:
-            name: argocd
-            api_version: v1
-            kind: Namespace
             state: present
+            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/argoproj/argo-cd/manifests/crds", enable_helm=true) }}'
 
         - name: Deploy ArgoCD
           kubernetes.core.k8s:
             state: present
-            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-kubernetes/bootstrap/argocd/overlays/" + overlay + "?ref=master") }}'
-
-        - name: Create app of apps
-          kubernetes.core.k8s:
-            state: present
-            src: '{{ "https://raw.githubusercontent.com/igou-io/igou-kubernetes/master/bootstrap/applications/" + overlay + "/application-of-applications-application.yml" }}'
-
-        - name: Create external secrets namespace
-          kubernetes.core.k8s:
-            name: external-secrets
-            api_version: v1
-            kind: Namespace
-            state: present
-          register: stdout
+            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-kubernetes/config/" + cluster + "argocd?ref=master") }}'
 
         - name: Create Credentials secret for OPC
           kubernetes.core.k8s:
@@ -125,8 +101,3 @@
                           name: onepassword-connect-token
                           key: token
                           namespace: external-secrets
-
-        - name: Remove temp_dir
-          ansible.builtin.file:
-            path: "{{ temp_dir.path }}"
-            state: absent
