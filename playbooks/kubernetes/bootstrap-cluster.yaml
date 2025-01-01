@@ -2,29 +2,29 @@
 - hosts: "{{ host }}"
   name: Bootstrap k3s cluster
   gather_facts: false
+  connection: local
   tasks:
     - name: Create objects
       block:
+        - name: create external secrets namespace
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: external-secrets
 
-        # - name: create external secrets namespace
-        #   kubernetes.core.k8s:
-        #     state: present
-        #     definition:
-        #       apiVersion: v1
-        #       kind: Namespace
-        #       metadata:
-        #         name: external-secrets
-
-        # - name: create argocd namespace
-        #   kubernetes.core.k8s:
-        #     state: present
-        #     definition:
-        #       apiVersion: v1
-        #       kind: Namespace
-        #       metadata:
-        #         name: argocd
-        #         labels:
-        #           external.secrets.io/enabled: "true"
+        - name: create argocd namespace
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: argocd
+                labels:
+                  external.secrets.io/enabled: "true"
 
         - name: Apply external-secrets crds manifest to the cluster.
           kubernetes.core.k8s:
@@ -39,7 +39,7 @@
         - name: Deploy ArgoCD
           kubernetes.core.k8s:
             state: present
-            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-kubernetes/config/" + cluster + "argocd?ref=master") }}'
+            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-kubernetes/config/" + overlay + "/argocd?ref=master") }}'
 
         - name: Create Credentials secret for OPC
           kubernetes.core.k8s:
