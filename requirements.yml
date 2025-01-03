@@ -57,6 +57,7 @@ collections:
   - name: kubernetes.core
   - name: ansible.windows
   - name: ansible.netcommon
+  - name: community.network
   - name: junipernetworks.junos
   - name: infra.controller_configuration
   - name: https://github.com/redhat-cop/aap_configuration.git
