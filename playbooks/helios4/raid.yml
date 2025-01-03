@@ -1,8 +1,0 @@
----
-- name: Configure RAID array
-  hosts: "{{ hosts }}"
-  become: yes
-  roles:
-    - role: raid
-        raid_level: 10
-        raid_name: md0

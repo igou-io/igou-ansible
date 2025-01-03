@@ -13,7 +13,11 @@
     vm_namespace: "default"
     vm_os_image_datasource: rhel9
   roles:
-    - David-Igou.kubevirt_vm_manage
+    - role: David-Igou.kubevirt_vm_manage
+    when: rebuild is true
+    vars:
+      vm_state: absent
+    - role: David-Igou.kubevirt_vm_manage
   tasks:
 
     - name: Set stat for vm name
