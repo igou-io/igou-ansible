@@ -1,0 +1,28 @@
+- hosts: "{{ host }}"
+  gather_facts: false
+  name: Configure SSh Authorized keys for user on Linux host
+  vars:
+    user: igou
+    github_users:
+      - david-igou
+    keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B
+  become: false
+  tasks:
+
+  - name: Set authorized keys taken from url
+    ansible.posix.authorized_key:
+      user: "{{ user }}"
+      state: present
+      key: "{{ lookup('url', 'https://github.com/' + item + '.keys',split_lines=False) }}"
+    loop: "{{ github_users }}"
+    when: github_users is defined
+
+  - name: Set authorized keys taken from variable
+    ansible.posix.authorized_key:
+      user: "{{ user }}"
+      state: present
+      key: "{{ item }}"
+    loop: "{{ keys }}"
+    when: keys is defined

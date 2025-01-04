@@ -1,0 +1,17 @@
+- hosts: er4
+  gather_facts: false
+  connection: network_cli
+  vars:
+    ansible_network_os: edgeos
+  name: Show edgeos facts
+  become: false
+  tasks:
+
+
+  - name: Collect all facts from the device
+    community.network.edgeos_facts:
+      gather_subset: all
+    register: facts
+
+  - debug:
+      var: facts

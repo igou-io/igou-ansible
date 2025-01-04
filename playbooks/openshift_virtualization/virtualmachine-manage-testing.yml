@@ -5,7 +5,7 @@
   vars:
     create_namespace: false
     set_stat: true
-    rebuild: true
+    rebuild: false
     vm_state: "present"
     vm_labels:
       created_by: "ansible"
