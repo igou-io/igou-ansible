@@ -7,8 +7,8 @@ options:
   package_manager_path: /usr/bin/microdnf
 dependencies:
   python_interpreter:
-    package_system: python3.11
-    python_path: /usr/bin/python3.11
+    package_system: python3.12
+    python_path: /usr/bin/python3.12
   ansible_core:
     # Require minimum of 2.15 to get ansible-inventory --limit option
     package_pip: ansible-core
@@ -16,7 +16,7 @@ dependencies:
     package_pip: ansible-runner
   galaxy: ../../requirements.yml
   system: |
-    python3.11-devel [platform:rpm compile]
+    python3.12-devel [platform:rpm compile]
     libcurl-devel [platform:rpm compile]
     krb5-devel [platform:rpm compile]
     krb5-workstation [platform:rpm]
@@ -72,8 +72,8 @@ additional_build_steps:
     COPY --from=quay.io/ansible/receptor:devel /usr/bin/receptor /usr/bin/receptor
     RUN mkdir -p /var/run/receptor
     RUN git lfs install --system
-    # SymLink `python` -> `python3.11`
-    RUN alternatives --install /usr/bin/python python /usr/bin/python3.11 311
+    # SymLink `python` -> `python3.12`
+    RUN alternatives --install /usr/bin/python python /usr/bin/python3.12 312
     RUN curl -L -o /usr/local/bin/kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz && \
         tar xzf /usr/local/bin/kustomize -C /usr/local/bin/ && \
         chmod +x /usr/local/bin/kustomize
