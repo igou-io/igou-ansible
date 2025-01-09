@@ -37,6 +37,7 @@ dependencies:
     coreos-installer
     cargo
     tar
+    helm
   python: |
     awxkit
     git+https://github.com/ansible/ansible-sign
@@ -78,7 +79,6 @@ additional_build_steps:
         tar xzf /usr/local/bin/kustomize -C /usr/local/bin/ && \
         chmod +x /usr/local/bin/kustomize
     # Output collections list for debugging
-    RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
     RUN python -V
     RUN ansible --version
     RUN ansible-galaxy collection list
