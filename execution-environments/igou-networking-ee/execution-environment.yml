@@ -88,4 +88,5 @@ additional_build_steps:
     # Output collections list for debugging
     RUN update-crypto-policies --set LEGACY
     RUN update-crypto-policies --set DEFAULT:SHA1
+    RUN ansible --version
     RUN ansible-galaxy collection list

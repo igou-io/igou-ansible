@@ -3,35 +3,20 @@ version: 3
 images:
   base_image:
     name: quay.io/fedora/fedora:latest
+options:
+  package_manager_path: /usr/bin/dnf
 dependencies:
   python_interpreter:
-    package_system: python3.11
-    python_path: /usr/bin/python3.11
+    package_system: python3.13
+    python_path: /usr/bin/python3.13
   ansible_core:
     # Require minimum of 2.15 to get ansible-inventory --limit option
     package_pip: ansible-core
   ansible_runner:
     package_pip: ansible-runner
-  galaxy: |
-    ---
-    collections:
-      - name: awx.awx
-      - name: azure.azcollection
-        version: ">=2.1.0"
-      - name: amazon.aws
-      - name: theforeman.foreman
-      - name: google.cloud
-      - name: openstack.cloud
-      - name: community.vmware
-      - name: ovirt.ovirt
-      - name: kubernetes.core
-      - name: ansible.posix
-      - name: ansible.windows
-      - name: redhatinsights.insights
-      - name: kubevirt.core
+  galaxy: ../../requirements.yml
   system: |
-    git-core [platform:rpm]
-    python3.11-devel [platform:rpm compile]
+    python3.13-devel [platform:rpm compile]
     libcurl-devel [platform:rpm compile]
     krb5-devel [platform:rpm compile]
     krb5-workstation [platform:rpm]
@@ -47,12 +32,13 @@ dependencies:
     gcc-c++ [platform:rpm compile]
     make [platform:rpm compile]
     openssl-devel [platform:rpm compile]
-    openssl
     1password-cli
     terraform
     coreos-installer
+    cargo
     tar
   python: |
+    awxkit
     git+https://github.com/ansible/ansible-sign
     ncclient
     paramiko
@@ -69,6 +55,8 @@ dependencies:
     boto3
     botocore
 additional_build_steps:
+  prepend_base: |
+    RUN dnf install -y git-core
   append_base: |
     RUN $PYCMD -m pip install -U pip
 
@@ -84,11 +72,13 @@ additional_build_steps:
     COPY --from=quay.io/ansible/receptor:devel /usr/bin/receptor /usr/bin/receptor
     RUN mkdir -p /var/run/receptor
     RUN git lfs install --system
-    # SymLink `python` -> `python3.11`
-    RUN alternatives --install /usr/bin/python python /usr/bin/python3.11 311
+    # SymLink `python` -> `python3.13`
+    RUN alternatives --install /usr/bin/python python /usr/bin/python3.13 313
     RUN curl -L -o /usr/local/bin/kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz && \
         tar xzf /usr/local/bin/kustomize -C /usr/local/bin/ && \
         chmod +x /usr/local/bin/kustomize
     # Output collections list for debugging
     RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    RUN python -V
+    RUN ansible --version
     RUN ansible-galaxy collection list
