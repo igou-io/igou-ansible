@@ -1,5 +1,5 @@
 # Workflow name
-name: igou-awx-ee-fedora build
+name: igou-awx-ee build
 
 # Controls when the workflow will run
 on:
@@ -8,7 +8,7 @@ on:
     branches:
       - main
     paths:
-      - 'execution-environments/igou-awx-ee-fedora/**'
+      - 'execution-environments/igou-awx-ee/**'
       - 'requirements.yml'
 
   # Schedule workflow run at 00:00 on Sunday
@@ -23,7 +23,7 @@ jobs:
   call-deploy-workflow:
     uses:  igou-io/igou-ansible/.github/workflows/ee-build.yml@main
     with:
-      EE_FOLDER_NAME: 'igou-awx-ee-fedora'
+      EE_FOLDER_NAME: 'igou-awx-ee'
       EE_IMAGE_TAG: 'latest'
       QUAY_USER: 'igou'
     secrets:
