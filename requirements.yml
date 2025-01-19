@@ -61,4 +61,4 @@ collections:
   - name: junipernetworks.junos
   - name: infra.controller_configuration
   - name: felixfontein.acme
-    version: 0.9.0
+    version: 0.10.0
