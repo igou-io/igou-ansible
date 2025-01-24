@@ -55,6 +55,7 @@ collections:
   - name: amazon.aws
   - name: theforeman.foreman
   - name: kubernetes.core
+  - name: infra.aap_utilities
   - name: ansible.windows
   - name: ansible.netcommon
   - name: community.network
