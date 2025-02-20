@@ -1,0 +1,159 @@
+---
+- hosts: netbox
+  become: true
+  roles:
+    - geerlingguy.postgresql
+    - davidwittman.redis
+    - lae.netbox
+  vars:
+    acme_certificate_acme_email: "{{ lookup('community.general.onepassword', 'acme-key', field='email', vault='awx') }}"
+    acme_certificate_domains: ['netbox.igou.systems']
+    acme_certificate_challenge: dns-01
+    acme_certificate_terms_agreed: true
+    acme_certificate_modify_account: true
+    acme_certificate_acme_account_content: "{{ lookup('community.general.onepassword', 'acme-key', field='key.b64', vault='awx') | b64decode }}"
+    acme_certificate_keys_path: /tmp/keys
+    # Defaults to letsencrypt production
+    # acme_certificate_acme_directory: https://acme-staging-v02.api.letsencrypt.org/directory
+    acme_certificate_dns_provider: cloudflare
+    acme_certificate_dns_servers: 8.8.8.8
+    acme_certificate_cloudflare_token: "{{ lookup('community.general.onepassword', 'dns-token', field='credential', vault='awx') }}"
+    acme_certificate_renewal_on_remaining_days: 15
+    acme_certificate_root_certificate: https://letsencrypt.org/certs/trustid-x3-root.pem.txt
+    acme_certificate_select_chain:
+      - test_certificates: last
+        issuer:
+          CN: DST Root CA X3
+          O: Digital Signature Trust Co.
+    # The following is needed to avoid validation failures now that the TrustID root expired
+    acme_certificate_root_certificate_for_verification: https://letsencrypt.org/certs/isrgrootx1.pem
+    netbox_stable: true
+    netbox_socket: "127.0.0.1:8000"
+    netbox_protocol: uwsgi
+    netbox_superuser_password: "{{ lookup('community.general.onepassword', 'netbox', field='password', vault='awx') }}"
+    netbox_config:
+      ALLOWED_HOSTS:
+        - "{{ inventory_hostname }}"
+        # The following should not be used in production, probably.
+        # This playbook gets used by Vagrant where we don't know the actual hostname.
+        - "*"
+      MEDIA_ROOT: "{{ netbox_shared_path }}/media"
+      REPORTS_ROOT: "{{ netbox_shared_path }}/reports"
+      SCRIPTS_ROOT: "{{ netbox_shared_path }}/scripts"
+    netbox_database_socket: "{{ postgresql_unix_socket_directories[0] }}"
+    netbox_keep_uwsgi_updated: true
+    postgresql_users:
+      - name: "{{ netbox_database_user }}"
+        role_attr_flags: CREATEDB,NOSUPERUSER
+    redis_bind: 127.0.0.1
+    redis_version: 6.0.9
+    redis_checksum: sha256:dc2bdcf81c620e9f09cfd12e85d3bc631c897b2db7a55218fd8a65eaa37f86dd
+  pre_tasks:
+    - block:
+        - name: Set PostgreSQL facts to use PG10 for RedHat distributions
+          set_fact:
+            postgresql_version: 10
+            postgresql_packages:
+              - postgresql10
+              - postgresql10-server
+              - postgresql10-contrib
+              - postgresql10-libs
+            postgresql_data_dir: /var/lib/pgsql/10/data
+            postgresql_bin_path: /usr/pgsql-10/bin
+            postgresql_config_path: /var/lib/pgsql/10/data
+            postgresql_daemon: postgresql-10
+        - name: Install the EPEL yum repository
+          yum:
+            name: epel-release
+        - name: Install the PostgreSQL yum repository
+          yum:
+            name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_distribution_major_version }}-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
+      when: "ansible_os_family == 'RedHat' and ansible_distribution_major_version =='7'"
+
+  tasks:
+
+    - name: Retrieve renewal information for a certificate
+      community.crypto.acme_certificate_renewal_info:
+        acme_version: 2
+        acme_directory: https://acme-v02.api.letsencrypt.org/directory
+        certificate_path: /etc/ssl/server-certs/netbox.igou.systems.pem
+        remaining_percentage: 0.1
+      register: cert_data
+
+    - name: If certificate does not exist or needs to be renewed, invoke acme role and copy over new certs
+      when: cert_data.exists is false or cert_data.should_renew is true
+      block:
+      - name: If certificate does not exist or needs to be renewed, invoked acme role
+        ansible.builtin.include_role:
+          name: felixfontein.acme.acme_certificate
+
+      - name: copy private keys
+        ansible.builtin.copy:
+          src: /tmp/keys/{{ item }}
+          dest: /etc/ssl/private/
+          owner: root
+          group: root
+          mode: "0400"
+        with_items:
+        - netbox.igou.systems.key
+
+      - name: Ensure /etc/ssl/server-certs exists
+        ansible.builtin.file:
+          state: directory
+          path: /etc/ssl/server-certs
+          mode: '0755'
+
+      - name: copy certificates
+        ansible.builtin.copy:
+          src: /tmp/keys/{{ item }}
+          dest: /etc/ssl/server-certs/
+          owner: root
+          group: root
+          mode: "0444"
+        with_items:
+        - netbox.igou.systems-rootchain.pem
+        - netbox.igou.systems-fullchain.pem
+        - netbox.igou.systems.pem
+
+    - name: Install nginx
+      ansible.builtin.package:
+        name: nginx
+        state: present
+
+    - name: copy nginx.conf
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/netbox
+        content: |
+          server {
+              listen [::]:443 ssl ipv6only=off;
+
+              server_name netbox.igou.systems;
+
+              ssl_certificate /etc/ssl/server-certs/netbox.igou.systems.pem;
+              ssl_certificate_key /etc/ssl/private/netbox.igou.systems.key;
+
+              client_max_body_size 25m;
+
+              location / {
+                  # Uncomment these lines if using uWSGI instead of Gunicorn
+                  include uwsgi_params;
+                  uwsgi_pass  127.0.0.1:8001;
+                  uwsgi_param Host $host;
+                  uwsgi_param X-Real-IP $remote_addr;
+                  uwsgi_param X-Forwarded-For $proxy_add_x_forwarded_for;
+                  uwsgi_param X-Forwarded-Proto $http_x_forwarded_proto;
+              }
+          }
+
+          server {
+              # Redirect HTTP traffic to HTTPS
+              listen [::]:80 ipv6only=off;
+              server_name _;
+              return 301 https://$host$request_uri;
+          }
+
+    - name: Start nginx service
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+        enabled: true
