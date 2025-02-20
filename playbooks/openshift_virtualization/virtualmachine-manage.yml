@@ -14,9 +14,9 @@
     vm_os_image_datasource: rhel9
   roles:
     - role: David-Igou.kubevirt_vm_manage
-    when: rebuild is true
-    vars:
-      vm_state: absent
+      when: rebuild is true
+      vars:
+        vm_state: absent
     - role: David-Igou.kubevirt_vm_manage
   tasks:
 
