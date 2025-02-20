@@ -117,7 +117,7 @@
           tag: "{{ ee_list[0].tag | default(omit) }}"
           validate_certs: "{{ ee_validate_certs | default(omit) }}"
           push_args:
-            dest: "{{ ee_registry_dest }}/{{ ee_list[0].name }}{{ (':' + item) if item is defined }}"
+            dest: "{{ ee_registry_dest }}/{{ ee_list[0].name }}{{ (':' + (item | string)) if item is defined }}"
             sign_by: "{{ ee_sign_by | default(omit) }}"
         with_items: "{{ ee_list[0].tags }}"
 ...
