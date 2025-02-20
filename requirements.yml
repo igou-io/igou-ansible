@@ -68,6 +68,8 @@ collections:
   - name: community.network
   - name: junipernetworks.junos
   - name: infra.controller_configuration
-  - name: community.postgresql
+  - name: https://github.com/redhat-cop/aap_configuration_extended.git
+    version: devel
+    type: git
   - name: felixfontein.acme
     version: 0.10.0
