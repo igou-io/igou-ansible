@@ -60,6 +60,9 @@ dependencies:
       - name: ansible.controller
       - name: infra.aap_configuration
       - name: infra.aap_utilities
+      - name: https://github.com/redhat-cop/aap_configuration_extended.git
+        version: devel
+        type: git
 additional_build_steps:
   prepend_base: |
     RUN microdnf install -y git-core
