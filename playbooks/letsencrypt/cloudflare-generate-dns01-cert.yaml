@@ -1,0 +1,49 @@
+# This is a PoC playbook I still need to operationalize
+- hosts: localhost
+  gather_facts: false
+  name: Generate a certificate using cloudflare dns challenge
+  become: false
+
+  vars:
+    acme_certificate_acme_email: "{{ lookup('community.general.onepassword', 'acme-key', field='email', vault='awx') }}"
+    acme_certificate_terms_agreed: true
+    acme_certificate_modify_account: true
+    acme_certificate_acme_account_content: "{{ lookup('community.general.onepassword', 'acme-key', field='key.b64', vault='awx') | b64decode }}"
+    acme_certificate_keys_path: /tmp/keys
+    # Defaults to letsencrypt production
+    # acme_certificate_acme_directory: https://acme-staging-v02.api.letsencrypt.org/directory
+    acme_certificate_dns_provider: cloudflare
+    acme_certificate_dns_servers: 8.8.8.8
+    acme_certificate_cloudflare_token: "{{ lookup('community.general.onepassword', 'dns-token', field='credential', vault='awx') }}"
+    acme_certificate_renewal_on_remaining_days: 15
+    acme_certificate_root_certificate: https://letsencrypt.org/certs/trustid-x3-root.pem.txt
+    acme_certificate_select_chain:
+      - test_certificates: last
+        issuer:
+          CN: DST Root CA X3
+          O: Digital Signature Trust Co.
+    # The following is needed to avoid validation failures now that the TrustID root expired
+    acme_certificate_root_certificate_for_verification: https://letsencrypt.org/certs/isrgrootx1.pem
+
+  roles:
+    - role: felixfontein.acme.acme_certificate
+      acme_certificate_domains: ['servicenode.igou.systems']
+      # Use DNS challenges:
+      acme_certificate_challenge: dns-01
+      # The certificate files will be stored at:
+      #    keys/example.com.key  (private key)
+      #    keys/example.com.pem  (certificate)
+      #    keys/example.com-chain.pem  (intermediate certificate)
+      #    keys/example.com-fullchain.pem  (certificate with intermediate certificate) # This is probably what you want
+      #    keys/example.com-root.pem  (root certificate)
+      #    keys/example.com-rootchain.pem  (intermediate certificate with root certificate)
+
+- hosts: servicenode.igou.systems
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Copy auth directory
+      ansible.builtin.copy:
+        src: /tmp/keys
+        dest: "/var/www/html/"
