@@ -20,7 +20,7 @@
   pre_tasks:
     - name: Wait for system to become reachable over ssh
       ansible.builtin.wait_for_connection:
-        timeout: 900
+        timeout: 90
 
     - name: Gather facts for first time
       ansible.builtin.setup:
