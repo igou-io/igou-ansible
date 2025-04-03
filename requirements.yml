@@ -15,7 +15,7 @@ roles:
   - name: geerlingguy.helm
     version: 1.0.1
   - name: artis3n.tailscale
-    version: v5.0.0
+    version: v5.0.1
   - name: ansible-zfs
     version: master
     scm: git
