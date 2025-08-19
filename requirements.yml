@@ -48,9 +48,6 @@ collections:
     version: 2.2.3
   - name: ansible.utils
     version: 6.0.0
-  - name: https://github.com/redhat-cop/infra.osbuild.git
-    version: main
-    type: git
   - name: https://github.com/David-Igou/ee_utilities.git
     version: devel
     type: git
@@ -62,14 +59,9 @@ collections:
   - name: amazon.aws
   - name: theforeman.foreman
   - name: kubernetes.core
-  - name: infra.aap_utilities
   - name: ansible.windows
   - name: ansible.netcommon
   - name: community.network
   - name: junipernetworks.junos
-  - name: infra.controller_configuration
-  - name: https://github.com/redhat-cop/aap_configuration_extended.git
-    version: devel
-    type: git
   - name: felixfontein.acme
     version: 0.10.1
