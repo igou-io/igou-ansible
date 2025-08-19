@@ -4,9 +4,8 @@
   gather_facts: false
   vars:
     single_node_ocp_iso_output_dir: /tmp/sno_iso
-    openshift_install_url: https://mirror.openshift.com/pub/openshift-v4/clients/ocp/4.16.4/openshift-install-linux.tar.gz
+    openshift_install_url: https://mirror.openshift.com/pub/openshift-v4/clients/ocp/4.18.9/openshift-install-linux.tar.gz
   tasks:
-
     - name: Create SNO ISO
       ansible.builtin.include_role:
         name: David-Igou.single_node_openshift_iso

@@ -1,0 +1,21 @@
+- hosts: "{{ hosts }}"
+  gather_facts: yes
+  vars:
+    accumulator: "{{ ansible_facts }}"
+
+  tasks:
+      - name: "Crate fact_{{ item }} containing everything so far "
+        ansible.builtin.set_fact:
+            "{{ 'fact_' ~ item }}": "{{ accumulator }}"
+            accumulator: >-
+                {{
+                accumulator
+                | combine({ ('fact_' ~ item): accumulator })
+                }}
+        loop: "{{ range(1, 11) | list }}"
+        loop_control:
+            label: "{{ item }}"
+
+      - name:
+        ansible.builtin.debug:
+          msg: "{{ fact_10 | length }}"

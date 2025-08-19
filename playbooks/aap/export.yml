@@ -1,0 +1,21 @@
+---
+- name: Export projects
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Export projects
+      awx.awx.export: # or ansible.controller.export
+        projects: all
+      register: export_results
+
+    - name: Show results
+      ansible.builtin.debug:
+        var: export_results
+
+    - name: Export projects to file
+      ansible.builtin.copy:
+        content: "{{ export_results | to_nice_yaml(width=50, explicit_start=true, explicit_end=true) }}"
+        dest: projects.yaml
+...
