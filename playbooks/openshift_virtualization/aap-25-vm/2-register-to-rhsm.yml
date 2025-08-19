@@ -1,0 +1,19 @@
+---
+- hosts: aap
+  become: true
+  gather_facts: false
+  vars:
+    rhc_state: present
+    rhc_insights:
+      autoupdate: false
+      remediation: absent
+      state: present
+    rhc_auth:
+      login:
+        username: "{{ lookup('community.general.onepassword', 'redhat-login', field='username', vault='awx') }}"
+        password: "{{ lookup('community.general.onepassword', 'redhat-login', field='password', vault='awx') }}"
+    rhc_repositories:
+      - {name: "rhel-9-for-x86_64-baseos-rpms", state: enabled}
+      - {name: "rhel-9-for-x86_64-appstream-rpms", state: enabled}
+  roles:
+    - redhat.rhel_system_roles.rhc

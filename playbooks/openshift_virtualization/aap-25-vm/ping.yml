@@ -1,0 +1,6 @@
+---
+- name: ping some hosts
+  hosts: namespace_vm_aap_testing
+  gather_facts: false
+  tasks:
+    - ping:

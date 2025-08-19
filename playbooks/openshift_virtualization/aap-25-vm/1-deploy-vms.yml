@@ -1,0 +1,314 @@
+---
+- name: Set the state of an Kubevirt VM
+  hosts: sno
+  gather_facts: false
+  vars:
+    vm_state: "present"
+    vm_labels:
+      created_by: "ansible"
+    vm_instancetype: "u1.small"
+    vm_data_volume:
+      sourceRef:
+        name: rhel9
+      pvc:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 100Gi
+    vm_namespace: "vm-aap-testing"
+    vm_wait_timeout: 1000
+    vm_os_image_datasource: rhel9
+    vm_node_selector:
+      kubernetes.io/hostname: 7c-c2-55-e3-dc-22.igou.systems
+
+    aap_number_gateway: 1
+    aap_number_controller: 1
+    aap_number_hub: 1
+    aap_number_eda: 1
+    aap_number_pgsql: 1
+
+  tasks:
+    - name: Create Namespace "epyc-vm-test"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ vm_namespace }}"
+
+    - name: Create NetworkAttachmentDefinition "vlan1000-network-bridge"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: k8s.cni.cncf.io/v1
+          kind: NetworkAttachmentDefinition
+          metadata:
+            name: vlan1000-network-bridge
+            namespace: "{{ vm_namespace }}"
+            annotations:
+              k8s.v1.cni.cncf.io/resourceName: bridge.network.kubevirt.io/br1
+          spec:
+            config: |
+              {
+                "cniVersion": "0.3.1",
+                "name": "vlan1000-network-bridge",
+                "bridge": "br1",
+                "type": "cnv-bridge",
+                "vlan": 1000
+              }
+
+    - name: Create NetworkAttachmentDefinition "vlan1001-network-bridge"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: k8s.cni.cncf.io/v1
+          kind: NetworkAttachmentDefinition
+          metadata:
+            name: vlan1001-network-bridge
+            namespace: "{{ vm_namespace }}"
+            annotations:
+              k8s.v1.cni.cncf.io/resourceName: bridge.network.kubevirt.io/br1
+          spec:
+            config: |
+              {
+                "cniVersion": "0.3.1",
+                "name": "vlan1001-network-bridge",
+                "bridge": "br1",
+                "type": "cnv-bridge",
+                "vlan": 1001
+              }
+
+    - name: Create NetworkAttachmentDefinition "vlan1002-network-bridge"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: k8s.cni.cncf.io/v1
+          kind: NetworkAttachmentDefinition
+          metadata:
+            name: vlan1002-network-bridge
+            namespace: "{{ vm_namespace }}"
+            annotations:
+              k8s.v1.cni.cncf.io/resourceName: bridge.network.kubevirt.io/br1
+          spec:
+            config: |
+              {
+                "cniVersion": "0.3.1",
+                "name": "vlan1002-network-bridge",
+                "bridge": "br1",
+                "type": "cnv-bridge",
+                "vlan": 1002
+              }
+
+    - name: Create NetworkAttachmentDefinition "vlan1003-network-bridge"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: k8s.cni.cncf.io/v1
+          kind: NetworkAttachmentDefinition
+          metadata:
+            name: vlan1003-network-bridge
+            namespace: "{{ vm_namespace }}"
+            annotations:
+              k8s.v1.cni.cncf.io/resourceName: bridge.network.kubevirt.io/br1
+          spec:
+            config: |
+              {
+                "cniVersion": "0.3.1",
+                "name": "vlan1003-network-bridge",
+                "bridge": "br1",
+                "type": "cnv-bridge",
+                "vlan": 1003
+              }
+
+    - name: Create NetworkAttachmentDefinition "vlan1004-network-bridge"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: k8s.cni.cncf.io/v1
+          kind: NetworkAttachmentDefinition
+          metadata:
+            name: vlan1004-network-bridge
+            namespace: "{{ vm_namespace }}"
+            annotations:
+              k8s.v1.cni.cncf.io/resourceName: bridge.network.kubevirt.io/br1
+          spec:
+            config: |
+              {
+                "cniVersion": "0.3.1",
+                "name": "vlan1004-network-bridge",
+                "bridge": "br1",
+                "type": "cnv-bridge",
+                "vlan": 1004
+              }
+
+    - name: Create NetworkAttachmentDefinition "vlan1005-network-bridge"
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: k8s.cni.cncf.io/v1
+          kind: NetworkAttachmentDefinition
+          metadata:
+            name: vlan1005-network-bridge
+            namespace: "{{ vm_namespace }}"
+            annotations:
+              k8s.v1.cni.cncf.io/resourceName: bridge.network.kubevirt.io/br1
+          spec:
+            config: |
+              {
+                "cniVersion": "0.3.1",
+                "name": "vlan1005-network-bridge",
+                "bridge": "br1",
+                "type": "cnv-bridge",
+                "vlan": 1005
+              }
+
+    - name: Create Bastion VM
+      ansible.builtin.import_role:
+        name: ansible-role-kubevirt_vm_manage
+      vars:
+        vm_name: bastion
+        vm_devices:
+          interfaces:
+            - bridge: {}
+              name: vlan1000-network-bridge
+        vm_networks:
+          - multus:
+              networkName: vlan1000-network-bridge
+            name: vlan1000-network-bridge
+        vm_user_data: |
+            #cloud-config
+            chpasswd:
+              expire: false
+            user: igou
+            password: "changeme"
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/
+
+    - name: Create gateway VM
+      ansible.builtin.import_role:
+        name: ansible-role-kubevirt_vm_manage
+      vars:
+        vm_name: gateway
+        vm_devices:
+          interfaces:
+            - bridge: {}
+              name: vlan1001-network-bridge
+        vm_networks:
+          - multus:
+              networkName: vlan1001-network-bridge
+            name: vlan1001-network-bridge
+        vm_user_data: |
+            #cloud-config
+            chpasswd:
+              expire: false
+            user: igou
+            password: "changeme"
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/
+
+    - name: Create controller VM
+      ansible.builtin.import_role:
+        name: ansible-role-kubevirt_vm_manage
+      vars:
+        vm_name: controller
+        vm_devices:
+          interfaces:
+            - bridge: {}
+              name: vlan1002-network-bridge
+        vm_networks:
+          - multus:
+              networkName: vlan1002-network-bridge
+            name: vlan1002-network-bridge
+        vm_user_data: |
+            #cloud-config
+            chpasswd:
+              expire: false
+            user: igou
+            password: "changeme"
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/
+
+    - name: Create hub VM
+      ansible.builtin.import_role:
+        name: ansible-role-kubevirt_vm_manage
+      vars:
+        vm_name: hub
+        vm_devices:
+          interfaces:
+            - bridge: {}
+              name: vlan1003-network-bridge
+        vm_networks:
+          - multus:
+              networkName: vlan1003-network-bridge
+            name: vlan1003-network-bridge
+        vm_user_data: |
+            #cloud-config
+            chpasswd:
+              expire: false
+            user: igou
+            password: "changeme"
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/
+
+    - name: Create eda VM
+      ansible.builtin.import_role:
+        name: ansible-role-kubevirt_vm_manage
+      vars:
+        vm_name: eda
+        vm_devices:
+          interfaces:
+            - bridge: {}
+              name: vlan1004-network-bridge
+        vm_networks:
+          - multus:
+              networkName: vlan1004-network-bridge
+            name: vlan1004-network-bridge
+        vm_user_data: |
+            #cloud-config
+            chpasswd:
+              expire: false
+            user: igou
+            password: "changeme"
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/
+
+    - name: Create postgresql VM
+      ansible.builtin.import_role:
+        name: ansible-role-kubevirt_vm_manage
+      vars:
+        vm_name: pgsql
+        vm_devices:
+          interfaces:
+            - bridge: {}
+              name: vlan1005-network-bridge
+        vm_networks:
+          - multus:
+              networkName: vlan1005-network-bridge
+            name: vlan1005-network-bridge
+        vm_user_data: |
+            #cloud-config
+            chpasswd:
+              expire: false
+            user: igou
+            password: "changeme"
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/
+
+    # - name: Wait for VMI to have an IP address todo: Make this more flexible
+    #   kubevirt.core.kubevirt_vmi_info:
+    #     name: "{{ vm_name }}"
+    #     namespace: "{{ vm_namespace }}"
+    #   register: vmi_info
+    #   until: vmi_info.resources[0].status.interfaces[0].ipAddress is defined
+    #   retries: 30
+    #   delay: 10
+    #   ignore_errors: yes
+    #   when: check_for_ip is true

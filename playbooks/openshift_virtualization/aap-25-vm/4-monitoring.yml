@@ -1,0 +1,227 @@
+---
+- name: Playbook to configure ansible controller post installation
+  hosts: "aap-bastion"
+  gather_facts: false
+  become: false
+  vars:
+    grafana_image: docker.io/grafana/grafana-oss
+    postgresql_password: "pg_pass"
+    postgresql_uri: "pgsql.igou.systems:5432/?sslmode=disable"
+    postgresql_user: "postgres"
+    postgres_exporter_image: "quay.io/prometheuscommunity/postgres-exporter"
+    prometheus_image: "docker.io/prom/prometheus:latest"
+  tasks:
+
+    - name: Create a podman network
+      containers.podman.podman_network:
+        name: promstack_network
+
+    - name: Create directories we need
+      ansible.builtin.file:
+        name: "{{ item }}"
+        state: directory
+      with_items:
+        - "/home/{{ ansible_user }}/monitoring/"
+        - "/home/{{ ansible_user }}/monitoring/prometheus"
+        - "/home/{{ ansible_user }}/monitoring/prometheus/data"
+        - "/home/{{ ansible_user }}/monitoring/postgres-exporter"
+        - "/home/{{ ansible_user }}/monitoring/grafana/provisioning/datasources"
+        - "/home/{{ ansible_user }}/monitoring/grafana/provisioning/dashboards"
+        - "/home/{{ ansible_user }}/monitoring/grafana/etc/dashboards"
+
+    - name: Create Prometheus objects
+      tags:
+        - prometheus
+      block:
+        - name: Write prometheus.yml
+          ansible.builtin.copy:
+            dest: "/home/{{ ansible_user }}/monitoring/prometheus/prometheus.yml"
+            content: |
+              global:
+                scrape_interval: 15s
+                evaluation_interval: 15s
+              scrape_configs:
+                - job_name: "postgres-exporter"
+                  static_configs:
+                    - targets: ["postgres-exporter:9187"]
+                - job_name: "podman-exporter"
+                  static_configs:
+                    - targets: ["10.100.5.20:9882"]
+        - name: Create Prometheus data volume
+          containers.podman.podman_volume:
+            name: prometheus_data
+
+        - name: Create Prometheus Quadlet
+          containers.podman.podman_container:
+            name: prometheus
+            image: "{{ prometheus_image }}"
+            state: quadlet
+            quadlet_filename: prometheus-container
+            quadlet_file_mode: '0640'
+            network:
+              - promstack_network
+            ports: 9090:9090
+            volumes:
+              - "/home/{{ ansible_user }}/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:Z"
+              - "prometheus_data:/prometheus"
+
+        - name: Run prometheus container
+          ansible.builtin.systemd_service:
+            name: prometheus-container.service
+            daemon_reload: true
+            enabled: true
+            scope: user
+            state: restarted
+
+    - name: Create postgres-exporter objects
+      tags:
+        - postgres-exporter
+      block:
+
+        - name: Write postgres-exporter.env
+          ansible.builtin.copy:
+            dest: "/home/{{ ansible_user }}/monitoring/postgres-exporter/postgres-exporter.env"
+            content: |
+              DATA_SOURCE_URI={{ postgresql_uri }}
+              DATA_SOURCE_USER={{ postgresql_user }}
+
+        - name: Create postgres secret
+          containers.podman.podman_secret:
+            name: postgres-password
+            state: present
+            data: "{{ postgresql_password }}"
+
+        - name: Create postgres-exporter Quadlet
+          containers.podman.podman_container:
+            name: postgres-exporter
+            image: "{{ postgres_exporter_image }}"
+            state: quadlet
+            quadlet_filename: postgres-exporter-container
+            quadlet_file_mode: '0640'
+            network:
+              - promstack_network
+            secrets:
+              - postgres-password,type=env,target=DATA_SOURCE_PASS
+            ports: 9187:9187
+            env_file: "/home/{{ ansible_user }}/monitoring/postgres-exporter/postgres-exporter.env"
+
+        - name: Run postgres-exporter container
+          ansible.builtin.systemd_service:
+            name: postgres-exporter-container.service
+            daemon_reload: true
+            enabled: true
+            scope:  user
+            state: restarted
+
+    - name: Create grafana objects
+      tags:
+        - grafana
+      block:
+        - name: Write grafana prometheus_ds.yml
+          ansible.builtin.copy:
+            dest: "/home/{{ ansible_user }}/monitoring/grafana/provisioning/datasources/prometheus_ds.yml"
+            content: |
+              apiVersion: 1
+              datasources:
+                - name: Prometheus
+                  type: prometheus
+                  access: proxy
+                  # Access mode - proxy (server in the UI) or direct (browser in the UI).
+                  url: http://prometheus:9090
+                  jsonData:
+                    httpMethod: POST
+                    manageAlerts: true
+                    prometheusType: Prometheus
+                    cacheLevel: 'High'
+                    disableRecordingRules: false
+                    incrementalQueryOverlapWindow: 10m
+
+        - name: Write grafana dashboards
+          ansible.builtin.copy:
+            dest: "/home/{{ ansible_user }}/monitoring/grafana/provisioning/dashboards/default.yml"
+            content: |
+              apiVersion: 1
+              providers:
+                - name: dashboards
+                  type: file
+                  updateIntervalSeconds: 30
+                  options:
+                    path: /etc/dashboards
+
+        - name: Get postgres dashboard
+          ansible.builtin.uri:
+            url: 'https://grafana.com/api/dashboards/14114/revisions/1/download'
+            method: GET
+            dest: "/home/{{ ansible_user }}/monitoring/grafana/etc/dashboards/postgres.json"
+
+        - name: Create grafana Quadlet
+          containers.podman.podman_container:
+            name: grafana
+            image: "{{ grafana_image }}"
+            state: quadlet
+            quadlet_filename: grafana-container
+            quadlet_file_mode: '0640'
+            network:
+              - promstack_network
+            ports: 3000:3000
+            volumes:
+              - "/home/{{ ansible_user }}/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:Z"
+              - "/home/{{ ansible_user }}/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:Z"
+              - "/home/{{ ansible_user }}/monitoring/grafana/etc/dashboards:/etc/dashboards:Z"
+
+        - name: Run grafana container
+          ansible.builtin.systemd_service:
+            name: grafana-container.service
+            daemon_reload: true
+            enabled: true
+            scope:  user
+            state: restarted
+
+- name: Deploy podman-exporter on database
+  hosts: database
+  gather_facts: false
+  become: false
+  tasks:
+
+    - name: Create prometheus-podman-exporter objects
+      tags:
+        - podman-exporter
+      block:
+
+        - name: Ensure EPEL present
+          ansible.builtin.dnf:
+            name: https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+            state: present
+            disable_gpg_check: true
+          become: true
+
+        - name: Install the latest version of podman-exporter from the testing repo
+          ansible.builtin.dnf:
+            name: prometheus-podman-exporter
+            enablerepo: epel
+            state: present
+          become: true
+
+        - name: Write podman-exporter.service
+          ansible.builtin.copy:
+            dest: "/home/{{ ansible_user }}/.config/systemd/user/podman-exporter.service"
+            content: |
+              [Unit]
+              Description=Prometheus Podman Exporter
+              After=network.target
+
+              [Service]
+              Type=simple
+              ExecStart=/usr/bin/prometheus-podman-exporter --collector.enable-all
+              Restart=on-failure
+
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Run podman-exporter.service
+          ansible.builtin.systemd_service:
+            name: podman-exporter.service
+            daemon_reload: true
+            enabled: true
+            scope:  user
+            state: restarted

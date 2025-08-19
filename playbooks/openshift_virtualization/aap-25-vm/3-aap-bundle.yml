@@ -1,0 +1,79 @@
+---
+- name: Playbook to configure ansible controller post installation
+  hosts: "aap-bastion"
+  gather_facts: false
+  become: false
+  vars:
+    ansible_ssh_common_args: "-A"
+    aap_setup_down_offline_token: "{{ lookup('community.general.onepassword', 'rhsm-api', field='password', vault='awx') }}"
+    aap_setup_working_dir: /tmp
+    host: vm-aap-standalone
+    aap_setup_containerized: true
+    aap_setup_rhel_version: 9
+    aap_setup_down_dest_dir: /home/igou
+    aap_setup_down_type: containerized-setup-bundle
+    aap_setup_down_version: 2.5-6
+    aap_setup_inst_containerized: true
+    aap_setup_inst_force: true
+    aap_setup_prep_working_dir: /home/igou
+    aap_setup_prep_process_template: true
+    aap_setup_prep_containerized: true
+    aap_setup_prep_inv_nodes:
+      automationgateway:
+        gateway.igou.systems:
+      automationcontroller:
+        controller.igou.systems:
+      automationhub:
+        hub.igou.sytems:
+      automationeda:
+        eda.igou.systems:
+      database:
+        pgsql.igou.systems:
+
+    aap_setup_prep_inv_vars:
+      automationcontroller:
+        node_type: hybrid
+      all:
+        ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
+        ansible_user: igou
+        redis_mode: standalone
+        registry_auth: false
+        receptor_listener_port: 27199
+        postgresql_admin_username: postgres
+        postgresql_admin_password: pg_pass
+        controller_admin_password: password
+        controller_pg_host: pgsql.igou.systems
+        controller_pg_password: pg_pass
+        controller_pg_database: 'awx'
+        controller_pg_username: 'awx'
+        gateway_admin_password: password
+        gateway_pg_host: pgsql.igou.systems
+        gateway_pg_database: gateway
+        gateway_pg_username: gateway
+        gateway_pg_password: pg_pass
+        gateway_redis_password: redis_pass
+        bundle_install: true
+        bundle_dir: !unsafe '{{ aap_setup_prep_setup_dir }}bundle'
+        receptor_protocol: tcp
+        receptor_port: 27199
+        hub_seed_collections: False
+        hub_admin_password: password
+        hub_pg_host: 'pgsql.igou.systems'
+        hub_pg_database: 'pulp'
+        hub_pg_username: 'pulp'
+        hub_pg_password: password
+        eda_admin_password: password
+        eda_pg_host: 'pgsql.igou.systems'
+        eda_pg_database: 'eda'
+        eda_pg_username: 'eda'
+        eda_pg_password: password
+
+
+  tasks:
+    - name: Download AAP bundle
+      ansible.builtin.include_role:
+        name: infra.aap_utilities.aap_setup_download
+
+    # - name: Set up AAP bundle
+    #   ansible.builtin.include_role:
+    #     name: infra.aap_utilities.aap_setup_prepare
