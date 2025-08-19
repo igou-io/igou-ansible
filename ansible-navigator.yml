@@ -32,9 +32,15 @@ ansible-navigator:
         - GATEWAY_HOSTNAME
         - GATEWAY_PASSWORD
         - GATEWAY_USERNAME
+        - GATEWAY_OAUTH_TOKEN
+        - GATEWAY_API_TOKEN
         - CONTROLLER_HOST
         - CONTROLLER_PASSWORD
         - CONTROLLER_USERNAME
+        - CONTROLLER_OAUTH_TOKEN
+        - AH_HOST
+        - AH_USERNAME
+        - AH_PASSWORD
         - K8S_AUTH_API_KEY
         - K8S_AUTH_HOST
         - K8S_AUTH_VERIFY_SSL
