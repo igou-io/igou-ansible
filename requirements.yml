@@ -14,8 +14,6 @@ roles:
     version: 4.1.9
   - name: geerlingguy.helm
     version: 1.0.1
-  - name: artis3n.tailscale
-    version: v5.0.1
   - name: ansible-zfs
     version: master
     scm: git
@@ -65,3 +63,5 @@ collections:
   - name: junipernetworks.junos
   - name: felixfontein.acme
     version: 0.10.1
+  - name: artis3n.tailscale
+    version: 1.0.1
