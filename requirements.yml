@@ -33,6 +33,8 @@ roles:
   - name: lae.netbox
     src: https://github.com/lae/ansible-role-netbox.git
     version: v1.0.7
+  - name: David-Igou.haproxy
+    version: 1.0.0
 collections:
   - name: community.general
     version: 11.3.0
