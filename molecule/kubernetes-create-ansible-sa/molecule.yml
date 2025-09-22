@@ -1,0 +1,23 @@
+---
+prerun: false
+driver:
+  name: default
+lint: |
+  set -e
+  yamllint .
+  ansible-lint
+platforms:
+  - name: molecule-test
+provisioner:
+  name: ansible
+  inventory:
+    host_vars:
+      localhost:
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') }}"
+  env:
+    KUBECONFIG: ~/.kube/config-molecule-test
+    K8S_AUTH_KUBECONFIG: ~/.kube/config-molecule-test
+    K8S_AUTH_VERIFY_SSL: "false"
+    # K8S_AUTH_API_KEY:
+    # K8S_AUTH_HOST:

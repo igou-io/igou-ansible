@@ -1,0 +1,45 @@
+---
+- name: Verify
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  pre_tasks:
+    - name: fail if K8S_AUTH_API_KEY and K8S_AUTH_HOST are set
+      ansible.builtin.fail:
+        msg: "K8S_AUTH_API_KEY and K8S_AUTH_HOST should not be set in the environment."
+      when: lookup('env', 'K8S_AUTH_API_KEY') != '' or lookup('env', 'K8S_AUTH_HOST') != ''
+  tasks:
+
+    - name: Get serviceaccount info.
+      kubernetes.core.k8s_info:
+        kind: serviceaccount
+        namespace: ansible-robot
+        name: ansible
+      register: serviceaccount
+
+    - name: Debug.
+      ansible.builtin.debug:
+        var: serviceaccount
+
+    - name: Assert that ansible serviceaccount exists.
+      ansible.builtin.assert:
+        that: serviceaccount.resources | length > 0
+
+    - name: Get clusterrolebinding info.
+      kubernetes.core.k8s_info:
+        kind: ClusterRoleBinding
+        name: ansible-cluster-admin-binding
+      register: clusterrolebinding
+
+    - name: Debug.
+      ansible.builtin.debug:
+        var: clusterrolebinding
+
+    - name: Assert that ansible serviceaccount is a cluster-admin
+      ansible.builtin.assert:
+        that:
+          - clusterrolebinding.resources | length > 0
+          - "'ansible' in clusterrolebinding.resources[0].subjects | map(attribute='name') | list"
+          - "'cluster-admin' == clusterrolebinding.resources[0].roleRef.name"
+        fail_msg: "ansible serviceaccount is not a cluster-admin"
+        success_msg: "ansible serviceaccount is a cluster-admin"

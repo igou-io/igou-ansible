@@ -1,0 +1,12 @@
+---
+- name: Converge
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  pre_tasks:
+    - name: fail if K8S_AUTH_API_KEY and K8S_AUTH_HOST are set
+      ansible.builtin.fail:
+        msg: "K8S_AUTH_API_KEY and K8S_AUTH_HOST should not be set in the environment."
+      when: lookup('env', 'K8S_AUTH_API_KEY') != '' or lookup('env', 'K8S_AUTH_HOST') != ''
+
+- ansible.builtin.import_playbook: ../../playbooks/kubernetes/create-ansible-sa.yaml
