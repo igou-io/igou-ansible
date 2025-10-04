@@ -26,8 +26,9 @@ ansible-navigator:
         dest: /home/igou/roles
     environment-variables:
       pass:
-        - AWS_ACCESS_KEY
-        - AWS_SECRET_KEY
+        - AWS_DEFAULT_REGION
+        - AWS_SECRET_ACCESS_KEY
+        - AWS_ACCESS_KEY_ID
         - OP_SERVICE_ACCOUNT_TOKEN
         - GATEWAY_HOSTNAME
         - GATEWAY_PASSWORD
@@ -44,3 +45,4 @@ ansible-navigator:
         - K8S_AUTH_API_KEY
         - K8S_AUTH_HOST
         - K8S_AUTH_VERIFY_SSL
+        - MOLECULE_NO_LOG
