@@ -9,4 +9,4 @@
         msg: "K8S_AUTH_API_KEY and K8S_AUTH_HOST should not be set in the environment."
       when: lookup('env', 'K8S_AUTH_API_KEY') != '' or lookup('env', 'K8S_AUTH_HOST') != ''
 
-- ansible.builtin.import_playbook: ../../playbooks/kubernetes/create-ansible-sa.yaml
+- ansible.builtin.import_playbook: ../../playbooks/kubernetes/create-serviceaccount.yml

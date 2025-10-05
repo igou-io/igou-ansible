@@ -1,0 +1,52 @@
+---
+# Kubernetes bootstrap testing with Kind
+# Copy from shared/templates/kubernetes.yml and customize
+prerun: false
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: requirements.yml
+
+driver:
+  name: default
+
+platforms:
+  - name: molecule-test
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      host_key_checking: false
+      verbosity: 0
+  inventory:
+    host_vars:
+      localhost:
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') }}"
+        cluster_name: "molecule-test"
+
+  env:
+    KUBECONFIG: "~/.kube/config-molecule-test"
+    K8S_AUTH_KUBECONFIG: "~/.kube/config-molecule-test"
+    K8S_AUTH_VERIFY_SSL: "false"
+  playbooks:
+    create: ../shared/playbooks/kind-create.yml
+    destroy: ../shared/playbooks/kind-destroy.yml
+    converge: converge.yml
+    verify: verify.yml
+
+lint: |
+  set -e
+  yamllint .
+  ansible-lint
+
+scenario:
+  name: kubernetes-create-serviceaccount-kind
+  create_sequence:
+    - dependency
+    - create
+    - prepare
+  destroy_sequence:
+    - destroy
