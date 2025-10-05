@@ -1,0 +1,38 @@
+---
+# Kubernetes cluster create playbook (Kind)
+- name: Create Kubernetes cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    cluster_name: "{{ molecule_yml.platforms[0].name | default('molecule-test') }}"
+    wait_timeout: "{{ molecule_yml.platforms[0].wait_timeout | default('300s') }}"
+    kind_config: "{{ molecule_yml.platforms[0].kind_config | default(omit) }}"
+
+  pre_tasks:
+    - name: Fail if K8S_AUTH_API_KEY and K8S_AUTH_HOST are set
+      ansible.builtin.fail:
+        msg: "K8S_AUTH_API_KEY and K8S_AUTH_HOST should not be set in the environment."
+      when: lookup('env', 'K8S_AUTH_API_KEY') != '' or lookup('env', 'K8S_AUTH_HOST') != ''
+
+  tasks:
+    - name: Create kind cluster
+      ansible.builtin.command: >-
+        kind create cluster
+        --wait {{ wait_timeout }}
+        --name {{ cluster_name }}
+        --kubeconfig {{ kubeconfig }}
+        {{ ('--config ' + kind_config) if kind_config != omit else '' }}
+      changed_when: true
+
+    - name: Wait for cluster to be ready
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+        wait: true
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"

@@ -1,0 +1,54 @@
+---
+# Matrix testing configuration template
+# Use environment variables to control test matrix dimensions
+dependency:
+  name: galaxy
+  options:
+    requirements-file: requirements.yml
+
+driver:
+  name: podman
+
+platforms:
+  - name: "instance-${MOLECULE_DISTRO:-rockylinux9}"
+    image: "${MOLECULE_DISTRO_IMAGE:-quay.io/ansible/community-ansible-dev-tools:latest}"
+    pre_build_image: true
+    privileged: ${MOLECULE_PRIVILEGED:-true}
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    tmpfs:
+      - /run
+      - /tmp
+    env:
+      # Allow matrix testing with different variables
+      MOLECULE_SCENARIO_NAME: "${MOLECULE_SCENARIO_NAME:-default}"
+      TEST_ENVIRONMENT: "${TEST_ENVIRONMENT:-development}"
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      host_key_checking: false
+      verbosity: 1
+  inventory:
+    group_vars:
+      all:
+        # Matrix variables can be injected here
+        molecule_distro: "${MOLECULE_DISTRO:-rockylinux9}"
+        test_environment: "${TEST_ENVIRONMENT:-development}"
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

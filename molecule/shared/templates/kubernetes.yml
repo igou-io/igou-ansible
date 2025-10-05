@@ -1,0 +1,27 @@
+---
+# Kubernetes-based testing template (Kind/K3s)
+driver:
+  name: default
+platforms:
+  - name: ${MOLECULE_K8S_CLUSTER:-molecule-test}
+
+provisioner:
+  name: ansible
+  inventory:
+    host_vars:
+      localhost:
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+        kubeconfig: "${KUBECONFIG:-$HOME/.kube/config-molecule-test}"
+        cluster_name: "${MOLECULE_K8S_CLUSTER:-molecule-test}"
+  env:
+    KUBECONFIG: "${KUBECONFIG:-$HOME/.kube/config-molecule-test}"
+    K8S_AUTH_KUBECONFIG: "${KUBECONFIG:-$HOME/.kube/config-molecule-test}"
+    K8S_AUTH_VERIFY_SSL: "${K8S_AUTH_VERIFY_SSL:-false}"
+
+scenario:
+  create_sequence:
+    - dependency
+    - create
+    - prepare
+  destroy_sequence:
+    - destroy

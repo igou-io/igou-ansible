@@ -1,0 +1,15 @@
+---
+# Kubernetes cluster destroy playbook (Kind)
+- name: Destroy Kubernetes cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    cluster_name: "{{ molecule_yml.platforms[0].name | default('molecule-test') }}"
+
+  tasks:
+    - name: Delete kind cluster
+      ansible.builtin.command: >-
+        kind delete cluster --name {{ cluster_name }} --kubeconfig {{ kubeconfig }}
+      changed_when: true
+      failed_when: false

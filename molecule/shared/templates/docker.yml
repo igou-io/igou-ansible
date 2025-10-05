@@ -1,0 +1,59 @@
+---
+# Podman-based testing template
+# Use environment variables to customize behavior
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_REQUIREMENTS_FILE:-requirements.yml}
+
+driver:
+  name: podman
+
+platforms:
+  - name: "${MOLECULE_PLATFORM_NAME:-instance}"
+    image: "${MOLECULE_DISTRO_IMAGE:-quay.io/ansible/community-ansible-dev-tools:latest}"
+    command: "${MOLECULE_PODMAN_COMMAND:-}"
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: ${MOLECULE_PRIVILEGED:-true}
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+    capabilities:
+      - SYS_ADMIN
+    env:
+      container: podman
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      host_key_checking: false
+      verbosity: ${MOLECULE_VERBOSITY:-1}
+  inventory:
+    group_vars:
+      all:
+        molecule_platform: podman
+        molecule_distro: "${MOLECULE_DISTRO:-default}"
+        test_environment: "${TEST_ENVIRONMENT:-development}"
+
+lint: |
+  set -e
+  yamllint .
+  ansible-lint
+
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy

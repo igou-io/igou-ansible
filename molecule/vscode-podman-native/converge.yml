@@ -1,0 +1,15 @@
+---
+- name: Converge
+  hosts: molecule
+  gather_facts: true
+  tasks:
+    - name: Read OS release information
+      ansible.builtin.slurp:
+        src: /etc/os-release
+      register: os_release
+
+    - name: Write OS info to file
+      ansible.builtin.copy:
+        content: "{{ os_release.content | b64decode }}"
+        dest: /tmp/molecule_os_info.txt
+        mode: "0644"
