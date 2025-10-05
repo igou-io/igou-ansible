@@ -4,24 +4,29 @@
   hosts: localhost
   connection: local
   gather_facts: false
-  vars:
-    molecule_podman_command: "{{ molecule_yml.platforms[0].command | default('') }}"
-    molecule_podman_image: "{{ molecule_yml.platforms[0].image }}"
-    molecule_privileged: "{{ molecule_yml.platforms[0].privileged | default(true) }}"
 
   tasks:
+    - name: Initialize podman network list
+      ansible.builtin.set_fact:
+        __podman_networks: []
+
+    - name: Collect networks from platforms[].network
+      ansible.builtin.set_fact:
+        __podman_networks: "{{ __podman_networks + (item.network if (item.network is sequence and item.network is not string) else [item.network]) }}"
+      with_items: "{{ molecule_yml.platforms }}"
+      when:
+        - item.network is defined
+
     - name: Create podman network(s)
       containers.podman.podman_network:
         name: "{{ item }}"
-      with_items: "{{ molecule_yml.platforms | selectattr('networks', 'defined')
-                    | map(attribute='networks') | flatten | map(attribute='name') | unique }}"
-      when: molecule_yml.platforms | selectattr('networks', 'defined') | list | length > 0
-
-    - name: Determine the CMD directives
-      ansible.builtin.set_fact:
-        molecule_podman_command: >-
-          {{ molecule_podman_command }}
-      when: molecule_podman_command != ''
+        state: present
+      with_items: "{{ __podman_networks | default([]) | unique }}"
+      when:
+        - __podman_networks | default([]) | length > 0
+        - item not in ['bridge', 'none', 'host', 'slirp4netns']
+        - item is not match('^ns:')
+        - item is not match('^container:')
 
     - name: Create molecule instance(s)
       containers.podman.podman_container:
@@ -29,14 +34,15 @@
         image: "{{ item.image }}"
         state: started
         recreate: false
-        command: "{{ molecule_podman_command }}"
-        privileged: "{{ item.privileged | default(molecule_privileged) }}"
+        command: "{{ item.podman_command | default('sleep 1d') }}"
+        privileged: "{{ item.privileged | default(false) }}"
+        log_driver: "{{ hostvars[item]['container_log_driver'] | default('json-file') }}"
         volume: "{{ item.volumes | default(omit) }}"
         cap_add: "{{ item.capabilities | default(omit) }}"
         expose: "{{ item.exposed_ports | default(omit) }}"
         publish: "{{ item.published_ports | default(omit) }}"
         ulimit: "{{ item.ulimits | default(omit) }}"
-        network: "{{ item.networks | default(omit) }}"
+        network: "{{ item.network | default(omit) }}"
         dns: "{{ item.dns_servers | default(omit) }}"
         env: "{{ item.env | default({}) }}"
         tmpfs: "{{ item.tmpfs | default(omit) }}"

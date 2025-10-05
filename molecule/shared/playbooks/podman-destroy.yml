@@ -23,10 +23,24 @@
       retries: 300
       with_items: "{{ server.results }}"
 
-    - name: Delete podman networks(s)
+    - name: Initialize podman network list
+      ansible.builtin.set_fact:
+        __podman_networks: []
+
+    - name: Collect networks from platforms[].network
+      ansible.builtin.set_fact:
+        __podman_networks: "{{ __podman_networks + (item.network if (item.network is sequence and item.network is not string) else [item.network]) }}"
+      with_items: "{{ molecule_yml.platforms }}"
+      when:
+        - item.network is defined
+
+    - name: Delete podman network(s)
       containers.podman.podman_network:
         name: "{{ item }}"
         state: absent
-      with_items: "{{ molecule_yml.platforms | selectattr('networks', 'defined')
-                    | map(attribute='networks') | flatten | map(attribute='name') | unique }}"
-      when: molecule_yml.platforms | selectattr('networks', 'defined') | list | length > 0
+      with_items: "{{ __podman_networks | default([]) | unique }}"
+      when:
+        - __podman_networks | default([]) | length > 0
+        - item not in ['bridge', 'none', 'host', 'slirp4netns']
+        - item is not match('^ns:')
+        - item is not match('^container:')

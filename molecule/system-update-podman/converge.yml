@@ -5,6 +5,10 @@
   hosts: all
   gather_facts: true # Disable if your role does not rely on facts
   tasks:
-    - name: Print Hello World
+    - name: Print vars
       ansible.builtin.debug:
-        msg: "Hello World"
+        var: hostvars[inventory_hostname]
+
+# - ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
+#   vars:
+#     ansible_limit: all
