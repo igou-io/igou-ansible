@@ -6,22 +6,35 @@ This guide shows how to organize molecule testing contexts using modern practice
 
 ```
 molecule/
-├── shared/                    # Shared resources
-│   ├── templates/            # Template configurations
-│   │   ├── podman.yml       # Podman-based testing
-│   │   ├── kubernetes.yml   # Kubernetes testing
-│   │   └── matrix.yml       # Matrix testing template
-│   ├── playbooks/           # Shared playbooks
-│   │   ├── podman-create.yml
-│   │   ├── podman-destroy.yml
+├── README.md
+├── default
+│   ├── converge.yml
+│   ├── create.yml
+│   ├── destroy.yml
+│   ├── molecule.yml
+│   └── verify.yml
+├── kubernetes-bootstrap-kind
+│   ├── converge.yml
+│   ├── molecule.yml
+│   └── verify.yml
+├── kubernetes-create-serviceaccount-kind
+│   ├── converge.yml
+│   ├── molecule.yml
+│   └── verify.yml
+├── shared
+│   ├── base.yml
+│   ├── playbooks
+│   │   ├── docker-create.yml
+│   │   ├── docker-destroy.yml
 │   │   ├── kind-create.yml
-│   │   └── kind-destroy.yml
-│   ├── base.yml            # Common base settings
-│   └── test-runner.sh      # Helper script
-├── Makefile                # Build automation
-├── system-update-v2/       # Example scenarios
-├── kubernetes-bootstrap-v2/
-└── ...
+│   │   ├── kind-destroy.yml
+│   │   ├── podman-create.yml
+│   │   └── podman-destroy.yml
+│   └── templates
+│       ├── docker.yml
+│       ├── kubernetes.yml
+│       └── matrix.yml
+...
 ```
 
 ## Key Principles
@@ -84,23 +97,12 @@ make matrix-test SCENARIO=system-update
 # Custom image and settings
 MOLECULE_DISTRO_IMAGE="ubuntu:20.04" \
 MOLECULE_PRIVILEGED=false \
-TEST_ENVIRONMENT=staging \
     molecule test -s system-update
 
 # Kubernetes testing with custom kubeconfig
 KUBECONFIG=/path/to/config \
 K8S_AUTH_VERIFY_SSL=true \
     molecule test -s kubernetes-bootstrap
-```
-
-### Parallel Testing
-
-```bash
-# Run multiple scenarios in parallel
-make test-all
-
-# Or using the test runner
-./shared/test-runner.sh parallel system-update kubernetes-bootstrap default
 ```
 
 ## Template Types
@@ -157,7 +159,6 @@ application-deployment-test
 # Environment variables
 MOLECULE_DISTRO=ubuntu22
 MOLECULE_PLATFORM_NAME=test-instance
-TEST_ENVIRONMENT=staging
 ```
 
 ### 4. Shared Resources
@@ -166,71 +167,9 @@ TEST_ENVIRONMENT=staging
 - Use templates in `shared/templates/`
 - Document shared variables in `shared/base.yml`
 
-## Development Workflow
-
-### 1. Create New Scenario
-
-```bash
-# Copy from template
-make copy-template SCENARIO=my-app-test TEMPLATE=podman
-
-# Customize the molecule.yml as needed
-# Add specific platforms, variables, etc.
-```
-
-### 2. Development Testing
-
-```bash
-# Create environment without running full test
-make dev-create SCENARIO=my-app-test
-
-# Iterate on your playbook
-make dev-converge SCENARIO=my-app-test
-
-# Clean up when done
-make dev-destroy SCENARIO=my-app-test
-```
-
-### 3. CI/CD Integration
-
-```bash
-# In CI pipeline
-make lint                    # Lint all scenarios
-make syntax                  # Check syntax
-make test-all               # Run all tests
-```
-
 ## Matrix Testing
 
-### Environment-Driven Matrix
-
-```bash
-# Test multiple distributions
-for distro in rockylinux9 ubuntu22 centos9; do
-    MOLECULE_DISTRO=$distro molecule test -s system-update
-done
-
-# Or use make target
-make matrix-test SCENARIO=system-update
-```
-
-### Multiple Environment Testing
-
-```bash
-# Test different environments
-for env in development staging production; do
-    TEST_ENVIRONMENT=$env molecule test -s my-scenario
-done
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Module not found**: Ensure `containers.podman` collection is installed
-2. **Permission denied**: Check `MOLECULE_PRIVILEGED` setting
-3. **Image not found**: Verify `MOLECULE_DISTRO_IMAGE` value
-4. **Kubeconfig issues**: Set `KUBECONFIG` environment variable
+Matrix tests are leveraged by Github Actions runners
 
 ### Debugging
 
@@ -242,14 +181,3 @@ MOLECULE_VERBOSITY=2 molecule test -s scenario-name
 molecule create -s scenario-name
 molecule converge -s scenario-name --debug
 ```
-
-## Migration from Custom Code
-
-If you have existing custom Python code:
-
-1. **Replace custom inheritance** with template copying
-2. **Use environment variables** instead of config generation
-3. **Leverage Makefile** or shell scripts for automation
-4. **Use shared playbooks** for common operations
-
-This approach uses only native molecule features and standard tooling, making it more maintainable and easier to understand.
