@@ -2,7 +2,6 @@
 # Playbook: bootstrap-cluster.yml
 # Purpose: Bootstrap Kubernetes cluster with GitOps and secret management
 # Target: Kubernetes API (localhost connection)
-# Dependencies: kubernetes.core collection, external access to GitHub
 # Tags: bootstrap, cluster, gitops, external-secrets, argocd
 #
 # This playbook is very bias to my repos and will require some changes to be used for other projects
