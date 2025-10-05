@@ -1,0 +1,104 @@
+---
+- name: Verify Kubernetes cluster bootstrap
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    overlay: test
+    vault_name: "molecule-testing"
+    cluster_bootstrap:
+      argocd_overlay: "{{ overlay }}"
+      onepassword_vault: "{{ vault_name }}"
+
+  module_defaults:
+    kubernetes.core.k8s:
+      verify_ssl: false
+
+  pre_tasks:
+    - name: fail if K8S_AUTH_API_KEY and K8S_AUTH_HOST are set
+      ansible.builtin.fail:
+        msg: "K8S_AUTH_API_KEY and K8S_AUTH_HOST should not be set in the environment."
+      when: lookup('env', 'K8S_AUTH_API_KEY') != '' or lookup('env', 'K8S_AUTH_HOST') != ''
+
+  tasks:
+    - name: Verify cluster connectivity
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: default
+      register: cluster_connectivity_check
+      failed_when: cluster_connectivity_check.resources | length == 0
+
+    - name: Verify required namespaces exist
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: "{{ item }}"
+      loop:
+        - external-secrets
+        - argocd
+      register: namespace_check
+      failed_when: namespace_check.resources | selectattr('failed', 'defined') | list | length > 0
+
+    - name: Verify argocd namespace has external-secrets label
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: argocd
+      register: argocd_ns
+      failed_when:
+        - argocd_ns.resources[0].metadata.labels['external.secrets.io/enabled'] != 'true'
+
+
+    - name: Verify External Secrets Operator deployment is running
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: external-secrets
+        namespace: external-secrets
+      register: ext_secrets_deployment
+      failed_when:
+        - ext_secrets_deployment.resources | length == 0
+        - ext_secrets_deployment.resources[0].status.readyReplicas | default(0) < 1
+
+    - name: Verify ArgoCD deployment is running
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: argocd-server
+        namespace: argocd
+      register: argocd_deployment
+      failed_when:
+        - argocd_deployment.resources | length == 0
+        - argocd_deployment.resources[0].status.readyReplicas | default(0) < 1
+
+    - name: Verify OnePassword token secret exists
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: onepassword-token
+        namespace: external-secrets
+      register: op_token_secret
+      failed_when: op_token_secret.resources | length == 0
+
+    - name: Verify ClusterSecretStore exists
+      kubernetes.core.k8s_info:
+        api_version: external-secrets.io/v1
+        kind: ClusterSecretStore
+        name: onepassword
+      register: cluster_secret_store
+      failed_when: cluster_secret_store.resources | length == 0
+
+    - name: Verify ClusterSecretStore is ready
+      kubernetes.core.k8s_info:
+        api_version: external-secrets.io/v1
+        kind: ClusterSecretStore
+        name: onepassword
+      register: css_status
+      failed_when:
+        - css_status.resources[0].status.conditions is not defined
+        - css_status.resources[0].status.conditions |
+          selectattr('type', 'equalto', 'Ready') |
+          selectattr('status', 'equalto', 'True') |
+          list | length == 0
