@@ -1,0 +1,211 @@
+---
+# Playbook: bootstrap-cluster.yml
+# Purpose: Bootstrap Kubernetes cluster with GitOps and secret management
+# Target: Kubernetes API (localhost connection)
+# Dependencies: kubernetes.core collection, external access to GitHub
+# Tags: bootstrap, cluster, gitops, external-secrets, argocd
+#
+# This playbook is very bias to my repos and will require some changes to be used for other projects
+# Required Variables:
+#   - overlay: ArgoCD overlay to deploy
+#   - vault_name: OnePassword vault name for secret storage
+#   - onepassword_token: OnePassword service account token
+#
+# Optional Variables:
+#   - token_force_update: Force update OnePassword token (default: false)
+#   - cluster_bootstrap: Override component configuration (advanced)
+
+- name: "Bootstrap Kubernetes cluster with GitOps and secret management"
+  hosts: "{{ ansible_limit | default('localhost') }}"
+  gather_facts: false
+  connection: local
+
+  vars:
+    # Component versions - pin for stability
+    cluster_bootstrap:
+      argocd_overlay: "{{ overlay | default('production') }}"
+      onepassword_vault: "{{ vault_name | default('test') }}"
+      wait_timeout: 300
+      retry_count: 3
+
+    # Namespace configuration
+    cluster_namespaces:
+      - name: external-secrets
+        labels: {}
+      - name: argocd
+        labels:
+          external.secrets.io/enabled: "true"
+
+  module_defaults:
+    kubernetes.core.k8s:
+      verify_ssl: false
+
+  tags:
+    - bootstrap
+    - cluster
+    - gitops
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - onepassword_token is defined
+          - onepassword_token | length > 0
+          - overlay is defined
+          - vault_name is defined
+        fail_msg: "Required variables: onepassword_token, overlay, vault_name"
+
+    - name: Verify cluster connectivity
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: default
+      register: cluster_connectivity_check
+      failed_when: cluster_connectivity_check.resources | length == 0
+
+  tasks:
+    - name: Bootstrap cluster foundation
+      delegate_to: localhost
+      tags: foundation
+      block:
+        - name: Create required namespaces
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: "{{ item.name }}"
+                labels: "{{ item.labels }}"
+          loop: "{{ cluster_namespaces }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+    - name: Deploy External Secrets Operator
+      delegate_to: localhost
+      tags: external-secrets
+      block:
+        - name: Deploy External Secrets Operator
+          kubernetes.core.k8s:
+            state: present
+            definition: >-
+              {{ lookup("kubernetes.core.kustomize",
+                       dir="https://github.com/igou-io/igou-kubernetes/config/" +
+                           cluster_bootstrap.argocd_overlay + "/external-secrets?ref=master",
+                       enable_helm=true) }}
+          register: ext_secrets_deploy
+          retries: "{{ cluster_bootstrap.retry_count }}"
+          delay: 15
+          until: ext_secrets_deploy is succeeded
+
+    - name: Deploy ArgoCD
+      delegate_to: localhost
+      tags:
+        - argocd
+      block:
+        - name: Deploy ArgoCD application
+          kubernetes.core.k8s:
+            state: present
+            definition: >-
+              {{ lookup("kubernetes.core.kustomize",
+                       dir="https://github.com/igou-io/igou-kubernetes/config/" +
+                           cluster_bootstrap.argocd_overlay + "/argocd?ref=master") }}
+          register: argocd_deploy
+          retries: "{{ cluster_bootstrap.retry_count }}"
+          delay: 15
+          until: argocd_deploy is succeeded
+
+        - name: Wait for ArgoCD server readiness
+          kubernetes.core.k8s_info:
+            api_version: apps/v1
+            kind: Deployment
+            name: argocd-server
+            namespace: argocd
+            wait: true
+            wait_condition:
+              type: Available
+              status: "True"
+            wait_timeout: "{{ cluster_bootstrap.wait_timeout }}"
+
+    - name: Configure OnePassword integration
+      delegate_to: localhost
+      tags: onepassword
+      block:
+        - name: Check existing OnePassword token
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Secret
+            name: onepassword-token
+            namespace: external-secrets
+          register: existing_op_token
+
+        - name: Create OnePassword credentials secret
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: onepassword-token
+                namespace: external-secrets
+                annotations:
+                  managed-by: ansible
+                  last-updated: "{{ now(utc=true,fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+                labels:
+                  bootstrap-phase: secrets
+              type: Opaque
+              stringData:
+                token: "{{ onepassword_token }}"
+          no_log: true
+          when: existing_op_token.resources | length == 0 or token_force_update | default(false)
+
+        - name: Create OnePassword ClusterSecretStore
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: external-secrets.io/v1
+              kind: ClusterSecretStore
+              metadata:
+                name: onepassword
+                annotations:
+                  managed-by: ansible
+                  bootstrap-phase: secrets
+              spec:
+                conditions:
+                - namespaceSelector:
+                    matchLabels:
+                      external.secrets.io/enabled: "true"
+                provider:
+                  onepasswordSDK:
+                    vault: "{{ cluster_bootstrap.onepassword_vault }}"
+                    auth:
+                      serviceAccountSecretRef:
+                        name: onepassword-token
+                        key: token
+                        namespace: external-secrets
+          register: css_creation_result
+          retries: 10
+          delay: 15
+          until: css_creation_result is succeeded
+          failed_when:
+            - css_creation_result is failed
+            - "'webhook' not in css_creation_result.msg | default('')"
+            - "'500' not in css_creation_result.msg | default('')"
+            - "'connection refused' not in css_creation_result.msg | default('') | lower"
+
+      rescue:
+        - name: Handle bootstrap failure
+          ansible.builtin.fail:
+            msg: |
+              - Variable configuration (overlay: {{ overlay }}, vault: {{ cluster_bootstrap.onepassword_vault }})
+
+  post_tasks:
+    - name: Display bootstrap summary
+      ansible.builtin.debug:
+        msg: |
+          Cluster bootstrap completed successfully!
+
+          Components deployed:
+          External Secrets Operator (overlay: {{ cluster_bootstrap.argocd_overlay }})
+          ArgoCD (overlay: {{ cluster_bootstrap.argocd_overlay }})
+          OnePassword Integration (vault: {{ cluster_bootstrap.onepassword_vault }})
