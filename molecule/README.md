@@ -1,6 +1,10 @@
-# Modern Molecule Organization Guide
+# Molecule testing
 
-This guide shows how to organize molecule testing contexts using modern practices and native molecule features, without custom Python code.
+These tests are bias towards testing against scenarios in my homelab without the need to reprovision certain things. There is a high probability this contains some antipatterns when used in professional settings. I just want to be able to test certain things I rarely do in "production" and are at high risk of the infrastructure components "drifting" (ie, I'm provisioning a fresh kubernetes/openshift cluster and bootstrapping a gitops/secrets controller. Maybe there has been 6 major kubernetes releases since the last time I did that and the depending compoenents have their own lifecycle)
+
+The concepts used in building/organizing molecule.yml can be fit into role/collection testing.
+
+Additionally, some tests in here are just to keep around as a reference to help building molecule scenarios (ie, system-update-kubevirt, I don't actually have a need for my own isolated test of that role, I just want a working example using ansible-native kubevirt provisioning)
 
 ## Directory Structure
 
@@ -65,6 +69,8 @@ provisioner:
 ```
 
 ### 3. Template-Based Scenario Creation
+
+The functionality here has not been implemented
 
 Use templates as starting points:
 
