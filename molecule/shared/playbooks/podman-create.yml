@@ -6,17 +6,23 @@
   gather_facts: false
 
   tasks:
+    # Initialize an empty list to collect all custom podman networks needed by the platforms
     - name: Initialize podman network list
       ansible.builtin.set_fact:
         __podman_networks: []
 
+    # Iterate over each platform defined in molecule_yml.platforms
+    # If the platform has a 'network' key, append its value(s) to the __podman_networks list.
+    # Handles both single network (string) and multiple networks (list).
     - name: Collect networks from platforms[].network
       ansible.builtin.set_fact:
-        __podman_networks: "{{ __podman_networks + (item.network if (item.network is sequence and item.network is not string) else [item.network]) }}"
-      with_items: "{{ molecule_yml.platforms }}"
+        __podman_networks: "{{ __podman_networks + (item['network'] if (item['network'] is sequence and item['network'] is not string) else [item['network']]) }}"
+      with_items: "{{ molecule_yml['platforms'] }}"
       when:
-        - item.network is defined
+        - item['network'] is defined
 
+    # Create all unique podman networks collected above, except for special built-in or reserved networks.
+    # Skips creation for default networks like 'bridge', 'none', 'host', 'slirp4netns', and for namespace/container references.
     - name: Create podman network(s)
       containers.podman.podman_network:
         name: "{{ item }}"
@@ -30,32 +36,32 @@
 
     - name: Create molecule instance(s)
       containers.podman.podman_container:
-        name: "{{ item.name }}"
-        image: "{{ item.image }}"
+        name: "{{ item['name'] }}"
+        image: "{{ item['image'] }}"
         state: started
         recreate: false
-        command: "{{ item.podman_command | default('sleep 1d') }}"
-        privileged: "{{ item.privileged | default(false) }}"
+        command: "{{ item['command'] | default('sleep 1d') }}"
+        privileged: "{{ item['privileged'] | default(false) }}"
         log_driver: "{{ hostvars[item]['container_log_driver'] | default('json-file') }}"
-        volume: "{{ item.volumes | default(omit) }}"
-        cap_add: "{{ item.capabilities | default(omit) }}"
-        expose: "{{ item.exposed_ports | default(omit) }}"
-        publish: "{{ item.published_ports | default(omit) }}"
-        ulimit: "{{ item.ulimits | default(omit) }}"
-        network: "{{ item.network | default(omit) }}"
-        dns: "{{ item.dns_servers | default(omit) }}"
-        env: "{{ item.env | default({}) }}"
-        tmpfs: "{{ item.tmpfs | default(omit) }}"
-        cgroupns: "{{ item.cgroupns_mode | default(omit) }}"
+        volume: "{{ item['volumes'] | default(omit) }}"
+        cap_add: "{{ item['capabilities'] | default(omit) }}"
+        expose: "{{ item['exposed_ports'] | default(omit) }}"
+        publish: "{{ item['published_ports'] | default(omit) }}"
+        ulimit: "{{ item['ulimits'] | default(omit) }}"
+        network: "{{ item['network'] | default(omit) }}"
+        dns: "{{ item['dns_servers'] | default(omit) }}"
+        env: "{{ item['env'] | default({}) }}"
+        tmpfs: "{{ item['tmpfs'] | default(omit) }}"
+        cgroupns: "{{ item['cgroupns_mode'] | default(omit) }}"
       register: server
-      with_items: "{{ molecule_yml.platforms }}"
+      with_items: "{{ molecule_yml['platforms'] }}"
       async: 7200
       poll: 0
 
     - name: Wait for instance(s) creation to complete
       ansible.builtin.async_status:
-        jid: "{{ item.ansible_job_id }}"
+        jid: "{{ item['ansible_job_id'] }}"
       register: podman_jobs
       until: podman_jobs.finished
       retries: 300
-      with_items: "{{ server.results }}"
+      with_items: "{{ server['results'] }}"

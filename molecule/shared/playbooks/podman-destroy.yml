@@ -8,20 +8,20 @@
   tasks:
     - name: Destroy molecule instance(s)
       containers.podman.podman_container:
-        name: "{{ item.name }}"
+        name: "{{ item['name'] }}"
         state: absent
       register: server
-      with_items: "{{ molecule_yml.platforms }}"
+      with_items: "{{ molecule_yml['platforms'] }}"
       async: 7200
       poll: 0
 
     - name: Wait for instance(s) deletion to complete
       ansible.builtin.async_status:
-        jid: "{{ item.ansible_job_id }}"
+        jid: "{{ item['ansible_job_id'] }}"
       register: podman_jobs
       until: podman_jobs.finished
       retries: 300
-      with_items: "{{ server.results }}"
+      with_items: "{{ server['results'] }}"
 
     - name: Initialize podman network list
       ansible.builtin.set_fact:
@@ -29,10 +29,10 @@
 
     - name: Collect networks from platforms[].network
       ansible.builtin.set_fact:
-        __podman_networks: "{{ __podman_networks + (item.network if (item.network is sequence and item.network is not string) else [item.network]) }}"
-      with_items: "{{ molecule_yml.platforms }}"
+        __podman_networks: "{{ __podman_networks + (item['network'] if (item['network'] is sequence and item['network'] is not string) else [item['network']]) }}"
+      with_items: "{{ molecule_yml['platforms'] }}"
       when:
-        - item.network is defined
+        - item['network'] is defined
 
     - name: Delete podman network(s)
       containers.podman.podman_network:
