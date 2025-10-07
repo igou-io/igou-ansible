@@ -1,14 +1,8 @@
 ---
 # Purpose: bring the instance to the desired state by running the role under test.
 # Molecule calls this playbook with `molecule converge`.
-- name: Converge
-  hosts: all
-  gather_facts: true # Disable if your role does not rely on facts
-  tasks:
-    - name: Print vars
-      ansible.builtin.debug:
-        var: hostvars[inventory_hostname]
 
-# - ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
-#   vars:
-#     ansible_limit: all
+- ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
+  vars:
+    ansible_limit: all
+    update_reboot: false

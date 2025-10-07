@@ -18,13 +18,11 @@ platforms:
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     cgroupns_mode: host
-    privileged: false
-    network: rocky
+    privileged: true
     pre_build_image: true
   - name: "ubuntu-20"
     image: docker.io/geerlingguy/docker-ubuntu2004-ansible:latest
     command: ${MOLECULE_DOCKER_COMMAND:-""}
-    network: ubuntu
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     cgroupns_mode: host
@@ -52,7 +50,7 @@ platforms:
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     cgroupns_mode: host
-    privileged: false
+    privileged: true
     pre_build_image: true
 
 provisioner:
@@ -60,7 +58,7 @@ provisioner:
   config_options:
     defaults:
       host_key_checking: false
-      verbosity: 0
+      verbosity: 1
   playbooks:
     create: ../shared/playbooks/podman-create.yml
     destroy: ../shared/playbooks/podman-destroy.yml
@@ -71,6 +69,7 @@ provisioner:
       all:
         ansible_connection: containers.podman.podman
         update_cache: true
+        ansible_become: false
         reboot_required_check: true
 
 lint: |
