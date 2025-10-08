@@ -1,0 +1,100 @@
+---
+# Kubernetes cluster create playbook (Kind)
+- name: Create Openshift cluster with CRC
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    __crc_cleanup: "{{ molecule_yml['driver']['cleanup'] | default('true') }}"
+    __crc_setup: "{{ molecule_yml['driver']['setup'] | default('true') }}"
+    __crc_config: "{{ molecule_yml['platforms'][0]['config'] | default(omit) }}"
+    __crc_persistent: "{{ molecule_yml['driver']['persistent'] | default('false') }}"
+
+  pre_tasks:
+    - name: Fail if K8S_AUTH_API_KEY and K8S_AUTH_HOST are set
+      ansible.builtin.fail:
+        msg: "K8S_AUTH_API_KEY and K8S_AUTH_HOST should not be set in the environment."
+      when: lookup('env', 'K8S_AUTH_API_KEY') != '' or lookup('env', 'K8S_AUTH_HOST') != ''
+
+    - name: Fail if more than one platform is defined (CRC only supports a single instance)
+      ansible.builtin.fail:
+        msg: "CRC only supports a single platform instance. Found {{ molecule_yml.platforms | length }}."
+      when: molecule_yml.platforms | length != 1
+
+  tasks:
+
+    - name: Check if crc cluster exists
+      ansible.builtin.command: >-
+        crc status -o json
+      register: crc_status_result
+      failed_when: crc_status_result.rc != 0
+      changed_when: false  # Status check doesn't change anything
+
+    - name: Parse crc status JSON
+      ansible.builtin.set_fact:
+        crc_status: "{{ crc_status_result.stdout | from_json }}"
+
+    - name: Debug output crc status
+      ansible.builtin.debug:
+        var: crc_status
+
+    - name: Fail if crc cluster already exists and persistent is false
+      ansible.builtin.fail:
+        msg: "CRC cluster already exists and persistent is false."
+      when: crc_status['success'] == true and __crc_persistent == false
+
+    - name: Run crc setup
+      ansible.builtin.command: >-
+        crc setup -o json
+      register: crc_setup_result
+      failed_when: crc_setup_result.rc != 0
+      changed_when: false  # Status check doesn't change anything
+      when: __crc_setup == true
+
+    - name: Parse crc setup JSON
+      ansible.builtin.set_fact:
+        crc_setup: "{{ crc_setup_result.stdout | from_json }}"
+
+    - name: debug output crc setup result
+      ansible.builtin.debug:
+        var: crc_setup
+
+    - name: Set crc config
+      ansible.builtin.command:
+        crc config set {{ item['key'] }} {{ item['value'] }}
+      loop: "{{ molecule_yml.platforms[0].config | dict2items }}"
+      when: molecule_yml.platforms[0].config is defined
+
+    - name: run crc start
+      ansible.builtin.command: >-
+        crc start -o json
+      register: crc_start_result
+      failed_when: crc_start_result.rc != 0
+      changed_when: false  # Status check doesn't change anything
+
+    - name: Parse crc start JSON
+      ansible.builtin.set_fact:
+        crc_start: "{{ crc_start_result.stdout | from_json }}"
+
+    - name: debug output crc start result
+      ansible.builtin.debug:
+        var: crc_start
+
+    - name: Wait for cluster to be ready
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Node
+        wait: true
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      register: cluster_ready_result
+      retries: 5
+      delay: 3
+      until: cluster_ready_result is succeeded
+
+    - name: Debug output cluster ready result
+      ansible.builtin.debug:
+        var: cluster_ready_result

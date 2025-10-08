@@ -1,0 +1,107 @@
+---
+# Kubernetes cluster create playbook (Kind)
+- name: Create Openshift cluster with CRC
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    __crc_cleanup: "{{ molecule_yml['driver']['cleanup'] | default('true') }}"
+    __crc_setup: "{{ molecule_yml['driver']['setup'] | default('true') }}"
+    __crc_config: "{{ molecule_yml['platforms'][0]['config'] | default(omit) }}"
+    __crc_persistent: "{{ molecule_yml['driver']['persistent'] | default('false') }}"
+    __crc_cleanup_ignore_errors: "{{ molecule_yml['driver']['cleanup_ignore_errors'] | default('false') }}"
+
+  pre_tasks:
+    - name: Fail if K8S_AUTH_API_KEY and K8S_AUTH_HOST are set
+      ansible.builtin.fail:
+        msg: "K8S_AUTH_API_KEY and K8S_AUTH_HOST should not be set in the environment."
+      when: lookup('env', 'K8S_AUTH_API_KEY') != '' or lookup('env', 'K8S_AUTH_HOST') != ''
+
+    - name: Fail if more than one platform is defined (CRC only supports a single instance)
+      ansible.builtin.fail:
+        msg: "CRC only supports a single platform instance. Found {{ molecule_yml.platforms | length }}."
+      when: molecule_yml.platforms | length != 1
+
+  tasks:
+
+    - name: Check if crc cluster exists
+      ansible.builtin.command: >-
+        crc status -o json
+      register: crc_status_result
+      failed_when: false  # Never fail - we handle both cases
+      changed_when: false  # Status check doesn't change anything
+
+    - name: Parse crc status JSON
+      ansible.builtin.set_fact:
+        crc_status: "{{ crc_status_result.stdout | from_json }}"
+
+    - name: Debug output crc status
+      ansible.builtin.debug:
+        var: crc_status
+
+    - name: Debug output __crc_persistent and crc_status.success
+      ansible.builtin.debug:
+        msg: |
+          crc_status.success: {{ crc_status.success | bool }}
+          __crc_persistent: {{ __crc_persistent }}
+
+    - block:
+        - name: Delete crc cluster
+          ansible.builtin.command: >-
+            crc delete -f -o json
+          register: crc_delete_result
+          failed_when: crc_delete_result.rc != 0
+          changed_when: true
+
+        - name: Parse crc delete JSON
+          ansible.builtin.set_fact:
+            crc_delete: "{{ crc_delete_result.stdout | from_json }}"
+
+        - name: Debug output crc delete result
+          ansible.builtin.debug:
+            var: crc_delete
+
+        - name: Assert crc_delete result is expected
+          ansible.builtin.assert:
+            that:
+              - >
+                (crc_delete['error'] is defined and
+                 crc_delete['error'] is string and
+                 crc_delete['error'].startswith('Machine does not exist') and
+                 (crc_delete['success'] is defined and not crc_delete['success'] | bool))
+                or
+                (crc_delete['success'] is defined and crc_delete['success'] | bool)
+            fail_msg: >
+              "crc_delete result is unexpected: {{ crc_delete }}"
+            success_msg: >
+              "crc_delete result is as expected: {{ crc_delete }}"
+
+        - name: run crc cleanup
+          ansible.builtin.command: >-
+            crc cleanup -o json
+          register: crc_cleanup_result
+          failed_when: crc_cleanup_result.rc != 0
+          changed_when: true
+
+        - name: Parse crc cleanup JSON
+          ansible.builtin.set_fact:
+            crc_cleanup: "{{ crc_cleanup_result.stdout | from_json }}"
+
+        - name: Assert crc cleanup result is expected
+          ansible.builtin.assert:
+            that:
+              - crc_cleanup['success'] | bool
+            fail_msg: >
+              "crc_cleanup result is unexpected: {{ crc_cleanup }}"
+            success_msg: >
+              "crc_cleanup result is as expected: {{ crc_cleanup }}"
+          ignore_errors: "{{ __crc_cleanup_ignore_errors | default(false) | bool }}"
+
+        - name: Debug output crc cleanup result
+          ansible.builtin.debug:
+            var: crc_cleanup
+      when:
+        - not (__crc_persistent | bool)
+
+
+

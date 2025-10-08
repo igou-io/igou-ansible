@@ -1,0 +1,49 @@
+---
+prerun: false
+# Openshift-based testing template (CRC)
+# CRC is quite rigid in configuration so many of these parameters are not configurable and thus there aren't default assertions for environment varibales
+driver:
+  name: default
+  # If true, don't actually delete cluster in destroy step - Can be good for debugging, makes execution ignore cleanup variable
+  persistent: false
+  # Ignore cleanup errors
+  cleanup_ignore_errors: true
+  # crc setup configures the host machine to run crc (ie, /etc/hosts entries)
+  setup: true
+  # "stop" and "start" the instance in create sequence - useful for applying configurations without having to recreate the cluster
+  restart: true
+platforms:
+  - name: okd # All crc clusters are named crc, this variable is not referenced in execution
+    config:
+      bundle: docker://quay.io/crcont/okd-bundle:4.19.0-okd-scos.19
+      preset: okd
+      consent-telemetry: "no"
+
+provisioner:
+  name: ansible
+  inventory:
+    host_vars:
+      localhost:
+        ansible_python_interpreter: '{{ ansible_playbook_python }}'
+        kubeconfig: "{{ lookup('env', 'HOME') + '/.crc/machines/crc/kubeconfig' }}"
+        cluster_name: "${MOLECULE_K8S_CLUSTER:-crc}"
+
+  playbooks:
+    create: ../shared/playbooks/crc-create.yml
+    destroy: ../shared/playbooks/crc-destroy.yml
+    converge: converge.yml
+    verify: verify.yml
+
+lint: |
+  set -e
+  yamllint .
+  ansible-lint
+
+scenario:
+  name: openshift-bootstrap-crc
+  create_sequence:
+    - dependency
+    - create
+    - prepare
+  destroy_sequence:
+    - destroy
