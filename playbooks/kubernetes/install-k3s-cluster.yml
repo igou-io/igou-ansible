@@ -1,37 +1,51 @@
 ---
-- hosts: "{{ host }}"
+- hosts: "{{ ansible_limit | default('none') }}"
   name: Install k3s cluster
   become: true
   tags: install
   roles:
     - role: xanmanning.k3s
 
-- hosts: "{{ host }}"
+- hosts: "{{ ansible_limit | default('none') }}"
   name: Create secret store kubeconfig entry
   no_log: false
   gather_facts: false
   tasks:
+
+  # Copy /etc/rancher/k3s/k3s.yaml from a single master node determined by k3s_control_node=true
+
     - name: Get Kubeconfig from master
       tags: get_kubeconfig
       become: true
+      when: k3s_control_node | default(false) | bool
       block:
       - name: Slurp kubeconfig
         ansible.builtin.slurp:
           src: '/etc/rancher/k3s/k3s.yaml'
         register: kubeconfig
 
-    - name: Save secrets to 1password
-      delegate_to: localhost
-      tags: op_save
-      block:
-      - name: Create kubeconfig facts
+      - name: Set fact to hostname of first control node in group
         ansible.builtin.set_fact:
-          kubeconfig_contents: "{{ kubeconfig.content | b64decode | regex_replace('https://127.0.0.1:6443', 'https://' + ansible_host + ':6443') }}"
-          kubeconfig_dict: "{{ kubeconfig.content | b64decode | from_yaml }}"
+          first_k3s_control_node: >-
+            {{ (groups[ansible_limit] | map('extract', hostvars) |
+                selectattr('k3s_control_node', 'defined') |
+                selectattr('k3s_control_node') |
+                map(attribute='inventory_hostname') |
+                list).0 }}
+        delegate_to: localhost
+
+      - name: Save secrets to 1password
+        delegate_to: localhost
+        tags: op_save
+        block:
+        - name: Create kubeconfig facts
+          ansible.builtin.set_fact:
+            kubeconfig_contents: "{{ kubeconfig.content | b64decode | regex_replace('https://127.0.0.1:6443', 'https://' + first_k3s_control_node + ':6443') }}"
+            kubeconfig_dict: "{{ kubeconfig.content | b64decode | from_yaml }}"
 
       - name: Set facts for password
         ansible.builtin.set_fact:
-          op_item_name: "{{ host + '-kubeconfig-' + now(utc=true,fmt='%Y%m%d%H%M') }}"
+          op_item_name: "{{ ansible_limit + '-kubeconfig-' + now(utc=true,fmt='%Y%m%d%H%M') }}"
           client_certificate_data: "{{ kubeconfig_dict.users[0].user['client-certificate-data'] }}"
           client_key_data: "{{ kubeconfig_dict.users[0].user['client-key-data'] }}"
           api_url: "{{ 'https://' + ansible_host + ':6443' }}"

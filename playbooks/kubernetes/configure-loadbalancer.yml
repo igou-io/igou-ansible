@@ -1,0 +1,60 @@
+---
+# Is this insane?
+- ansible.builtin.import_playbook: ../tailscale/tailscale.yml
+  tags: tailscale
+  vars:
+      tailscale_state: latest
+      tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-loadbalancer-authkey', field='password', vault='awx') }}"
+      tailscale_tags:
+        - "loadbalancer"
+      tailscale_oauth_ephemeral: false
+      tailscale_oauth_preauthorized: true
+
+- hosts:  "{{ ansible_limit | default(none) }}"
+  name: Configure HAProxy Loadbalancer for external k8s cluster
+  tags: haproxy
+  become: true
+  roles:
+    - role: David-Igou.haproxy
+      # vars:
+      #   haproxy_socket: /var/lib/haproxy/stats
+      #   haproxy_chroot: /var/lib/haproxy
+      #   haproxy_user: haproxy
+      #   haproxy_group: haproxy
+      #   haproxy_frontends:
+      #     - name: "https-in"
+      #       bind_address: "0.0.0.0"
+      #       bind_port: 443
+      #       mode: "tcp"
+      #       default_backend: "https"
+      #       extra_options:
+      #         - "option tcplog"
+      #     - name: "minecraft-in"
+      #       bind_address: "0.0.0.0"
+      #       bind_port: 6969
+      #       mode: "tcp"
+      #       default_backend: "minecraft"
+      #       extra_options:
+      #         - "option tcplog"
+      #   haproxy_backends:
+      #     - name: "https"
+      #       mode: "tcp"
+      #       balance_method: "source"
+      #       servers:
+      #         - name: "ingress-nginx-ingress-nginx-controller"
+      #           address: "ingress-nginx-ingress-nginx-controller:443"
+      #           options:
+      #             - "check"
+      #             - "send-proxy"
+      #     - name: "minecraft"
+      #       mode: "tcp"
+      #       balance_method: "roundrobin"
+      #       servers:
+      #         - name: "minecraft-server-minecraft"
+      #           address: "minecraft-server-minecraft:25565"
+      #   # Extra global vars (see README for example usage).
+      #   haproxy_global_vars: []
+      #   # Default haproxy timeouts
+      #   haproxy_connect_timeout: 5000
+      #   haproxy_client_timeout: 50000
+      #   haproxy_server_timeout: 50000
