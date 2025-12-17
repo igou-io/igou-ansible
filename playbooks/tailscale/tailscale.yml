@@ -1,0 +1,20 @@
+---
+- hosts: "{{ ansible_limit | default(none) }}"
+  name: Install tailscale
+  become: true
+  gather_facts: true
+  vars:
+    tailscale_state: latest
+    tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-oauthkey-ansible', field='client-secret', vault='awx') }}"
+    tailscale_tags:
+      - "ansible"
+  tasks:
+    - name: Set up Tailscale
+      tags: tailscale
+      block:
+        - name: Set up Tailscale
+          ansible.builtin.include_role:
+            name: artis3n.tailscale.machine
+          vars:
+            verbose: true
+            state: "{{ tailscale_state }}"
