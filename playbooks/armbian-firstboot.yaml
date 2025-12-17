@@ -1,8 +1,35 @@
 ---
-- hosts: "{{ hosts }}"
+# Trick to run against a host not in the inventory
+# To do/add: system update, automatic reboot, boot from sd/os on nvme,
+# ansible-playbook -i rock-5a.dmz.igou.systems, playbooks/armbian-firstboot.yaml --ask-pass --ask-become-pass
+- hosts: "{{ ansible_limit | default('all') }}"
   name: Set up Armbian host on first boot
   become: true
+  vars:
+    ansible_user: root # armbian default user
+    ansible_password: 1234 # armbian default password
+    new_hostname: "{{ default(omit) }}"
+    new_ansible_user: igou
+    new_ansible_user_authorized_keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B"
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/"
   tasks:
+
+    # - name: test contents of vars
+    #   ansible.builtin.debug:
+    #     msg:
+    #       - "new_hostname={{ new_hostname }}"
+    #       - "inventory_hostname={{ inventory_hostname }}"
+
+    - name: Update /etc/hostname with new_hostname
+      ansible.builtin.copy:
+        dest: /etc/hostname
+        content: "{{ new_hostname }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: new_hostname is defined
+
     - name: Add local user
       ansible.builtin.user:
         name: igou
@@ -16,8 +43,9 @@
     - name: Add SSH public key for user
       ansible.builtin.authorized_key:
         user: igou
-        key: "{{ public_key }}"
+        key: "{{ item }}"
         state: present
+      loop: "{{ new_ansible_user_authorized_keys }}"
 
     - name: Ensure sudo is installed
       ansible.builtin.package:
