@@ -1,5 +1,5 @@
 ---
-- hosts: "{{ host }}"
+- hosts:  "{{ ansible_limit | default('none') }}"
   name: Configure remote vscode server
   gather_facts: true
   vars:
@@ -9,6 +9,7 @@
     virtctl_version: v1.2.0
     virtctl_url: "https://github.com/kubevirt/kubevirt/releases/download/{{ virtctl_version }}/virtctl-{{ virtctl_version }}-linux-amd64"
     oc_url: https://mirror.openshift.com/pub/openshift-v4/clients/oc/latest/linux/oc.tar.gz
+    crc_url: https://developers.redhat.com/content-gateway/file/pub/openshift-v4/clients/crc/2.54.0/crc-linux-amd64.tar.xz
     bashrc_exports:
       - { variable: "ANSIBLE_INVENTORY", value: "/home/igou/igou-inventory" }
       - { variable: "ANSIBLE_HOST_KEY_CHECKING", value: "False" }
@@ -22,6 +23,12 @@
       become: true
       tags: system
       block:
+
+        - name: Install gpg
+          ansible.builtin.package:
+            name: gpg
+            state: present
+            update_cache: true
 
         - name: Download and add the 1Password GPG key
           ansible.builtin.apt_key:
@@ -40,8 +47,6 @@
               - git
               - vim
               - 1password-cli
-              - openjdk-17-jdk
-              - pipx
               - podman
               - tree
               - curl
@@ -50,6 +55,11 @@
               - p7zip
               - nfs-common
               - sshpass
+              - pipx
+              - qemu-kvm
+              - libvirt-daemon
+              - libvirt-daemon-system
+              - network-manager
             update_cache: true
 
         - name: Install Terraform
@@ -69,16 +79,20 @@
             helm_version: v3.13.2
 
     - name: Install pipx dependencies
+      become: false
       tags: pip
       block:
+
         - name: Install ansible via pipx
           community.general.pipx:
+            executable: /home/igou/.local/bin/pipx
             state: present
             name: ansible
             install_deps: true
 
         - name: Install other packages via pipx
           community.general.pipx:
+            executable: /home/igou/.local/bin/pipx
             state: present
             name: "{{ item }}"
             install_deps: true
@@ -144,6 +158,7 @@
           mode: 0755
 
       - name: Clone repositories
+        ignore_errors: true
         ansible.builtin.git:
           repo: "{{ item.repo }}"
           dest: "{{ item.dest }}"
@@ -175,13 +190,16 @@
                                     "path": "igou-kubernetes"
                             },
                             {
-                                    "path": "igou-kubernetes-private"
+                                    "path": "igou-infrastructure"
                             },
                             {
                                     "path": "igou-openshift"
                             },
                             {
                                     "path": "roles"
+                            },
+                            {
+                                    "path": "scratch"
                             }
                     ],
                     "settings": {
@@ -225,9 +243,15 @@
         ansible.builtin.copy:
           dest: 1p-envs/ocp.env
           content: |
+            export GATEWAY_HOSTNAME=op://awx/aap/host
+            export GATEWAY_PASSWORD=op://awx/aap/password
+            export GATEWAY_USERNAME=op://awx/aap/username
             export CONTROLLER_HOST=op://awx/aap/host
             export CONTROLLER_PASSWORD=op://awx/aap/password
             export CONTROLLER_USERNAME=op://awx/aap/username
+            export AH_HOST=op://awx/aap/host
+            export AH_PASSWORD=op://awx/aap/password
+            export AH_USERNAME=op://awx/aap/username
             export ANSIBLE_VAULT_PASSWORD_FILE=/home/igou/igou-ansible/.vaultpassword.sh
             export ANSIBLE_VAULT_PASSWORD=op://awx/vault/password
             export K8S_AUTH_API_KEY=op://awx/ansible-robot-token/sa_token
@@ -237,15 +261,23 @@
   # This could be replaced with some 1p inject templating
 
       - name: Write kubeconfigs
+        tags: notest
         ansible.builtin.copy:
           dest: /home/igou/.kube/config_sno
           content: "{{ lookup('community.general.onepassword', 'sno-kubeconfig', field='kubeconfig', vault='awx') | b64decode }}"
 
-    - name: Set up Tailscale
-      tags: tailscale
-      block:
-        - name: Set up Tailscale
-          ansible.builtin.include_role:
-            name: artis3n.tailscale
-          vars:
-            tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-authkey', field='password', vault='awx') }}"
+#- ansible.builtin.import_playbook: tailscale/tailscale.yml
+#  tags:
+#    - tailscale
+#    - notest
+#  vars:
+#      tailscale_state: latest
+#      tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-oauthkey-varrock-east-bank-circa-2004', field='client-secret', vault='awx') }}"
+#      tailscale_tags:
+#        - "mytag"
+#      tailscale_args: "--advertise-routes=1.2.3.4/24 --advertise-exit-node"
+#      tailscale_oauth_ephemeral: false
+#      tailscale_oauth_preauthorized: true
+
+
+# Todo configure code-server, there are currently no roles

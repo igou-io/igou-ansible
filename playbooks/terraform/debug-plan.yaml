@@ -2,8 +2,8 @@
 - name: Terraform Plan and output result via debug module
   hosts: localhost
   gather_facts: false
-  environment:
-    AWS_REGION: "{{ aws_region }}"
+  # environment:
+  #   AWS_REGION: "{{ aws_region }}"
   tasks:
     - name: Set Up Directory
       block:
