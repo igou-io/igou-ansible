@@ -1,7 +1,9 @@
 ---
-- hosts: sno
+- hosts: "{{ ansible_limit | default('localhost') }}"
   name: Bootstrap Openshift Gitops and external-secrets operator, add an ansible serviceaccount and save the token to 1password
   gather_facts: false
+  environment:
+    KUBECONFIG: "{{ kubeconfig | default(omit)}}"
   tasks:
     - name: Create 1P Connect secrets, deploy and cluster-config application
       block:
@@ -16,45 +18,17 @@
                 labels:
                   openshift.io/cluster-monitoring: 'true'
 
-        - name: create external secrets namespace
+        - name: Create Gitops OperatorGroup
           kubernetes.core.k8s:
             state: present
             definition:
-              apiVersion: v1
-              kind: Namespace
+              apiVersion: operators.coreos.com/v1
+              kind: OperatorGroup
               metadata:
-                name: external-secrets-operator
-
-        - name: Create 1password-credentials.json
-          kubernetes.core.k8s:
-            state: present
-            definition:
-              apiVersion: v1
-              kind: Secret
-              metadata:
-                name: 1p-credentials
-                namespace: external-secrets-operator
-              type: Opaque
-              stringData:
-                1password-credentials.json: "{{ lookup('community.general.onepassword', 'sno-1p-credentials', field='1password-credentials.json', vault='awx') }}"
-
-        - name: Create 1password Connect Token
-          kubernetes.core.k8s:
-            state: present
-            definition:
-              apiVersion: v1
-              kind: Secret
-              metadata:
-                name: onepassword-connect-token
-                namespace: external-secrets-operator
-              type: Opaque
-              stringData:
-                token: "{{ lookup('community.general.onepassword', 'sno-1p-connect-token', field='token', vault='awx') }}"
-
-        - name: Deploy 1password Connect
-          kubernetes.core.k8s:
-            state: present
-            definition: '{{ lookup("kubernetes.core.kustomize", dir="https://github.com/igou-io/igou-openshift/config/sno/live/1password-connect?ref=main", enable_helm=true) }}'
+                name: openshift-gitops-operator
+                namespace: openshift-gitops-operator
+              spec:
+                upgradeStrategy: Default
 
         - name: Create Gitops Subscription
           kubernetes.core.k8s:
@@ -72,39 +46,51 @@
                 source: redhat-operators
                 sourceNamespace: openshift-marketplace
 
-        - name: Create Gitops OperatorGroup
+        - name: create external secrets namespace
           kubernetes.core.k8s:
             state: present
             definition:
-              apiVersion: operators.coreos.com/v1
-              kind: OperatorGroup
+              apiVersion: v1
+              kind: Namespace
               metadata:
-                name: openshift-gitops-operator
-                namespace: openshift-gitops-operator
-              spec:
-                upgradeStrategy: Default
+                name: external-secrets-operator
 
-        - name: Create Gitops ClusterRoleBinding
+        - name: Create 1password-token secret
           kubernetes.core.k8s:
             state: present
             definition:
-              kind: ClusterRoleBinding
-              apiVersion: rbac.authorization.k8s.io/v1
+              apiVersion: v1
+              kind: Secret
               metadata:
-                name: gitops-cluster-admin
-              subjects:
-                - kind: ServiceAccount
-                  name: openshift-gitops-argocd-application-controller
-                  namespace: openshift-gitops
-              roleRef:
-                apiGroup: rbac.authorization.k8s.io
-                kind: ClusterRole
-                name: cluster-admin
+                name: onepassword-token
+                namespace: external-secrets-operator
+                annotations:
+                  managed-by: ansible
+              type: Opaque
+              stringData:
+                token: "{{ onepassword_token }}"
+
+      #   - name: Create Gitops ClusterRoleBinding
+      #     kubernetes.core.k8s:
+      #       state: present
+      #       definition:
+      #         kind: ClusterRoleBinding
+      #         apiVersion: rbac.authorization.k8s.io/v1
+      #         metadata:
+      #           name: gitops-cluster-admin
+      #         subjects:
+      #           - kind: ServiceAccount
+      #             name: openshift-gitops-argocd-application-controller
+      #             namespace: openshift-gitops
+      #         roleRef:
+      #           apiGroup: rbac.authorization.k8s.io
+      #           kind: ClusterRole
+      #           name: cluster-admin
 
         - name: Create cluster-config application # Make cluster agnostic
           kubernetes.core.k8s:
             state: present
-            src: "https://raw.githubusercontent.com/igou-io/igou-openshift/main/config/sno/live/base-config/base-config-application.yaml"
+            definition: "{{ lookup('kubernetes.core.kustomize', enable_helm=True, dir='https://github.com/igou-io/igou-openshift/config/' + cluster_name + '/live/base-config/') }}"
           retries: 50
           delay: 15
       tags: create-objects
