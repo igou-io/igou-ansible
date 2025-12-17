@@ -1,27 +1,2 @@
-- name: Create Openshift cluster with CRC
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  environment:
-    KUBECONFIG: "{{ kubeconfig }}"
-    K8S_AUTH_KUBECONFIG: "{{ kubeconfig }}"
-    K8S_AUTH_VERIFY_SSL: "true"
-  tasks:
-
-    - name: Get node info
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Node
-        wait: true
-        wait_condition:
-          type: Ready
-          status: "True"
-        wait_timeout: 300
-      register: node_info
-      retries: 5
-      delay: 3
-      until: node_info is succeeded
-
-    - name: Debug output node info
-      ansible.builtin.debug:
-        var: node_info
+- name: Run playbooks/openshift/bootstrap_openshift_gitops.yaml
+  ansible.builtin.import_playbook: ../../playbooks/openshift/bootstrap_openshift_gitops.yaml

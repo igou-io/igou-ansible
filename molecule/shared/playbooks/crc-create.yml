@@ -9,6 +9,7 @@
     __crc_setup: "{{ molecule_yml['driver']['setup'] | default('true') }}"
     __crc_config: "{{ molecule_yml['platforms'][0]['config'] | default(omit) }}"
     __crc_persistent: "{{ molecule_yml['driver']['persistent'] | default('false') }}"
+    __crc_pull_secret_file: "{{ molecule_yml['platforms'][0]['pull_secret_file'] | default(omit) }}"
 
   pre_tasks:
     - name: Fail if K8S_AUTH_API_KEY and K8S_AUTH_HOST are set
@@ -20,6 +21,25 @@
       ansible.builtin.fail:
         msg: "CRC only supports a single platform instance. Found {{ molecule_yml.platforms | length }}."
       when: molecule_yml.platforms | length != 1
+
+    - name: Validate pull secret file exists
+      ansible.builtin.stat:
+        path: "{{ __crc_pull_secret_file }}"
+      register: pull_secret_stat
+      when: __crc_pull_secret_file is defined and __crc_pull_secret_file != omit
+
+    - name: Fail if pull secret file does not exist
+      ansible.builtin.fail:
+        msg: "Pull secret file does not exist: {{ __crc_pull_secret_file }}"
+      when:
+        - __crc_pull_secret_file is defined
+        - __crc_pull_secret_file != omit
+        - not pull_secret_stat.stat.exists
+
+    - name: Remove prexisting crc.json in $HOME/.crc/crc.json
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') + '/.crc/crc.json' }}"
+        state: absent
 
   tasks:
 
@@ -43,6 +63,12 @@
         msg: "CRC cluster already exists and persistent is false."
       when: crc_status['success'] == true and __crc_persistent == false
 
+    - name: Set crc config
+      ansible.builtin.command:
+        crc config set {{ item['key'] }} {{ item['value'] }}
+      loop: "{{ molecule_yml.platforms[0].config | dict2items }}"
+      when: molecule_yml.platforms[0].config is defined
+
     - name: Run crc setup
       ansible.builtin.command: >-
         crc setup -o json
@@ -59,15 +85,12 @@
       ansible.builtin.debug:
         var: crc_setup
 
-    - name: Set crc config
-      ansible.builtin.command:
-        crc config set {{ item['key'] }} {{ item['value'] }}
-      loop: "{{ molecule_yml.platforms[0].config | dict2items }}"
-      when: molecule_yml.platforms[0].config is defined
-
     - name: run crc start
       ansible.builtin.command: >-
         crc start -o json
+        {% if __crc_pull_secret_file is defined and __crc_pull_secret_file != omit %}
+        --pull-secret-file {{ __crc_pull_secret_file }}
+        {% endif %}
       register: crc_start_result
       failed_when: crc_start_result.rc != 0
       changed_when: false  # Status check doesn't change anything
