@@ -66,6 +66,6 @@ collections:
   - name: community.network
   - name: junipernetworks.junos
   - name: felixfontein.acme
-    version: 0.10.1
+    version: 0.11.0
   - name: artis3n.tailscale
     version: 1.2.0
