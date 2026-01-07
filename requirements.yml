@@ -1,9 +1,7 @@
 ---
 roles:
   - name: xanmanning.k3s
-    src: https://github.com/David-Igou/ansible-role-k3s.git
-    scm: git
-    version: ansible-2.19-fixes
+    version: v3.6.2
   - name: githubixx.iscsi_target
     version: 2.0.0
   - name: githubixx.ansible_role_wireguard
