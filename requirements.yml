@@ -34,9 +34,8 @@ roles:
   - name: David-Igou.haproxy
     version: 1.0.0
 collections:
-  - name: https://github.com/kubernetes-sigs/kubespray
-    type: git
-    version: master
+  - name: geerlingguy.kubernetes
+    version: 8.2.0
   - name: community.general
     version: 12.2.0
   - name: ansible.posix
