@@ -51,7 +51,7 @@ collections:
   - name: kubevirt.core
     version: 2.2.3
   - name: ansible.utils
-    version: 6.0.0
+    version: 6.0.1
   - name: https://github.com/David-Igou/ee_utilities.git
     version: devel
     type: git
