@@ -47,7 +47,7 @@ collections:
   - name: containers.podman
     version: 1.18.1
   - name: devsec.hardening
-    version: 10.4.0
+    version: 10.5.0
   - name: kubevirt.core
     version: 2.2.3
   - name: ansible.utils
