@@ -39,7 +39,7 @@ roles:
     version: 1.4.1
 collections:
   - name: community.general
-    version: 12.2.0
+    version: 12.3.0
   - name: ansible.posix
     version: 2.1.0
   - name: kubernetes.core
