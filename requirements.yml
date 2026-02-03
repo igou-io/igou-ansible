@@ -43,7 +43,7 @@ collections:
   - name: ansible.posix
     version: 2.1.0
   - name: kubernetes.core
-    version: 6.2.0
+    version: 6.3.0
   - name: containers.podman
     version: 1.19.0
   - name: devsec.hardening
