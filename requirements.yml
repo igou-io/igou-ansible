@@ -71,3 +71,5 @@ collections:
     version: 0.11.0
   - name: artis3n.tailscale
     version: 1.2.0
+  - name: arensb.truenas
+    version: 1.14.4
