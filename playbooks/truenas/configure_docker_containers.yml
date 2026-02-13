@@ -1,0 +1,244 @@
+---
+# Create ZFS datasets, set ownership, and deploy compose files for
+# Docker containers on TrueNAS.
+#
+# Each container gets a dataset at {pool}/containers/{name}, mounted at
+# /mnt/{pool}/containers/{name}.  The "containers" parent dataset is
+# created automatically via create_ancestors if it doesn't exist.
+#
+# Docker on TrueNAS runs in context: default (root runs docker-compose up).
+# All files and directories default to the configured owner/group (950:950).
+#
+# Variables (group_vars/truenas.yml):
+#   truenas_docker_containers_default_pool  — default ZFS pool
+#   truenas_docker_containers_default_owner — default UID (950)
+#   truenas_docker_containers_default_group — default GID (950)
+#   truenas_docker_containers[] — list of containers, each with:
+#     name        (required) — container/stack name
+#     state       (required) — present or absent
+#     pool        (optional) — ZFS pool (default: truenas_docker_containers_default_pool)
+#     owner       (optional) — override default UID
+#     group       (optional) — override default GID
+#     directories (optional) — list of subdirectories to create for volumes
+#       each entry is a string (inherits container owner/group) or a dict:
+#         path, owner (optional), group (optional)
+#
+#   Compose — exactly one of these is used, in priority order:
+#     compose_src (highest) — local file path to copy as-is
+#     compose               — inline YAML dict rendered verbatim
+#     image                 — triggers dynamic generation from template:
+#       image       (required) — container image
+#       ports       (optional) — list of port mappings
+#       volumes     (optional) — list of "dirname:/path/in/container" mounts
+#       environment (optional) — dict of env vars inlined in compose
+#       restart     (optional) — restart policy (default: unless-stopped)
+#       network_mode(optional) — network mode
+#       extra       (optional) — arbitrary dict merged into the service
+#
+#   Environment file (used alongside any compose mode):
+#     env_src — local .env file to copy
+#     env     — dict of key/value pairs rendered as a .env file
+#   In dynamic mode, env_file: [.env] is auto-added to the service.
+#
+# Tags: datasets, ownership, directories, compose, env, cleanup
+
+- name: Create container datasets via TrueNAS API
+  hosts: truenas
+  gather_facts: false
+  become: false
+  vars:
+    _default_pool: "{{ truenas_docker_containers_default_pool }}"
+    _present: >-
+      {{ truenas_docker_containers
+         | selectattr('state', 'defined')
+         | selectattr('state', 'equalto', 'present')
+         | list }}
+  tags: [datasets]
+  tasks:
+
+    - name: Create container dataset
+      arensb.truenas.filesystem:
+        name: "{{ (item.pool | default(_default_pool)) }}/containers/{{ item.name }}"
+        state: present
+        type: FILESYSTEM
+        create_ancestors: true
+      loop: "{{ _present }}"
+      loop_control:
+        label: "{{ (item.pool | default(_default_pool)) }}/containers/{{ item.name }}"
+      tags: [datasets]
+
+- name: Set container directory ownership and deploy compose files
+  hosts: truenas
+  gather_facts: false
+  become: true
+  vars:
+    _default_pool: "{{ truenas_docker_containers_default_pool }}"
+    _default_owner: "{{ truenas_docker_containers_default_owner }}"
+    _default_group: "{{ truenas_docker_containers_default_group }}"
+    _present: >-
+      {{ truenas_docker_containers
+         | selectattr('state', 'defined')
+         | selectattr('state', 'equalto', 'present')
+         | list }}
+  tasks:
+
+    # --- Ownership -----------------------------------------------------------
+
+    - name: Set ownership on container directory
+      ansible.builtin.file:
+        path: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}"
+        state: directory
+        owner: "{{ item.owner | default(_default_owner) }}"
+        group: "{{ item.group | default(_default_group) }}"
+      loop: "{{ _present }}"
+      loop_control:
+        label: "{{ item.name }} → {{ item.owner | default(_default_owner) }}:{{ item.group | default(_default_group) }}"
+      tags: [ownership]
+
+    # --- Subdirectories -------------------------------------------------------
+
+    - name: Create volume subdirectories
+      ansible.builtin.file:
+        path: "/mnt/{{ item.0.pool | default(_default_pool) }}/containers/{{ item.0.name }}/{{ item.1.path | default(item.1) }}"
+        state: directory
+        owner: "{{ item.1.owner | default(item.0.owner | default(_default_owner)) }}"
+        group: "{{ item.1.group | default(item.0.group | default(_default_group)) }}"
+      loop: "{{ _present | subelements('directories', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.path | default(item.1) }}"
+      tags: [directories]
+
+    # --- Compose: priority 1 — static file -----------------------------------
+
+    - name: Deploy compose file from local source
+      ansible.builtin.copy:
+        src: "{{ item.compose_src }}"
+        dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/docker-compose.yml"
+        owner: "{{ item.owner | default(_default_owner) }}"
+        group: "{{ item.group | default(_default_group) }}"
+        mode: "0644"
+      register: _compose_static
+      loop: >-
+        {{ _present
+           | selectattr('compose_src', 'defined')
+           | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [compose]
+
+    # --- Compose: priority 2 — inline dict ------------------------------------
+
+    - name: Deploy compose file from inline dict
+      ansible.builtin.copy:
+        content: "{{ item.compose | to_nice_yaml(indent=2) }}"
+        dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/docker-compose.yml"
+        owner: "{{ item.owner | default(_default_owner) }}"
+        group: "{{ item.group | default(_default_group) }}"
+        mode: "0644"
+      register: _compose_inline
+      loop: >-
+        {{ _present
+           | selectattr('compose', 'defined')
+           | rejectattr('compose_src', 'defined')
+           | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [compose]
+
+    # --- Compose: priority 3 — dynamic from template --------------------------
+
+    - name: Generate compose file from dynamic variables
+      ansible.builtin.template:
+        src: templates/docker-compose.yml.j2
+        dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/docker-compose.yml"
+        owner: "{{ item.owner | default(_default_owner) }}"
+        group: "{{ item.group | default(_default_group) }}"
+        mode: "0644"
+      vars:
+        _container: "{{ item }}"
+        _base: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}"
+      register: _compose_dynamic
+      loop: >-
+        {{ _present
+           | selectattr('image', 'defined')
+           | rejectattr('compose_src', 'defined')
+           | rejectattr('compose', 'defined')
+           | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [compose]
+
+    # --- Summary --------------------------------------------------------------
+
+    - name: Compose files deployed
+      ansible.builtin.debug:
+        msg: >-
+          {{ (_compose_static.results | default([])
+              + _compose_inline.results | default([])
+              + _compose_dynamic.results | default([]))
+             | rejectattr('skipped', 'defined')
+             | map(attribute='dest')
+             | list }}
+      tags: [compose]
+
+    # --- Environment file -----------------------------------------------------
+
+    - name: Deploy .env file from local source
+      ansible.builtin.copy:
+        src: "{{ item.env_src }}"
+        dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/.env"
+        owner: "{{ item.owner | default(_default_owner) }}"
+        group: "{{ item.group | default(_default_group) }}"
+        mode: "0600"
+      loop: >-
+        {{ _present
+           | selectattr('env_src', 'defined')
+           | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [env]
+
+    - name: Deploy .env file from inline variables
+      ansible.builtin.copy:
+        content: |
+          # Managed by Ansible — do not edit manually.
+          {% for key, value in item.env.items() %}
+          {{ key }}={{ value }}
+          {% endfor %}
+        dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/.env"
+        owner: "{{ item.owner | default(_default_owner) }}"
+        group: "{{ item.group | default(_default_group) }}"
+        mode: "0600"
+      loop: >-
+        {{ _present
+           | selectattr('env', 'defined')
+           | rejectattr('env_src', 'defined')
+           | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [env]
+
+# --- Cleanup: state=absent ---------------------------------------------------
+
+- name: Remove absent container datasets
+  hosts: truenas
+  gather_facts: false
+  become: false
+  vars:
+    _default_pool: "{{ truenas_docker_containers_default_pool }}"
+    _absent: >-
+      {{ truenas_docker_containers
+         | selectattr('state', 'defined')
+         | selectattr('state', 'equalto', 'absent')
+         | list }}
+  tags: [cleanup]
+  tasks:
+
+    - name: Destroy container dataset (recursive)
+      arensb.truenas.filesystem:
+        name: "{{ (item.pool | default(_default_pool)) }}/containers/{{ item.name }}"
+        state: absent
+      loop: "{{ _absent }}"
+      loop_control:
+        label: "{{ (item.pool | default(_default_pool)) }}/containers/{{ item.name }}"
+      tags: [cleanup]
