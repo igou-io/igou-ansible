@@ -14,23 +14,9 @@ roles:
     version: 4.1.9
   - name: geerlingguy.helm
     version: 1.0.1
-  - name: ansible-zfs
-    version: master
-    scm: git
-    src: https://github.com/mrlesmithjr/ansible-zfs.git
-  - name: David-Igou.single_node_openshift_iso
-    version: main
-    scm: git
-    src: https://github.com/David-Igou/ansible-role-single_node_openshift_iso.git
   - name: David-Igou.kubevirt_vm_manage
     version: 0.0.3
   - name: geerlingguy.postgresql
-  - name: davidwittman.redis
-    src: https://github.com/DavidWittman/ansible-redis.git
-    version: 1.2.12
-  - name: lae.netbox
-    src: https://github.com/lae/ansible-role-netbox.git
-    version: v1.0.7
   - name: David-Igou.haproxy
     version: 1.0.0
   - name: geerlingguy.kubernetes
@@ -52,9 +38,6 @@ collections:
     version: 2.2.3
   - name: ansible.utils
     version: 6.0.1
-  - name: https://github.com/David-Igou/ee_utilities.git
-    version: devel
-    type: git
   - name: vkhitrin.libguestfs
     version: 1.1.5
   - name: awx.awx
@@ -73,3 +56,5 @@ collections:
     version: 1.2.0
   - name: arensb.truenas
     version: 1.14.4
+  - name: community.docker
+    version: 5.0.5
