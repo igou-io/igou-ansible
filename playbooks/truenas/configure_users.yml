@@ -1,0 +1,31 @@
+---
+# Configure users on TrueNAS via arensb.truenas.user (non-deprecated parameters only).
+- name: Configure users on TrueNAS
+  hosts: truenas
+  gather_facts: false
+  become: false
+  tasks:
+
+    - name: Create or update users
+      arensb.truenas.user:
+        state: "{{ item.state | default('present') }}"
+        name: "{{ item.name }}"
+        comment: "{{ (item.comment | default(omit)) or (item.full_name | default(omit)) }}"
+        email: "{{ item.email | default(omit) }}"
+        password: "{{ item.password | default(omit) }}"
+        password_disabled: "{{ item.password_disabled | default(omit) }}"
+        group: "{{ item.group | default(omit) }}"
+        groups: "{{ item.groups | default(omit) }}"
+        create_group: "{{ item.create_group | default(omit) }}"
+        append: "{{ item.append | default(omit) }}"
+        home: "{{ item.home | default(omit) }}"
+        shell: "{{ item.shell | default(omit) }}"
+        uid: "{{ item.uid | default(omit) }}"
+        smb: "{{ item.smb | default(omit) }}"
+        ssh_authorized_keys: "{{ item.ssh_authorized_keys | default(omit) }}"
+        append_pubkeys: "{{ item.append_pubkeys | default(omit) }}"
+        sudo_commands_nopasswd: "{{ item.sudo_commands_nopasswd | default(omit) }}"
+        delete_group: "{{ item.delete_group | default(omit) }}"
+      loop: "{{ truenas_users }}"
+      loop_control:
+        label: "{{ item.name }}"

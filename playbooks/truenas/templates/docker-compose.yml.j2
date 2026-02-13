@@ -1,0 +1,72 @@
+# Managed by Ansible — do not edit manually.
+# Container: {{ _container.name }}
+services:
+  {{ _container.name }}:
+    image: {{ _container.image }}
+    restart: {{ _container.restart | default('unless-stopped') }}
+{% if _container.ports is defined %}
+    ports:
+{% for port in _container.ports %}
+      - "{{ port }}"
+{% endfor %}
+{% endif %}
+{% if _container.network_mode is defined %}
+    network_mode: {{ _container.network_mode }}
+{% endif %}
+{% if _container.environment is defined %}
+    environment:
+{% for key, value in _container.environment.items() %}
+      {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
+{% if _container.env_src is defined or _container.env is defined %}
+    env_file:
+      - .env
+{% endif %}
+{% if _container.volumes is defined %}
+    volumes:
+{% for vol in _container.volumes %}
+{% if vol.startswith('/') %}
+      - {{ vol }}
+{% else %}
+      - {{ _base }}/{{ vol }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if _container.networks is defined %}
+    networks:
+{% for net_name, net_config in _container.networks.items() %}
+{% if net_config is mapping %}
+      {{ net_name }}:
+{% for k, v in net_config.items() %}
+        {{ k }}: {{ v }}
+{% endfor %}
+{% else %}
+      {{ net_name }}: {}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if _container.extra is defined %}
+{% for key, value in _container.extra.items() %}
+{% if value is mapping %}
+    {{ key }}:
+{% for k, v in value.items() %}
+      {{ k }}: {{ v }}
+{% endfor %}
+{% elif value is iterable and value is not string %}
+    {{ key }}:
+{% for item in value %}
+      - {{ item }}
+{% endfor %}
+{% else %}
+    {{ key }}: {{ value }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if _container.networks is defined %}
+networks:
+{% for net_name in _container.networks.keys() %}
+  {{ net_name }}:
+    external: true
+{% endfor %}
+{% endif %}

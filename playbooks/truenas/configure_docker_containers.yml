@@ -1,6 +1,9 @@
 ---
-# Create ZFS datasets, set ownership, and deploy compose files for
-# Docker containers on TrueNAS.
+# Create Docker networks, ZFS datasets, set ownership, and deploy compose
+# files for Docker containers on TrueNAS.
+#
+# Docker networks are created first via community.docker.docker_network
+# so that compose stacks can reference them as external: true.
 #
 # Each container gets a dataset at {pool}/containers/{name}, mounted at
 # /mnt/{pool}/containers/{name}.  The "containers" parent dataset is
@@ -10,6 +13,13 @@
 # All files and directories default to the configured owner/group (950:950).
 #
 # Variables (group_vars/truenas.yml):
+#   truenas_docker_networks[] — list of Docker networks, each with:
+#     name           (required) — network name
+#     driver         (optional) — bridge, macvlan, ipvlan … (default: bridge)
+#     driver_options (optional) — dict of driver-specific options
+#     ipam_config    (optional) — list of IPAM pool dicts (subnet, gateway, ip_range)
+#     state          (optional) — present or absent (default: present)
+#
 #   truenas_docker_containers_default_pool  — default ZFS pool
 #   truenas_docker_containers_default_owner — default UID (950)
 #   truenas_docker_containers_default_group — default GID (950)
@@ -29,10 +39,12 @@
 #     image                 — triggers dynamic generation from template:
 #       image       (required) — container image
 #       ports       (optional) — list of port mappings
-#       volumes     (optional) — list of "dirname:/path/in/container" mounts
+#       volumes     (optional) — list of volume mounts (absolute paths used as-is,
+#                                relative paths auto-prefixed with base path)
 #       environment (optional) — dict of env vars inlined in compose
 #       restart     (optional) — restart policy (default: unless-stopped)
-#       network_mode(optional) — network mode
+#       network_mode(optional) — network mode (mutually exclusive with networks)
+#       networks    (optional) — dict of external networks to attach to
 #       extra       (optional) — arbitrary dict merged into the service
 #
 #   Environment file (used alongside any compose mode):
@@ -40,7 +52,104 @@
 #     env     — dict of key/value pairs rendered as a .env file
 #   In dynamic mode, env_file: [.env] is auto-added to the service.
 #
-# Tags: datasets, ownership, directories, compose, env, cleanup
+# Tags: networks, datasets, ownership, directories, compose, env, cleanup
+#
+# Example group_vars/truenas.yml:
+#
+#   # --- Networks ---
+#   truenas_docker_networks:
+#     - name: lan
+#       driver: macvlan
+#       driver_options:
+#         parent: eth0
+#       ipam_config:
+#         - subnet: 192.168.1.0/24
+#           gateway: 192.168.1.1
+#           iprange: 192.168.1.240/30
+#
+#   # --- Container defaults ---
+#   truenas_docker_containers_default_pool: tank
+#   truenas_docker_containers_default_owner: "950"
+#   truenas_docker_containers_default_group: "950"
+#
+#   # --- Containers ---
+#   truenas_docker_containers:
+#     # Dynamic template with macvlan network
+#     - name: public
+#       state: present
+#       image: docker.io/nginx:mainline-alpine
+#       volumes:
+#         - "/mnt/tank/public:/usr/share/nginx/html"
+#       networks:
+#         lan:
+#           ipv4_address: 192.168.1.241
+#
+#     # Dynamic template with port mapping and .env
+#     - name: gitea
+#       state: present
+#       image: gitea/gitea:latest
+#       ports:
+#         - "3000:3000"
+#         - "2222:22"
+#       volumes:
+#         - "data:/data"                    # → /mnt/tank/containers/gitea/data:/data
+#       env:
+#         GITEA__database__DB_TYPE: postgres
+#         GITEA__database__HOST: "db:5432"
+#       directories:
+#         - data
+#
+#     # Inline compose dict — rendered verbatim
+#     - name: whoami
+#       state: present
+#       compose:
+#         services:
+#           whoami:
+#             image: traefik/whoami
+#             ports:
+#               - "8080:80"
+#
+#     # Static compose file from the ansible repo
+#     - name: plex
+#       state: present
+#       compose_src: files/truenas/compose/plex/docker-compose.yml
+#       directories:
+#         - config
+#         - transcode
+#
+#     # Dataset + ownership only, no compose managed
+#     - name: custom-app
+#       state: present
+#       owner: "1000"
+#       group: "1000"
+#       directories:
+#         - config
+#         - data
+#         - path: cache
+#           owner: "0"
+#           group: "0"
+#
+#     # Remove a container's dataset entirely
+#     - name: old-app
+#       state: absent
+
+- name: Create Docker networks
+  hosts: truenas
+  gather_facts: false
+  become: true
+  tags: [networks]
+  tasks:
+
+    - name: Ensure Docker networks exist
+      community.docker.docker_network:
+        name: "{{ item.name }}"
+        driver: "{{ item.driver | default('bridge') }}"
+        driver_options: "{{ item.driver_options | default(omit) }}"
+        ipam_config: "{{ item.ipam_config | default(omit) }}"
+        state: "{{ item.state | default('present') }}"
+      loop: "{{ truenas_docker_networks | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
 
 - name: Create container datasets via TrueNAS API
   hosts: truenas
