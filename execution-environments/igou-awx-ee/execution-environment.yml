@@ -32,6 +32,7 @@ dependencies:
     gcc-c++ [platform:rpm compile]
     make [platform:rpm compile]
     openssl-devel [platform:rpm compile]
+    nmstate
     1password-cli
     terraform
     coreos-installer

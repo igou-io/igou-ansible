@@ -19,6 +19,8 @@ roles:
   - name: geerlingguy.postgresql
   - name: David-Igou.haproxy
     version: 1.0.0
+  - name: david-igou.openshift_agent_install
+    version: 0.1
   - name: geerlingguy.kubernetes
     version: 8.2.0
   - name: geerlingguy.containerd
