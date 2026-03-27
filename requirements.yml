@@ -56,7 +56,8 @@ collections:
     version: 0.11.0
   - name: artis3n.tailscale
     version: 1.2.1
-  - name: arensb.truenas
-    version: 1.14.4
+  - name: https://github.com/david-igou/ansible-truenas.git
+    type: git
+    version: fix-user-update
   - name: community.docker
     version: 5.1.0
