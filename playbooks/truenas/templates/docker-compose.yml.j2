@@ -23,8 +23,12 @@ services:
     env_file:
       - .env
 {% endif %}
-{% if _container.volumes is defined %}
+{% set _has_volumes = _container.volumes is defined %}
+{% set _has_certs = _container.certificates is defined and _container.certificates %}
+{% set _has_configs = _container.config_files is defined and _container.config_files %}
+{% if _has_volumes or _has_certs or _has_configs %}
     volumes:
+{% if _has_volumes %}
 {% for vol in _container.volumes %}
 {% if vol.startswith('/') %}
       - {{ vol }}
@@ -33,10 +37,25 @@ services:
 {% endif %}
 {% endfor %}
 {% endif %}
+{% if _has_certs %}
+{% if _container.certificates is sameas true %}
+      - /etc/certificates:/certs:ro
+{% elif _container.certificates is iterable and _container.certificates is not string and _container.certificates is not mapping %}
+{% for cert in _container.certificates %}
+      - {{ cert.source | default('/etc/certificates') }}:{{ cert.target | default('/certs') }}:ro
+{% endfor %}
+{% endif %}
+{% endif %}
+{% if _has_configs %}
+{% for cf in _container.config_files %}
+      - {{ _base }}/{{ cf.dest }}:{{ cf.mount }}:ro
+{% endfor %}
+{% endif %}
+{% endif %}
 {% if _container.networks is defined %}
     networks:
 {% for net_name, net_config in _container.networks.items() %}
-{% if net_config is mapping %}
+{% if net_config is mapping and net_config %}
       {{ net_name }}:
 {% for k, v in net_config.items() %}
         {{ k }}: {{ v }}
@@ -65,8 +84,12 @@ services:
 {% endif %}
 {% if _container.networks is defined %}
 networks:
-{% for net_name in _container.networks.keys() %}
+{% for net_name, net_config in _container.networks.items() %}
+{% if net_config is mapping %}
+{% if net_config or net_name != 'bridge' %}
   {{ net_name }}:
     external: true
+{% endif %}
+{% endif %}
 {% endfor %}
 {% endif %}

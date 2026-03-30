@@ -70,22 +70,22 @@
               stringData:
                 token: "{{ onepassword_token }}"
 
-      #   - name: Create Gitops ClusterRoleBinding
-      #     kubernetes.core.k8s:
-      #       state: present
-      #       definition:
-      #         kind: ClusterRoleBinding
-      #         apiVersion: rbac.authorization.k8s.io/v1
-      #         metadata:
-      #           name: gitops-cluster-admin
-      #         subjects:
-      #           - kind: ServiceAccount
-      #             name: openshift-gitops-argocd-application-controller
-      #             namespace: openshift-gitops
-      #         roleRef:
-      #           apiGroup: rbac.authorization.k8s.io
-      #           kind: ClusterRole
-      #           name: cluster-admin
+        - name: Create Gitops ClusterRoleBinding
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              kind: ClusterRoleBinding
+              apiVersion: rbac.authorization.k8s.io/v1
+              metadata:
+                name: gitops-cluster-admin
+              subjects:
+                - kind: ServiceAccount
+                  name: openshift-gitops-argocd-application-controller
+                  namespace: openshift-gitops
+              roleRef:
+                apiGroup: rbac.authorization.k8s.io
+                kind: ClusterRole
+                name: cluster-admin
 
         - name: Create cluster-config application # Make cluster agnostic
           kubernetes.core.k8s:

@@ -1,0 +1,113 @@
+---
+- name: Render OpenShift agent-based install PXE assets
+  hosts: "{{ target_cluster }}"
+  connection: local
+  gather_facts: true
+  vars:
+    openshift_agent_install_work_dir: "{{ ansible_env.HOME }}/openshift-agent-install/{{ target_cluster }}"
+  roles:
+    - role: david-igou.openshift_agent_install
+  tasks:
+    - name: Copy auth files to /tmp/auth
+      ansible.builtin.copy:
+        src: "{{ hostvars[target_cluster]['openshift_agent_install_work_dir_resolved'] }}/cluster-manifests/auth/"
+        dest: "/tmp/{{ target_cluster }}-auth/"
+        mode: "0644"
+
+    - name: Save auth directory contents to 1password
+      vars:
+        _auth_dir: "{{ openshift_agent_install_work_dir_resolved }}/cluster-manifests/auth"
+      block:
+        - name: Validate OP_SERVICE_ACCOUNT_TOKEN is set
+          ansible.builtin.assert:
+            that:
+              - lookup('env', 'OP_SERVICE_ACCOUNT_TOKEN') | length > 0
+            fail_msg: "OP_SERVICE_ACCOUNT_TOKEN environment variable is not set"
+
+        - name: Create a backup of kubeconfig as kubeconfig_self_signed
+          ansible.builtin.copy:
+            src: "{{ _auth_dir }}/kubeconfig"
+            dest: "{{ _auth_dir }}/kubeconfig_self_signed"
+
+        - name: Remove CA from kubeconfig
+          ansible.builtin.lineinfile:
+            path: "{{ _auth_dir }}/kubeconfig"
+            regexp: '^.*certificate-authority-data:.*$'
+            state: absent
+
+        - name: Create kubeconfig facts
+          ansible.builtin.set_fact:
+            kubeconfig_contents: "{{ lookup('ansible.builtin.file', _auth_dir + '/kubeconfig') }}"
+            kubeconfig_self_signed_contents: "{{ lookup('ansible.builtin.file', _auth_dir + '/kubeconfig_self_signed') }}"
+            kubeconfig_dict: "{{ lookup('ansible.builtin.file', _auth_dir + '/kubeconfig') | from_yaml }}"
+
+        - name: Set facts for 1password item
+          ansible.builtin.set_fact:
+            op_item_name: "{{ target_cluster }}-kubeconfig-{{ now(utc=true,fmt='%Y%m%d%H%M') }}"
+            client_certificate_data: "{{ kubeconfig_dict.users[0].user['client-certificate-data'] }}"
+            client_key_data: "{{ kubeconfig_dict.users[0].user['client-key-data'] }}"
+            api_url: "{{ kubeconfig_dict.clusters[0].cluster.server }}"
+
+        - name: Save auth info to 1password
+          ansible.builtin.shell:
+            cmd: op item create --category=login --title {{ op_item_name }} --vault=ansible-push kubeconfig[password]={{ kubeconfig_contents | b64encode }} kubeconfig_self_signed[password]={{ kubeconfig_self_signed_contents | b64encode }} client_certificate_data[password]={{ client_certificate_data }} client_key_data[password]={{ client_key_data }} api_url[password]={{ api_url }}</dev/null
+          no_log: true
+      tags: op-save
+
+
+- name: Copy boot artifacts to TrueNAS netbootxyz directory
+  hosts: truenas
+  become: true
+  gather_facts: false
+  vars:
+    cluster_host: "{{ target_cluster }}"
+    boot_artifacts_src: "{{ hostvars[cluster_host]['openshift_agent_install_work_dir_resolved'] }}/cluster-manifests/boot-artifacts"
+    boot_mac: "{{ hostvars[cluster_host]['openshift_agent_install_boot_mac'] }}"
+    ipxe_filename: "{{ boot_mac | replace(':', '') }}-install-openshift.ipxe"
+    truenas_boot_files_dest: /mnt/ssd/containers/netbootxyz/assets
+    truenas_ipxe_dest: /mnt/ssd/containers/netbootxyz/config/menus
+  tasks:
+    - name: Verify iPXE destination directory exists
+      ansible.builtin.stat:
+        path: "{{ truenas_ipxe_dest }}"
+      register: _ipxe_dest_stat
+
+    - name: Fail if iPXE destination directory does not exist
+      ansible.builtin.assert:
+        that:
+          - _ipxe_dest_stat.stat.exists
+          - _ipxe_dest_stat.stat.isdir
+        fail_msg: "iPXE destination directory {{ truenas_ipxe_dest }} does not exist"
+
+    - name: Ensure boot files destination directory exists
+      ansible.builtin.file:
+        path: "{{ truenas_boot_files_dest }}/{{ cluster_host }}"
+        state: directory
+        mode: "0755"
+        owner: "1000"
+        group: "1000"
+
+    - name: Copy boot files to TrueNAS (excluding iPXE script)
+      ansible.posix.synchronize:
+        src: "{{ boot_artifacts_src }}/"
+        dest: "{{ truenas_boot_files_dest }}/{{ cluster_host }}/"
+        delete: true
+        rsync_opts:
+          - "--exclude=*.ipxe"
+          - "--chown=1000:1000"
+
+    - name: Copy iPXE script to TrueNAS
+      ansible.builtin.copy:
+        src: "{{ boot_artifacts_src }}/agent.{{ hostvars[cluster_host]['openshift_agent_install_arch'] | default('x86_64') }}.ipxe"
+        dest: "{{ truenas_ipxe_dest }}/{{ ipxe_filename }}"
+        mode: "0644"
+        owner: "1000"
+        group: "1000"
+
+    - name: Copy iPXE script to TrueNAS local dir #This works around a weird bug in netbootxyz
+      ansible.builtin.copy:
+        src: "{{ boot_artifacts_src }}/agent.{{ hostvars[cluster_host]['openshift_agent_install_arch'] | default('x86_64') }}.ipxe"
+        dest: "{{ truenas_ipxe_dest }}/local/{{ ipxe_filename }}"
+        mode: "0644"
+        owner: "1000"
+        group: "1000"

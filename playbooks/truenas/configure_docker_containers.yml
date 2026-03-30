@@ -31,7 +31,9 @@
 #     group       (optional) — override default GID
 #     directories (optional) — list of subdirectories to create for volumes
 #       each entry is a string (inherits container owner/group) or a dict:
-#         path, owner (optional), group (optional)
+#         path, owner (optional), group (optional), pool (optional)
+#       If pool is set, the directory is created on that pool instead of the
+#       container's pool (a cross-pool dataset is auto-created).
 #
 #   Compose — exactly one of these is used, in priority order:
 #     compose_src (highest) — local file path to copy as-is
@@ -44,15 +46,38 @@
 #       environment (optional) — dict of env vars inlined in compose
 #       restart     (optional) — restart policy (default: unless-stopped)
 #       network_mode(optional) — network mode (mutually exclusive with networks)
-#       networks    (optional) — dict of external networks to attach to
+#       networks    (optional) — dict of networks to attach to:
+#                                  Networks with config (e.g., ipv4_address) are
+#                                  marked as external: true. Networks with {} are
+#                                  also marked as external: true (for external bridge
+#                                  networks). Exception: the default "bridge" network
+#                                  cannot be used as external and is not added to
+#                                  the top-level networks section.
 #       extra       (optional) — arbitrary dict merged into the service
+#
+#   Config files — inline content deployed and auto-mounted read-only:
+#     config_files (optional) — list of dicts, each with:
+#       content  (required) — inline file content
+#       dest     (required) — path relative to container dataset
+#       mount    (required) — absolute path inside the container
+#       mode     (optional) — file permissions (default: 0644)
+#     Files are written to the dataset; the compose template auto-generates
+#     read-only volume mounts from dest → mount.
+#
+#   Certificates — mount TrueNAS host certificates read-only:
+#     certificates (optional) — one of:
+#       true         — shorthand for /etc/certificates:/certs:ro
+#       list of dicts, each with:
+#         source (optional) — host path (default: /etc/certificates)
+#         target (optional) — container path (default: /certs)
+#       All mounts are forced read-only (:ro).
 #
 #   Environment file (used alongside any compose mode):
 #     env_src — local .env file to copy
 #     env     — dict of key/value pairs rendered as a .env file
 #   In dynamic mode, env_file: [.env] is auto-added to the service.
 #
-# Tags: networks, datasets, ownership, directories, compose, env, cleanup
+# Tags: networks, datasets, ownership, directories, compose, config_files, env, cleanup
 #
 # Example group_vars/truenas.yml:
 #
@@ -74,12 +99,13 @@
 #
 #   # --- Containers ---
 #   truenas_docker_containers:
-#     # Dynamic template with macvlan network
+#     # Dynamic template with macvlan network and TLS certificates
 #     - name: public
 #       state: present
 #       image: docker.io/nginx:mainline-alpine
 #       volumes:
 #         - "/mnt/tank/public:/usr/share/nginx/html"
+#       certificates: true              # → /etc/certificates:/certs:ro
 #       networks:
 #         lan:
 #           ipv4_address: 192.168.1.241
@@ -128,6 +154,32 @@
 #         - path: cache
 #           owner: "0"
 #           group: "0"
+#         - path: downloads        # cross-pool: created on cold pool
+#           pool: cold             # → /mnt/cold/containers/custom-app/downloads
+#
+#     # Inline config files — written to dataset and auto-mounted
+#     - name: nginx
+#       state: present
+#       image: docker.io/nginx:mainline-alpine
+#       config_files:
+#         - content: |
+#             server {
+#                 listen 443 ssl;
+#                 ssl_certificate     /certs/server.crt;
+#                 ssl_certificate_key /certs/server.key;
+#                 location / { root /usr/share/nginx/html; }
+#             }
+#           dest: config/default.conf
+#           mount: /etc/nginx/conf.d/default.conf
+#       certificates: true
+#
+#     # Certificates with custom paths (e.g. specific cert/key files)
+#     - name: traefik
+#       state: present
+#       image: traefik:v3
+#       certificates:
+#         - source: /etc/certificates
+#           target: /etc/traefik/certs
 #
 #     # Remove a container's dataset entirely
 #     - name: old-app
@@ -176,6 +228,18 @@
         label: "{{ (item.pool | default(_default_pool)) }}/containers/{{ item.name }}"
       tags: [datasets]
 
+    - name: Create cross-pool container datasets
+      arensb.truenas.filesystem:
+        name: "{{ item.1.pool }}/containers/{{ item.0.name }}"
+        state: present
+        type: FILESYSTEM
+        create_ancestors: true
+      loop: "{{ _present | subelements('directories', skip_missing=True) }}"
+      when: item.1.pool is defined and item.1.pool != (item.0.pool | default(_default_pool))
+      loop_control:
+        label: "{{ item.1.pool | default('skip') }}/containers/{{ item.0.name }}"
+      tags: [datasets]
+
 - name: Set container directory ownership and deploy compose files
   hosts: truenas
   gather_facts: false
@@ -204,11 +268,23 @@
         label: "{{ item.name }} → {{ item.owner | default(_default_owner) }}:{{ item.group | default(_default_group) }}"
       tags: [ownership]
 
+    - name: Set ownership on cross-pool container directories
+      ansible.builtin.file:
+        path: "/mnt/{{ item.1.pool }}/containers/{{ item.0.name }}"
+        state: directory
+        owner: "{{ item.1.owner | default(item.0.owner | default(_default_owner)) }}"
+        group: "{{ item.1.group | default(item.0.group | default(_default_group)) }}"
+      loop: "{{ _present | subelements('directories', skip_missing=True) }}"
+      when: item.1.pool is defined and item.1.pool != (item.0.pool | default(_default_pool))
+      loop_control:
+        label: "{{ item.0.name }} ({{ item.1.pool | default('same') }}) → {{ item.1.owner | default(item.0.owner | default(_default_owner)) }}:{{ item.1.group | default(item.0.group | default(_default_group)) }}"
+      tags: [ownership]
+
     # --- Subdirectories -------------------------------------------------------
 
     - name: Create volume subdirectories
       ansible.builtin.file:
-        path: "/mnt/{{ item.0.pool | default(_default_pool) }}/containers/{{ item.0.name }}/{{ item.1.path | default(item.1) }}"
+        path: "/mnt/{{ item.1.pool | default(item.0.pool | default(_default_pool)) }}/containers/{{ item.0.name }}/{{ item.1.path | default(item.1) }}"
         state: directory
         owner: "{{ item.1.owner | default(item.0.owner | default(_default_owner)) }}"
         group: "{{ item.1.group | default(item.0.group | default(_default_group)) }}"
@@ -225,7 +301,7 @@
         dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/docker-compose.yml"
         owner: "{{ item.owner | default(_default_owner) }}"
         group: "{{ item.group | default(_default_group) }}"
-        mode: "0644"
+        mode: "0600"
       register: _compose_static
       loop: >-
         {{ _present
@@ -243,7 +319,7 @@
         dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/docker-compose.yml"
         owner: "{{ item.owner | default(_default_owner) }}"
         group: "{{ item.group | default(_default_group) }}"
-        mode: "0644"
+        mode: "0600"
       register: _compose_inline
       loop: >-
         {{ _present
@@ -262,7 +338,7 @@
         dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/docker-compose.yml"
         owner: "{{ item.owner | default(_default_owner) }}"
         group: "{{ item.group | default(_default_group) }}"
-        mode: "0644"
+        mode: "0600"
       vars:
         _container: "{{ item }}"
         _base: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}"
@@ -289,6 +365,135 @@
              | map(attribute='dest')
              | list }}
       tags: [compose]
+
+    # --- Register & redeploy TrueNAS custom apps --------------------------------
+    #
+    # TrueNAS custom apps use an include directive pointing at the compose file
+    # we just deployed (e.g. {"include": ["/mnt/ssd/containers/netbootxyz/docker-compose.yml"]}).
+    #
+    # This section:
+    #   1. Queries TrueNAS for all existing apps.
+    #   2. Creates new custom apps for containers that have a compose file but
+    #      are not yet registered as TrueNAS apps (via app.create with an
+    #      include pointing at the deployed docker-compose.yml).
+    #   3. Redeploys existing apps whose compose file changed on disk so
+    #      TrueNAS picks up the new configuration.
+    #
+    # The app name in TrueNAS matches the "name" field in
+    # truenas_docker_containers.
+
+    - name: Build list of all containers with a compose file
+      ansible.builtin.set_fact:
+        _all_compose_containers: >-
+          {{ ((_compose_static.results  | default([])
+               + _compose_inline.results  | default([])
+               + _compose_dynamic.results | default([]))
+              | rejectattr('skipped', 'defined'))
+             | map(attribute='item')
+             | list }}
+      tags: [compose]
+
+    - name: Collect containers with changed compose files
+      ansible.builtin.set_fact:
+        _changed_compose_names: >-
+          {{ ((_compose_static.results  | default([])
+               + _compose_inline.results  | default([])
+               + _compose_dynamic.results | default([]))
+              | selectattr('changed'))
+             | map(attribute='item')
+             | map(attribute='name')
+             | list }}
+      tags: [compose]
+
+    - name: Query TrueNAS installed applications
+      ansible.builtin.command: midclt call app.query
+      register: _app_query
+      changed_when: false
+      when: _all_compose_containers | length > 0
+      tags: [compose]
+
+    - name: Build set of TrueNAS app names
+      ansible.builtin.set_fact:
+        _truenas_app_names: >-
+          {{ (_app_query.stdout | default('[]') | from_json)
+             | map(attribute='name') | list }}
+      when: _all_compose_containers | length > 0
+      tags: [compose]
+
+    # --- Create new custom apps ------------------------------------------------
+
+    - name: Create new TrueNAS custom apps
+      ansible.builtin.command: >-
+        midclt call app.create
+        '{{ {"custom_app": true,
+             "app_name": item.name,
+             "custom_compose_config": {"include":
+               ["/mnt/" + (item.pool | default(_default_pool))
+                + "/containers/" + item.name
+                + "/docker-compose.yml"]}}
+           | to_json }}'
+      loop: >-
+        {{ _all_compose_containers
+           | rejectattr('name', 'in', _truenas_app_names | default([]))
+           | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [compose]
+
+    - name: New apps created
+      ansible.builtin.debug:
+        msg: >-
+          {{ _all_compose_containers
+             | map(attribute='name')
+             | reject('in', _truenas_app_names | default([]))
+             | list }}
+      when: >-
+        (_all_compose_containers
+         | map(attribute='name')
+         | reject('in', _truenas_app_names | default([]))
+         | list) | length > 0
+      tags: [compose]
+
+    # --- Redeploy changed apps -------------------------------------------------
+
+    - name: Redeploy TrueNAS custom apps with changed compose files
+      ansible.builtin.command: "midclt call app.redeploy {{ item }}"
+      loop: "{{ _changed_compose_names | intersect(_truenas_app_names | default([])) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [compose]
+
+    - name: Redeployed apps
+      ansible.builtin.debug:
+        msg: >-
+          {{ _changed_compose_names | intersect(_truenas_app_names | default([])) }}
+      when: (_changed_compose_names | intersect(_truenas_app_names | default([]))) | length > 0
+      tags: [compose]
+
+    # --- Config files (inline content) -----------------------------------------
+
+    - name: Ensure config file parent directories exist
+      ansible.builtin.file:
+        path: "/mnt/{{ item.0.pool | default(_default_pool) }}/containers/{{ item.0.name }}/{{ item.1.dest | dirname }}"
+        state: directory
+        owner: "{{ item.0.owner | default(_default_owner) }}"
+        group: "{{ item.0.group | default(_default_group) }}"
+      loop: "{{ _present | subelements('config_files', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.dest | dirname }}"
+      tags: [config_files]
+
+    - name: Deploy config files from inline content
+      ansible.builtin.copy:
+        content: "{{ item.1.content }}"
+        dest: "/mnt/{{ item.0.pool | default(_default_pool) }}/containers/{{ item.0.name }}/{{ item.1.dest }}"
+        owner: "{{ item.0.owner | default(_default_owner) }}"
+        group: "{{ item.0.group | default(_default_group) }}"
+        mode: "{{ item.1.mode | default('0644') }}"
+      loop: "{{ _present | subelements('config_files', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.dest }}"
+      tags: [config_files]
 
     # --- Environment file -----------------------------------------------------
 

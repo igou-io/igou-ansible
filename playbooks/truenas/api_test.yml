@@ -1,0 +1,97 @@
+---
+# Test basic TrueNAS API functionality via midclt.
+#
+# midclt is the TrueNAS middleware CLI client (truenas/api_client).
+# It communicates with the local TrueNAS middleware over its
+# JSON-RPC 2.0 WebSocket API.
+#
+# API reference: https://api.truenas.com/v25.10/
+# Client repo:   https://github.com/truenas/api_client
+#
+# Usage:
+#   ansible-playbook playbooks/truenas/api_test.yml
+#
+- name: TrueNAS API smoke test via midclt
+  hosts: truenas
+  gather_facts: false
+  become: false
+  tasks:
+
+    # ------------------------------------------------------------------
+    # Pools — pool.query
+    # ------------------------------------------------------------------
+
+    - name: Query storage pools
+      ansible.builtin.command: midclt call pool.query
+      register: pool_result
+      changed_when: false
+
+    - name: Parse pool JSON
+      ansible.builtin.set_fact:
+        pools: "{{ pool_result.stdout | from_json }}"
+
+    - name: Display pools
+      ansible.builtin.debug:
+        msg: |
+          === Storage Pools ===
+          {% for pool in pools %}
+          Pool: {{ pool.name }}
+            ID:       {{ pool.id }}
+            Status:   {{ pool.status | default('UNKNOWN') }}
+            Path:     {{ pool.path | default('/mnt/' + pool.name) }}
+            Healthy:  {{ pool.healthy | default('N/A') }}
+          {% endfor %}
+
+    # ------------------------------------------------------------------
+    # Users — user.query
+    # ------------------------------------------------------------------
+
+    - name: Query user accounts
+      ansible.builtin.command: midclt call user.query
+      register: user_result
+      changed_when: false
+
+    - name: Parse user JSON
+      ansible.builtin.set_fact:
+        users: "{{ user_result.stdout | from_json }}"
+
+    - name: Display users
+      ansible.builtin.debug:
+        msg: |
+          === User Accounts ===
+          {% for user in users %}
+          User: {{ user.username }}
+            UID:      {{ user.uid }}
+            Group:    {{ user.group.bsdgrp_group | default(user.group.id | default('N/A')) }}
+            Home:     {{ user.home | default('N/A') }}
+            Shell:    {{ user.shell | default('N/A') }}
+            Builtin:  {{ user.builtin | default('N/A') }}
+          {% endfor %}
+
+    # ------------------------------------------------------------------
+    # Applications — app.query
+    # ------------------------------------------------------------------
+
+    - name: Query installed applications
+      ansible.builtin.command: midclt call app.query
+      register: app_result
+      changed_when: false
+
+    - name: Parse app JSON
+      ansible.builtin.set_fact:
+        apps: "{{ app_result.stdout | from_json }}"
+
+    - name: Display applications and their states
+      ansible.builtin.debug:
+        msg: |
+          === Installed Applications ===
+          {% if apps | length == 0 %}
+          (no applications installed)
+          {% else %}
+          {% for app in apps %}
+          App: {{ app.name }}
+            ID:       {{ app.id | default('N/A') }}
+            State:    {{ app.state | default('UNKNOWN') }}
+            Version:  {{ app.version | default('N/A') }}
+          {% endfor %}
+          {% endif %}
