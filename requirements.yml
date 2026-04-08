@@ -60,4 +60,4 @@ collections:
     type: git
     version: fix-user-update
   - name: community.docker
-    version: 5.1.0
+    version: 5.2.0
