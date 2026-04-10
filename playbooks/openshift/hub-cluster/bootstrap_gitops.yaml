@@ -1,4 +1,5 @@
 ---
+# ansible-navigator run bootstrap_gitops.yaml
 - hosts: "{{ target_cluster }}"
   name: Bootstrap Openshift Gitops and external-secrets operator, add an ansible serviceaccount and save the token to 1password
   gather_facts: false

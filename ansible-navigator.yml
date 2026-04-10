@@ -1,48 +1,45 @@
+---
 ansible-navigator:
   ansible:
     config:
       path: ansible.cfg
-  logging:
-    level: debug
-    file: ~/ansible-navigator/ansible-navigator.log
-  mode: stdout
   ansible-runner:
     artifact-dir: ~/ansible-navigator
-  playbook-artifact:
-    enable: true
-    save-as: ~/ansible-navigator/{playbook_name}-artifact-{time_stamp}.json
   execution-environment:
     container-engine: podman
     enabled: true
-    image: quay.io/igou/igou-awx-ee:latest
-    volume-mounts:
-      # Ugly as hell.. I don't know a better solution yet
-      - src: "/home/igou/.kube"
-        dest: "/root/.kube"
-        options: "Z"
-      - src: /tmp
-        dest: /tmp
-      - src: /home/igou/roles
-        dest: /home/igou/roles
     environment-variables:
       pass:
-        - AWS_DEFAULT_REGION
-        - AWS_SECRET_ACCESS_KEY
-        - AWS_ACCESS_KEY_ID
-        - OP_SERVICE_ACCOUNT_TOKEN
-        - GATEWAY_HOSTNAME
-        - GATEWAY_PASSWORD
-        - GATEWAY_USERNAME
-        - GATEWAY_OAUTH_TOKEN
-        - GATEWAY_API_TOKEN
-        - CONTROLLER_HOST
-        - CONTROLLER_PASSWORD
-        - CONTROLLER_USERNAME
-        - CONTROLLER_OAUTH_TOKEN
-        - AH_HOST
-        - AH_USERNAME
-        - AH_PASSWORD
-        - K8S_AUTH_API_KEY
-        - K8S_AUTH_HOST
-        - K8S_AUTH_VERIFY_SSL
-        - MOLECULE_NO_LOG
+      - AWS_DEFAULT_REGION
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_ACCESS_KEY_ID
+      - OP_SERVICE_ACCOUNT_TOKEN
+      - GATEWAY_HOSTNAME
+      - GATEWAY_PASSWORD
+      - GATEWAY_USERNAME
+      - GATEWAY_OAUTH_TOKEN
+      - GATEWAY_API_TOKEN
+      - CONTROLLER_HOST
+      - CONTROLLER_PASSWORD
+      - CONTROLLER_USERNAME
+      - CONTROLLER_OAUTH_TOKEN
+      - AH_HOST
+      - AH_USERNAME
+      - AH_PASSWORD
+      - KUBECONFIG
+      - K8S_AUTH_API_KEY
+      - K8S_AUTH_HOST
+      - K8S_AUTH_VERIFY_SSL
+      - MOLECULE_NO_LOG
+    image: quay.io/igou/igou-awx-ee:latest
+    volume-mounts:
+    - dest: /root/.kube
+      options: Z
+      src: /home/igou/.kube
+  logging:
+    file: ~/ansible-navigator/ansible-navigator.log
+    level: debug
+  mode: stdout
+  playbook-artifact:
+    enable: false
+    save-as: ~/ansible-navigator/{playbook_name}-artifact-{time_stamp}.json

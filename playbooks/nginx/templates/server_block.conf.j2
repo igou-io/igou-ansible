@@ -1,0 +1,52 @@
+# {{ ansible_managed }}
+# Server block: {{ item.name }}
+
+{% if item.ssl.enabled | default(false) and item.ssl.redirect_http | default(false) %}
+server {
+    listen 80;
+{% if item.server_name is defined %}
+    server_name {{ item.server_name }};
+{% endif %}
+    return 301 https://$host$request_uri;
+}
+
+{% endif %}
+server {
+{% if item.ssl.enabled | default(false) %}
+    listen {{ item.listen | default('443') }} ssl;
+    ssl_certificate {{ item.ssl.certificate }};
+    ssl_certificate_key {{ item.ssl.certificate_key }};
+    ssl_protocols {{ nginx_ssl_protocols }};
+    ssl_ciphers {{ nginx_ssl_ciphers }};
+    ssl_prefer_server_ciphers {{ 'on' if nginx_ssl_prefer_server_ciphers else 'off' }};
+    ssl_session_cache {{ nginx_ssl_session_cache }};
+{% else %}
+    listen {{ item.listen | default('80') }};
+{% endif %}
+
+{% if item.server_name is defined %}
+    server_name {{ item.server_name }};
+{% endif %}
+
+{% if item.root is defined %}
+    root {{ item.root }};
+{% endif %}
+{% if item.index is defined %}
+    index {{ item.index }};
+{% endif %}
+
+{% for location in item.locations | default([]) %}
+    location {{ location.path }} {
+{% if location.proxy_pass is defined %}
+        proxy_pass {{ location.proxy_pass }};
+{% for header in location.proxy_set_headers | default(nginx_default_proxy_headers) %}
+        proxy_set_header {{ header }};
+{% endfor %}
+{% endif %}
+{% for directive in location.directives | default([]) %}
+        {{ directive }};
+{% endfor %}
+    }
+
+{% endfor %}
+}
