@@ -33,7 +33,7 @@ collections:
   - name: kubernetes.core
     version: 6.3.0
   - name: containers.podman
-    version: 1.19.0
+    version: 1.19.1
   - name: devsec.hardening
     version: 10.5.2
   - name: kubevirt.core
@@ -60,5 +60,5 @@ collections:
     type: git
     version: fix-user-update
   - name: community.docker
-    version: 5.1.0
+    version: 5.2.0
 ...
