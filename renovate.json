@@ -47,6 +47,11 @@
       "matchUpdateTypes": ["digest"],
       "groupName": "digest updates",
       "automerge": true
+    },
+    {
+      "matchManagers": ["pip_requirements"],
+      "groupName": "pip dependencies",
+      "automerge": true
     }
   ]
 }

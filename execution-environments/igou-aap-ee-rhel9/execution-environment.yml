@@ -32,13 +32,7 @@ dependencies:
     - libxslt-devel [platform:rpm]
     - 1password-cli [platform:rpm]
     - terraform [platform:rpm]
-  python:
-    - pytz  # for schedule_rrule lookup plugin
-    - python-dateutil>=2.7.0  # schedule_rrule
-    - awxkit  # For import and export modules
-    - systemd-python
-    - boto3
-    - botocore
+  python: requirements.txt
   galaxy:
     collections:
       - name: ansible.windows
