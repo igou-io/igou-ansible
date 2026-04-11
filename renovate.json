@@ -3,9 +3,6 @@
   "extends": [
     "config:best-practices"
   ],
-  "docker": {
-    "pinDigests": true
-  },
   "pin": {
     "automerge": true
   },
@@ -14,7 +11,15 @@
   "schedule": ["before 5am on sunday"],
   "packageRules": [
     {
-      "matchManagers": ["github-actions"],
+      "matchCategories": [
+        "docker"
+      ],
+      "pinDigests": true
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
       "pinDigests": true,
       "groupName": "github-actions"
     },
