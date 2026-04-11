@@ -25,13 +25,24 @@ jobs:
       - name: Install ansible-core
         run: pip install ansible-core
 
-      - name: Install collection dependencies
-        run: ansible-galaxy collection install -r requirements.yml
+      - name: Install dependencies
+        run: |
+          ansible-galaxy collection install -r requirements.yml
+          ansible-galaxy role install -r requirements.yml
 
       - name: Syntax check all playbooks
+        env:
+          # Playbooks requiring subscription-only collections (redhat.rhel_system_roles)
+          SKIP_PLAYBOOKS: |
+            playbooks/rhel/rhsm-system-register.yml
+            playbooks/openshift_virtualization/aap-25-vm/2-register-to-rhsm.yml
         run: |
           failed=0
           for playbook in $(find playbooks -name '*.yml' -o -name '*.yaml' | sort); do
+            if echo "${SKIP_PLAYBOOKS}" | grep -qx "${playbook}"; then
+              echo "Skipping ${playbook} (requires subscription-only collection)"
+              continue
+            fi
             echo "Checking ${playbook}..."
             if ! ansible-playbook --syntax-check "${playbook}"; then
               failed=1

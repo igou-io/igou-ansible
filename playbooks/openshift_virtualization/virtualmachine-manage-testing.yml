@@ -31,11 +31,11 @@
           name: vlan2-network-bridge
           macAddress: "02:7a:1f:00:00:0f"
     vm_networks:
-    # - name: default
-    #   pod: {}
-    - multus:
-        networkName: vlan2-network-bridge
-      name: vlan2-network-bridge
+      # - name: default
+      #   pod: {}
+      - multus:
+          networkName: vlan2-network-bridge
+        name: vlan2-network-bridge
     vm_virtualmachineclusterpreference: "centos.stream9"
     vm_data_volume:
       sourceRef:
@@ -65,11 +65,11 @@
     #       termination: passthrough
 
   roles:
-    - role: ansible-role-kubevirt_vm_manage
+    - role: David-Igou.kubevirt_vm_manage
       when: rebuild is true
       vars:
         vm_state: absent
-    - ansible-role-kubevirt_vm_manage
+    - David-Igou.kubevirt_vm_manage
 
   pre_tasks:
     - name: Create NetworkAttachmentDefinition
@@ -118,8 +118,6 @@
           host: "{{ vm_namespace }}-{{ vm_name }}"
         per_host: false
       when: set_stat is true
-
-
 
     # - name: Wait for VMI to have an IP address todo: Make this more flexible
     #   kubevirt.core.kubevirt_vmi_info:

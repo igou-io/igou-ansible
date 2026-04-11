@@ -166,7 +166,7 @@
 
     - name: Create Bastion VM
       ansible.builtin.import_role:
-        name: ansible-role-kubevirt_vm_manage
+        name: David-Igou.kubevirt_vm_manage
       vars:
         vm_name: bastion
         vm_devices:
@@ -189,7 +189,7 @@
 
     - name: Create gateway VM
       ansible.builtin.import_role:
-        name: ansible-role-kubevirt_vm_manage
+        name: David-Igou.kubevirt_vm_manage
       vars:
         vm_name: gateway
         vm_devices:
@@ -212,7 +212,7 @@
 
     - name: Create controller VM
       ansible.builtin.import_role:
-        name: ansible-role-kubevirt_vm_manage
+        name: David-Igou.kubevirt_vm_manage
       vars:
         vm_name: controller
         vm_devices:
@@ -235,7 +235,7 @@
 
     - name: Create hub VM
       ansible.builtin.import_role:
-        name: ansible-role-kubevirt_vm_manage
+        name: David-Igou.kubevirt_vm_manage
       vars:
         vm_name: hub
         vm_devices:
@@ -258,7 +258,7 @@
 
     - name: Create eda VM
       ansible.builtin.import_role:
-        name: ansible-role-kubevirt_vm_manage
+        name: David-Igou.kubevirt_vm_manage
       vars:
         vm_name: eda
         vm_devices:
@@ -281,7 +281,7 @@
 
     - name: Create postgresql VM
       ansible.builtin.import_role:
-        name: ansible-role-kubevirt_vm_manage
+        name: David-Igou.kubevirt_vm_manage
       vars:
         vm_name: pgsql
         vm_devices:

@@ -23,14 +23,14 @@
           url: "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"
       pvc:
         accessModes:
-        - ReadWriteOnce
+          - ReadWriteOnce
         resources:
           requests:
             storage: 30Gi
     vm_services:
-    - name: archlinux-ssh-nodeport
-      type: NodePort
-      ports:
-        - target_port: 22
+      - name: archlinux-ssh-nodeport
+        type: NodePort
+        ports:
+          - target_port: 22
   roles:
-    - ansible-role-kubevirt_vm_manage
+    - David-Igou.kubevirt_vm_manage

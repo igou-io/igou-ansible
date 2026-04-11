@@ -12,7 +12,7 @@ platforms:
     config:
       bundle: docker://quay.io/crcont/okd-bundle:4.19.0-okd-scos.19
       preset: okd
-      consent-telemetry: no
+      consent-telemetry: "no"
 
 provisioner:
   name: ansible
