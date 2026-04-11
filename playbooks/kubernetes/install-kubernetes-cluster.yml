@@ -1,15 +1,19 @@
 ---
-- hosts: "{{ ansible_limit | default('none') }}"
-  name: Install Kubernetes cluster
+- name: Install Kubernetes cluster
+  hosts: "{{ ansible_limit | default('none') }}"
   become: true
   tags: install
   pre_tasks:
-    - ansible.posix.sysctl:
+    - name: Enable IP forwarding
+      ansible.posix.sysctl:
         name: net.ipv4.ip_forward
         value: '1'
         sysctl_set: true
     - name: Disable firewalld
-      ansible.builtin.command: systemctl disable firewalld --now
+      ansible.builtin.systemd:
+        name: firewalld
+        enabled: false
+        state: stopped
     - name: Install dependencies
       ansible.builtin.package:
         name:

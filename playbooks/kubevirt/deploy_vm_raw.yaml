@@ -38,22 +38,22 @@
                 cpu: "{{ vm_cpu_cores }}"
             devices:
               disks:
-              - name: containerdisk
-                disk:
-                  bus: virtio
-              - name: emptydisk
-                disk:
-                  bus: virtio
-              - disk:
-                  bus: virtio
-                name: cloudinitdisk
+                - name: containerdisk
+                  disk:
+                    bus: virtio
+                - name: emptydisk
+                  disk:
+                    bus: virtio
+                - disk:
+                    bus: virtio
+                  name: cloudinitdisk
           volumes:
-          - name: containerdisk
-            containerDisk:
-              image: "{{ vm_image }}"
-          - name: emptydisk
-            emptyDisk:
-              capacity: "2Gi"
-          - name: cloudinitdisk
-            cloudInitNoCloud:
-              userData: "{{ vm_user_data }}"
+            - name: containerdisk
+              containerDisk:
+                image: "{{ vm_image }}"
+            - name: emptydisk
+              emptyDisk:
+                capacity: "2Gi"
+            - name: cloudinitdisk
+              cloudInitNoCloud:
+                userData: "{{ vm_user_data }}"

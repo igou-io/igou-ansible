@@ -1,6 +1,6 @@
 ---
 - name: Set the state of an Openshift Virtualization Virtual Machine
-  hosts: "{{ host }}"
+  hosts: "{{ host | default('all') }}"
   gather_facts: false
   vars:
     create_namespace: false
@@ -63,12 +63,12 @@
             resources: {}
           subdomain: headless
           volumes:
-          - dataVolume:
-              name: "{{ vm_name }}-volume"
-            name: rootdisk
-          - cloudInitNoCloud:
-              userData: "{{ vm_user_data }}"
-            name: cloudinitdisk
+            - dataVolume:
+                name: "{{ vm_name }}-volume"
+              name: rootdisk
+            - cloudInitNoCloud:
+                userData: "{{ vm_user_data }}"
+              name: cloudinitdisk
         wait_timeout: 600
       register: r_vm
 
@@ -87,5 +87,5 @@
       until: vmi_info.resources[0].status.interfaces[0].ipAddress is defined
       retries: 30
       delay: 10
-      ignore_errors: yes
+      ignore_errors: true
       when: check_for_ip is true

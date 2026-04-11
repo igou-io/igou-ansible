@@ -44,10 +44,10 @@ ansible:
         - --diff
         - --force-handlers
         - --inventory=./inventory
-      # ansible_navigator:
-      #   - --mode stdout
-      #   - --pull-policy missing
-      #   - --execution-environment-image ghcr.io/ansible/community-ansible-dev-tools:latest
+  # ansible_navigator:
+  #   - --mode stdout
+  #   - --pull-policy missing
+  #   - --execution-environment-image ghcr.io/ansible/community-ansible-dev-tools:latest
   playbooks:
     create: create.yml
     converge: converge.yml

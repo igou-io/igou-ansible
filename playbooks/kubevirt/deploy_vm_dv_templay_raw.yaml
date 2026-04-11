@@ -53,18 +53,18 @@
                 cpu: 2
             devices:
               disks:
-              - disk:
-                  bus: virtio
-                name: datavolumevolume
-              - disk:
-                  bus: virtio
-                name: cloudinitdisk
+                - disk:
+                    bus: virtio
+                  name: datavolumevolume
+                - disk:
+                    bus: virtio
+                  name: cloudinitdisk
           volumes:
-          - name: datavolumevolume
-            dataVolume:
-              name: fedora-dv
-          - name: cloudinitdisk
-            cloudInitNoCloud:
+            - name: datavolumevolume
+              dataVolume:
+                name: fedora-dv
+            - name: cloudinitdisk
+              cloudInitNoCloud:
               userData: |-
                 #cloud-config
                 password: fedora

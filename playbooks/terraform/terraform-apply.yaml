@@ -17,11 +17,12 @@
             repo: https://github.com/igou-io/igou-infrastructure.git
             dest: "{{ temp_dir.path }}"
             clone: true
+            version: main
 
         - name: Render tfvars from secret store
           ansible.builtin.copy:
             content: "{{ lookup('community.general.onepassword', 'terraform', field='tfvars', vault='awx') }}"
-            mode: 0644
+            mode: "0644"
             dest: "{{ temp_dir.path }}/terraform/terraform.tfvars"
           no_log: true
 

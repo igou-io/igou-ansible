@@ -1,3 +1,4 @@
+---
 # Workflow name
 name: EE build (reusable)
 
@@ -96,5 +97,3 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "`cat Containerfile`" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-
-

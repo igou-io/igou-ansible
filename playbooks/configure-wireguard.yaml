@@ -1,6 +1,6 @@
 ---
-- hosts: cluster_vpn_gateway
-  name: Configure Wireguard gateway
+- name: Configure Wireguard gateway
+  hosts: cluster_vpn_gateway
   become: true
   pre_tasks:
     - name: Whats my public ip

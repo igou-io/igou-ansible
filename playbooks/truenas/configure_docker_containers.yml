@@ -263,6 +263,7 @@
         state: directory
         owner: "{{ item.owner | default(_default_owner) }}"
         group: "{{ item.group | default(_default_group) }}"
+        mode: "0755"
       loop: "{{ _present }}"
       loop_control:
         label: "{{ item.name }} → {{ item.owner | default(_default_owner) }}:{{ item.group | default(_default_group) }}"
@@ -274,6 +275,7 @@
         state: directory
         owner: "{{ item.1.owner | default(item.0.owner | default(_default_owner)) }}"
         group: "{{ item.1.group | default(item.0.group | default(_default_group)) }}"
+        mode: "0755"
       loop: "{{ _present | subelements('directories', skip_missing=True) }}"
       when: item.1.pool is defined and item.1.pool != (item.0.pool | default(_default_pool))
       loop_control:
@@ -288,6 +290,7 @@
         state: directory
         owner: "{{ item.1.owner | default(item.0.owner | default(_default_owner)) }}"
         group: "{{ item.1.group | default(item.0.group | default(_default_group)) }}"
+        mode: "0755"
       loop: "{{ _present | subelements('directories', skip_missing=True) }}"
       loop_control:
         label: "{{ item.0.name }}/{{ item.1.path | default(item.1) }}"
@@ -432,6 +435,7 @@
                 + "/containers/" + item.name
                 + "/docker-compose.yml"]}}
            | to_json }}'
+      changed_when: true
       loop: >-
         {{ _all_compose_containers
            | rejectattr('name', 'in', _truenas_app_names | default([]))
@@ -458,6 +462,7 @@
 
     - name: Redeploy TrueNAS custom apps with changed compose files
       ansible.builtin.command: "midclt call app.redeploy {{ item }}"
+      changed_when: true
       loop: "{{ _changed_compose_names | intersect(_truenas_app_names | default([])) }}"
       loop_control:
         label: "{{ item }}"
@@ -478,6 +483,7 @@
         state: directory
         owner: "{{ item.0.owner | default(_default_owner) }}"
         group: "{{ item.0.group | default(_default_group) }}"
+        mode: "0755"
       loop: "{{ _present | subelements('config_files', skip_missing=True) }}"
       loop_control:
         label: "{{ item.0.name }}/{{ item.1.dest | dirname }}"

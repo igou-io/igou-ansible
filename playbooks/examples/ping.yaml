@@ -1,6 +1,6 @@
 ---
-- hosts: "{{ host }}"
-  name: Ping host
+- name: Ping host
+  hosts: "{{ host | default('all') }}"
   gather_facts: false
   tasks:
     - name: Ping host

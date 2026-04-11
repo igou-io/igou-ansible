@@ -45,7 +45,9 @@
           crc_status.success: {{ crc_status.success | bool }}
           __crc_persistent: {{ __crc_persistent }}
 
-    - block:
+    - name: Delete and cleanup crc cluster
+      when: not __crc_persistent
+      block:
         - name: Delete crc cluster
           ansible.builtin.command: >-
             crc delete -f -o json
@@ -76,7 +78,7 @@
             success_msg: >
               "crc_delete result is as expected: {{ crc_delete }}"
 
-        - name: run crc cleanup
+        - name: Run crc cleanup
           ansible.builtin.command: >-
             crc cleanup -o json
           register: crc_cleanup_result
@@ -95,13 +97,11 @@
               "crc_cleanup result is unexpected: {{ crc_cleanup }}"
             success_msg: >
               "crc_cleanup result is as expected: {{ crc_cleanup }}"
-          ignore_errors: "{{ __crc_cleanup_ignore_errors | default(false) | bool }}"
+          register: _crc_cleanup_assert
+          failed_when:
+            - _crc_cleanup_assert is failed
+            - not (__crc_cleanup_ignore_errors | default(false) | bool)
 
         - name: Debug output crc cleanup result
           ansible.builtin.debug:
             var: crc_cleanup
-      when:
-        - not (__crc_persistent | bool)
-
-
-

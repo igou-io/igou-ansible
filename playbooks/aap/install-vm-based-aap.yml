@@ -1,6 +1,6 @@
 ---
 - name: Playbook to configure ansible controller post installation
-  hosts: "{{ host }}"
+  hosts: "{{ host | default('all') }}"
   gather_facts: false
   become: false
   vars:

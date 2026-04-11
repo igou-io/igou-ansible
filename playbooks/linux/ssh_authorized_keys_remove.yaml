@@ -1,6 +1,7 @@
-- hosts: "{{ host }}"
+---
+- name: Ensure keys are absent
+  hosts: "{{ host | default('all') }}"
   gather_facts: false
-  name: Ensure keys are absent
   vars:
     user: igou
     keys:
@@ -8,10 +9,10 @@
   become: false
   tasks:
 
-  - name: Set authorized keys taken from variable
-    ansible.posix.authorized_key:
-      user: "{{ user }}"
-      state: absent
-      key: "{{ item }}"
-    loop: "{{ keys }}"
-    when: keys is defined
+    - name: Set authorized keys taken from variable
+      ansible.posix.authorized_key:
+        user: "{{ user }}"
+        state: absent
+        key: "{{ item }}"
+      loop: "{{ keys }}"
+      when: keys is defined

@@ -2,7 +2,7 @@
 # Purpose: bring the instance to the desired state by running the role under test.
 # Molecule calls this playbook with `molecule converge`.
 
-- ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
+- name: Converge system-update
+  ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
   vars:
-    ansible_limit: all
     update_reboot: false

@@ -149,7 +149,7 @@
                 namespace: external-secrets
                 annotations:
                   managed-by: ansible
-                  last-updated: "{{ now(utc=true,fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+                  last-updated: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
                 labels:
                   bootstrap-phase: secrets
               type: Opaque
@@ -171,9 +171,9 @@
                   bootstrap-phase: secrets
               spec:
                 conditions:
-                - namespaceSelector:
-                    matchLabels:
-                      external.secrets.io/enabled: "true"
+                  - namespaceSelector:
+                      matchLabels:
+                        external.secrets.io/enabled: "true"
                 provider:
                   onepasswordSDK:
                     vault: "{{ cluster_bootstrap.onepassword_vault }}"

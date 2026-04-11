@@ -1,6 +1,6 @@
 ---
 - name: Render OpenShift agent-based install PXE assets
-  hosts: "{{ target_cluster }}"
+  hosts: "{{ target_cluster | default('all') }}"
   connection: local
   gather_facts: true
   vars:
@@ -17,6 +17,7 @@
     - name: Save auth directory contents to 1password
       vars:
         _auth_dir: "{{ openshift_agent_install_work_dir_resolved }}/cluster-manifests/auth"
+      tags: op-save
       block:
         - name: Validate OP_SERVICE_ACCOUNT_TOKEN is set
           ansible.builtin.assert:
@@ -28,6 +29,7 @@
           ansible.builtin.copy:
             src: "{{ _auth_dir }}/kubeconfig"
             dest: "{{ _auth_dir }}/kubeconfig_self_signed"
+            mode: "0600"
 
         - name: Remove CA from kubeconfig
           ansible.builtin.lineinfile:
@@ -43,7 +45,7 @@
 
         - name: Set facts for 1password item
           ansible.builtin.set_fact:
-            op_item_name: "{{ target_cluster }}-kubeconfig-{{ now(utc=true,fmt='%Y%m%d%H%M') }}"
+            op_item_name: "{{ target_cluster }}-kubeconfig-{{ now(utc=true, fmt='%Y%m%d%H%M') }}"
             client_certificate_data: "{{ kubeconfig_dict.users[0].user['client-certificate-data'] }}"
             client_key_data: "{{ kubeconfig_dict.users[0].user['client-key-data'] }}"
             api_url: "{{ kubeconfig_dict.clusters[0].cluster.server }}"
@@ -52,7 +54,7 @@
           ansible.builtin.shell:
             cmd: op item create --category=login --title {{ op_item_name }} --vault=ansible-push kubeconfig[password]={{ kubeconfig_contents | b64encode }} kubeconfig_self_signed[password]={{ kubeconfig_self_signed_contents | b64encode }} client_certificate_data[password]={{ client_certificate_data }} client_key_data[password]={{ client_key_data }} api_url[password]={{ api_url }}</dev/null
           no_log: true
-      tags: op-save
+          changed_when: true
 
 
 - name: Copy boot artifacts to TrueNAS netbootxyz directory
@@ -104,7 +106,7 @@
         owner: "1000"
         group: "1000"
 
-    - name: Copy iPXE script to TrueNAS local dir #This works around a weird bug in netbootxyz
+    - name: Copy iPXE script to TrueNAS local dir  # This works around a weird bug in netbootxyz
       ansible.builtin.copy:
         src: "{{ boot_artifacts_src }}/agent.{{ hostvars[cluster_host]['openshift_agent_install_arch'] | default('x86_64') }}.ipxe"
         dest: "{{ truenas_ipxe_dest }}/local/{{ ipxe_filename }}"

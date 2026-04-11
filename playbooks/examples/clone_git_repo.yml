@@ -1,5 +1,6 @@
 ---
-- hosts: localhost
+- name: Clone a git repo example
+  hosts: localhost
   vars:
     ansible_ssh_common_args: "-A"
   tasks:
@@ -8,6 +9,8 @@
       ansible.builtin.git:
         repo: git@github.com:igou-io/igou-kubernetes.git
         dest: ~
+        version: main
 
-    - name: "ls the directory"
+    - name: Ls the directory
       ansible.builtin.command: "ls ~/igou-kubernetes"
+      changed_when: false

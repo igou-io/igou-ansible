@@ -1,0 +1,13 @@
+---
+profile: production
+
+# Exclude files that reference roles/collections not installable in this environment
+exclude_paths:
+  - playbooks/netbox/  # davidwittman.redis
+  - playbooks/openshift_virtualization/aap-25-vm/  # ansible-role-kubevirt_vm_manage, redhat.rhel_system_roles.rhc
+  - playbooks/openshift_virtualization/virtualmachine-manage-testing.yml  # ansible-role-kubevirt_vm_manage
+  - playbooks/openshift_virtualization/virtualmachine-tests/  # ansible-role-kubevirt_vm_manage
+  - playbooks/rhel/rhsm-system-register.yml  # redhat.rhel_system_roles.rhc
+  - playbooks/taint-nodes.yaml  # node_taint role
+  - playbooks/zfs/  # ansible-zfs
+  - roles/kubevirt_provision_survey/  # infra.controller_configuration.job_templates

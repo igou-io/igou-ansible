@@ -13,7 +13,7 @@ driver:
   # "stop" and "start" the instance in create sequence - useful for applying configurations without having to recreate the cluster
   restart: true
 platforms:
-  - name: ocp # All crc clusters are named crc, this variable is not referenced in execution
+  - name: ocp  # All crc clusters are named crc, this variable is not referenced in execution
     pull_secret_file: ../../../../pull-secret.json
     config:
       cpus: 8
@@ -21,11 +21,11 @@ platforms:
       disk-size: 45
       preset: openshift
       consent-telemetry: "no"
-  # - name: okd # All crc clusters are named crc, this variable is not referenced in execution
-  #   config:
-  #     bundle: docker://quay.io/crcont/okd-bundle:4.19.0-okd-scos.19
-  #     preset: okd
-  #     consent-telemetry: "no"
+# - name: okd # All crc clusters are named crc, this variable is not referenced in execution
+#   config:
+#     bundle: docker://quay.io/crcont/okd-bundle:4.19.0-okd-scos.19
+#     preset: okd
+#     consent-telemetry: "no"
 
 provisioner:
   name: ansible

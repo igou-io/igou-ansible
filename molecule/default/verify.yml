@@ -3,7 +3,7 @@
 # Molecule calls this playbook with `molecule verify`.
 - name: Verify
   hosts: instance
-  gather_facts: false # Quicker, if you do not need facts
+  gather_facts: false  # Quicker, if you do not need facts
   tasks:
     - name: Assert something
       ansible.builtin.assert:

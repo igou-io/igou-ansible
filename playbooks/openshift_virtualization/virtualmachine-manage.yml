@@ -26,16 +26,3 @@
           host: "{{ vm_namespace }}-{{ vm_name }}"
         per_host: false
       when: set_stat is true
-
-
-
-    # - name: Wait for VMI to have an IP address todo: Make this more flexible
-    #   kubevirt.core.kubevirt_vmi_info:
-    #     name: "{{ vm_name }}"
-    #     namespace: "{{ vm_namespace }}"
-    #   register: vmi_info
-    #   until: vmi_info.resources[0].status.interfaces[0].ipAddress is defined
-    #   retries: 30
-    #   delay: 10
-    #   ignore_errors: yes
-    #   when: check_for_ip is true

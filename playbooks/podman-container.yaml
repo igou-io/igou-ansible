@@ -1,12 +1,12 @@
 ---
-- hosts: transmission
-  name: Deploy podman container
+- name: Deploy podman container
+  hosts: transmission
   become: true
   tasks:
     - name: Ensure podman is installed
       ansible.builtin.package:
         name: podman
-        state: latest
+        state: present
 
     - name: Run httpd podman container
       containers.podman.podman_container:
@@ -24,10 +24,10 @@
           names: true
 
     - name: Reload Systemd
-      systemd:
-        daemon_reload: yes
+      ansible.builtin.systemd:
+        daemon_reload: true
 
     - name: Enable the Systemd unit
-      systemd:
+      ansible.builtin.systemd:
         name: "container-my_web_server.service"
-        enabled: yes
+        enabled: true

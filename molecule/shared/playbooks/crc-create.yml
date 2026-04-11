@@ -61,11 +61,12 @@
     - name: Fail if crc cluster already exists and persistent is false
       ansible.builtin.fail:
         msg: "CRC cluster already exists and persistent is false."
-      when: crc_status['success'] == true and __crc_persistent == false
+      when: crc_status['success'] and not __crc_persistent
 
     - name: Set crc config
       ansible.builtin.command:
         crc config set {{ item['key'] }} {{ item['value'] }}
+      changed_when: true
       loop: "{{ molecule_yml.platforms[0].config | dict2items }}"
       when: molecule_yml.platforms[0].config is defined
 
@@ -75,17 +76,17 @@
       register: crc_setup_result
       failed_when: crc_setup_result.rc != 0
       changed_when: false  # Status check doesn't change anything
-      when: __crc_setup == true
+      when: __crc_setup
 
     - name: Parse crc setup JSON
       ansible.builtin.set_fact:
         crc_setup: "{{ crc_setup_result.stdout | from_json }}"
 
-    - name: debug output crc setup result
+    - name: Debug output crc setup result
       ansible.builtin.debug:
         var: crc_setup
 
-    - name: run crc start
+    - name: Run crc start
       ansible.builtin.command: >-
         crc start -o json
         {% if __crc_pull_secret_file is defined and __crc_pull_secret_file != omit %}
@@ -99,7 +100,7 @@
       ansible.builtin.set_fact:
         crc_start: "{{ crc_start_result.stdout | from_json }}"
 
-    - name: debug output crc start result
+    - name: Debug output crc start result
       ansible.builtin.debug:
         var: crc_start
 

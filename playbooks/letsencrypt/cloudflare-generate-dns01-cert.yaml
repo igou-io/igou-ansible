@@ -1,7 +1,8 @@
+---
 # This is a PoC playbook I still need to operationalize
-- hosts: localhost
+- name: Generate a certificate using cloudflare dns challenge
+  hosts: localhost
   gather_facts: false
-  name: Generate a certificate using cloudflare dns challenge
   become: false
 
   vars:
@@ -38,7 +39,8 @@
       #    keys/example.com-root.pem  (root certificate)
       #    keys/example.com-rootchain.pem  (intermediate certificate with root certificate)
 
-- hosts: servicenode.igou.systems
+- name: Copy certificates to service node
+  hosts: servicenode.igou.systems
   become: true
   gather_facts: false
 
@@ -47,3 +49,4 @@
       ansible.builtin.copy:
         src: /tmp/keys
         dest: "/var/www/html/"
+        mode: "0644"

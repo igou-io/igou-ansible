@@ -1,14 +1,15 @@
 ---
 # ansible-navigator run bootstrap_gitops.yaml
-- hosts: "{{ target_cluster }}"
-  name: Bootstrap Openshift Gitops and external-secrets operator, add an ansible serviceaccount and save the token to 1password
+- name: Bootstrap Openshift Gitops and external-secrets operator, add an ansible serviceaccount and save the token to 1password
+  hosts: "{{ target_cluster | default('all') }}"
   gather_facts: false
   environment:
-    K8S_AUTH_KUBECONFIG: "{{ kubeconfig | default(omit)}}"
+    K8S_AUTH_KUBECONFIG: "{{ kubeconfig | default(omit) }}"
   vars:
     gitops_repo: "https://github.com/igou-io/igou-openshift.git"
   tasks:
     - name: Create 1P Connect secrets, deploy and cluster-config application
+      tags: create-objects
       block:
         - name: Create Gitops namespace
           kubernetes.core.k8s:
@@ -49,7 +50,7 @@
                 source: redhat-operators
                 sourceNamespace: openshift-marketplace
 
-        - name: create external secrets namespace
+        - name: Create external secrets namespace
           kubernetes.core.k8s:
             state: present
             definition:
@@ -368,8 +369,8 @@
                     enabled: false
                 initialSSHKnownHosts: {}
                 applicationSet:
-                  #extraCommandArgs:
-                  #  - --enable-progressive-syncs
+                  # extraCommandArgs:
+                  #   - --enable-progressive-syncs
                   resources:
                     limits:
                       cpu: "2"
@@ -577,4 +578,3 @@
                       maxDuration: 3m
           retries: 50
           delay: 15
-      tags: create-objects

@@ -3,4 +3,4 @@
   hosts: namespace_vm_aap_testing
   gather_facts: false
   tasks:
-    - ping:
+    - ansible.builtin.ping:

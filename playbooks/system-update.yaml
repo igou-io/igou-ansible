@@ -1,6 +1,6 @@
 ---
-- hosts: "{{ ansible_limit | default('all') }}"
-  name: Update all systems
+- name: Update all systems
+  hosts: "{{ ansible_limit | default('all') }}"
   become: "{{ become | default(true) }}"
   gather_facts: true
   roles:
