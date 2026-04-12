@@ -16,7 +16,6 @@ roles:
     version: 1.0.1
   - name: David-Igou.kubevirt_vm_manage
     version: 0.0.3
-  - name: geerlingguy.postgresql
   - name: David-Igou.haproxy
     version: 1.0.0
   - name: david-igou.openshift_agent_install
@@ -40,18 +39,6 @@ collections:
     version: 2.2.4
   - name: ansible.utils
     version: 6.0.1
-  - name: vkhitrin.libguestfs
-    version: 1.1.5
-  - name: awx.awx
-  - name: azure.azcollection
-    version: ">=2.1.0"
-  - name: amazon.aws
-  - name: theforeman.foreman
-  - name: kubernetes.core
-  - name: ansible.windows
-  - name: ansible.netcommon
-  - name: community.network
-  - name: junipernetworks.junos
   - name: felixfontein.acme
     version: 0.11.0
   - name: artis3n.tailscale

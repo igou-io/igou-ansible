@@ -43,7 +43,6 @@ additional_build_steps:
     RUN microdnf install -y git-core
   append_base: |
     RUN $PYCMD -m pip install -U pip
-    RUN echo "Target architecture is: $TARGETARCH"
 
     # Configure Terraform Repo
     RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
@@ -53,19 +52,15 @@ additional_build_steps:
 
   append_final: |
     COPY --from=quay.io/ansible/receptor:devel /usr/bin/receptor /usr/bin/receptor
-    RUN mkdir -p /var/run/receptor
-    RUN git lfs install --system
-    # SymLink `python` -> `python3.12`
-    RUN alternatives --install /usr/bin/python python /usr/bin/python3.12 312
-    RUN curl -L -o /usr/local/bin/kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz && \
-        tar xzf /usr/local/bin/kustomize -C /usr/local/bin/ && \
-        chmod +x /usr/local/bin/kustomize
-    # Output collections list for debugging
-    RUN curl -L -o /usr/local/bin/oc https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/openshift-client-linux.tar.gz && \
-        tar xzf /usr/local/bin/oc -C /usr/local/bin/ && \
-        chmod +x /usr/local/bin/oc
-    RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-    RUN oc version
-    RUN python -V
-    RUN ansible --version
-    RUN ansible-galaxy collection list
+    RUN mkdir -p /var/run/receptor && \
+        git lfs install --system && \
+        alternatives --install /usr/bin/python python /usr/bin/python3.12 312
+    RUN curl -L -o /tmp/kustomize.tar.gz https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz && \
+        tar xzf /tmp/kustomize.tar.gz -C /usr/local/bin/ && \
+        chmod +x /usr/local/bin/kustomize && \
+        curl -L -o /tmp/oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/openshift-client-linux.tar.gz && \
+        tar xzf /tmp/oc.tar.gz -C /usr/local/bin/ && \
+        chmod +x /usr/local/bin/oc && \
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash && \
+        rm -f /tmp/kustomize.tar.gz /tmp/oc.tar.gz
+    RUN oc version && python -V && ansible --version && ansible-galaxy collection list
