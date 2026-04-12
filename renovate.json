@@ -65,7 +65,8 @@
       "customType": "regex",
       "managerFilePatterns": ["/Containerfile$/", "/Dockerfile$/", "/execution-environment\\.yml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:ARG )?\\w+_VERSION=\"(?<currentValue>[^\"]+)\""
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:ARG )?\\w+_VERSION=\"(?<currentValue>[^\"]+)\"",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*package_pip: \\S+==[\"']?(?<currentValue>[^\"'\\s]+)"
       ],
       "versioningTemplate": "semver"
     }
