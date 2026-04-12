@@ -52,6 +52,22 @@
       "matchManagers": ["pip_requirements"],
       "groupName": "pip dependencies",
       "automerge": true
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "groupName": "cli tools",
+      "automerge": true
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Update pinned CLI tool versions in Containerfiles and EE definitions via '# renovate:' comments",
+      "customType": "regex",
+      "managerFilePatterns": ["/Containerfile$/", "/Dockerfile$/", "/execution-environment\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n(?:ARG )?\\w+_VERSION=\"(?<currentValue>[^\"]+)\""
+      ],
+      "versioningTemplate": "semver"
     }
   ]
 }
