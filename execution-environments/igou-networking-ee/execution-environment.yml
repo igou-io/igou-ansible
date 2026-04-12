@@ -66,7 +66,8 @@ additional_build_steps:
     COPY _build/configs/custom.conf /etc/ssh/ssh_config.d/custom.conf
     RUN chmod 600 /etc/ssh/ssh_config.d/custom.conf
     RUN rm /etc/ssh/ssh_config.d/50-redhat.conf
-    COPY --from=quay.io/ansible/receptor:devel /usr/bin/receptor /usr/bin/receptor
+    # renovate: datasource=docker depName=quay.io/ansible/receptor
+    COPY --from=quay.io/ansible/receptor:v1.6.4 /usr/bin/receptor /usr/bin/receptor
     RUN mkdir -p /var/run/receptor && \
         git lfs install --system && \
         alternatives --install /usr/bin/python python /usr/bin/python3.12 312
