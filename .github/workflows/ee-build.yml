@@ -40,14 +40,14 @@ jobs:
 
       # In this job, all steps begin with a name
       - name: Checkout repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Install python requirements (ansible-builder)
         run: pip install ansible-builder==3.1.1
 
       - name: Log in to quay.io
         id: registry-quay
-        uses: redhat-actions/podman-login@v1
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1
         with:
           registry: quay.io
           username: ${{ secrets.QUAY_USERNAME }}
@@ -65,7 +65,7 @@ jobs:
 
       - name: Push To quay.io
         id: push-to-quay
-        uses: redhat-actions/push-to-registry@v2
+        uses: redhat-actions/push-to-registry@5ed88d269cf581ea9ef6dd6806d01562096bee9c # v2
         with:
           image: ${{ inputs.EE_FOLDER_NAME }}
           tags: |
