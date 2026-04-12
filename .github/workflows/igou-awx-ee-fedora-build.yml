@@ -22,7 +22,7 @@ on:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   call-deploy-workflow:
-    uses:  igou-io/igou-ansible/.github/workflows/ee-build.yml@438207c22fba423804c1fe00ba690880da1bfe30 # main
+    uses:  ./.github/workflows/ee-build.yml
     with:
       EE_FOLDER_NAME: 'igou-awx-ee-fedora'
       EE_IMAGE_TAG: 'latest'
