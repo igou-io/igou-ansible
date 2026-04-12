@@ -55,7 +55,14 @@
     },
     {
       "matchManagers": ["custom.regex"],
+      "matchDatasources": ["!docker"],
       "groupName": "cli tools",
+      "automerge": true
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "ee container images",
       "automerge": true
     }
   ],
