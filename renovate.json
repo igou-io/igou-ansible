@@ -8,7 +8,7 @@
   },
   "minimumReleaseAge": "10 days",
   "automergeType": "pr",
-  "schedule": ["before 5am on sunday"],
+  "schedule": ["before 11pm on sunday"],
   "packageRules": [
     {
       "matchCategories": [
