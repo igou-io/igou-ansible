@@ -60,7 +60,7 @@ additional_build_steps:
         git lfs install --system && \
         alternatives --install /usr/bin/python python /usr/bin/python3.14 314
     # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize extractVersion=^kustomize/(?<version>.*)$
-    ARG KUSTOMIZE_VERSION="v5.4.3"
+    ARG KUSTOMIZE_VERSION="v5.8.1"
     RUN curl -L -o /tmp/kustomize.tar.gz "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" && \
         tar xzf /tmp/kustomize.tar.gz -C /usr/local/bin/ && \
         chmod +x /usr/local/bin/kustomize && \
