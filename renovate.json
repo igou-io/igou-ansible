@@ -82,8 +82,9 @@
       "customType": "regex",
       "managerFilePatterns": ["/execution-environment\\.yml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*name: \\S+:(?<currentValue>\\S+)"
-      ]
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*name: \\S+:(?<currentValue>[^@\\s]+)(?:@(?<currentDigest>\\S+))?"
+      ],
+      "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\n    name: {{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}"
     }
   ]
 }
