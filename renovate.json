@@ -55,6 +55,13 @@
     },
     {
       "matchManagers": ["custom.regex"],
+      "matchCategories": ["docker"],
+      "groupName": "ee container images",
+      "automerge": true
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "excludeCategories": ["docker"],
       "groupName": "cli tools",
       "automerge": true
     }
@@ -69,6 +76,14 @@
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*package_pip: \\S+==[\"']?(?<currentValue>[^\"'\\s]+)"
       ],
       "versioningTemplate": "semver"
+    },
+    {
+      "description": "Track and pin Docker base images in execution-environment.yml files",
+      "customType": "regex",
+      "managerFilePatterns": ["/execution-environment\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*name: \\S+:(?<currentValue>\\S+)"
+      ]
     }
   ]
 }
