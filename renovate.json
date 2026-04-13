@@ -78,13 +78,23 @@
       "versioningTemplate": "semver"
     },
     {
-      "description": "Update container image references in EE definitions with digest pinning",
+      "description": "Pin digests for COPY --from container image references in EE definitions",
       "customType": "regex",
       "managerFilePatterns": ["/Containerfile$/", "/Dockerfile$/", "/execution-environment\\.yml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*COPY --from=\\S+:(?<currentValue>[^@\\s]+)(?:@(?<currentDigest>\\S+))?",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*COPY --from=\\S+:(?<currentValue>[^@\\s]+)(?:@(?<currentDigest>\\S+))?"
+      ],
+      "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\n    COPY --from={{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
+      "versioningTemplate": "docker"
+    },
+    {
+      "description": "Pin digests for base image references in EE definitions",
+      "customType": "regex",
+      "managerFilePatterns": ["/Containerfile$/", "/Dockerfile$/", "/execution-environment\\.yml$/"],
+      "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*name: \\S+:(?<currentValue>[^@\\s]+)(?:@(?<currentDigest>\\S+))?"
       ],
+      "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\n    name: {{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
       "versioningTemplate": "docker"
     }
   ]
