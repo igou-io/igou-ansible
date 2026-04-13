@@ -55,13 +55,13 @@
     },
     {
       "matchManagers": ["custom.regex"],
-      "matchCategories": ["docker"],
+      "matchDatasources": ["docker"],
       "groupName": "ee container images",
       "automerge": true
     },
     {
       "matchManagers": ["custom.regex"],
-      "excludeCategories": ["docker"],
+      "matchDatasources": ["github-releases", "pypi"],
       "groupName": "cli tools",
       "automerge": true
     }
