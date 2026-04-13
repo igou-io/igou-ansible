@@ -57,7 +57,9 @@
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["docker"],
       "groupName": "ee container images",
-      "automerge": true
+      "automerge": true,
+      "minimumReleaseAge": null,
+      "minimumReleaseAgeBehaviour": "age-only"
     },
     {
       "matchManagers": ["custom.regex"],
@@ -82,7 +84,7 @@
       "customType": "regex",
       "managerFilePatterns": ["/execution-environment\\.yml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*name: \\S+:(?<currentValue>[^@\\s]+)(?:@(?<currentDigest>\\S+))?"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*name: [^:\\s]+:(?<currentValue>[^@\\s]+)(?:@(?<currentDigest>\\S+))?"
       ],
       "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\n    name: {{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}"
     }
