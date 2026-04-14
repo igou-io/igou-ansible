@@ -1,71 +1,48 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:best-practices"
+    "github>igou-io/igou-devenv//renovate-base.json"
   ],
-  "pin": {
-    "automerge": true
-  },
-  "minimumReleaseAge": "10 days",
-  "automergeType": "pr",
-  "schedule": ["before 11pm on sunday"],
   "packageRules": [
     {
-      "matchCategories": [
-        "docker"
-      ],
-      "pinDigests": true
-    },
-    {
-      "matchManagers": [
-        "github-actions"
-      ],
-      "pinDigests": true,
+      "matchManagers": ["github-actions"],
       "groupName": "github-actions"
     },
     {
       "matchUpdateTypes": ["patch"],
-      "groupName": "patch updates",
-      "automerge": true
+      "groupName": "patch updates"
     },
     {
       "matchUpdateTypes": ["minor"],
-      "groupName": "minor updates",
-      "automerge": true
+      "groupName": "minor updates"
     },
     {
       "matchUpdateTypes": ["major"],
-      "groupName": "major updates",
-      "automerge": true
+      "groupName": "major updates"
     },
     {
       "matchUpdateTypes": ["pin"],
-      "groupName": "pin dependencies",
-      "automerge": true
+      "groupName": "pin dependencies"
     },
     {
       "matchUpdateTypes": ["digest"],
-      "groupName": "digest updates",
-      "automerge": true
+      "groupName": "digest updates"
     },
     {
       "matchManagers": ["pip_requirements"],
-      "groupName": "pip dependencies",
-      "automerge": true
+      "groupName": "pip dependencies"
     },
     {
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["docker"],
       "groupName": "ee container images",
-      "automerge": true,
       "minimumReleaseAge": null,
       "minimumReleaseAgeBehaviour": "age-only"
     },
     {
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["github-releases", "pypi"],
-      "groupName": "cli tools",
-      "automerge": true
+      "groupName": "cli tools"
     }
   ],
   "customManagers": [
