@@ -106,6 +106,7 @@
         owner: "1000"
         group: "1000"
 
+    # This copies the ipxe script itself to netbootxyz. It is not the default boot option for a host, but referrenced in the .ipxe file served by netbootxyz.
     - name: Copy iPXE script to TrueNAS local dir  # This works around a weird bug in netbootxyz
       ansible.builtin.copy:
         src: "{{ boot_artifacts_src }}/agent.{{ hostvars[cluster_host]['openshift_agent_install_arch'] | default('x86_64') }}.ipxe"
