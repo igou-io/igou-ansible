@@ -3,7 +3,7 @@ version: 3
 images:
   base_image:
     # renovate: datasource=docker depName=quay.io/fedora/fedora
-    name: quay.io/fedora/fedora:latest@sha256:bfaf8568c478947c9ba497c502b2b96640b1a6c7df5ea65bbc2968cb99b9a159
+    name: quay.io/fedora/fedora:44@sha256:bfaf8568c478947c9ba497c502b2b96640b1a6c7df5ea65bbc2968cb99b9a159
 options:
   package_manager_path: /usr/bin/dnf
 dependencies:
@@ -35,7 +35,6 @@ dependencies:
     make [platform:rpm compile]
     openssl-devel [platform:rpm compile]
     1password-cli
-    terraform
     coreos-installer
     cargo
     tar
@@ -46,9 +45,6 @@ additional_build_steps:
     RUN dnf install -y git-core
   append_base: |
     RUN $PYCMD -m pip install -U pip
-
-    # Configure Terraform Repo
-    RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
 
     RUN rpm --import https://downloads.1password.com/linux/keys/1password.asc && \
     sh -c 'echo -e "[1password]\nname=1Password Stable Channel\nbaseurl=https://downloads.1password.com/linux/rpm/stable/\$basearch\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://downloads.1password.com/linux/keys/1password.asc" > /etc/yum.repos.d/1password.repo'
@@ -69,4 +65,10 @@ additional_build_steps:
         tar xzf /tmp/kustomize.tar.gz -C /usr/local/bin/ && \
         chmod +x /usr/local/bin/kustomize && \
         rm -f /tmp/kustomize.tar.gz
+    # renovate: datasource=github-releases depName=hashicorp/terraform
+    ARG TERRAFORM_VERSION="v1.15.1"
+    RUN curl -L -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION#v}/terraform_${TERRAFORM_VERSION#v}_linux_amd64.zip" && \
+        unzip -o /tmp/terraform.zip -d /usr/local/bin/ && \
+        chmod +x /usr/local/bin/terraform && \
+        rm -f /tmp/terraform.zip
     RUN python -V && ansible --version && ansible-galaxy collection list
