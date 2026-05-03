@@ -134,10 +134,16 @@
                   service:
                     type: ""
                 resourceIgnoreDifferences:
+                  # Suppress diff noise on Secret /data only when the Secret
+                  # is owned by external-secrets-operator (ESO labels Secrets
+                  # it manages with reconcile.external-secrets.io/managed=true).
+                  # Without this scope, ArgoCD ignores /data on EVERY Secret —
+                  # which silently breaks drift detection for kustomize-authored
+                  # Secrets like alertmanager-main.
                   resourceIdentifiers:
                     - customization:
-                        jsonPointers:
-                          - /data
+                        jqPathExpressions:
+                          - 'select(.metadata.labels."reconcile.external-secrets.io/managed" == "true") | .data'
                       kind: Secret
                 resourceCustomizations: |
                   argoproj.io/Application:
