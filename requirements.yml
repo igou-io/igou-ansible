@@ -52,4 +52,8 @@ collections:
     version: 1.1.5
   - name: ansible.posix
     version: 2.1.0
+  - name: ansible.netcommon
+    version: 7.1.0
+  - name: community.routeros
+    version: 2.18.0
 ...

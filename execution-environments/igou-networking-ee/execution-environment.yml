@@ -29,6 +29,8 @@ dependencies:
         version: 5.0.0
       - name: arista.eos
         version: 10.0.1
+      - name: community.routeros
+        version: 2.18.0
   system: |
     python3.12-devel [platform:rpm compile]
     libcurl-devel [platform:rpm compile]

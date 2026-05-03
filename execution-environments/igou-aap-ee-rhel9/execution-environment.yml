@@ -42,6 +42,7 @@ dependencies:
       - name: ansible.posix
       - name: ansible.netcommon
       - name: ansible.utils
+      - name: community.routeros
       - name: community.crypto
       - name: community.general
       - name: redhat.satellite
