@@ -2,4 +2,4 @@ pytz==2026.1.post1
 python-dateutil==2.9.0.post0
 awxkit==24.6.1
 systemd-python==235
-boto3==1.42.90
+boto3==1.42.94
