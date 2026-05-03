@@ -12,7 +12,7 @@ dependencies:
     python_path: /usr/bin/python3.12
   ansible_core:
     # renovate: datasource=pypi depName=ansible-core
-    package_pip: ansible-core==2.20.4
+    package_pip: ansible-core==2.20.5
   ansible_runner:
     # renovate: datasource=pypi depName=ansible-runner
     package_pip: ansible-runner==2.4.3
