@@ -1,3 +1,20 @@
 ---
-# Placeholder — see Task 2.
-hosts: []
+{# Renders nodes-config.yaml for `oc adm node-image create --pxe`.
+   Iterates the per-cluster worker group and emits one hosts[] entry
+   per worker. Optional dict fields are inline JSON for safety. #}
+{% set _workers = groups['openshift_workers_' + target_cluster] %}
+hosts:
+{% for w in _workers %}
+{%   set h = hostvars[w] %}
+  - hostname: {{ h.openshift_add_node_hostname | default(w) }}
+    interfaces:
+      - name: {{ h.openshift_add_node_interface_name | default('eth0') }}
+        macAddress: "{{ h.openshift_add_node_mac }}"
+{%   if h.openshift_add_node_root_device is defined %}
+    rootDeviceHints: {{ h.openshift_add_node_root_device | to_json }}
+{%   endif %}
+{%   if h.openshift_add_node_network_config is defined %}
+    networkConfig: {{ h.openshift_add_node_network_config | to_json }}
+{%   endif %}
+{% endfor %}
+bootArtifactsBaseURL: {{ openshift_add_node_boot_artifacts_base_url }}
