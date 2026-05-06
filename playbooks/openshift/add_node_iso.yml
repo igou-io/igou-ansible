@@ -149,10 +149,10 @@
              | map('extract', hostvars)
              | map(attribute='openshift_add_node_network_config', default={})
              | map(attribute='interfaces', default=[])
-             | map('first', default={})
+             | map(attribute='0', default={})
              | map(attribute='ipv4', default={})
              | map(attribute='address', default=[])
-             | map('first', default={})
+             | map(attribute='0', default={})
              | map(attribute='ip', default='')
              | list }}
       block:
