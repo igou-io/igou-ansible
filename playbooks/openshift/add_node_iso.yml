@@ -33,10 +33,40 @@
   vars:
     openshift_add_node_work_dir: "{{ ansible_env.HOME }}/openshift-add-node/{{ target_cluster }}"
     openshift_add_node_arch: "{{ openshift_add_node_arch | default('x86_64') }}"
-  tasks:
-    - name: Placeholder for Play 1
-      ansible.builtin.debug:
-        msg: "Play 1 stub"
+  pre_tasks:
+    - name: Preflight — KUBECONFIG must be set in the environment
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'KUBECONFIG') | length > 0
+        fail_msg: >-
+          KUBECONFIG environment variable is not set. Export it before
+          running this playbook (e.g., `export KUBECONFIG=~/.kube/ocp-config`).
+
+    - name: Preflight — worker group must exist and be non-empty
+      vars:
+        _workers_group: "openshift_workers_{{ target_cluster }}"
+        _workers: "{{ groups[_workers_group] | default([]) }}"
+      ansible.builtin.assert:
+        that:
+          - _workers | length > 0
+        fail_msg: >-
+          Inventory group `{{ _workers_group }}` is missing or empty.
+          Add at least one worker host to that group with
+          `openshift_add_node_mac` set.
+
+    - name: Preflight — every worker must have a valid MAC address
+      ansible.builtin.assert:
+        that:
+          - hostvars[item].openshift_add_node_mac is defined
+          - hostvars[item].openshift_add_node_mac is match('^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$')
+        fail_msg: >-
+          Worker `{{ item }}` is missing or has an invalid
+          `openshift_add_node_mac`. Expected format aa:bb:cc:dd:ee:ff.
+      loop: "{{ groups['openshift_workers_' + target_cluster] }}"
+      loop_control:
+        label: "{{ item }}"
+
+  tasks: []
 
 - name: Deliver PXE assets to TrueNAS netbootxyz
   hosts: truenas
