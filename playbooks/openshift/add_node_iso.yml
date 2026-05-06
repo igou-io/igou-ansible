@@ -24,7 +24,10 @@
 #        oc adm certificate approve <name>
 
 - name: Generate OpenShift add-node PXE assets
-  hosts: "{{ target_cluster }}"
+  # default('all') keeps ansible-lint happy at parse time; Play 1's
+  # pre_tasks (Task 3) assert that target_cluster is actually defined
+  # before any work runs, so the 'all' fallback is never reached at runtime.
+  hosts: "{{ target_cluster | default('all') }}"
   connection: local
   gather_facts: true
   vars:
