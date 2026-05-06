@@ -94,6 +94,53 @@
         path: "{{ openshift_add_node_work_dir }}/auth.json"
         mode: "0600"
 
+    - name: Render nodes-config.yaml
+      ansible.builtin.template:
+        src: templates/nodes-config.yaml.j2
+        dest: "{{ openshift_add_node_work_dir }}/nodes-config.yaml"
+        mode: "0644"
+
+    - name: Run `oc adm node-image create --pxe`
+      ansible.builtin.command:
+        cmd: >-
+          oc adm node-image create --pxe
+          --dir {{ openshift_add_node_work_dir }}
+          --registry-config {{ openshift_add_node_work_dir }}/auth.json
+        creates: "{{ openshift_add_node_work_dir }}/node.{{ openshift_add_node_arch }}.ipxe"
+
+    - name: List generated PXE assets
+      ansible.builtin.find:
+        paths: "{{ openshift_add_node_work_dir }}"
+        file_type: file
+        excludes:
+          - auth.json
+          - nodes-config.yaml
+      register: _add_node_assets
+
+    - name: Show generated PXE asset filenames
+      ansible.builtin.debug:
+        msg: "{{ _add_node_assets.files | map(attribute='path') | map('basename') | sort }}"
+
+    - name: Verify expected PXE asset files exist
+      ansible.builtin.stat:
+        path: "{{ openshift_add_node_work_dir }}/{{ item }}"
+      register: _asset_stat
+      failed_when: not _asset_stat.stat.exists
+      loop:
+        - "node.{{ openshift_add_node_arch }}.ipxe"
+        - "node.{{ openshift_add_node_arch }}-vmlinuz"
+        - "node.{{ openshift_add_node_arch }}-initrd.img"
+        - "node.{{ openshift_add_node_arch }}-rootfs.img"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Set fact for Play 2 — generated asset paths
+      ansible.builtin.set_fact:
+        openshift_add_node_pxe_assets:
+          ipxe: "{{ openshift_add_node_work_dir }}/node.{{ openshift_add_node_arch }}.ipxe"
+          work_dir: "{{ openshift_add_node_work_dir }}"
+          arch: "{{ openshift_add_node_arch }}"
+
 - name: Deliver PXE assets to TrueNAS netbootxyz
   hosts: truenas
   become: true
