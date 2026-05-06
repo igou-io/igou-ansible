@@ -141,6 +141,38 @@
           work_dir: "{{ openshift_add_node_work_dir }}"
           arch: "{{ openshift_add_node_arch }}"
 
+    - name: Monitor add-node progress
+      tags: [monitor, never]
+      vars:
+        _worker_ips: >-
+          {{ groups['openshift_workers_' + target_cluster]
+             | map('extract', hostvars)
+             | map(attribute='openshift_add_node_network_config', default={})
+             | map(attribute='interfaces', default=[])
+             | map('first', default={})
+             | map(attribute='ipv4', default={})
+             | map(attribute='address', default=[])
+             | map('first', default={})
+             | map(attribute='ip', default='')
+             | list }}
+      block:
+        - name: Assert every worker has a static IP for monitoring
+          ansible.builtin.assert:
+            that:
+              - _worker_ips | reject('equalto', '') | list | length == _worker_ips | length
+            fail_msg: >-
+              At least one worker has no static IP in
+              `openshift_add_node_network_config`. Run
+              `oc adm node-image monitor --ip-addresses <ips>` manually
+              with addresses discovered from DHCP.
+
+        - name: Run `oc adm node-image monitor`
+          ansible.builtin.command:
+            cmd: >-
+              oc adm node-image monitor
+              --ip-addresses {{ _worker_ips | join(',') }}
+          changed_when: false
+
 - name: Deliver PXE assets to TrueNAS netbootxyz
   hosts: truenas
   become: true
