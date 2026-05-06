@@ -179,8 +179,10 @@
   gather_facts: false
   vars:
     cluster_host: "{{ target_cluster }}"
-    work_dir: "{{ hostvars[cluster_host]['openshift_add_node_work_dir'] }}"
-    arch: "{{ hostvars[cluster_host]['openshift_add_node_arch'] | default('x86_64') }}"
+    # Read via the fact set by Play 1's set_fact task; play-level vars are
+    # not promoted into hostvars across plays, but set_fact values are.
+    work_dir: "{{ hostvars[cluster_host]['openshift_add_node_pxe_assets']['work_dir'] }}"
+    arch: "{{ hostvars[cluster_host]['openshift_add_node_pxe_assets']['arch'] }}"
     truenas_assets_root: /mnt/ssd/containers/netbootxyz/assets
     truenas_menus_root: /mnt/ssd/containers/netbootxyz/config/menus
     asset_subdir: "{{ cluster_host }}-add-node"
