@@ -177,7 +177,65 @@
   hosts: truenas
   become: true
   gather_facts: false
+  vars:
+    cluster_host: "{{ target_cluster }}"
+    work_dir: "{{ hostvars[cluster_host]['openshift_add_node_work_dir'] }}"
+    arch: "{{ hostvars[cluster_host]['openshift_add_node_arch'] | default('x86_64') }}"
+    truenas_assets_root: /mnt/ssd/containers/netbootxyz/assets
+    truenas_menus_root: /mnt/ssd/containers/netbootxyz/config/menus
+    asset_subdir: "{{ cluster_host }}-add-node"
   tasks:
-    - name: Placeholder for Play 2
-      ansible.builtin.debug:
-        msg: "Play 2 stub"
+    - name: Verify netbootxyz menus directory exists
+      ansible.builtin.stat:
+        path: "{{ truenas_menus_root }}"
+      register: _menus_stat
+
+    - name: Fail if netbootxyz menus directory is missing
+      ansible.builtin.assert:
+        that:
+          - _menus_stat.stat.exists
+          - _menus_stat.stat.isdir
+        fail_msg: "netbootxyz menus directory {{ truenas_menus_root }} is missing"
+
+    - name: Ensure asset destination directory exists
+      ansible.builtin.file:
+        path: "{{ truenas_assets_root }}/{{ asset_subdir }}"
+        state: directory
+        mode: "0755"
+        owner: "1000"
+        group: "1000"
+
+    - name: Sync boot artifacts to TrueNAS
+      ansible.posix.synchronize:
+        src: "{{ work_dir }}/"
+        dest: "{{ truenas_assets_root }}/{{ asset_subdir }}/"
+        delete: true
+        rsync_opts:
+          - "--exclude=*.ipxe"
+          - "--exclude=auth.json"
+          - "--exclude=nodes-config.yaml"
+          - "--chown=1000:1000"
+
+    - name: Copy iPXE script per worker into menus dir
+      ansible.builtin.copy:
+        src: "{{ work_dir }}/node.{{ arch }}.ipxe"
+        dest: "{{ truenas_menus_root }}/{{ hostvars[item].openshift_add_node_mac | replace(':', '') }}-add-node-{{ cluster_host }}.ipxe"
+        mode: "0644"
+        owner: "1000"
+        group: "1000"
+      loop: "{{ groups['openshift_workers_' + cluster_host] }}"
+      loop_control:
+        label: "{{ item }}"
+
+    # Mirrors the netbootxyz workaround in deploy_pxe_assets.yml: a duplicate
+    # copy under /local/ that the menu chain references.
+    - name: Copy iPXE script per worker into menus/local dir
+      ansible.builtin.copy:
+        src: "{{ work_dir }}/node.{{ arch }}.ipxe"
+        dest: "{{ truenas_menus_root }}/local/{{ hostvars[item].openshift_add_node_mac | replace(':', '') }}-add-node-{{ cluster_host }}.ipxe"
+        mode: "0644"
+        owner: "1000"
+        group: "1000"
+      loop: "{{ groups['openshift_workers_' + cluster_host] }}"
+      loop_control:
+        label: "{{ item }}"
