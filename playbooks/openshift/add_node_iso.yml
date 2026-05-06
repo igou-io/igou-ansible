@@ -66,7 +66,33 @@
       loop_control:
         label: "{{ item }}"
 
-  tasks: []
+  tasks:
+    - name: Wipe stale work dir
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}"
+        state: absent
+
+    - name: Create fresh work dir
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Fetch cluster pull secret to work dir
+      ansible.builtin.shell: |
+        set -o pipefail
+        oc -n openshift-config get secret pull-secret \
+          -o jsonpath='{.data.\.dockerconfigjson}' \
+          | base64 -d > "{{ openshift_add_node_work_dir }}/auth.json"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    - name: Lock down pull secret file mode
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}/auth.json"
+        mode: "0600"
 
 - name: Deliver PXE assets to TrueNAS netbootxyz
   hosts: truenas
