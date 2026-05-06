@@ -24,7 +24,7 @@
 #        oc adm certificate approve <name>
 
 - name: Generate OpenShift add-node PXE assets
-  hosts: "{{ target_cluster | default('all') }}"
+  hosts: "{{ target_cluster }}"
   connection: local
   gather_facts: true
   vars:
