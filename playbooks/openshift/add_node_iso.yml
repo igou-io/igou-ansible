@@ -24,9 +24,9 @@
 #        oc adm certificate approve <name>
 
 - name: Generate OpenShift add-node PXE assets
-  # default('all') keeps ansible-lint happy at parse time; Play 1's
-  # pre_tasks (Task 3) assert that target_cluster is actually defined
-  # before any work runs, so the 'all' fallback is never reached at runtime.
+  # default('all') keeps ansible-lint happy at parse time; target_cluster must
+  # be provided via -e at runtime. The pre_tasks fail fast if it's undefined
+  # (the work-dir var dereference) or if the resulting worker group is empty.
   hosts: "{{ target_cluster | default('all') }}"
   connection: local
   gather_facts: true
@@ -58,7 +58,7 @@
       ansible.builtin.assert:
         that:
           - hostvars[item].openshift_add_node_mac is defined
-          - hostvars[item].openshift_add_node_mac is match('^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$')
+          - hostvars[item].openshift_add_node_mac | default('') is match('^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$')
         fail_msg: >-
           Worker `{{ item }}` is missing or has an invalid
           `openshift_add_node_mac`. Expected format aa:bb:cc:dd:ee:ff.
