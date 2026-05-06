@@ -1,0 +1,45 @@
+---
+# Add worker nodes to an existing OpenShift cluster by generating PXE
+# assets via `oc adm node-image create --pxe` and copying them to
+# TrueNAS netbootxyz.
+#
+# Source procedure:
+#   https://github.com/openshift/openshift-docs/blob/main/nodes/nodes/nodes-nodes-adding-node-iso.adoc
+#
+# Operator workflow:
+#   1. Add worker(s) to inventory under group `openshift_workers_<cluster>`
+#      with at minimum `openshift_add_node_mac`. Add
+#      `openshift_add_node_network_config` (nmstate) for static IPs.
+#   2. Set on the cluster host (e.g., host_vars/ocp.yml):
+#        openshift_add_node_arch: x86_64
+#        openshift_add_node_boot_artifacts_base_url: http://<netboot-host>/<cluster>-add-node/
+#   3. export KUBECONFIG=<path-to-cluster-kubeconfig>
+#   4. ansible-navigator run playbooks/openshift/add_node_iso.yml \
+#        -i igou-inventory/inventory.yaml \
+#        -e target_cluster=<cluster>
+#   5. PXE-boot the worker.
+#   6. Optionally: re-run with `--tags monitor` to watch the join.
+#   7. Approve any pending CSRs manually:
+#        oc get csr
+#        oc adm certificate approve <name>
+
+- name: Generate OpenShift add-node PXE assets
+  hosts: "{{ target_cluster | default('all') }}"
+  connection: local
+  gather_facts: true
+  vars:
+    openshift_add_node_work_dir: "{{ ansible_env.HOME }}/openshift-add-node/{{ target_cluster }}"
+    openshift_add_node_arch: "{{ openshift_add_node_arch | default('x86_64') }}"
+  tasks:
+    - name: Placeholder for Play 1
+      ansible.builtin.debug:
+        msg: "Play 1 stub"
+
+- name: Deliver PXE assets to TrueNAS netbootxyz
+  hosts: truenas
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Placeholder for Play 2
+      ansible.builtin.debug:
+        msg: "Play 2 stub"
