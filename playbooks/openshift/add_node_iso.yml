@@ -101,12 +101,14 @@
         mode: "0644"
 
     - name: Run `oc adm node-image create --pxe`
+      # work_dir is wiped above, so this always runs and always produces fresh
+      # assets; changed_when reflects that.
       ansible.builtin.command:
         cmd: >-
           oc adm node-image create --pxe
           --dir {{ openshift_add_node_work_dir }}
           --registry-config {{ openshift_add_node_work_dir }}/auth.json
-        creates: "{{ openshift_add_node_work_dir }}/node.{{ openshift_add_node_arch }}.ipxe"
+      changed_when: true
 
     - name: List generated PXE assets
       ansible.builtin.find:
@@ -142,6 +144,9 @@
           arch: "{{ openshift_add_node_arch }}"
 
     - name: Monitor add-node progress
+      # `oc adm node-image monitor` skips CSR-readiness checks if reverse DNS
+      # is not available for a node IP. CSR approval is always manual (see
+      # operator workflow step 7) regardless of whether monitor completes.
       tags: [monitor, never]
       vars:
         _worker_ips: >-
