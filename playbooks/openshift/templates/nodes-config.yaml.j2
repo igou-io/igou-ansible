@@ -17,4 +17,4 @@ hosts:
     networkConfig: {{ h.openshift_add_node_network_config | to_json }}
 {%   endif %}
 {% endfor %}
-bootArtifactsBaseURL: {{ openshift_add_node_boot_artifacts_base_url }}
+bootArtifactsBaseURL: "{{ openshift_add_node_boot_artifacts_base_url }}"
