@@ -1,0 +1,248 @@
+---
+# Add worker nodes to an existing OpenShift cluster by generating PXE
+# assets via `oc adm node-image create --pxe` and copying them to
+# TrueNAS netbootxyz.
+#
+# Source procedure:
+#   https://github.com/openshift/openshift-docs/blob/main/nodes/nodes/nodes-nodes-adding-node-iso.adoc
+#
+# Operator workflow:
+#   1. Add worker(s) to inventory under group `openshift_workers_<cluster>`
+#      with at minimum `openshift_add_node_mac`. Add
+#      `openshift_add_node_network_config` (nmstate) for static IPs.
+#   2. Set on the cluster host (e.g., host_vars/ocp.yml):
+#        openshift_add_node_arch: x86_64
+#        openshift_add_node_boot_artifacts_base_url: http://<netboot-host>/<cluster>-add-node/
+#   3. export KUBECONFIG=<path-to-cluster-kubeconfig>
+#   4. ansible-navigator run playbooks/openshift/add_node_iso.yml \
+#        -i igou-inventory/inventory.yaml \
+#        -e target_cluster=<cluster>
+#   5. PXE-boot the worker.
+#   6. Optionally: re-run with `--tags monitor` to watch the join.
+#   7. Approve any pending CSRs manually:
+#        oc get csr
+#        oc adm certificate approve <name>
+
+- name: Generate OpenShift add-node PXE assets
+  # default('all') keeps ansible-lint happy at parse time; target_cluster must
+  # be provided via -e at runtime. The pre_tasks fail fast if it's undefined
+  # (the work-dir var dereference) or if the resulting worker group is empty.
+  hosts: "{{ target_cluster | default('all') }}"
+  connection: local
+  gather_facts: true
+  vars:
+    openshift_add_node_work_dir: "{{ ansible_env.HOME }}/openshift-add-node/{{ target_cluster }}"
+    openshift_add_node_arch: "{{ openshift_add_node_arch | default('x86_64') }}"
+  pre_tasks:
+    - name: Preflight — KUBECONFIG must be set in the environment
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'KUBECONFIG') | length > 0
+        fail_msg: >-
+          KUBECONFIG environment variable is not set. Export it before
+          running this playbook (e.g., `export KUBECONFIG=~/.kube/ocp-config`).
+
+    - name: Preflight — worker group must exist and be non-empty
+      vars:
+        _workers_group: "openshift_workers_{{ target_cluster }}"
+        _workers: "{{ groups[_workers_group] | default([]) }}"
+      ansible.builtin.assert:
+        that:
+          - _workers | length > 0
+        fail_msg: >-
+          Inventory group `{{ _workers_group }}` is missing or empty.
+          Add at least one worker host to that group with
+          `openshift_add_node_mac` set.
+
+    - name: Preflight — every worker must have a valid MAC address
+      ansible.builtin.assert:
+        that:
+          - hostvars[item].openshift_add_node_mac is defined
+          - hostvars[item].openshift_add_node_mac | default('') is match('^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$')
+        fail_msg: >-
+          Worker `{{ item }}` is missing or has an invalid
+          `openshift_add_node_mac`. Expected format aa:bb:cc:dd:ee:ff.
+      loop: "{{ groups['openshift_workers_' + target_cluster] }}"
+      loop_control:
+        label: "{{ item }}"
+
+  tasks:
+    - name: Wipe stale work dir
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}"
+        state: absent
+
+    - name: Create fresh work dir
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Fetch cluster pull secret to work dir
+      ansible.builtin.shell: |
+        set -o pipefail
+        oc -n openshift-config get secret pull-secret \
+          -o jsonpath='{.data.\.dockerconfigjson}' \
+          | base64 -d > "{{ openshift_add_node_work_dir }}/auth.json"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    - name: Lock down pull secret file mode
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}/auth.json"
+        mode: "0600"
+
+    - name: Render nodes-config.yaml
+      ansible.builtin.template:
+        src: templates/nodes-config.yaml.j2
+        dest: "{{ openshift_add_node_work_dir }}/nodes-config.yaml"
+        mode: "0644"
+
+    - name: Run `oc adm node-image create --pxe`
+      # work_dir is wiped above, so this always runs and always produces fresh
+      # assets; changed_when reflects that.
+      ansible.builtin.command:
+        cmd: >-
+          oc adm node-image create --pxe
+          --dir {{ openshift_add_node_work_dir }}
+          --registry-config {{ openshift_add_node_work_dir }}/auth.json
+      changed_when: true
+
+    - name: List generated PXE assets
+      ansible.builtin.find:
+        paths: "{{ openshift_add_node_work_dir }}"
+        file_type: file
+        excludes:
+          - auth.json
+          - nodes-config.yaml
+      register: _add_node_assets
+
+    - name: Show generated PXE asset filenames
+      ansible.builtin.debug:
+        msg: "{{ _add_node_assets.files | map(attribute='path') | map('basename') | sort }}"
+
+    - name: Verify expected PXE asset files exist
+      ansible.builtin.stat:
+        path: "{{ openshift_add_node_work_dir }}/{{ item }}"
+      register: _asset_stat
+      failed_when: not _asset_stat.stat.exists
+      loop:
+        - "node.{{ openshift_add_node_arch }}.ipxe"
+        - "node.{{ openshift_add_node_arch }}-vmlinuz"
+        - "node.{{ openshift_add_node_arch }}-initrd.img"
+        - "node.{{ openshift_add_node_arch }}-rootfs.img"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Set fact for Play 2 — generated asset paths
+      ansible.builtin.set_fact:
+        openshift_add_node_pxe_assets:
+          ipxe: "{{ openshift_add_node_work_dir }}/node.{{ openshift_add_node_arch }}.ipxe"
+          work_dir: "{{ openshift_add_node_work_dir }}"
+          arch: "{{ openshift_add_node_arch }}"
+
+    - name: Monitor add-node progress
+      # `oc adm node-image monitor` skips CSR-readiness checks if reverse DNS
+      # is not available for a node IP. CSR approval is always manual (see
+      # operator workflow step 7) regardless of whether monitor completes.
+      tags: [monitor, never]
+      vars:
+        _worker_ips: >-
+          {{ groups['openshift_workers_' + target_cluster]
+             | map('extract', hostvars)
+             | map(attribute='openshift_add_node_network_config', default={})
+             | map(attribute='interfaces', default=[])
+             | map(attribute='0', default={})
+             | map(attribute='ipv4', default={})
+             | map(attribute='address', default=[])
+             | map(attribute='0', default={})
+             | map(attribute='ip', default='')
+             | list }}
+      block:
+        - name: Assert every worker has a static IP for monitoring
+          ansible.builtin.assert:
+            that:
+              - _worker_ips | reject('equalto', '') | list | length == _worker_ips | length
+            fail_msg: >-
+              At least one worker has no static IP in
+              `openshift_add_node_network_config`. Run
+              `oc adm node-image monitor --ip-addresses <ips>` manually
+              with addresses discovered from DHCP.
+
+        - name: Run `oc adm node-image monitor`
+          ansible.builtin.command:
+            cmd: >-
+              oc adm node-image monitor
+              --ip-addresses {{ _worker_ips | join(',') }}
+          changed_when: false
+
+- name: Deliver PXE assets to TrueNAS netbootxyz
+  hosts: truenas
+  become: true
+  gather_facts: false
+  vars:
+    cluster_host: "{{ target_cluster }}"
+    # Read via the fact set by Play 1's set_fact task; play-level vars are
+    # not promoted into hostvars across plays, but set_fact values are.
+    work_dir: "{{ hostvars[cluster_host]['openshift_add_node_pxe_assets']['work_dir'] }}"
+    arch: "{{ hostvars[cluster_host]['openshift_add_node_pxe_assets']['arch'] }}"
+    truenas_assets_root: /mnt/ssd/containers/netbootxyz/assets
+    truenas_menus_root: /mnt/ssd/containers/netbootxyz/config/menus
+    asset_subdir: "{{ cluster_host }}-add-node"
+  tasks:
+    - name: Verify netbootxyz menus directory exists
+      ansible.builtin.stat:
+        path: "{{ truenas_menus_root }}"
+      register: _menus_stat
+
+    - name: Fail if netbootxyz menus directory is missing
+      ansible.builtin.assert:
+        that:
+          - _menus_stat.stat.exists
+          - _menus_stat.stat.isdir
+        fail_msg: "netbootxyz menus directory {{ truenas_menus_root }} is missing"
+
+    - name: Ensure asset destination directory exists
+      ansible.builtin.file:
+        path: "{{ truenas_assets_root }}/{{ asset_subdir }}"
+        state: directory
+        mode: "0755"
+        owner: "1000"
+        group: "1000"
+
+    - name: Sync boot artifacts to TrueNAS
+      ansible.posix.synchronize:
+        src: "{{ work_dir }}/"
+        dest: "{{ truenas_assets_root }}/{{ asset_subdir }}/"
+        delete: true
+        rsync_opts:
+          - "--exclude=*.ipxe"
+          - "--exclude=auth.json"
+          - "--exclude=nodes-config.yaml"
+          - "--chown=1000:1000"
+
+    - name: Copy iPXE script per worker into menus dir
+      ansible.builtin.copy:
+        src: "{{ work_dir }}/node.{{ arch }}.ipxe"
+        dest: "{{ truenas_menus_root }}/{{ hostvars[item].openshift_add_node_mac | replace(':', '') }}-add-node-{{ cluster_host }}.ipxe"
+        mode: "0644"
+        owner: "1000"
+        group: "1000"
+      loop: "{{ groups['openshift_workers_' + cluster_host] }}"
+      loop_control:
+        label: "{{ item }}"
+
+    # Mirrors the netbootxyz workaround in deploy_pxe_assets.yml: a duplicate
+    # copy under /local/ that the menu chain references.
+    - name: Copy iPXE script per worker into menus/local dir
+      ansible.builtin.copy:
+        src: "{{ work_dir }}/node.{{ arch }}.ipxe"
+        dest: "{{ truenas_menus_root }}/local/{{ hostvars[item].openshift_add_node_mac | replace(':', '') }}-add-node-{{ cluster_host }}.ipxe"
+        mode: "0644"
+        owner: "1000"
+        group: "1000"
+      loop: "{{ groups['openshift_workers_' + cluster_host] }}"
+      loop_control:
+        label: "{{ item }}"
