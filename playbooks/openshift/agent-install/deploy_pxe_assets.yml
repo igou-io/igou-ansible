@@ -5,6 +5,11 @@
   gather_facts: true
   vars:
     openshift_agent_install_work_dir: "{{ ansible_env.HOME }}/openshift-agent-install/{{ target_cluster }}"
+  pre_tasks:
+    - name: Remove stale work dir so assets are regenerated fresh
+      ansible.builtin.file:
+        path: "{{ openshift_agent_install_work_dir }}"
+        state: absent
   roles:
     - role: david-igou.openshift_agent_install
   tasks:
