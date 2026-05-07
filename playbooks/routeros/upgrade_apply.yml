@@ -121,7 +121,8 @@
         - name: Verify firmware upgrade took effect
           ansible.builtin.assert:
             that:
-              - (rb_post.stdout[0] | regex_search('current-firmware: (\S+)', '\1') | first) == rb_upgrade
+              - >-
+                (rb_post.stdout[0] | regex_search('current-firmware: (\S+)', '\1') | first) == rb_upgrade
             fail_msg: >-
               Routerboard firmware did not upgrade to {{ rb_upgrade }} on
               {{ inventory_hostname }}.
