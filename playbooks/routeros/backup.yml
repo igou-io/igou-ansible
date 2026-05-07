@@ -1,0 +1,82 @@
+---
+# Pull a fresh binary backup + plaintext config (with sensitive values)
+# off every RouterOS device. Files land in
+# {{ routeros_backup_dir }}/<inventory_hostname>/ at mode 0600
+# (directory mode 0700). Both files contain secrets — do not commit
+# them. /backups/ is in .gitignore.
+#
+# Default scope: the routeros group (1 router + 3 switches).
+# Override target with: -e host=<inventory_hostname>
+- name: Back up RouterOS devices
+  hosts: "{{ host | default('routeros') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Compute per-host backup timestamp
+      ansible.builtin.set_fact:
+        backup_ts: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+
+    - name: Ensure local backup directory exists
+      ansible.builtin.file:
+        path: "{{ routeros_backup_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+
+    - name: Save binary backup on device
+      community.routeros.command:
+        commands:
+          - "/system backup save name={{ inventory_hostname }}-{{ backup_ts }} dont-encrypt=yes"
+
+    - name: Export plaintext config with sensitive values
+      community.routeros.command:
+        commands:
+          - "/export show-sensitive file={{ inventory_hostname }}-{{ backup_ts }}"
+
+    - name: Fetch binary backup
+      ansible.builtin.include_tasks: tasks/fetch_artifact.yml
+      vars:
+        remote_filename: "{{ inventory_hostname }}-{{ backup_ts }}.backup"
+        local_dir: "{{ routeros_backup_dir }}/{{ inventory_hostname }}"
+
+    - name: Fetch plaintext export
+      ansible.builtin.include_tasks: tasks/fetch_artifact.yml
+      vars:
+        remote_filename: "{{ inventory_hostname }}-{{ backup_ts }}.rsc"
+        local_dir: "{{ routeros_backup_dir }}/{{ inventory_hostname }}"
+
+    - name: List local .backup files for pruning
+      ansible.builtin.find:
+        paths: "{{ routeros_backup_dir }}/{{ inventory_hostname }}"
+        patterns: "{{ inventory_hostname }}-*.backup"
+        file_type: file
+      register: existing_binary_backups
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Prune .backup files beyond retention
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      delegate_to: localhost
+      loop: "{{ (existing_binary_backups.files | sort(attribute='mtime', reverse=true))[routeros_backup_retain | int :] }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: List local .rsc files for pruning
+      ansible.builtin.find:
+        paths: "{{ routeros_backup_dir }}/{{ inventory_hostname }}"
+        patterns: "{{ inventory_hostname }}-*.rsc"
+        file_type: file
+      register: existing_rsc_backups
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Prune .rsc files beyond retention
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      delegate_to: localhost
+      loop: "{{ (existing_rsc_backups.files | sort(attribute='mtime', reverse=true))[routeros_backup_retain | int :] }}"
+      loop_control:
+        label: "{{ item.path }}"
