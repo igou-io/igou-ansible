@@ -1,0 +1,6 @@
+---
+# Configure /container global tmpdir, mounts, envs; add/start container.
+# Implemented in Task 6.
+- name: Netbootxyz_container placeholder
+  ansible.builtin.debug:
+    msg: "stage container not yet implemented"

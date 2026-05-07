@@ -1,0 +1,6 @@
+---
+# Push iPXE menus from netbootxyz_menu_source_dir to the container's config volume.
+# Implemented in Task 7.
+- name: Netbootxyz_menus placeholder
+  ansible.builtin.debug:
+    msg: "stage menus not yet implemented"

@@ -1,0 +1,63 @@
+---
+# Deploy netboot.xyz as a RouterOS container on the rb5009.
+#
+# Prerequisites:
+#   - /system/device-mode must allow containers (container=yes).
+#     If not: /system/device-mode/update container=yes, then physical
+#     button-press confirmation. This playbook does NOT change device-mode.
+#   - 10.10.99.100 must be reserved (DHCP exclusion or static lease).
+#   - podman available on the control node (used by the `image` stage).
+#
+# Stages map 1:1 to tags:
+#   preflight  - device-mode + free space + arch + control-node sanity
+#   image      - podman pull + save on control node, net_put to router
+#   network    - veth on `bridge` with static IP 10.10.99.100/24
+#   container  - mounts, envs, container add/start
+#   menus      - push iPXE menus from netbootxyz_menu_source_dir
+#   verify     - HTTP probe of http://10.10.99.100/menu.ipxe
+#
+# Common invocations:
+#   ansible-navigator run playbooks/routeros/deploy_netbootxyz.yml \
+#     -i igou-inventory/inventory.yaml -e host=rb5009.igou.systems
+#
+#   # refresh menus only
+#   ansible-navigator run playbooks/routeros/deploy_netbootxyz.yml \
+#     -i igou-inventory/inventory.yaml -e host=rb5009.igou.systems \
+#     --tags menus,verify
+#
+#   # force container recreate after env or var change
+#   ansible-navigator run playbooks/routeros/deploy_netbootxyz.yml \
+#     -i igou-inventory/inventory.yaml -e host=rb5009.igou.systems \
+#     --tags container,verify -e netbootxyz_force_restart=true
+#
+# Post-deploy: a sibling playbook (TBD) configures /ip dhcp-server option
+# entries to point PXE clients at 10.10.99.100.
+- name: Deploy netboot.xyz container on rb5009
+  hosts: "{{ host | default('routeros_routers') }}"
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Preflight checks
+      ansible.builtin.import_tasks: tasks/netbootxyz_preflight.yml
+      tags: [preflight, image, network, container, menus, verify]
+
+    - name: Build and upload container image
+      ansible.builtin.import_tasks: tasks/netbootxyz_image.yml
+      tags: [image]
+
+    - name: Configure container networking
+      ansible.builtin.import_tasks: tasks/netbootxyz_network.yml
+      tags: [network]
+
+    - name: Configure and start container
+      ansible.builtin.import_tasks: tasks/netbootxyz_container.yml
+      tags: [container]
+
+    - name: Push custom iPXE menus
+      ansible.builtin.import_tasks: tasks/netbootxyz_menus.yml
+      tags: [menus]
+
+    - name: Verify HTTP endpoint
+      ansible.builtin.import_tasks: tasks/netbootxyz_verify.yml
+      tags: [verify]

@@ -1,0 +1,6 @@
+---
+# Verify the container is serving HTTP on the LAN IP.
+# Implemented in Task 8.
+- name: Netbootxyz_verify placeholder
+  ansible.builtin.debug:
+    msg: "stage verify not yet implemented"

@@ -1,0 +1,6 @@
+---
+# Build the netbootxyz image tar on the control node, then upload to the router.
+# Implemented in Task 4.
+- name: Netbootxyz_image placeholder
+  ansible.builtin.debug:
+    msg: "stage image not yet implemented"

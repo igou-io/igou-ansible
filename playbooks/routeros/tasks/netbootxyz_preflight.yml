@@ -1,0 +1,6 @@
+---
+# Pre-flight checks before any netbootxyz stage runs.
+# Implemented in Task 3.
+- name: Netbootxyz_preflight placeholder
+  ansible.builtin.debug:
+    msg: "stage preflight not yet implemented"

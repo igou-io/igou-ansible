@@ -1,0 +1,6 @@
+---
+# Create the container's veth and attach it to the existing bridge.
+# Implemented in Task 5.
+- name: Netbootxyz_network placeholder
+  ansible.builtin.debug:
+    msg: "stage network not yet implemented"
