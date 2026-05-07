@@ -1,0 +1,74 @@
+---
+# Keep SSH authorized keys for managed RouterOS users in sync.
+# Idempotent: only imports keys whose comment field is not already
+# present in /user ssh-keys for that user.
+#
+# Each public key in routeros_users[].ssh_keys MUST include a comment
+# (the third whitespace-separated field — e.g. "user@host"). The
+# playbook uses that comment string as the dedup key, since RouterOS
+# does not surface a stable fingerprint via /user ssh-keys print.
+#
+# Set routeros_prune_ssh_keys=true to enable a placeholder prune-debug
+# message; real prune logic is intentionally deferred to a follow-up.
+- name: Manage RouterOS user SSH keys
+  hosts: "{{ host | default('routeros') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Read user list
+      community.routeros.command:
+        commands:
+          - "/user print detail without-paging"
+      register: user_print
+      changed_when: false
+
+    - name: Read existing SSH keys
+      community.routeros.command:
+        commands:
+          - "/user ssh-keys print detail without-paging"
+      register: sshkey_print
+      changed_when: false
+
+    - name: Confirm each managed user exists on device
+      ansible.builtin.assert:
+        that:
+          - ('name=\"' ~ item.name ~ '\"') in user_print.stdout[0]
+        fail_msg: "User '{{ item.name }}' not present on {{ inventory_hostname }}"
+      loop: "{{ routeros_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Fail loudly for any keys missing a comment field
+      ansible.builtin.assert:
+        that:
+          - (item.1.split(' ') | length) >= 3
+        fail_msg: "Key for {{ item.0.name }} has no comment field; manage_users.yml requires `ssh-<type> <blob> <comment>` format."
+      loop: "{{ routeros_users | subelements('ssh_keys') }}"
+      loop_control:
+        label: "{{ item.0.name }}"
+
+    - name: Import any missing SSH keys
+      ansible.builtin.include_tasks:
+        file: tasks/import_ssh_key.yml
+      vars:
+        key_comment: "{{ item.1.split(' ')[2] }}"
+        key_user: "{{ item.0.name }}"
+        local_tmp: "/tmp/routeros_{{ inventory_hostname }}_{{ item.0.name }}_{{ ansible_loop.index }}.pub"
+        remote_tmp: "tmp_{{ item.0.name }}_{{ ansible_loop.index }}.pub"
+      loop: "{{ routeros_users | subelements('ssh_keys') }}"
+      loop_control:
+        extended: true
+        label: "{{ item.0.name }}: {{ item.1.split(' ')[2] }}"
+      when:
+        - ('key-owner=' ~ '\"' ~ item.1.split(' ')[2] ~ '\"') not in sshkey_print.stdout[0]
+        - ('key-owner=' ~ item.1.split(' ')[2]) not in sshkey_print.stdout[0]
+
+    - name: Optional prune branch (placeholder)
+      ansible.builtin.debug:
+        msg: >-
+          routeros_prune_ssh_keys is true. Manual review needed — the
+          current implementation does not yet auto-prune. Inspect
+          /user ssh-keys print detail output above, then run
+          /user ssh-keys remove <id> manually. Auto-prune is left for a
+          follow-up change once the import path has been validated.
+      when: routeros_prune_ssh_keys | default(false) | bool
