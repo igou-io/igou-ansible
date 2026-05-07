@@ -32,7 +32,6 @@
   gather_facts: true
   vars:
     openshift_add_node_work_dir: "{{ ansible_env.HOME }}/openshift-add-node/{{ target_cluster }}"
-    openshift_add_node_arch: "{{ openshift_add_node_arch | default('x86_64') }}"
   pre_tasks:
     - name: Preflight — KUBECONFIG must be set in the environment
       ansible.builtin.assert:
