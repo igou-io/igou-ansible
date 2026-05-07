@@ -1,0 +1,37 @@
+---
+# Wait for a RouterOS device to disconnect (after a /system reboot) and
+# come back, then smoke-test the connection. Used by upgrade_apply.yml.
+#
+# Operates on `inventory_hostname` and the inventory's ansible_port
+# (default 3480). Uses control-node-side wait_for; no agent on device.
+- name: Wait for SSH port to drop
+  ansible.builtin.wait_for:
+    host: "{{ inventory_hostname }}"
+    port: "{{ ansible_port | default(3480) }}"
+    state: stopped
+    delay: 5
+    timeout: 60
+  delegate_to: localhost
+
+- name: Wait for SSH port to return
+  ansible.builtin.wait_for:
+    host: "{{ inventory_hostname }}"
+    port: "{{ ansible_port | default(3480) }}"
+    state: started
+    delay: 30
+    timeout: 600
+  delegate_to: localhost
+
+- name: Reset network_cli connection
+  ansible.builtin.meta: reset_connection
+
+- name: Smoke-test post-reboot connectivity
+  community.routeros.command:
+    commands:
+      - "/system identity print"
+  register: smoke
+  changed_when: false
+
+- name: Show smoke-test output
+  ansible.builtin.debug:
+    var: smoke.stdout_lines
