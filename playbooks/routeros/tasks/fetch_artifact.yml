@@ -9,18 +9,18 @@
 #
 # Caller is responsible for ensuring local_dir exists. The fetched file
 # is chmod 0600 because backup artifacts contain secrets.
-- name: "Fetch {{ remote_filename }} from {{ inventory_hostname }}"
+- name: "Fetch artifact from device flash: {{ remote_filename }}"
   ansible.netcommon.net_get:
     src: "{{ remote_filename }}"
     dest: "{{ local_dir }}/{{ remote_filename }}"
 
-- name: "Set mode 0600 on local copy of {{ remote_filename }}"
+- name: "Set 0600 on local backup artifact: {{ remote_filename }}"
   ansible.builtin.file:
     path: "{{ local_dir }}/{{ remote_filename }}"
     mode: '0600'
   delegate_to: localhost
 
-- name: "Remove {{ remote_filename }} from {{ inventory_hostname }} flash"
+- name: "Remove staged artifact from device flash: {{ remote_filename }}"
   community.routeros.command:
     commands:
       - "/file remove {{ remote_filename }}"
