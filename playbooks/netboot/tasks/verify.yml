@@ -1,2 +1,80 @@
 ---
-# placeholder; implemented in Task 7
+# HTTP probes against the running netbootxyz container.
+# delegate_to: localhost — the probes run from wherever the playbook runs,
+# not from inside TrueNAS.
+
+- name: Verify — top-level menu.ipxe is reachable and well-formed
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/menu.ipxe"
+    return_content: true
+    status_code: 200
+  register: _verify_menu
+  delegate_to: localhost
+  run_once: true
+  failed_when:
+    - _verify_menu.status != 200
+    - "'#!ipxe' not in (_verify_menu.content | default(''))"
+
+- name: Verify — every entry's name appears in menu.ipxe
+  ansible.builtin.assert:
+    that:
+      - "item.name in _verify_menu.content"
+    fail_msg: "Entry {{ item.id }} ({{ item.name }}) not found in served menu.ipxe."
+  loop: "{{ netboot_entries }}"
+  loop_control:
+    label: "{{ item.id }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Verify — each entry .ipxe is reachable
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/menus/entries/{{ item.id }}.ipxe"
+    method: GET
+    status_code: 200
+  loop: "{{ netboot_entries }}"
+  loop_control:
+    label: "{{ item.id }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Verify — each kind=iso asset is reachable
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/assets/iso/{{ item.id }}.iso"
+    method: HEAD
+    status_code: 200
+  loop: "{{ netboot_entries | selectattr('kind', 'equalto', 'iso') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Verify — each host pin MAC file is reachable
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/menus/host/MAC-{{ item.mac | lower | replace(':', '') }}.ipxe"
+    method: GET
+    status_code: 200
+  loop: "{{ netboot_host_pins }}"
+  loop_control:
+    label: "{{ item.mac }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Verify — each host pin HOSTNAME file is reachable (when set)
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/menus/host/HOSTNAME-{{ item.hostname }}.ipxe"
+    method: GET
+    status_code: 200
+  loop: "{{ netboot_host_pins | selectattr('hostname', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Verify — summary
+  ansible.builtin.debug:
+    msg:
+      - "menu.ipxe served (length {{ _verify_menu.content | length }} bytes)"
+      - "entries verified: {{ netboot_entries | length }}"
+      - "host pins verified: {{ netboot_host_pins | length }}"
+  delegate_to: localhost
+  run_once: true
