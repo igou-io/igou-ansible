@@ -1,0 +1,13 @@
+#!ipxe
+### Managed by playbooks/netboot/deploy_assets.yml — do not edit manually.
+### Entry: {{ entry.name }} ({{ entry.id }})
+
+### memdisk is hosted by the netbootxyz container at /memdisk on its HTTP root.
+kernel {{ netbootxyz_self_url }}/memdisk iso raw
+initrd {{ netbootxyz_self_url }}/assets/iso/{{ entry.id }}.iso
+boot || goto failed
+
+:failed
+echo Boot failed for {{ entry.id }}; press any key to return to menu.
+prompt
+exit

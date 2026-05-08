@@ -1,0 +1,41 @@
+#!ipxe
+### Managed by playbooks/netboot/deploy_assets.yml — do not edit manually.
+
+:per_host
+isset ${hostname} && chain {{ netbootxyz_self_url }}/menus/host/HOSTNAME-${hostname}.ipxe || goto check_mac
+:check_mac
+isset ${mac} && chain {{ netbootxyz_self_url }}/menus/host/MAC-${mac:hexraw}.ipxe || goto main_menu
+
+:main_menu
+clear menu_choice
+menu netboot.xyz custom menu
+{% for entry in netboot_entries %}
+item {{ entry.id }} ${space} {{ entry.name }}
+{% endfor %}
+{% if _netboot_fragments | length > 0 %}
+item --gap -- Custom fragments
+{% for f in _netboot_fragments %}
+item fragment_{{ loop.index0 }} ${space} {{ f }}
+{% endfor %}
+{% endif %}
+item --gap
+item exit ${space} Exit
+
+choose menu_choice || goto menu_exit
+echo ${cls}
+goto ${menu_choice}
+
+{% for entry in netboot_entries %}
+:{{ entry.id }}
+chain entries/{{ entry.id }}.ipxe
+goto menu_exit
+
+{% endfor %}
+{% for f in _netboot_fragments %}
+:fragment_{{ loop.index0 }}
+chain fragments/{{ f }}
+goto menu_exit
+
+{% endfor %}
+:menu_exit
+exit

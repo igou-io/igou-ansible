@@ -1,0 +1,5 @@
+#!ipxe
+### Managed by playbooks/netboot/deploy_assets.yml — do not edit manually.
+### Entry: {{ entry.name }} ({{ entry.id }})
+
+chain {{ entry.url | replace('${netboot_self}', netbootxyz_self_url) }}
