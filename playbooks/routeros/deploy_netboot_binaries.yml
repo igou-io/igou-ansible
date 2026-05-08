@@ -31,3 +31,7 @@
     - name: Upload stage
       ansible.builtin.import_tasks: tasks/netboot_upload.yml
       tags: [upload]
+
+    - name: DHCP stage
+      ansible.builtin.import_tasks: tasks/netboot_dhcp.yml
+      tags: [dhcp]

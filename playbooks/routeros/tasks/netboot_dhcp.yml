@@ -1,0 +1,168 @@
+---
+# Wire RouterOS DHCP so PXE clients on the configured subnets receive
+# next-server pointing at rb5009 and boot-file-name pointing at the
+# right binary for their architecture.
+#
+# Default path (BIOS): network-layer next-server + boot-file-name set
+# via /ip dhcp-server network. UEFI overrides go through option-sets
+# plus matchers because that's the only RouterOS mechanism for changing
+# boot-file-name per-client.
+#
+# All adds are gated on count-only checks for idempotency. Network-layer
+# set is gated on a print-then-compare drift check.
+
+# --- Pre-flight: dhcp_server placeholders must be filled in ----------------
+
+- name: Assert each subnet's dhcp_server has been filled in
+  ansible.builtin.assert:
+    that:
+      - not (item.dhcp_server is match('^REPLACE_WITH_'))
+    fail_msg: >-
+      netboot_subnets[].dhcp_server for subnet {{ item.subnet }} is still
+      the placeholder "{{ item.dhcp_server }}". Fill it in with the real
+      DHCP server name from `/ip dhcp-server print` before running --tags
+      dhcp.
+  loop: "{{ netboot_subnets }}"
+  loop_control:
+    label: "{{ item.subnet }}"
+
+# --- Network-layer fields (default = BIOS) -----------------------------------
+
+- name: Read existing network rows for our subnets
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server network print detail without-paging where
+        address={{ item.subnet }}
+  register: _netboot_network_existing
+  changed_when: false
+  loop: "{{ netboot_subnets }}"
+  loop_control:
+    label: "{{ item.subnet }}"
+
+- name: Set next-server + boot-file-name on each DHCP network
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server network set
+        [find address={{ item.0.subnet }}]
+        next-server={{ item.0.rb5009_ip }}
+        boot-file-name=netboot.xyz.kpxe
+  when: >-
+    (item.1.stdout[0] | regex_search('(?m)^\\s*next-server:\\s*' ~ item.0.rb5009_ip ~ '\\s*$') is none)
+    or
+    (item.1.stdout[0] | regex_search('(?m)^\\s*boot-file-name:\\s*"?netboot\\.xyz\\.kpxe"?\\s*$') is none)
+  changed_when: true
+  loop: "{{ netboot_subnets | zip(_netboot_network_existing.results) | list }}"
+  loop_control:
+    label: "{{ item.0.subnet }}"
+
+# --- Option + option-set (global, conditional on UEFI arches enabled) -------
+
+- name: Count option pxe-bf-uefi-x64
+  community.routeros.command:
+    commands:
+      - '/ip dhcp-server option print count-only where name=pxe-bf-uefi-x64'
+  register: _netboot_opt_x64_count
+  when: "'uefi-x64' in netboot_arches"
+  changed_when: false
+
+- name: Add option pxe-bf-uefi-x64
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server option add
+        code=67 name=pxe-bf-uefi-x64 value="'netboot.xyz.efi'"
+  when:
+    - "'uefi-x64' in netboot_arches"
+    - (_netboot_opt_x64_count.stdout[0] | trim | int) == 0
+  changed_when: true
+
+- name: Count option-set pxe-uefi-x64
+  community.routeros.command:
+    commands:
+      - '/ip dhcp-server option/sets print count-only where name=pxe-uefi-x64'
+  register: _netboot_set_x64_count
+  when: "'uefi-x64' in netboot_arches"
+  changed_when: false
+
+- name: Add option-set pxe-uefi-x64
+  community.routeros.command:
+    commands:
+      - "/ip dhcp-server option/sets add name=pxe-uefi-x64 options=pxe-bf-uefi-x64"
+  when:
+    - "'uefi-x64' in netboot_arches"
+    - (_netboot_set_x64_count.stdout[0] | trim | int) == 0
+  changed_when: true
+
+- name: Count option pxe-bf-uefi-arm64
+  community.routeros.command:
+    commands:
+      - '/ip dhcp-server option print count-only where name=pxe-bf-uefi-arm64'
+  register: _netboot_opt_arm64_count
+  when: "'uefi-arm64' in netboot_arches"
+  changed_when: false
+
+- name: Add option pxe-bf-uefi-arm64
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server option add
+        code=67 name=pxe-bf-uefi-arm64 value="'netboot.xyz-arm64.efi'"
+  when:
+    - "'uefi-arm64' in netboot_arches"
+    - (_netboot_opt_arm64_count.stdout[0] | trim | int) == 0
+  changed_when: true
+
+- name: Count option-set pxe-uefi-arm64
+  community.routeros.command:
+    commands:
+      - '/ip dhcp-server option/sets print count-only where name=pxe-uefi-arm64'
+  register: _netboot_set_arm64_count
+  when: "'uefi-arm64' in netboot_arches"
+  changed_when: false
+
+- name: Add option-set pxe-uefi-arm64
+  community.routeros.command:
+    commands:
+      - "/ip dhcp-server option/sets add name=pxe-uefi-arm64 options=pxe-bf-uefi-arm64"
+  when:
+    - "'uefi-arm64' in netboot_arches"
+    - (_netboot_set_arm64_count.stdout[0] | trim | int) == 0
+  changed_when: true
+
+# --- Matchers (per DHCP server x matcher value) -----------------------------
+
+- name: Count matcher rows for each (server x value) pair
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server matcher print count-only where
+        server={{ item.0.dhcp_server }} and
+        code=93 and
+        value="{{ item.1.value }}"
+  register: _netboot_matcher_count
+  changed_when: false
+  when: item.1.arch in netboot_arches
+  loop: "{{ netboot_subnets | product(netboot_uefi_matchers) | list }}"
+  loop_control:
+    label: "{{ item.0.dhcp_server }} {{ item.1.value }}"
+
+- name: Add matcher row for each (server x value) pair
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server matcher add
+        name=match-{{ item.0.dhcp_server }}-{{ item.1.value | regex_replace('^0x', '') }}
+        server={{ item.0.dhcp_server }}
+        code=93 value="{{ item.1.value }}"
+        option-set={{ item.1.set }}
+  when:
+    - item.1.arch in netboot_arches
+    - not (_netboot_matcher_count.results[ansible_loop.index0].skipped | default(false))
+    - (_netboot_matcher_count.results[ansible_loop.index0].stdout[0] | trim | int) == 0
+  changed_when: true
+  loop: "{{ netboot_subnets | product(netboot_uefi_matchers) | list }}"
+  loop_control:
+    label: "{{ item.0.dhcp_server }} {{ item.1.value }}"
+    extended: true
