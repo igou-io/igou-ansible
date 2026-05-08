@@ -33,7 +33,7 @@
     commands:
       - >-
         /ip dhcp-server network print detail without-paging where
-        address={{ item.subnet }}
+        address="{{ item.subnet }}"
   register: _netboot_network_existing
   changed_when: false
   loop: "{{ netboot_subnets }}"
@@ -45,14 +45,16 @@
     commands:
       - >-
         /ip dhcp-server network set
-        [find address={{ item.0.subnet }}]
+        [find address="{{ item.0.subnet }}"]
         next-server={{ item.0.rb5009_ip }}
         boot-file-name=netboot.xyz.kpxe
+  register: _netboot_network_set
   when: >-
-    (item.1.stdout[0] | regex_search('(?m)^\\s*next-server:\\s*' ~ item.0.rb5009_ip ~ '\\s*$') is none)
+    (item.1.stdout[0] | regex_search('(^|\\s)next-server=' ~ (item.0.rb5009_ip | replace('.', '\\.')) ~ '(\\s|$)') is none)
     or
-    (item.1.stdout[0] | regex_search('(?m)^\\s*boot-file-name:\\s*"?netboot\\.xyz\\.kpxe"?\\s*$') is none)
+    (item.1.stdout[0] | regex_search('(^|\\s)boot-file-name="netboot\\.xyz\\.kpxe"(\\s|$)') is none)
   changed_when: true
+  failed_when: _netboot_network_set.stdout is defined and (_netboot_network_set.stdout[0] | trim) != ''
   loop: "{{ netboot_subnets | zip(_netboot_network_existing.results) | list }}"
   loop_control:
     label: "{{ item.0.subnet }}"
@@ -73,10 +75,12 @@
       - >-
         /ip dhcp-server option add
         code=67 name=pxe-bf-uefi-x64 value="'netboot.xyz.efi'"
+  register: _netboot_opt_x64_add
   when:
     - "'uefi-x64' in netboot_arches"
     - (_netboot_opt_x64_count.stdout[0] | trim | int) == 0
   changed_when: true
+  failed_when: _netboot_opt_x64_add.stdout is defined and (_netboot_opt_x64_add.stdout[0] | trim) != ''
 
 - name: Count option-set pxe-uefi-x64
   community.routeros.command:
@@ -90,10 +94,12 @@
   community.routeros.command:
     commands:
       - "/ip dhcp-server option/sets add name=pxe-uefi-x64 options=pxe-bf-uefi-x64"
+  register: _netboot_set_x64_add
   when:
     - "'uefi-x64' in netboot_arches"
     - (_netboot_set_x64_count.stdout[0] | trim | int) == 0
   changed_when: true
+  failed_when: _netboot_set_x64_add.stdout is defined and (_netboot_set_x64_add.stdout[0] | trim) != ''
 
 - name: Count option pxe-bf-uefi-arm64
   community.routeros.command:
@@ -109,10 +115,12 @@
       - >-
         /ip dhcp-server option add
         code=67 name=pxe-bf-uefi-arm64 value="'netboot.xyz-arm64.efi'"
+  register: _netboot_opt_arm64_add
   when:
     - "'uefi-arm64' in netboot_arches"
     - (_netboot_opt_arm64_count.stdout[0] | trim | int) == 0
   changed_when: true
+  failed_when: _netboot_opt_arm64_add.stdout is defined and (_netboot_opt_arm64_add.stdout[0] | trim) != ''
 
 - name: Count option-set pxe-uefi-arm64
   community.routeros.command:
@@ -126,10 +134,12 @@
   community.routeros.command:
     commands:
       - "/ip dhcp-server option/sets add name=pxe-uefi-arm64 options=pxe-bf-uefi-arm64"
+  register: _netboot_set_arm64_add
   when:
     - "'uefi-arm64' in netboot_arches"
     - (_netboot_set_arm64_count.stdout[0] | trim | int) == 0
   changed_when: true
+  failed_when: _netboot_set_arm64_add.stdout is defined and (_netboot_set_arm64_add.stdout[0] | trim) != ''
 
 # --- Matchers (per DHCP server x matcher value) -----------------------------
 
@@ -155,13 +165,15 @@
         /ip dhcp-server matcher add
         name=match-{{ item.0.dhcp_server }}-{{ item.1.value | regex_replace('^0x', '') }}
         server={{ item.0.dhcp_server }}
-        code=93 value="{{ item.1.value }}"
+        code=93 value="{{ item.1.value }}" matching-type=exact
         option-set={{ item.1.set }}
+  register: _netboot_matcher_add
   when:
     - item.1.arch in netboot_arches
     - not (_netboot_matcher_count.results[ansible_loop.index0].skipped | default(false))
     - (_netboot_matcher_count.results[ansible_loop.index0].stdout[0] | trim | int) == 0
   changed_when: true
+  failed_when: _netboot_matcher_add.stdout is defined and (_netboot_matcher_add.stdout[0] | trim) != ''
   loop: "{{ netboot_subnets | product(netboot_uefi_matchers) | list }}"
   loop_control:
     label: "{{ item.0.dhcp_server }} {{ item.1.value }}"

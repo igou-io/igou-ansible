@@ -108,7 +108,7 @@
     commands:
       - >-
         /ip dhcp-server network print detail without-paging where
-        address={{ item.subnet }}
+        address="{{ item.subnet }}"
   register: _netboot_network_verify
   changed_when: false
   loop: "{{ netboot_subnets }}"
@@ -118,8 +118,8 @@
 - name: Assert next-server + boot-file-name on each network
   ansible.builtin.assert:
     that:
-      - item.1.stdout[0] | regex_search('(?m)^\\s*next-server:\\s*' ~ item.0.rb5009_ip ~ '\\s*$') is not none
-      - item.1.stdout[0] | regex_search('(?m)^\\s*boot-file-name:\\s*"?netboot\\.xyz\\.kpxe"?\\s*$') is not none
+      - item.1.stdout[0] | regex_search('(^|\\s)next-server=' ~ (item.0.rb5009_ip | replace('.', '\\.')) ~ '(\\s|$)') is not none
+      - item.1.stdout[0] | regex_search('(^|\\s)boot-file-name="netboot\\.xyz\\.kpxe"(\\s|$)') is not none
     fail_msg: >-
       DHCP network row for {{ item.0.subnet }} is missing the expected
       next-server={{ item.0.rb5009_ip }} or boot-file-name=netboot.xyz.kpxe.
