@@ -11,9 +11,7 @@
   register: _verify_menu
   delegate_to: localhost
   run_once: true
-  failed_when:
-    - _verify_menu.status != 200
-    - "'#!ipxe' not in (_verify_menu.content | default(''))"
+  failed_when: "'#!ipxe' not in (_verify_menu.content | default(''))"
 
 - name: Verify — every entry's name appears in menu.ipxe
   ansible.builtin.assert:
