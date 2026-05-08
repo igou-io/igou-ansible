@@ -3,11 +3,11 @@
 ### Entry: {{ entry.name }} ({{ entry.id }})
 
 {% if entry.kind == 'local' %}
-set base /assets/local/{{ entry.id }}
+set base /local/{{ entry.id }}
 kernel {{ netbootxyz_self_url }}${base}/vmlinuz {{ entry.cmdline | default('') }}
 initrd {{ netbootxyz_self_url }}${base}/initrd
 {% elif entry.cache | default(false) %}
-set base /assets/cache/{{ entry.id }}
+set base /cache/{{ entry.id }}
 kernel {{ netbootxyz_self_url }}${base}/vmlinuz {{ entry.cmdline | default('') }}
 initrd {{ netbootxyz_self_url }}${base}/initrd
 {% else %}

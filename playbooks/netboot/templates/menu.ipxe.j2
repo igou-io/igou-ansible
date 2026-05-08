@@ -1,10 +1,14 @@
 #!ipxe
 ### Managed by playbooks/netboot/deploy_assets.yml — do not edit manually.
 
+### Per-host hooks fetch via TFTP relative to this file's location, since
+### the netbootxyz container's nginx serves /assets/* at URL root /* and
+### does NOT serve /config/menus/* over HTTP. dnsmasq serves
+### /config/menus/ at TFTP root, so a relative chain stays in TFTP.
 :per_host
-isset ${hostname} && chain {{ netbootxyz_self_url }}/menus/host/HOSTNAME-${hostname}.ipxe || goto check_mac
+isset ${hostname} && chain host/HOSTNAME-${hostname}.ipxe || goto check_mac
 :check_mac
-isset ${mac} && chain {{ netbootxyz_self_url }}/menus/host/MAC-${mac:hexraw}.ipxe || goto main_menu
+isset ${mac} && chain host/MAC-${mac:hexraw}.ipxe || goto main_menu
 
 :main_menu
 clear menu_choice

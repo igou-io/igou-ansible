@@ -2,9 +2,13 @@
 ### Managed by playbooks/netboot/deploy_assets.yml — do not edit manually.
 ### Entry: {{ entry.name }} ({{ entry.id }})
 
-### memdisk is hosted by the netbootxyz container at /memdisk on its HTTP root.
-kernel {{ netbootxyz_self_url }}/memdisk iso raw
-initrd {{ netbootxyz_self_url }}/assets/iso/{{ entry.id }}.iso
+### nginx serves /assets/* at URL root /*. The container does not ship a
+### memdisk binary at /memdisk by default — drop a memdisk file into
+### playbooks/netboot/files/<wherever>/ and reference it explicitly if you
+### need ISO entries. For now this template uses the iPXE-built-in
+### ${memdisk} variable, set by netboot.xyz's binary build when supported.
+kernel ${memdisk} iso raw
+initrd {{ netbootxyz_self_url }}/iso/{{ entry.id }}.iso
 boot || goto failed
 
 :failed
