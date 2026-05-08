@@ -1,0 +1,167 @@
+---
+# Build the custom netboot.xyz iPXE binaries on the control node by
+# invoking the upstream Ansible build inside the official netbootxyz
+# builder container.
+#
+# Sets fact netboot_arches_resolved -- used by upload, dhcp, and verify
+# stages.
+#
+# Idempotency: a SHA256 of the rendered user_overrides plus the resolved
+# git SHA of the cloned netboot.xyz repo is recorded in MANIFEST.lastbuild
+# after each successful run. On re-run, if the hash matches AND every
+# expected output binary exists, the podman build is skipped.
+
+- name: Define arches map (local -> public file names)
+  ansible.builtin.set_fact:
+    _netboot_arches_map:
+      bios:
+        local_name: netboot.xyz.kpxe
+        public_name: netboot.xyz.kpxe
+      uefi-x64:
+        local_name: netboot.xyz.efi
+        public_name: netboot.xyz.efi
+      uefi-arm64:
+        local_name: netboot.xyz-arm64.efi
+        public_name: netboot.xyz-arm64.efi
+
+- name: Resolve enabled arches into a structured list
+  ansible.builtin.set_fact:
+    netboot_arches_resolved: >-
+      {{
+        netboot_arches | map('extract', _netboot_arches_map)
+                       | list
+      }}
+
+- name: Ensure local build cache directory exists
+  ansible.builtin.file:
+    path: "{{ netboot_local_build_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Ensure local build output directory exists
+  ansible.builtin.file:
+    path: "{{ netboot_local_build_dir }}/output"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Clone or update netboot.xyz source at the pinned ref
+  ansible.builtin.git:
+    repo: "{{ netboot_xyz_repo }}"
+    dest: "{{ netboot_local_build_dir }}/src"
+    version: "{{ netboot_xyz_ref }}"
+    force: true
+  delegate_to: localhost
+  environment:
+    # Bypass any host-level url rewrites in ~/.gitconfig (e.g.,
+    # `insteadOf = https://github.com/`). The clone is anonymous HTTPS
+    # against a public repo, so no creds are needed.
+    GIT_CONFIG_GLOBAL: /dev/null
+  register: _netboot_git
+
+- name: Render user_overrides.yml into the source clone
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/netboot/user_overrides.yml.j2"
+    dest: "{{ netboot_local_build_dir }}/src/user_overrides.yml"
+    mode: "0644"
+  delegate_to: localhost
+  register: _netboot_template
+
+- name: Compute a build-input hash (rendered overrides + git SHA)
+  ansible.builtin.set_fact:
+    _netboot_build_hash: >-
+      {{
+        (lookup('ansible.builtin.file',
+                netboot_local_build_dir ~ '/src/user_overrides.yml')
+         ~ _netboot_git.after) | hash('sha256')
+      }}
+  delegate_to: localhost
+
+- name: Read prior build hash if present
+  ansible.builtin.slurp:
+    src: "{{ netboot_local_build_dir }}/MANIFEST.lastbuild"
+  register: _netboot_lastbuild
+  delegate_to: localhost
+  failed_when: false
+  changed_when: false
+
+- name: Stat each expected output binary
+  ansible.builtin.stat:
+    path: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.local_name }}"
+  delegate_to: localhost
+  loop: "{{ netboot_arches_resolved }}"
+  loop_control:
+    label: "{{ item.public_name }}"
+  register: _netboot_output_stat
+
+- name: Decide whether to invoke the builder container
+  ansible.builtin.set_fact:
+    _netboot_need_build: >-
+      {{
+        (_netboot_lastbuild.content | default('') | b64decode | trim)
+          != _netboot_build_hash
+        or
+        (_netboot_output_stat.results
+          | rejectattr('stat.exists', 'equalto', true) | list | length) > 0
+      }}
+
+- name: Run the netboot.xyz builder container  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      podman run --rm
+      --pull=always
+      -v {{ netboot_local_build_dir }}/src:/ansible:Z
+      -v {{ netboot_local_build_dir }}/output:/var/www/html:Z
+      --workdir /ansible
+      {{ netboot_builder_image }}
+      ansible-playbook site.yml
+  when: _netboot_need_build
+  delegate_to: localhost
+  changed_when: true
+  register: _netboot_build_run
+
+- name: Re-stat each expected output binary after build
+  ansible.builtin.stat:
+    path: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.local_name }}"
+  delegate_to: localhost
+  loop: "{{ netboot_arches_resolved }}"
+  loop_control:
+    label: "{{ item.public_name }}"
+  register: _netboot_output_stat_post
+
+- name: Assert all expected binaries exist after build
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Expected output binary
+      {{ netboot_local_build_dir }}/output/ipxe/{{ item.item.local_name }}
+      is missing after the build step. Check the builder container's
+      ansible-playbook output (the prior task) for errors.
+  loop: "{{ _netboot_output_stat_post.results }}"
+  loop_control:
+    label: "{{ item.item.public_name }}"
+
+- name: Persist build hash for next run
+  ansible.builtin.copy:
+    dest: "{{ netboot_local_build_dir }}/MANIFEST.lastbuild"
+    content: "{{ _netboot_build_hash }}"
+    mode: "0644"
+  delegate_to: localhost
+  when: _netboot_need_build
+
+- name: Write human-readable MANIFEST
+  ansible.builtin.copy:
+    dest: "{{ netboot_local_build_dir }}/MANIFEST"
+    mode: "0644"
+    content: |
+      ref: {{ netboot_xyz_ref }}
+      git_sha: {{ _netboot_git.after }}
+      built_at: {{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}
+      artifacts:
+      {% for item in netboot_arches_resolved %}
+        - ipxe/{{ item.local_name }}
+      {% endfor %}
+  delegate_to: localhost
+  when: _netboot_need_build

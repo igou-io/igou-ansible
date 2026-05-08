@@ -1,0 +1,29 @@
+---
+# Build custom netboot.xyz iPXE binaries on the control node, ship them
+# to the rb5009 for TFTP serving, and wire RouterOS DHCP so PXE clients
+# land on the binaries (which then chainload to the existing TrueNAS
+# netbootxyz container at tftp://10.10.45.242/menu.ipxe).
+#
+# Stages (each backed by a tag):
+#   build   -- podman run nbxyz/builder against our user_overrides.yml
+#   upload  -- net_put binaries to flash:/netboot/, register /ip tftp
+#   dhcp    -- /ip dhcp-server network/option/option-set/matcher
+#   verify  -- TFTP fetch checks + DHCP state assertion
+#
+# See docs/superpowers/specs/2026-05-08-netboot-binaries-build-design.md
+# for the full design and decisions log.
+#
+# The playbook does NOT decommission the rb5009 netbootxyz container
+# deployed by deploy_netbootxyz.yml. After verifying PXE boot end-to-end,
+# follow the manual cleanup steps in:
+#   playbooks/routeros/files/netboot/cleanup-old-container.md
+
+- name: Build and deploy custom netboot.xyz iPXE binaries
+  hosts: "{{ host | default('routeros_netboot') }}"
+  gather_facts: false
+  serial: 1
+  tasks:
+
+    - name: Build stage
+      ansible.builtin.import_tasks: tasks/netboot_build.yml
+      tags: [build]
