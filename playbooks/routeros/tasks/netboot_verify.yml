@@ -78,6 +78,31 @@
   loop_control:
     label: "{{ item.0.item.public_name }}"
 
+- name: Fetch menu.ipxe redirect from rb5009 over TFTP  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      curl -sf
+      -o {{ netboot_local_build_dir }}/verify/menu-redirect.ipxe
+      tftp://{{ netboot_subnets[0].rb5009_ip }}/menu.ipxe
+  delegate_to: localhost
+  changed_when: false
+
+- name: Read fetched menu.ipxe redirect
+  ansible.builtin.slurp:
+    src: "{{ netboot_local_build_dir }}/verify/menu-redirect.ipxe"
+  delegate_to: localhost
+  register: _netboot_redirect_slurp
+
+- name: Assert rb5009 menu.ipxe redirect chains to the chainload host
+  ansible.builtin.assert:
+    that:
+      - "'#!ipxe' in (_netboot_redirect_slurp.content | b64decode)"
+      - "('chain tftp://' ~ netboot_chainload_host ~ '/menu.ipxe') in (_netboot_redirect_slurp.content | b64decode)"
+    fail_msg: >-
+      The menu.ipxe served by rb5009 is missing the iPXE shebang or
+      doesn't chain to tftp://{{ netboot_chainload_host }}/menu.ipxe.
+      Re-run --tags upload to refresh the redirect file.
+
 - name: Fetch menu.ipxe from TrueNAS netbootxyz over TFTP  # noqa: command-instead-of-module
   ansible.builtin.command:
     cmd: >-
