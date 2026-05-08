@@ -8,7 +8,14 @@
 :per_host
 isset ${hostname} && chain host/HOSTNAME-${hostname}.ipxe || goto check_mac
 :check_mac
-isset ${mac} && chain host/MAC-${mac:hexraw}.ipxe || goto main_menu
+isset ${mac} && chain host/MAC-${mac:hexraw}.ipxe || goto stock_fallback
+
+### When no per-host pin matches, fall through to the stock netbootxyz
+### menu. push_text.yml preserves the original menu.ipxe as
+### stock-menu.ipxe before overwriting menu.ipxe with this template, so
+### the upstream multi-distro UX still works for unpinned hosts.
+:stock_fallback
+chain stock-menu.ipxe || goto main_menu
 
 :main_menu
 clear menu_choice

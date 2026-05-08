@@ -59,6 +59,47 @@
   loop_control:
     label: "{{ item | basename }}"
 
+- name: Push — stat existing menu.ipxe (source of stock-menu preservation)
+  ansible.builtin.stat:
+    path: "{{ item }}/menu.ipxe"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  register: _netboot_existing_menu_stat
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — stat existing stock-menu.ipxe (target of preservation)
+  ansible.builtin.stat:
+    path: "{{ item }}/stock-menu.ipxe"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  register: _netboot_existing_stock_stat
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — preserve stock netbootxyz menu before overwriting menu.ipxe
+  ansible.builtin.copy:
+    src: "{{ item.0 }}/menu.ipxe"
+    dest: "{{ item.0 }}/stock-menu.ipxe"
+    remote_src: true
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+  loop: >-
+    {{ [_netboot_menus_dst, _netboot_menus_dst + '/local']
+       | zip(_netboot_existing_menu_stat.results | default([]),
+             _netboot_existing_stock_stat.results | default([])) }}
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item.0 else 'canonical' }}"
+  when:
+    - _netboot_have_custom_menu | bool
+    - item.1.stat.exists | default(false)
+    - not (item.2.stat.exists | default(false))
+
 - name: Push — top-level menu.ipxe
   ansible.builtin.copy:
     src: "{{ _netboot_cache_dir }}/menu.ipxe"
