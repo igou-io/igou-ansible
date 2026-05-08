@@ -4,6 +4,12 @@
 # netboot.xyz builder container at /ansible/user_overrides.yml and
 # consumed by the upstream site.yml -> netbootxyz role.
 #
+# Per-arch flags map to upstream's role defaults:
+#   generate_disks_legacy -> .kpxe (BIOS)
+#   generate_disks_efi    -> .efi  (UEFI x86_64)
+#   generate_disks_arm    -> -arm64.efi (UEFI ARM64; default false upstream,
+#                                        hence must be set explicitly to enable)
+#
 # Documentation of every key:
 #   https://github.com/netbootxyz/netboot.xyz/blob/master/user_overrides.yml
 
@@ -12,5 +18,8 @@ bootloader_default: "{{ netboot_chainload_proto }}"
 site_name: "igou homelab"
 generate_menus: false
 generate_disks: true
+generate_disks_legacy: {{ 'true' if 'bios' in netboot_arches else 'false' }}
+generate_disks_efi: {{ 'true' if 'uefi-x64' in netboot_arches else 'false' }}
+generate_disks_arm: {{ 'true' if 'uefi-arm64' in netboot_arches else 'false' }}
 generate_checksums: false
 make_num_jobs: 4
