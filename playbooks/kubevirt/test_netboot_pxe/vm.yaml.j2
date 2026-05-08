@@ -1,0 +1,51 @@
+---
+# Diskless PXE-boot VM for the netboot.xyz binary smoke test. Rendered
+# by ../test_netboot_pxe.yml with `arch` set to either `bios` or
+# `uefi-x64`. The two variants only differ in whether the firmware
+# block requests EFI; everything else is identical so the same hit
+# counter on rb5009 distinguishes which binary the VM fetched.
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: pxe-test-{{ arch }}
+  namespace: {{ pxe_test_namespace }}
+  labels:
+    app: netboot-pxe-smoke-test
+    netboot.test/arch: {{ arch }}
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels:
+        app: netboot-pxe-smoke-test
+        netboot.test/arch: {{ arch }}
+    spec:
+      architecture: amd64
+      domain:
+{% if arch == 'uefi-x64' %}
+        firmware:
+          bootloader:
+            efi:
+              # SecureBoot would refuse to load our unsigned iPXE binary;
+              # also requires SMM which KubeVirt disables by default.
+              secureBoot: false
+{% endif %}
+        cpu:
+          cores: 1
+        memory:
+          guest: 1Gi
+        devices:
+          # Default pod network would give the VM a second NIC and DHCP
+          # racing -- we want PXE to see only the vlan9 interface.
+          autoattachPodInterface: false
+          interfaces:
+            - bridge: {}
+              model: virtio
+              name: nic
+              bootOrder: 1
+        machine:
+          type: pc-q35-rhel9.6.0
+      networks:
+        - multus:
+            networkName: {{ pxe_test_cudn }}
+          name: nic

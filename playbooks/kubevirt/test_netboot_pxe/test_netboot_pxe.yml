@@ -1,0 +1,77 @@
+---
+# Smoke-test the netboot.xyz custom binaries by spinning up a diskless
+# KubeVirt VM on vlan9 (DHCP from rb5009) for each x86 architecture
+# and asserting that the matching binary's TFTP hit counter on the
+# router increments. Catches regressions in the DHCP -> TFTP path that
+# deploy_netboot_binaries.yml wires up.
+#
+# Iteration 1 scope:
+#   * vlan9 only (vlan45's CUDN is not yet synced into the cluster).
+#   * BIOS + UEFI x86_64 (arm64 would require qemu emulation).
+#   * Verifies the binary fetch via TFTP hit counter delta. Does NOT
+#     verify the iPXE -> TrueNAS chainload; that needs console
+#     scraping, which is intentionally deferred.
+#
+# Namespace handling: the test namespace is ensured (created with the
+# vlan9 CUDN selector label if missing) but never deleted -- removing
+# CUDN-attached namespaces is currently fragile, and the namespace is
+# safe to leave in place between runs. Each VM IS cleaned up via the
+# block's always: clause, even on assertion failure.
+
+- name: Test netboot.xyz custom binaries via KubeVirt VM PXE boot
+  hosts: localhost
+  gather_facts: false
+  vars:
+    pxe_test_namespace: netboot-pxe-test
+    pxe_test_router: rb5009.igou.systems
+    pxe_test_cudn: vlan9-no-ipam
+    # Time to wait between VM-Ready and the post-snapshot. SeaBIOS POST
+    # plus the iPXE ROM's DHCP retry loop can run 60-90s on its own,
+    # before TFTP even starts; 180s gives margin without dragging the
+    # full per-arch cycle past 4 minutes.
+    pxe_test_boot_wait_seconds: 180
+    pxe_test_arches:
+      - { arch: bios, binary: netboot.xyz.kpxe }
+      - { arch: uefi-x64, binary: netboot.xyz.efi }
+
+  tasks:
+    # --- Pre-flight (idempotent, never destructive) --------------------------
+
+    - name: Read the vlan9 ClusterUserDefinedNetwork
+      kubernetes.core.k8s_info:
+        api_version: k8s.ovn.org/v1
+        kind: ClusterUserDefinedNetwork
+        name: "{{ pxe_test_cudn }}"
+        validate_certs: false
+      register: _pxe_cudn
+
+    - name: Assert the vlan9 CUDN is present
+      ansible.builtin.assert:
+        that:
+          - _pxe_cudn.resources | length == 1
+        fail_msg: >-
+          ClusterUserDefinedNetwork {{ pxe_test_cudn }} is not present in
+          the current cluster. The test cannot attach VMs to vlan9 until
+          the CUDN is synced (see clusters/ocp/udn/ in igou-openshift).
+
+    - name: Ensure test namespace exists with the vlan9 CUDN selector label
+      kubernetes.core.k8s:
+        state: present
+        validate_certs: false
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ pxe_test_namespace }}"
+            labels:
+              network.igou.systems/vlan9: "true"
+
+    # --- Per-arch smoke test -------------------------------------------------
+    # The block/always per-iteration cleanup is in _arch_test.yml because
+    # ansible does not allow `loop:` directly on a `block:`.
+
+    - name: Smoke-test each architecture
+      ansible.builtin.include_tasks: _arch_test.yml
+      loop: "{{ pxe_test_arches }}"
+      loop_control:
+        label: "{{ item.arch }}"
