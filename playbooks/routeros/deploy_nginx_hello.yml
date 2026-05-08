@@ -1,0 +1,582 @@
+---
+# Deploy a basic nginx "hello world" container on a RouterOS device,
+# preserved as a reference for the patterns we worked out while running
+# netboot.xyz on rb5009 (now decommissioned). Demonstrates:
+#   - Free-space + architecture pre-flight against /system resource
+#   - Pulling and saving an OCI image on the control node, then SCPing
+#     the tar to the router (RouterOS containers load from a local tar)
+#   - Creating a veth + bridge port with a known static IP and PVID
+#   - Idempotent /container envs / add / start with status-wait between
+#     transitions (RouterOS goes "extracting" briefly after add)
+#   - HTTP probe verification against the container IP
+#
+# This playbook is self-contained: all variables live in the `vars:`
+# block below. It is intentionally not run regularly -- it exists as a
+# reference to the patterns. To actually exercise it on a router, pass
+# the target host explicitly, e.g.:
+#
+#   ansible-navigator run playbooks/routeros/deploy_nginx_hello.yml \
+#     -i igou-inventory/inventory.yaml -e host=rb5009.igou.systems
+#
+#   # force container recreate after env or var change
+#   ansible-navigator run playbooks/routeros/deploy_nginx_hello.yml \
+#     -i igou-inventory/inventory.yaml -e host=rb5009.igou.systems \
+#     --tags container,verify -e nginx_hello_force_restart=true
+#
+# Prerequisites:
+#   - /system/device-mode must allow containers (container=yes).
+#     If not: /system/device-mode/update container=yes, then physical
+#     button-press confirmation. This playbook does NOT change device-mode.
+#   - The static IP for the container (nginx_hello_address) must not
+#     collide with another lease on the same VLAN.
+#   - podman available on the control node (used by the `image` stage).
+#
+# Stages map 1:1 to tags:
+#   preflight  - device-mode + free space + arch + control-node sanity
+#   image      - podman pull + save on control node, net_put to router
+#   network    - veth on the bridge with the configured static IP
+#   container  - envs + container add/start with status-wait
+#   verify     - HTTP GET / asserts 200 and the nginx welcome body
+
+- name: Deploy nginx hello-world container on RouterOS
+  hosts: "{{ host | default('routeros_routers') }}"
+  gather_facts: false
+  serial: 1
+
+  vars:
+    # Container image, pulled and saved by the `image` stage.
+    nginx_hello_image: docker.io/library/nginx:alpine
+
+    # Image platform passed to `podman pull --platform=...`. The preflight
+    # stage cross-checks this against the router's reported architecture.
+    nginx_hello_image_platform: linux/arm64
+
+    # Local working directory for the saved image tar (gitignored).
+    nginx_hello_local_image_dir: "{{ playbook_dir }}/../../.cache/nginx-hello"
+
+    # RouterOS-side networking for the container.
+    nginx_hello_veth_name: veth-nginx-hello
+    nginx_hello_address: 10.10.99.100/24
+    nginx_hello_gateway: 10.10.99.1
+    nginx_hello_bridge: bridge
+    # Bridge VLAN for the container port. The mgmt subnet (10.10.99.0/24)
+    # lives on vlan99; bridge ports default to pvid=1, so without this the
+    # container ends up on the wrong VLAN and the LAN cannot reach it.
+    nginx_hello_bridge_pvid: 99
+
+    # Filesystem layout on the router's flash. RouterOS *creates*
+    # nginx_hello_root_dir itself during /container add; we must NOT
+    # pre-create it. The image tar is a sibling of the root-dir.
+    nginx_hello_parent_dir: containers
+    nginx_hello_root_dir: containers/nginx-hello
+    nginx_hello_image_tar: containers/nginx-hello.tar
+    nginx_hello_tmpdir: containers-scratch
+
+    # Container metadata.
+    nginx_hello_container_hostname: nginx-hello
+    nginx_hello_container_logging: true
+
+    # Extra env entries (k=v dicts: {key: ..., value: ...}). Default empty;
+    # stock nginx needs no extra env.
+    nginx_hello_env_extra: []
+
+    # Forces /container stop+remove+re-add on next `container` stage run,
+    # even when the image and network haven't changed.
+    nginx_hello_force_restart: false
+
+  tasks:
+    # ===== Preflight ========================================================
+    # Verify device-mode allows containers, architecture matches the chosen
+    # image platform, free disk is sufficient, and (control node side)
+    # podman is on PATH.
+    - name: Preflight checks
+      tags: [preflight, image, network, container, verify]
+      block:
+        - name: Read device-mode
+          community.routeros.command:
+            commands:
+              - "/system device-mode print without-paging"
+          register: _nginx_hello_devmode
+          changed_when: false
+
+        - name: Assert containers are allowed by device-mode
+          ansible.builtin.assert:
+            that:
+              - "'container: yes' in _nginx_hello_devmode.stdout[0]"
+            fail_msg: >-
+              Containers are disabled in /system device-mode on
+              {{ inventory_hostname }}. Run on the device:
+                /system/device-mode/update container=yes
+              then press the physical reset button when prompted.
+              This playbook will not change device-mode.
+
+        - name: Read system resources
+          community.routeros.command:
+            commands:
+              - "/system resource print without-paging"
+          register: _nginx_hello_resource
+          changed_when: false
+
+        - name: Map image platform to expected RouterOS architecture-name
+          ansible.builtin.set_fact:
+            _nginx_hello_expected_arch_map:
+              "linux/arm64": "arm64"
+              "linux/amd64": "x86_64"
+              "linux/arm/v7": "arm"
+
+        - name: Assert image platform is in the supported map
+          ansible.builtin.assert:
+            that:
+              - nginx_hello_image_platform in _nginx_hello_expected_arch_map
+            fail_msg: >-
+              nginx_hello_image_platform={{ nginx_hello_image_platform }} is not in the
+              supported set {{ _nginx_hello_expected_arch_map.keys() | list }}.
+              Add a mapping in the preflight block or set
+              nginx_hello_image_platform to a supported value.
+
+        - name: Assert architecture matches nginx_hello_image_platform
+          ansible.builtin.assert:
+            that:
+              - "('architecture-name: ' ~ _nginx_hello_expected_arch_map[nginx_hello_image_platform]) in _nginx_hello_resource.stdout[0]"
+            fail_msg: >-
+              nginx_hello_image_platform={{ nginx_hello_image_platform }} expects
+              architecture-name={{ _nginx_hello_expected_arch_map[nginx_hello_image_platform] }}
+              but {{ inventory_hostname }} reports a different architecture.
+              Inspect /system resource print and update nginx_hello_image_platform.
+
+        - name: Parse free-hdd-space line
+          ansible.builtin.set_fact:
+            _nginx_hello_free_match: "{{ _nginx_hello_resource.stdout[0] | regex_search('free-hdd-space:\\s+([0-9.]+)([KMG])iB', '\\1', '\\2') }}"
+
+        - name: Assert free-hdd-space line was parseable
+          ansible.builtin.assert:
+            that:
+              - _nginx_hello_free_match is iterable
+              - (_nginx_hello_free_match | length) == 2
+            fail_msg: >-
+              Could not parse free-hdd-space from /system resource print on
+              {{ inventory_hostname }}. Expected a line like
+              'free-hdd-space: 700.0MiB' with units in K/M/G. Inspect the device
+              output and either fix the device, widen the regex in the preflight
+              block, or extend it to handle other units.
+
+        - name: Compute free space in MiB
+          ansible.builtin.set_fact:
+            _nginx_hello_free_mib: >-
+              {%- if _nginx_hello_free_match[1] == 'G' -%}
+                {{ (_nginx_hello_free_match[0] | float) * 1024 }}
+              {%- elif _nginx_hello_free_match[1] == 'M' -%}
+                {{ _nginx_hello_free_match[0] | float }}
+              {%- else -%}
+                {{ (_nginx_hello_free_match[0] | float) / 1024 }}
+              {%- endif -%}
+
+        - name: Assert >= 100 MiB free for image import
+          ansible.builtin.assert:
+            that:
+              - (_nginx_hello_free_mib | float) >= 100
+            fail_msg: >-
+              Free disk space on {{ inventory_hostname }} is
+              {{ _nginx_hello_free_mib | float | round(1) }} MiB; need >= 100 MiB to import
+              the nginx image tar (~50 MiB) plus its extracted rootfs. Investigate
+              stale files under {{ nginx_hello_root_dir }}/ or other large entries
+              in /file.
+
+        - name: Verify podman is available on the control node
+          ansible.builtin.command: podman --version
+          register: _nginx_hello_podman_check
+          delegate_to: localhost
+          changed_when: false
+
+    # ===== Image ============================================================
+    # Pull and save the nginx image on the control node, then upload to the
+    # router if size differs from what's already on flash. Sets fact
+    # nginx_hello_image_changed for the container stage to consume.
+    - name: Build and upload container image
+      tags: [image]
+      block:
+        - name: Ensure local image cache directory exists
+          ansible.builtin.file:
+            path: "{{ nginx_hello_local_image_dir }}"
+            state: directory
+            mode: "0755"
+          delegate_to: localhost
+
+        - name: Pull nginx image on control node
+          ansible.builtin.command: >-
+            podman pull --platform={{ nginx_hello_image_platform }} {{ nginx_hello_image }}
+          register: _nginx_hello_podman_pull
+          delegate_to: localhost
+          changed_when: "'Writing manifest' in _nginx_hello_podman_pull.stdout or 'Copying blob' in _nginx_hello_podman_pull.stdout"
+
+        - name: Stat local image tar (pre-save)
+          ansible.builtin.stat:
+            path: "{{ nginx_hello_local_image_dir }}/nginx-hello.tar"
+          register: _nginx_hello_local_tar_pre
+          delegate_to: localhost
+
+        # noqa: no-handler — keep linear; downstream stat/count/net_put need
+        # the tar in place before the play ends, when handlers would normally
+        # flush.
+        - name: Save image to tar (when pull changed or local tar missing)  # noqa: no-handler
+          ansible.builtin.command: >-
+            podman save {{ nginx_hello_image }}
+            -o {{ nginx_hello_local_image_dir }}/nginx-hello.tar
+          delegate_to: localhost
+          when: _nginx_hello_podman_pull.changed or not _nginx_hello_local_tar_pre.stat.exists
+          changed_when: true
+
+        - name: Stat local image tar
+          ansible.builtin.stat:
+            path: "{{ nginx_hello_local_image_dir }}/nginx-hello.tar"
+          register: _nginx_hello_local_tar
+          delegate_to: localhost
+
+        - name: Fail if local tar still missing after save attempt
+          ansible.builtin.assert:
+            that:
+              - _nginx_hello_local_tar.stat.exists
+            fail_msg: >-
+              {{ nginx_hello_local_image_dir }}/nginx-hello.tar does not exist on the
+              control node even after the save step. Inspect the podman pull output
+              (the prior task) for errors. If the image is corrupted in the local
+              podman cache, run `podman rmi {{ nginx_hello_image }}` and re-run.
+
+        - name: Count router-side image tars matching local size
+          community.routeros.command:
+            commands:
+              - "/file print count-only where name=\"{{ nginx_hello_image_tar }}\" and size={{ _nginx_hello_local_tar.stat.size }}"
+          register: _nginx_hello_router_tar_match
+          changed_when: false
+
+        - name: Decide whether to upload image tar
+          ansible.builtin.set_fact:
+            _nginx_hello_need_upload: "{{ (_nginx_hello_router_tar_match.stdout[0] | trim | int) == 0 }}"
+
+        # Ensure the parent of the tar exists before SCP. We deliberately do
+        # NOT create nginx_hello_root_dir here -- /container add must be the
+        # one to create it. Pre-creating the root-dir causes import to land
+        # in a broken state where the rootfs is empty and the container exits
+        # 255.
+        - name: Count flash parent directory entries
+          community.routeros.command:
+            commands:
+              - "/file print count-only where name=\"{{ nginx_hello_parent_dir }}\" and type=directory"
+          register: _nginx_hello_parent_dir_count
+          changed_when: false
+          when: _nginx_hello_need_upload
+
+        - name: Create flash parent directory
+          community.routeros.command:
+            commands:
+              - "/file add name={{ nginx_hello_parent_dir }} type=directory"
+          when:
+            - _nginx_hello_need_upload
+            - (_nginx_hello_parent_dir_count.stdout[0] | trim | int) == 0
+          changed_when: true
+
+        - name: Upload image tar to router
+          ansible.netcommon.net_put:
+            src: "{{ nginx_hello_local_image_dir }}/nginx-hello.tar"
+            dest: "{{ nginx_hello_image_tar }}"
+          vars:
+            ansible_command_timeout: 600
+          when: _nginx_hello_need_upload
+          register: _nginx_hello_net_put_result
+
+        - name: Set nginx_hello_image_changed fact
+          ansible.builtin.set_fact:
+            nginx_hello_image_changed: "{{ _nginx_hello_need_upload | bool }}"
+
+    # ===== Network ==========================================================
+    # Create the container's veth (which holds the LAN-facing IP) and attach
+    # it to the existing bridge. Sets fact nginx_hello_network_changed for
+    # the container stage to consume.
+    - name: Configure container networking
+      tags: [network]
+      block:
+        - name: Count veths with our name
+          community.routeros.command:
+            commands:
+              - "/interface veth print count-only where name={{ nginx_hello_veth_name }}"
+          register: _nginx_hello_veth_name_count
+          changed_when: false
+
+        - name: Count veths matching desired address and gateway
+          community.routeros.command:
+            commands:
+              - >-
+                /interface veth print count-only where
+                name={{ nginx_hello_veth_name }} and
+                address={{ nginx_hello_address }} and
+                gateway={{ nginx_hello_gateway }}
+          register: _nginx_hello_veth_match_count
+          changed_when: false
+
+        - name: Add veth interface
+          community.routeros.command:
+            commands:
+              - >-
+                /interface veth add
+                name={{ nginx_hello_veth_name }}
+                address={{ nginx_hello_address }}
+                gateway={{ nginx_hello_gateway }}
+          when: (_nginx_hello_veth_name_count.stdout[0] | trim | int) == 0
+          changed_when: true
+          register: _nginx_hello_veth_added
+
+        - name: Update veth address/gateway if drifted
+          community.routeros.command:
+            commands:
+              - >-
+                /interface veth set [find name={{ nginx_hello_veth_name }}]
+                address={{ nginx_hello_address }}
+                gateway={{ nginx_hello_gateway }}
+          when:
+            - (_nginx_hello_veth_name_count.stdout[0] | trim | int) >= 1
+            - (_nginx_hello_veth_match_count.stdout[0] | trim | int) == 0
+          changed_when: true
+          register: _nginx_hello_veth_updated
+
+        - name: Count bridge ports matching desired veth and bridge
+          community.routeros.command:
+            commands:
+              - >-
+                /interface bridge port print count-only where
+                bridge={{ nginx_hello_bridge }} and
+                interface={{ nginx_hello_veth_name }}
+          register: _nginx_hello_bridge_port_count
+          changed_when: false
+
+        - name: Add veth as bridge port
+          community.routeros.command:
+            commands:
+              - >-
+                /interface bridge port add
+                bridge={{ nginx_hello_bridge }}
+                interface={{ nginx_hello_veth_name }}
+                pvid={{ nginx_hello_bridge_pvid | default(1) }}
+          when: (_nginx_hello_bridge_port_count.stdout[0] | trim | int) == 0
+          changed_when: true
+          register: _nginx_hello_bridge_port_added
+
+        # A pre-existing port may have the wrong pvid (default 1). On a
+        # VLAN-aware bridge that puts the container on the wrong VLAN.
+        - name: Count bridge ports matching desired pvid
+          community.routeros.command:
+            commands:
+              - >-
+                /interface bridge port print count-only where
+                bridge={{ nginx_hello_bridge }} and
+                interface={{ nginx_hello_veth_name }} and
+                pvid={{ nginx_hello_bridge_pvid | default(1) }}
+          register: _nginx_hello_bridge_port_pvid_count
+          changed_when: false
+
+        - name: Set bridge port pvid if drifted
+          community.routeros.command:
+            commands:
+              - >-
+                /interface bridge port set
+                [find bridge={{ nginx_hello_bridge }} and interface={{ nginx_hello_veth_name }}]
+                pvid={{ nginx_hello_bridge_pvid | default(1) }}
+          when: (_nginx_hello_bridge_port_pvid_count.stdout[0] | trim | int) == 0
+          changed_when: true
+          register: _nginx_hello_bridge_port_pvid_updated
+
+        - name: Set nginx_hello_network_changed fact
+          ansible.builtin.set_fact:
+            nginx_hello_network_changed: "{{ (_nginx_hello_veth_added.changed | default(false) | bool) or (_nginx_hello_veth_updated.changed | default(false) | bool) or (_nginx_hello_bridge_port_added.changed | default(false) | bool) or (_nginx_hello_bridge_port_pvid_updated.changed | default(false) | bool) }}"
+
+    # ===== Container ========================================================
+    # Configure /container global tmpdir, ensure the env list (if any) is
+    # present, then add+start (or recreate) the container row. Honors
+    # nginx_hello_image_changed, nginx_hello_network_changed, and
+    # nginx_hello_force_restart facts/vars to decide on remove+re-add.
+    #
+    # Note (carried over from the netboot.xyz deploy this was based on):
+    # RouterOS bind mounts don't preserve container UID/ownership semantics
+    # the way Linux's overlay does, which can break images that chown into
+    # their bind-mounted directories on entry. For services that need
+    # persistent state, prefer keeping that state inside the container's
+    # writable layer (under root-dir) rather than a bind mount. Tradeoff:
+    # any /container remove destroys it, so re-deploys reset state.
+    - name: Configure and start container
+      tags: [container]
+      block:
+        - name: Read /container config
+          community.routeros.command:
+            commands:
+              - "/container config print without-paging"
+          register: _nginx_hello_container_config
+          changed_when: false
+
+        - name: Set /container tmpdir
+          community.routeros.command:
+            commands:
+              - "/container config set tmpdir={{ nginx_hello_tmpdir }}"
+          when: _nginx_hello_container_config.stdout[0] | regex_search('(?m)^\\s*tmpdir:\\s*' ~ nginx_hello_tmpdir ~ '\\s*$') is none
+          changed_when: true
+
+        - name: Probe each desired env entry
+          community.routeros.command:
+            commands:
+              - >-
+                /container envs print count-only where
+                name=nginx-hello-env and
+                key="{{ item.key }}" and
+                value="{{ item.value }}"
+          register: _nginx_hello_env_probes
+          changed_when: false
+          loop: "{{ nginx_hello_env_extra }}"
+          loop_control:
+            label: "{{ item.key }}"
+
+        - name: Add env entries from nginx_hello_env_extra
+          community.routeros.command:
+            commands:
+              - >-
+                /container envs add
+                name=nginx-hello-env
+                key="{{ item.item.key }}"
+                value="{{ item.item.value }}"
+          loop: "{{ _nginx_hello_env_probes.results }}"
+          loop_control:
+            label: "{{ item.item.key }}"
+          when: (item.stdout[0] | trim | int) == 0
+          changed_when: true
+
+        - name: Count container rows for our root-dir
+          community.routeros.command:
+            commands:
+              - "/container print count-only where root-dir={{ nginx_hello_root_dir }}"
+          register: _nginx_hello_container_count
+          changed_when: false
+
+        - name: Decide whether to recreate container
+          ansible.builtin.set_fact:
+            _nginx_hello_container_present: "{{ (_nginx_hello_container_count.stdout[0] | trim | int) >= 1 }}"
+            _nginx_hello_container_recreate: "{{ (nginx_hello_image_changed | default(false) | bool) or (nginx_hello_network_changed | default(false) | bool) or (nginx_hello_force_restart | bool) }}"
+
+        - name: Stop container before recreate
+          community.routeros.command:
+            commands:
+              - "/container stop [find root-dir={{ nginx_hello_root_dir }}]"
+          when: _nginx_hello_container_present and _nginx_hello_container_recreate
+          changed_when: true
+
+        - name: Wait for container to reach status=stopped before remove
+          community.routeros.command:
+            commands:
+              - "/container print count-only where root-dir={{ nginx_hello_root_dir }} and status=stopped"
+          register: _nginx_hello_stop_check
+          retries: 12
+          delay: 5
+          until: (_nginx_hello_stop_check.stdout[0] | trim | int) >= 1
+          changed_when: false
+          when: _nginx_hello_container_present and _nginx_hello_container_recreate
+
+        - name: Remove container before recreate
+          community.routeros.command:
+            commands:
+              - "/container remove [find root-dir={{ nginx_hello_root_dir }}]"
+          when: _nginx_hello_container_present and _nginx_hello_container_recreate
+          changed_when: true
+
+        - name: Add container row (fresh or recreate)
+          community.routeros.command:
+            commands:
+              - >-
+                /container add
+                file={{ nginx_hello_image_tar }}
+                interface={{ nginx_hello_veth_name }}
+                root-dir={{ nginx_hello_root_dir }}
+                {{ 'envlist=nginx-hello-env' if (nginx_hello_env_extra | length) > 0 else '' }}
+                hostname={{ nginx_hello_container_hostname }}
+                logging={{ 'yes' if nginx_hello_container_logging else 'no' }}
+          vars:
+            ansible_command_timeout: 300
+          when: (not _nginx_hello_container_present) or _nginx_hello_container_recreate
+          changed_when: true
+
+        - name: Wait for container to leave status=extracting
+          community.routeros.command:
+            commands:
+              - "/container print count-only where root-dir={{ nginx_hello_root_dir }} and status=extracting"
+          register: _nginx_hello_extract_check
+          retries: 24
+          delay: 5
+          until: (_nginx_hello_extract_check.stdout[0] | trim | int) == 0
+          changed_when: false
+
+        - name: Count container rows currently running
+          community.routeros.command:
+            commands:
+              - "/container print count-only where root-dir={{ nginx_hello_root_dir }} and status=running"
+          register: _nginx_hello_running_check
+          changed_when: false
+
+        - name: Start container
+          community.routeros.command:
+            commands:
+              - "/container start [find root-dir={{ nginx_hello_root_dir }}]"
+          when: (_nginx_hello_running_check.stdout[0] | trim | int) == 0
+          changed_when: true
+
+        - name: Wait for container status=running
+          community.routeros.command:
+            commands:
+              - "/container print count-only where root-dir={{ nginx_hello_root_dir }} and status=running"
+          register: _nginx_hello_running_wait
+          retries: 12
+          delay: 5
+          until: (_nginx_hello_running_wait.stdout[0] | trim | int) >= 1
+          changed_when: false
+
+    # ===== Verify ===========================================================
+    # Verify the container is serving HTTP on the LAN IP, then debug-print
+    # the final container row for the recap.
+    - name: Verify HTTP endpoint
+      tags: [verify]
+      block:
+        - name: Wait for HTTP port on container IP
+          ansible.builtin.wait_for:
+            host: "{{ nginx_hello_address | ansible.utils.ipaddr('address') }}"
+            port: 80
+            delay: 5
+            timeout: 120
+          delegate_to: localhost
+
+        # Default nginx serves its welcome page at /; assert both the 200 and
+        # the recognizable body so we know the container is actually serving
+        # (not, say, a stray service answering on the same address).
+        - name: GET / and assert nginx is reachable
+          ansible.builtin.uri:
+            url: "http://{{ nginx_hello_address | ansible.utils.ipaddr('address') }}/"
+            status_code: 200
+            return_content: true
+          register: _nginx_hello_http_response
+          delegate_to: localhost
+          retries: 12
+          delay: 5
+          until: _nginx_hello_http_response.status == 200
+
+        - name: Assert response body is the nginx welcome page
+          ansible.builtin.assert:
+            that:
+              - "'Welcome to nginx' in _nginx_hello_http_response.content"
+            fail_msg: >-
+              The container at {{ nginx_hello_address }} returned 200 but the body
+              is not the default nginx welcome page. Something else may be answering
+              on that IP, or the image is not the expected nginx image.
+
+        - name: Read final container row for recap
+          community.routeros.command:
+            commands:
+              - "/container print detail without-paging where root-dir={{ nginx_hello_root_dir }}"
+          register: _nginx_hello_final_state
+          changed_when: false
+
+        - name: Show final container state
+          ansible.builtin.debug:
+            var: _nginx_hello_final_state.stdout_lines
