@@ -13,3 +13,6 @@ testvars.yml
 /backups/
 .cache/netbootxyz/
 /.cache/
+
+# Local render cache for playbooks/netboot/deploy_assets.yml
+.cache/netboot-menus/
