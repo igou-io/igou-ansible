@@ -10,7 +10,7 @@ This replaces the rb5009 netbootxyz container deployment from `2026-05-07-netboo
 
 - Build custom iPXE binaries via netboot.xyz's upstream Ansible build (`site.yml` + `user_overrides.yml`) inside the official `ghcr.io/netbootxyz/builder` container, on the control node.
 - Embed `boot_domain=10.10.45.242` and `bootloader_default=tftp` so the produced binaries chainload to the existing TrueNAS netbootxyz container without further client-side configuration.
-- Ship three architectures: BIOS (`netboot.xyz.kpxe`), UEFI x86_64 (`netboot.xyz.efi`), UEFI arm64 (`netboot.xyz.arm64.efi`).
+- Ship three architectures: BIOS (`netboot.xyz.kpxe`), UEFI x86_64 (`netboot.xyz.efi`), UEFI arm64 (`netboot.xyz-arm64.efi`).
 - Stage them on rb5009 flash and register them in `/ip tftp` under the same names netboot.xyz publishes upstream.
 - Configure DHCP at the network layer (`next-server` + `boot-file-name`) on subnets `10.10.9.0/24` and `10.10.45.0/24`. Add UEFI matchers (option 93 = `0x0007`, `0x0009`, `0x000b`) per DHCP server to deliver the right binary per client architecture.
 - Re-runnable: idempotent for every RouterOS resource and every build artifact. Tag-driven for selective re-runs (build vs. upload vs. dhcp vs. verify).
@@ -71,7 +71,7 @@ Conventions (same as the rest of `playbooks/routeros/`):
 │  ghcr.io/netbootxyz/     │  net_put│   flash:/netboot/    │ chainload│  dnsmasq tftp :69     │
 │  builder:latest          │ ───────►│     netboot.xyz.kpxe │ tftp     │   → menu.ipxe         │
 │  ↓                       │         │     netboot.xyz.efi  │ ───────►│   (existing)          │
-│  user_overrides.yml      │         │     netboot.xyz.arm64.efi      │  webapp :3000          │
+│  user_overrides.yml      │         │     netboot.xyz-arm64.efi      │  webapp :3000          │
 │  → /var/www/html/ipxe/   │         │                      │         │  nginx :80 (/assets)   │
 │    *.kpxe / *.efi        │         │   /ip tftp           │         │                        │
 │                          │         │   /ip dhcp-server    │         │                        │
@@ -84,7 +84,7 @@ Conventions (same as the rest of `playbooks/routeros/`):
 **Boot flow:**
 
 1. PXE client DHCPs on `10.10.9.0/24` or `10.10.45.0/24`.
-2. rb5009 returns `siaddr/next-server = <rb5009-gateway-ip>` and `boot-file-name = netboot.xyz.kpxe` (default), or via UEFI matcher returns `netboot.xyz.efi` / `netboot.xyz.arm64.efi`.
+2. rb5009 returns `siaddr/next-server = <rb5009-gateway-ip>` and `boot-file-name = netboot.xyz.kpxe` (default), or via UEFI matcher returns `netboot.xyz.efi` / `netboot.xyz-arm64.efi`.
 3. Client TFTPs the binary from rb5009.
 4. Binary's embedded iPXE script runs `chain tftp://10.10.45.242/menu.ipxe`.
 5. Client loads the menu from TrueNAS, normal netboot.xyz user flow continues from there.
@@ -153,7 +153,7 @@ built_at: 2026-05-08T10:30:00Z
 artifacts:
   - ipxe/netboot.xyz.kpxe
   - ipxe/netboot.xyz.efi
-  - ipxe/netboot.xyz.arm64.efi
+  - ipxe/netboot.xyz-arm64.efi
 ```
 
 ## Upload + TFTP registration (`netboot_upload.yml`)
@@ -217,7 +217,7 @@ Looped over `netboot_arches`. For each arch, the upload is gated on a size compa
 arches_map:
   bios:        { local_name: netboot.xyz.kpxe,        public_name: netboot.xyz.kpxe }
   uefi-x64:    { local_name: netboot.xyz.efi,         public_name: netboot.xyz.efi }
-  uefi-arm64:  { local_name: netboot.xyz.arm64.efi,   public_name: netboot.xyz.arm64.efi }
+  uefi-arm64:  { local_name: netboot.xyz-arm64.efi,   public_name: netboot.xyz-arm64.efi }
 ```
 
 ### TFTP registration
