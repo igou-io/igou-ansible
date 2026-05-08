@@ -12,3 +12,4 @@ testvars.yml
 .ansible/
 /backups/
 .cache/netbootxyz/
+/.cache/
