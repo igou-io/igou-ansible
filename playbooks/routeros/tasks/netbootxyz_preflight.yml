@@ -35,6 +35,16 @@
       "linux/amd64": "x86_64"
       "linux/arm/v7": "arm"
 
+- name: Assert image platform is in the supported map
+  ansible.builtin.assert:
+    that:
+      - netbootxyz_image_platform in _netbootxyz_expected_arch_map
+    fail_msg: >-
+      netbootxyz_image_platform={{ netbootxyz_image_platform }} is not in the
+      supported set {{ _netbootxyz_expected_arch_map.keys() | list }}.
+      Add a mapping in netbootxyz_preflight.yml or set
+      netbootxyz_image_platform to a supported value.
+
 - name: Assert architecture matches netbootxyz_image_platform
   ansible.builtin.assert:
     that:
@@ -48,6 +58,18 @@
 - name: Parse free-hdd-space line
   ansible.builtin.set_fact:
     _netbootxyz_free_match: "{{ _netbootxyz_resource.stdout[0] | regex_search('free-hdd-space:\\s+([0-9.]+)([KMG])iB', '\\1', '\\2') }}"
+
+- name: Assert free-hdd-space line was parseable
+  ansible.builtin.assert:
+    that:
+      - _netbootxyz_free_match is iterable
+      - (_netbootxyz_free_match | length) == 2
+    fail_msg: >-
+      Could not parse free-hdd-space from /system resource print on
+      {{ inventory_hostname }}. Expected a line like
+      'free-hdd-space: 700.0MiB' with units in K/M/G. Inspect the device
+      output and either fix the device, widen the regex in
+      netbootxyz_preflight.yml, or extend it to handle other units.
 
 - name: Compute free space in MiB
   ansible.builtin.set_fact:
@@ -75,4 +97,3 @@
   register: _netbootxyz_podman_check
   delegate_to: localhost
   changed_when: false
-  tags: [image]
