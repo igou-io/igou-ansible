@@ -1,0 +1,16 @@
+---
+# Rendered by playbooks/routeros/tasks/netboot_build.yml from
+# group_vars/routeros.yml at build time. This file is mounted into the
+# netboot.xyz builder container at /ansible/user_overrides.yml and
+# consumed by the upstream site.yml -> netbootxyz role.
+#
+# Documentation of every key:
+#   https://github.com/netbootxyz/netboot.xyz/blob/master/user_overrides.yml
+
+boot_domain: "{{ netboot_chainload_host }}"
+bootloader_default: "{{ netboot_chainload_proto }}"
+site_name: "igou homelab"
+generate_menus: false
+generate_disks: true
+generate_checksums: false
+make_num_jobs: 4
