@@ -1,0 +1,156 @@
+---
+# Verify the deployment end-to-end:
+#   1. Fetch each binary from rb5009 over TFTP (size compare).
+#   2. Fetch menu.ipxe from the TrueNAS netbootxyz container over TFTP
+#      and assert it begins with #!ipxe (chainload target alive).
+#   3. Read /ip dhcp-server network and matcher rows, assert that
+#      next-server, boot-file-name, and the expected matchers exist.
+
+- name: Recompute arches map if running verify stage alone
+  ansible.builtin.set_fact:
+    _netboot_arches_map:
+      bios:
+        local_name: netboot.xyz.kpxe
+        public_name: netboot.xyz.kpxe
+      uefi-x64:
+        local_name: netboot.xyz.efi
+        public_name: netboot.xyz.efi
+      uefi-arm64:
+        local_name: netboot.xyz-arm64.efi
+        public_name: netboot.xyz-arm64.efi
+  when: netboot_arches_resolved is not defined
+
+- name: Recompute resolved arches list if running verify stage alone
+  ansible.builtin.set_fact:
+    netboot_arches_resolved: >-
+      {{
+        netboot_arches | map('extract', _netboot_arches_map) | list
+      }}
+  when: netboot_arches_resolved is not defined
+
+- name: Stat each local binary (for size compare)
+  ansible.builtin.stat:
+    path: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.local_name }}"
+  delegate_to: localhost
+  loop: "{{ netboot_arches_resolved }}"
+  loop_control:
+    label: "{{ item.public_name }}"
+  register: _netboot_local_stat_verify
+
+- name: Ensure local TFTP fetch directory exists
+  ansible.builtin.file:
+    path: "{{ netboot_local_build_dir }}/verify"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Fetch each binary from rb5009 over TFTP  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      curl -sf
+      -o {{ netboot_local_build_dir }}/verify/{{ item.public_name }}
+      tftp://{{ netboot_subnets[0].rb5009_ip }}/{{ item.public_name }}
+  delegate_to: localhost
+  changed_when: false
+  loop: "{{ netboot_arches_resolved }}"
+  loop_control:
+    label: "{{ item.public_name }}"
+
+- name: Stat each fetched binary
+  ansible.builtin.stat:
+    path: "{{ netboot_local_build_dir }}/verify/{{ item.public_name }}"
+  delegate_to: localhost
+  loop: "{{ netboot_arches_resolved }}"
+  loop_control:
+    label: "{{ item.public_name }}"
+  register: _netboot_fetched_stat
+
+- name: Assert each fetched binary matches the local build size
+  ansible.builtin.assert:
+    that:
+      - item.0.stat.size == item.1.stat.size
+    fail_msg: >-
+      Size mismatch for {{ item.0.item.public_name }}:
+      rb5009 served {{ item.0.stat.size }} bytes,
+      local build is {{ item.1.stat.size }} bytes.
+      Re-run --tags upload and check /ip tftp print on the router.
+  loop: "{{ _netboot_fetched_stat.results | zip(_netboot_local_stat_verify.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item.public_name }}"
+
+- name: Fetch menu.ipxe from TrueNAS netbootxyz over TFTP  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      curl -sf
+      -o {{ netboot_local_build_dir }}/verify/menu.ipxe
+      tftp://{{ netboot_chainload_host }}/menu.ipxe
+  delegate_to: localhost
+  changed_when: false
+
+- name: Slurp first 32 bytes of menu.ipxe
+  ansible.builtin.command:
+    cmd: head -c 32 {{ netboot_local_build_dir }}/verify/menu.ipxe
+  delegate_to: localhost
+  changed_when: false
+  register: _netboot_menu_head
+
+- name: Assert menu.ipxe begins with the iPXE shebang
+  ansible.builtin.assert:
+    that:
+      - "'#!ipxe' in _netboot_menu_head.stdout"
+    fail_msg: >-
+      Fetched {{ netboot_chainload_host }}/menu.ipxe but it does not
+      begin with #!ipxe. The TrueNAS netbootxyz container is likely
+      down or its dnsmasq is not serving menu.ipxe.
+
+- name: Read DHCP network rows for assertion
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server network print detail without-paging where
+        address={{ item.subnet }}
+  register: _netboot_network_verify
+  changed_when: false
+  loop: "{{ netboot_subnets }}"
+  loop_control:
+    label: "{{ item.subnet }}"
+
+- name: Assert next-server + boot-file-name on each network
+  ansible.builtin.assert:
+    that:
+      - item.1.stdout[0] | regex_search('(?m)^\\s*next-server:\\s*' ~ item.0.rb5009_ip ~ '\\s*$') is not none
+      - item.1.stdout[0] | regex_search('(?m)^\\s*boot-file-name:\\s*"?netboot\\.xyz\\.kpxe"?\\s*$') is not none
+    fail_msg: >-
+      DHCP network row for {{ item.0.subnet }} is missing the expected
+      next-server={{ item.0.rb5009_ip }} or boot-file-name=netboot.xyz.kpxe.
+  loop: "{{ netboot_subnets | zip(_netboot_network_verify.results) | list }}"
+  loop_control:
+    label: "{{ item.0.subnet }}"
+
+- name: Read DHCP matcher count for each expected (server, value) pair
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server matcher print count-only where
+        server={{ item.0.dhcp_server }} and
+        code=93 and
+        value="{{ item.1.value }}"
+  register: _netboot_matcher_verify
+  changed_when: false
+  when: item.1.arch in netboot_arches
+  loop: "{{ netboot_subnets | product(netboot_uefi_matchers) | list }}"
+  loop_control:
+    label: "{{ item.0.dhcp_server }} {{ item.1.value }}"
+
+- name: Assert each expected matcher exists
+  ansible.builtin.assert:
+    that:
+      - (item.stdout[0] | trim | int) >= 1
+    fail_msg: >-
+      Missing matcher on server {{ item.item.0.dhcp_server }}
+      for code=93 value={{ item.item.1.value }}.
+  when:
+    - not (item.skipped | default(false))
+  loop: "{{ _netboot_matcher_verify.results }}"
+  loop_control:
+    label: "{{ item.item.0.dhcp_server }} {{ item.item.1.value }}"

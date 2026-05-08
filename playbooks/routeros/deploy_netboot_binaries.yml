@@ -35,3 +35,7 @@
     - name: DHCP stage
       ansible.builtin.import_tasks: tasks/netboot_dhcp.yml
       tags: [dhcp]
+
+    - name: Verify stage
+      ansible.builtin.import_tasks: tasks/netboot_verify.yml
+      tags: [verify]
