@@ -1,0 +1,45 @@
+---
+# Phase A — stage a RouterOS package update without rebooting.
+# Safe to run any time. Run upgrade_apply.yml later (during a maintenance
+# window) to actually reboot into the new version.
+- name: Stage RouterOS package upgrade
+  hosts: "{{ host | default('routeros') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Read current update status
+      community.routeros.command:
+        commands:
+          - "/system package update print without-paging"
+      register: pkg_pre
+      changed_when: false
+
+    - name: Set update channel if it differs
+      community.routeros.command:
+        commands:
+          - "/system package update set channel={{ routeros_upgrade_channel }}"
+      when: "('channel: ' ~ routeros_upgrade_channel) not in pkg_pre.stdout[0]"
+
+    - name: Check for updates
+      community.routeros.command:
+        commands:
+          - "/system package update check-for-updates once"
+      register: check_result
+      changed_when: false
+
+    - name: Re-read update status after check
+      community.routeros.command:
+        commands:
+          - "/system package update print without-paging"
+      register: pkg_status
+      changed_when: false
+
+    - name: Show update status
+      ansible.builtin.debug:
+        var: pkg_status.stdout_lines
+
+    - name: Download update if newer version is available
+      community.routeros.command:
+        commands:
+          - "/system package update download"
+      when: "pkg_status.stdout[0] is search('status: New version is available')"

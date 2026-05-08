@@ -1,0 +1,81 @@
+---
+# Apply a small idempotent RouterOS baseline:
+#   - NTP client enabled with configured server list
+#   - System timezone set
+#   - Specified IP services disabled (telnet, ftp, www, www-ssl,
+#     api, api-ssl by default)
+#
+# ssh and winbox are explicitly excluded from the disable list. SSH
+# port (3480) is not managed here — changing it mid-run would lock out
+# the connection.
+#
+# Run idempotently; second run reports changed=0.
+- name: Apply RouterOS baseline configuration
+  hosts: "{{ host | default('routeros') }}"
+  gather_facts: false
+
+  tasks:
+    # ---------- NTP ----------
+    - name: Read current NTP client config
+      community.routeros.command:
+        commands:
+          - "/system ntp client print without-paging"
+      register: ntp_print
+      changed_when: false
+
+    - name: Configure NTP client
+      community.routeros.command:
+        commands:
+          - "/system ntp client set enabled=yes servers={{ routeros_ntp_servers | join(',') }}"
+      when: >-
+        ('enabled: yes' not in ntp_print.stdout[0])
+        or ((routeros_ntp_servers | join(',')) not in ntp_print.stdout[0])
+
+    # ---------- Timezone ----------
+    - name: Read current clock config
+      community.routeros.command:
+        commands:
+          - "/system clock print without-paging"
+      register: clock_print
+      changed_when: false
+
+    - name: Set timezone
+      community.routeros.command:
+        commands:
+          - "/system clock set time-zone-name={{ routeros_timezone }}"
+      when: "('time-zone-name: ' ~ routeros_timezone) not in clock_print.stdout[0]"
+
+    # ---------- IP services ----------
+    - name: Count enabled instances of each disabled-by-policy service
+      community.routeros.command:
+        commands:
+          - "/ip service print count-only where name={{ item }} and disabled=no"
+      register: service_check
+      changed_when: false
+      loop: "{{ routeros_disabled_services }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Disable services that are currently enabled
+      community.routeros.command:
+        commands:
+          - "/ip service set [find name={{ item.item }}] disabled=yes"
+      when: (item.stdout[0] | trim | int) > 0
+      loop: "{{ service_check.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ---------- Recap ----------
+    - name: Show post-state for verification
+      community.routeros.command:
+        commands:
+          - "/system clock print"
+          - "/system ntp client print"
+          - "/ip service print"
+      register: post_state
+      changed_when: false
+
+    - name: Display recap
+      ansible.builtin.debug:
+        var: post_state.stdout_lines
+      when: ansible_verbosity > 0

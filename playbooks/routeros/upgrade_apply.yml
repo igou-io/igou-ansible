@@ -1,0 +1,128 @@
+---
+# Phase B — apply a previously-staged RouterOS package update, verify
+# it took effect, and (if applicable) upgrade the routerboard firmware
+# with a second reboot.
+#
+# Imports backup.yml first so a fresh backup pair always exists before
+# any reboot, then proceeds serially (one device at a time).
+- name: Take pre-upgrade backups
+  import_playbook: backup.yml
+
+- name: Apply RouterOS package + firmware upgrade
+  hosts: "{{ host | default('routeros') }}"
+  gather_facts: false
+  serial: 1
+
+  tasks:
+    - name: Read pre-upgrade package status
+      community.routeros.command:
+        commands:
+          - "/system package update print without-paging"
+      register: pkg_pre
+      changed_when: false
+
+    - name: Pre-flight -- confirm package status is ready
+      ansible.builtin.assert:
+        that:
+          - >-
+            (pkg_pre.stdout[0] is search('status: New version is available'))
+            or (pkg_pre.stdout[0] is search('status: System is already up to date'))
+        fail_msg: >-
+          Refusing to upgrade {{ inventory_hostname }} -- unexpected package
+          status. Run upgrade_download.yml first, then retry.
+
+    - name: Capture pre-upgrade installed version
+      ansible.builtin.set_fact:
+        pre_version: "{{ pkg_pre.stdout[0] | regex_search('installed-version: (\\S+)', '\\1') | first | default('unknown') }}"
+
+    - name: Warn if a newer version was published since download
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: latest-version may be newer than the
+          downloaded version. After this run, re-run upgrade_download.yml
+          to pull the newer release.
+      when:
+        - pkg_pre.stdout[0] is search('latest-version:')
+        - >-
+          (pkg_pre.stdout[0] | regex_search('latest-version: (\S+)', '\1') | first | default(''))
+          != (pkg_pre.stdout[0] | regex_search('installed-version: (\S+)', '\1') | first | default(''))
+        - "pkg_pre.stdout[0] is search('status: New version is available')"
+
+    - name: Reboot to apply package
+      community.routeros.command:
+        commands:
+          - "/system reboot"
+      register: reboot_result
+      failed_when: false
+      changed_when: true
+      ignore_errors: true
+
+    - name: Wait for device to come back after package reboot
+      ansible.builtin.import_tasks: tasks/wait_for_routeros.yml
+
+    - name: Read post-upgrade resource info
+      community.routeros.command:
+        commands:
+          - "/system resource print without-paging"
+      register: resource_post
+      changed_when: false
+
+    - name: Verify version changed (or no upgrade was needed)
+      ansible.builtin.assert:
+        that:
+          - >-
+            ((resource_post.stdout[0] | regex_search('version: (\S+)', '\1') | first) != pre_version)
+            or (pkg_pre.stdout[0] is search('status: System is already up to date'))
+        fail_msg: >-
+          Upgrade did not take effect on {{ inventory_hostname }}: still
+          on {{ pre_version }}. Backup is at backups/routeros/{{ inventory_hostname }}/.
+
+    - name: Read routerboard firmware status
+      community.routeros.command:
+        commands:
+          - "/system routerboard print without-paging"
+      register: rb_print
+      changed_when: false
+
+    - name: Determine firmware versions
+      ansible.builtin.set_fact:
+        rb_current: "{{ rb_print.stdout[0] | regex_search('current-firmware: (\\S+)', '\\1') | first | default('') }}"
+        rb_upgrade: "{{ rb_print.stdout[0] | regex_search('upgrade-firmware: (\\S+)', '\\1') | first | default('') }}"
+
+    - name: Routerboard firmware upgrade
+      when:
+        - rb_upgrade | length > 0
+        - rb_current != rb_upgrade
+      block:
+        - name: Schedule firmware upgrade
+          community.routeros.command:
+            commands:
+              - "/system routerboard upgrade"
+
+        - name: Reboot for firmware upgrade
+          community.routeros.command:
+            commands:
+              - "/system reboot"
+          register: fw_reboot_result
+          failed_when: false
+          changed_when: true
+          ignore_errors: true
+
+        - name: Wait for device to come back after firmware reboot
+          ansible.builtin.import_tasks: tasks/wait_for_routeros.yml
+
+        - name: Re-read routerboard firmware status
+          community.routeros.command:
+            commands:
+              - "/system routerboard print without-paging"
+          register: rb_post
+          changed_when: false
+
+        - name: Verify firmware upgrade took effect
+          ansible.builtin.assert:
+            that:
+              - >-
+                (rb_post.stdout[0] | regex_search('current-firmware: (\S+)', '\1') | first) == rb_upgrade
+            fail_msg: >-
+              Routerboard firmware did not upgrade to {{ rb_upgrade }} on
+              {{ inventory_hostname }}.
