@@ -1,2 +1,77 @@
 ---
-# placeholder; implemented in Task 5
+# Idempotent download of upstream URLs into the netbootxyz container's
+# /assets directory. Runs against netbootxyz_host so the bytes never round-
+# trip through the control node.
+
+- name: Fetch — ensure iso/ directory exists
+  ansible.builtin.file:
+    path: "{{ netbootxyz_root }}/assets/iso"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+
+- name: Fetch — download kind=iso (sha256-checked)
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ netbootxyz_root }}/assets/iso/{{ item.id }}.iso"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+    force: false
+  loop: "{{ netboot_entries | selectattr('kind', 'equalto', 'iso') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+
+- name: Fetch — ensure cache/ directory exists for kind=kernel cache=true
+  ansible.builtin.file:
+    path: "{{ netbootxyz_root }}/assets/cache/{{ item.id }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+  loop: >-
+    {{ netboot_entries
+       | selectattr('kind', 'equalto', 'kernel')
+       | selectattr('cache', 'defined')
+       | selectattr('cache', 'equalto', true)
+       | list }}
+  loop_control:
+    label: "{{ item.id }}"
+
+- name: Fetch — download kind=kernel cache=true vmlinuz
+  ansible.builtin.get_url:
+    url: "{{ item.kernel }}"
+    dest: "{{ netbootxyz_root }}/assets/cache/{{ item.id }}/vmlinuz"
+    checksum: "{{ ('sha256:' + item.kernel_sha256) if item.kernel_sha256 is defined else omit }}"
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+    force: false
+  loop: >-
+    {{ netboot_entries
+       | selectattr('kind', 'equalto', 'kernel')
+       | selectattr('cache', 'defined')
+       | selectattr('cache', 'equalto', true)
+       | list }}
+  loop_control:
+    label: "{{ item.id }} vmlinuz"
+
+- name: Fetch — download kind=kernel cache=true initrd
+  ansible.builtin.get_url:
+    url: "{{ item.initrd }}"
+    dest: "{{ netbootxyz_root }}/assets/cache/{{ item.id }}/initrd"
+    checksum: "{{ ('sha256:' + item.initrd_sha256) if item.initrd_sha256 is defined else omit }}"
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+    force: false
+  loop: >-
+    {{ netboot_entries
+       | selectattr('kind', 'equalto', 'kernel')
+       | selectattr('cache', 'defined')
+       | selectattr('cache', 'equalto', true)
+       | list }}
+  loop_control:
+    label: "{{ item.id }} initrd"
