@@ -1,6 +1,61 @@
 ---
-# Build the netbootxyz image tar on the control node, then upload to the router.
-# Implemented in Task 4.
-- name: Netbootxyz_image placeholder
-  ansible.builtin.debug:
-    msg: "stage image not yet implemented"
+# Build the netbootxyz image tar on the control node, then upload to the
+# router if size differs from what's already on flash. Sets fact
+# netbootxyz_image_changed for the container stage to consume.
+- name: Ensure local image cache directory exists
+  ansible.builtin.file:
+    path: "{{ netbootxyz_local_image_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Pull netbootxyz image on control node
+  ansible.builtin.command: >-
+    podman pull --platform={{ netbootxyz_image_platform }} {{ netbootxyz_image }}
+  register: _netbootxyz_podman_pull
+  delegate_to: localhost
+  changed_when: "'Writing manifest' in _netbootxyz_podman_pull.stdout or 'Copying blob' in _netbootxyz_podman_pull.stdout"
+
+- name: Save image to tar (only if pull was changed)  # noqa: no-handler
+  ansible.builtin.command: >-
+    podman save {{ netbootxyz_image }}
+    -o {{ netbootxyz_local_image_dir }}/netbootxyz.tar
+  delegate_to: localhost
+  when: _netbootxyz_podman_pull.changed
+  changed_when: true
+
+- name: Stat local image tar
+  ansible.builtin.stat:
+    path: "{{ netbootxyz_local_image_dir }}/netbootxyz.tar"
+  register: _netbootxyz_local_tar
+  delegate_to: localhost
+
+- name: Fail if local tar missing (run with --tags image at least once)
+  ansible.builtin.assert:
+    that:
+      - _netbootxyz_local_tar.stat.exists
+    fail_msg: >-
+      {{ netbootxyz_local_image_dir }}/netbootxyz.tar does not exist on
+      the control node. Run the image stage with --tags image first.
+
+- name: Count router-side image tars matching local size
+  community.routeros.command:
+    commands:
+      - "/file print count-only where name=\"{{ netbootxyz_root_dir }}/image.tar\" and size={{ _netbootxyz_local_tar.stat.size }}"
+  register: _netbootxyz_router_tar_match
+  changed_when: false
+
+- name: Decide whether to upload image tar
+  ansible.builtin.set_fact:
+    _netbootxyz_need_upload: "{{ (_netbootxyz_router_tar_match.stdout[0] | trim | int) == 0 }}"
+
+- name: Upload image tar to router
+  ansible.netcommon.net_put:
+    src: "{{ netbootxyz_local_image_dir }}/netbootxyz.tar"
+    dest: "{{ netbootxyz_root_dir }}/image.tar"
+  when: _netbootxyz_need_upload
+  register: _netbootxyz_net_put_result
+
+- name: Set netbootxyz_image_changed fact
+  ansible.builtin.set_fact:
+    netbootxyz_image_changed: "{{ _netbootxyz_need_upload | bool }}"
