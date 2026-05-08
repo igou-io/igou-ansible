@@ -1,6 +1,69 @@
 ---
-# Push iPXE menus from netbootxyz_menu_source_dir to the container's config volume.
-# Implemented in Task 7.
-- name: Netbootxyz_menus placeholder
-  ansible.builtin.debug:
-    msg: "stage menus not yet implemented"
+# Push iPXE menus from netbootxyz_menu_source_dir to the container's
+# config volume on the router. Pushes both the canonical path
+# (config/menus/) and the local mirror (config/menus/local/) — the
+# mirror is the existing TrueNAS workaround for netbootxyz overwriting
+# config/menus/ on container restart unless MENU_VERSION=local.
+- name: Enumerate local menu files
+  ansible.builtin.find:
+    paths: "{{ netbootxyz_menu_source_dir }}"
+    file_type: file
+    recurse: true
+  register: _netbootxyz_menu_files
+  delegate_to: localhost
+
+- name: Fail if menu source directory is empty
+  ansible.builtin.assert:
+    that:
+      - _netbootxyz_menu_files.matched | int > 0
+    fail_msg: >-
+      No files found under {{ netbootxyz_menu_source_dir }}.
+      Verify the path or override netbootxyz_menu_source_dir.
+
+- name: Probe each menu file at config/menus/<rel>
+  community.routeros.command:
+    commands:
+      - >-
+        /file print count-only where
+        name="{{ netbootxyz_root_dir }}/config/menus/{{ item.path | relpath(netbootxyz_menu_source_dir) }}" and
+        size={{ item.size }}
+  register: _netbootxyz_menu_canon_probes
+  changed_when: false
+  loop: "{{ _netbootxyz_menu_files.files }}"
+  loop_control:
+    label: "{{ item.path | relpath(netbootxyz_menu_source_dir) }}"
+
+- name: Push menus to config/menus/
+  ansible.netcommon.net_put:
+    src: "{{ item.item.path }}"
+    dest: "{{ netbootxyz_root_dir }}/config/menus/{{ item.item.path | relpath(netbootxyz_menu_source_dir) }}"
+  loop: "{{ _netbootxyz_menu_canon_probes.results }}"
+  loop_control:
+    label: "{{ item.item.path | relpath(netbootxyz_menu_source_dir) }}"
+  vars:
+    ansible_command_timeout: 60
+  when: (item.stdout[0] | trim | int) == 0
+
+- name: Probe each menu file at config/menus/local/<rel>
+  community.routeros.command:
+    commands:
+      - >-
+        /file print count-only where
+        name="{{ netbootxyz_root_dir }}/config/menus/local/{{ item.path | relpath(netbootxyz_menu_source_dir) }}" and
+        size={{ item.size }}
+  register: _netbootxyz_menu_local_probes
+  changed_when: false
+  loop: "{{ _netbootxyz_menu_files.files }}"
+  loop_control:
+    label: "{{ item.path | relpath(netbootxyz_menu_source_dir) }}"
+
+- name: Push menus to config/menus/local/ (TrueNAS workaround mirror)
+  ansible.netcommon.net_put:
+    src: "{{ item.item.path }}"
+    dest: "{{ netbootxyz_root_dir }}/config/menus/local/{{ item.item.path | relpath(netbootxyz_menu_source_dir) }}"
+  loop: "{{ _netbootxyz_menu_local_probes.results }}"
+  loop_control:
+    label: "{{ item.item.path | relpath(netbootxyz_menu_source_dir) }}"
+  vars:
+    ansible_command_timeout: 60
+  when: (item.stdout[0] | trim | int) == 0
