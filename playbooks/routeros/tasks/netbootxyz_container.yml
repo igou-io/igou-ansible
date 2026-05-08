@@ -28,7 +28,7 @@
   community.routeros.command:
     commands:
       - "/container config set tmpdir={{ netbootxyz_tmpdir }}"
-  when: "('tmpdir: ' ~ netbootxyz_tmpdir) not in _netbootxyz_container_config.stdout[0]"
+  when: _netbootxyz_container_config.stdout[0] | regex_search('(?m)^\\s*tmpdir:\\s*' ~ netbootxyz_tmpdir ~ '\\s*$') is none
   changed_when: true
 
 - name: Count container mounts with our name
@@ -44,8 +44,8 @@
       - >-
         /container mounts print count-only where
         name=netbootxyz-config and
-        src={{ netbootxyz_root_dir }}/config and
-        dst=/config
+        src="{{ netbootxyz_root_dir }}/config" and
+        dst="/config"
   register: _netbootxyz_mount_match_count
   changed_when: false
 
@@ -55,8 +55,8 @@
       - >-
         /container mounts add
         name=netbootxyz-config
-        src={{ netbootxyz_root_dir }}/config
-        dst=/config
+        src="{{ netbootxyz_root_dir }}/config"
+        dst="/config"
   when: (_netbootxyz_mount_name_count.stdout[0] | trim | int) == 0
   changed_when: true
 
@@ -65,8 +65,8 @@
     commands:
       - >-
         /container mounts set [find name=netbootxyz-config]
-        src={{ netbootxyz_root_dir }}/config
-        dst=/config
+        src="{{ netbootxyz_root_dir }}/config"
+        dst="/config"
   when:
     - (_netbootxyz_mount_name_count.stdout[0] | trim | int) >= 1
     - (_netbootxyz_mount_match_count.stdout[0] | trim | int) == 0
@@ -78,8 +78,8 @@
       - >-
         /container envs print count-only where
         name=netbootxyz-env and
-        key={{ item.key }} and
-        value={{ item.value }}
+        key="{{ item.key }}" and
+        value="{{ item.value }}"
   register: _netbootxyz_env_probes
   changed_when: false
   loop: "{{ netbootxyz_env_extra }}"
@@ -92,8 +92,8 @@
       - >-
         /container envs add
         name=netbootxyz-env
-        key={{ item.item.key }}
-        value={{ item.item.value }}
+        key="{{ item.item.key }}"
+        value="{{ item.item.value }}"
   loop: "{{ _netbootxyz_env_probes.results }}"
   loop_control:
     label: "{{ item.item.key }}"
@@ -110,12 +110,7 @@
 - name: Decide whether to recreate container
   ansible.builtin.set_fact:
     _netbootxyz_container_present: "{{ (_netbootxyz_container_count.stdout[0] | trim | int) >= 1 }}"
-    _netbootxyz_container_recreate: >-
-      {{
-        (netbootxyz_image_changed | default(false)) or
-        (netbootxyz_network_changed | default(false)) or
-        (netbootxyz_force_restart | bool)
-      }}
+    _netbootxyz_container_recreate: "{{ (netbootxyz_image_changed | default(false) | bool) or (netbootxyz_network_changed | default(false) | bool) or (netbootxyz_force_restart | bool) }}"
 
 - name: Stop container before recreate
   community.routeros.command:
@@ -151,7 +146,7 @@
         interface={{ netbootxyz_veth_name }}
         root-dir={{ netbootxyz_root_dir }}
         mounts=netbootxyz-config
-        envlist=netbootxyz-env
+        {{ 'envlist=netbootxyz-env' if (netbootxyz_env_extra | length) > 0 else '' }}
         hostname={{ netbootxyz_container_hostname }}
         logging={{ 'yes' if netbootxyz_container_logging else 'no' }}
   vars:

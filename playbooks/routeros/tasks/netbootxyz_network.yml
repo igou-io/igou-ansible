@@ -68,9 +68,4 @@
 
 - name: Set netbootxyz_network_changed fact
   ansible.builtin.set_fact:
-    netbootxyz_network_changed: >-
-      {{
-        (_netbootxyz_veth_added.changed | default(false)) or
-        (_netbootxyz_veth_updated.changed | default(false)) or
-        (_netbootxyz_bridge_port_added.changed | default(false))
-      }}
+    netbootxyz_network_changed: "{{ (_netbootxyz_veth_added.changed | default(false) | bool) or (_netbootxyz_veth_updated.changed | default(false) | bool) or (_netbootxyz_bridge_port_added.changed | default(false) | bool) }}"
