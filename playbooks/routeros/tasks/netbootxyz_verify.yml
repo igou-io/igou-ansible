@@ -6,7 +6,7 @@
     host: "{{ netbootxyz_address | ansible.utils.ipaddr('address') }}"
     port: 80
     delay: 5
-    timeout: 60
+    timeout: 120
   delegate_to: localhost
 
 - name: GET /menu.ipxe and assert iPXE script body
@@ -16,6 +16,11 @@
     status_code: 200
   register: _netbootxyz_ipxe_response
   delegate_to: localhost
+  retries: 12
+  delay: 5
+  until:
+    - _netbootxyz_ipxe_response.status == 200
+    - "'#!ipxe' in (_netbootxyz_ipxe_response.content | default(''))"
 
 - name: Assert response body looks like an iPXE script
   ansible.builtin.assert:
