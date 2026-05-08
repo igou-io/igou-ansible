@@ -13,6 +13,23 @@
     _netboot_kickstart_src: "{{ playbook_dir }}/files/kickstart"
     _netboot_cloudinit_src: "{{ playbook_dir }}/files/cloud-init"
 
+- name: Push — verify render cache exists (run --tags render first if this fails)
+  ansible.builtin.stat:
+    path: "{{ _netboot_cache_dir }}/menu.ipxe"
+  register: _netboot_cache_check
+  delegate_to: localhost
+  run_once: true
+
+- name: Push — assert render cache is populated
+  ansible.builtin.assert:
+    that:
+      - _netboot_cache_check.stat.exists
+    fail_msg: |
+      Render cache not found at {{ _netboot_cache_dir }}/menu.ipxe.
+      Run with --tags render,push (or just no tag filter) so render produces the cache before push reads it. Running --tags push standalone with a stale or missing cache would silently regress the live netbootxyz state because synchronize uses delete=true on entries/ and host/.
+  delegate_to: localhost
+  run_once: true
+
 - name: Push — ensure destination subdirs exist
   ansible.builtin.file:
     path: "{{ item }}"
@@ -31,6 +48,8 @@
     - "{{ _netboot_menus_dst }}/local/fragments"
     - "{{ _netboot_assets_dst }}/kickstart"
     - "{{ _netboot_assets_dst }}/cloud-init"
+  loop_control:
+    label: "{{ item | basename }}"
 
 - name: Push — top-level menu.ipxe
   ansible.builtin.copy:
@@ -42,6 +61,8 @@
   loop:
     - "{{ _netboot_menus_dst }}"
     - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
 
 - name: Push — entries/ (with delete-extras)
   ansible.posix.synchronize:
@@ -56,6 +77,8 @@
   loop:
     - "{{ _netboot_menus_dst }}"
     - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
 
 - name: Push — host/ (with delete-extras)
   ansible.posix.synchronize:
@@ -70,6 +93,8 @@
   loop:
     - "{{ _netboot_menus_dst }}"
     - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
 
 - name: Push — fragments/ (with delete-extras)
   ansible.posix.synchronize:
@@ -85,6 +110,8 @@
   loop:
     - "{{ _netboot_menus_dst }}"
     - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
 
 - name: Push — kickstart/
   ansible.posix.synchronize:
