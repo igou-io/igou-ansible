@@ -7,6 +7,8 @@ ignore: |
   .github/workflows/
   .ansible/
   .cache/
+  playbooks/netboot/files/cloud-init/
+  playbooks/netboot/files/kickstart/
 rules:
   # 80 chars should be enough, but don't fail if a line is longer
   line-length: disable

@@ -8,23 +8,34 @@
 #      HTTP by the container's nginx, which serves /assets/* at URL /*.
 #      That's ISO assets and cached kernels.
 
+- name: Verify — recompute have-custom-menu fact
+  ansible.builtin.set_fact:
+    _netboot_have_custom_menu: >-
+      {{ (netboot_entries | length > 0)
+         or (netboot_host_pins | length > 0)
+         or (_netboot_fragments | length > 0) }}
+
 - name: Verify — stat menu.ipxe on the netbootxyz host
   ansible.builtin.stat:
     path: "{{ netbootxyz_root }}/config/menus/menu.ipxe"
   register: _verify_menu_stat
+  when: _netboot_have_custom_menu | bool
   failed_when:
-    - not _verify_menu_stat.stat.exists
+    - _netboot_have_custom_menu | bool
+    - not (_verify_menu_stat.stat.exists | default(false))
 
 - name: Verify — read menu.ipxe content
   ansible.builtin.slurp:
     src: "{{ netbootxyz_root }}/config/menus/menu.ipxe"
   register: _verify_menu_slurp
+  when: _netboot_have_custom_menu | bool
 
 - name: Verify — menu.ipxe is well-formed
   ansible.builtin.assert:
     that:
       - "'#!ipxe' in (_verify_menu_slurp.content | b64decode)"
     fail_msg: "menu.ipxe at {{ netbootxyz_root }}/config/menus/menu.ipxe is missing the #!ipxe shebang."
+  when: _netboot_have_custom_menu | bool
 
 - name: Verify — every entry's name appears in menu.ipxe
   ansible.builtin.assert:
@@ -34,6 +45,7 @@
   loop: "{{ netboot_entries }}"
   loop_control:
     label: "{{ item.id }}"
+  when: _netboot_have_custom_menu | bool
 
 - name: Verify — each entry .ipxe exists on disk
   ansible.builtin.stat:
@@ -79,6 +91,10 @@
 - name: Verify — summary
   ansible.builtin.debug:
     msg:
-      - "menu.ipxe on disk ({{ _verify_menu_stat.stat.size }} bytes)"
+      - >-
+        {{ 'custom menu.ipxe on disk (' + (_verify_menu_stat.stat.size | string) + ' bytes)'
+           if _netboot_have_custom_menu | bool
+           else 'no custom menu (entries/pins/fragments empty); stock menu.ipxe untouched' }}
       - "entries verified: {{ netboot_entries | length }}"
       - "host pins verified: {{ netboot_host_pins | length }}"
+      - "fragments: {{ _netboot_fragments | length }}"

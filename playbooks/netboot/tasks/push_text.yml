@@ -12,6 +12,14 @@
     _netboot_fragments_src: "{{ playbook_dir }}/files/fragments"
     _netboot_kickstart_src: "{{ playbook_dir }}/files/kickstart"
     _netboot_cloudinit_src: "{{ playbook_dir }}/files/cloud-init"
+    # Only replace the stock netbootxyz menu.ipxe + own the entries/host/
+    # subdirs when we actually have custom content to put there. The stock
+    # menu and any pre-existing flat-named .ipxe files (e.g. OpenShift
+    # add-node, hand-placed MAC files) stay untouched otherwise.
+    _netboot_have_custom_menu: >-
+      {{ (netboot_entries | length > 0)
+         or (netboot_host_pins | length > 0)
+         or (_netboot_fragments | length > 0) }}
 
 - name: Push — verify render cache exists (run --tags render first if this fails)
   ansible.builtin.stat:
@@ -63,6 +71,7 @@
     - "{{ _netboot_menus_dst }}/local"
   loop_control:
     label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  when: _netboot_have_custom_menu | bool
 
 - name: Push — entries/ (with delete-extras)
   ansible.posix.synchronize:
@@ -79,6 +88,7 @@
     - "{{ _netboot_menus_dst }}/local"
   loop_control:
     label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  when: _netboot_have_custom_menu | bool
 
 - name: Push — host/ (with delete-extras)
   ansible.posix.synchronize:
@@ -95,6 +105,7 @@
     - "{{ _netboot_menus_dst }}/local"
   loop_control:
     label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  when: _netboot_have_custom_menu | bool
 
 - name: Push — fragments/ (with delete-extras)
   ansible.posix.synchronize:
@@ -112,6 +123,7 @@
     - "{{ _netboot_menus_dst }}/local"
   loop_control:
     label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  when: _netboot_have_custom_menu | bool
 
 - name: Push — kickstart/
   ansible.posix.synchronize:
