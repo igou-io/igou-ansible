@@ -1,6 +1,38 @@
 ---
-# Verify the container is serving HTTP on the LAN IP.
-# Implemented in Task 8.
-- name: Netbootxyz_verify placeholder
+# Verify the container is serving HTTP on the LAN IP, then debug-print
+# the final container row for the recap.
+- name: Wait for HTTP port on container IP
+  ansible.builtin.wait_for:
+    host: "{{ netbootxyz_address | ansible.utils.ipaddr('address') }}"
+    port: 80
+    delay: 5
+    timeout: 60
+  delegate_to: localhost
+
+- name: GET /menu.ipxe and assert iPXE script body
+  ansible.builtin.uri:
+    url: "http://{{ netbootxyz_address | ansible.utils.ipaddr('address') }}/menu.ipxe"
+    return_content: true
+    status_code: 200
+  register: _netbootxyz_ipxe_response
+  delegate_to: localhost
+
+- name: Assert response body looks like an iPXE script
+  ansible.builtin.assert:
+    that:
+      - "'#!ipxe' in _netbootxyz_ipxe_response.content"
+    fail_msg: >-
+      http://{{ netbootxyz_address | ansible.utils.ipaddr('address') }}/menu.ipxe
+      returned 200 but body does not contain "#!ipxe". Container likely
+      failed to bootstrap menus. Check /container print and container logs.
+
+- name: Read final container row for recap
+  community.routeros.command:
+    commands:
+      - "/container print detail without-paging where root-dir={{ netbootxyz_root_dir }}"
+  register: _netbootxyz_final_state
+  changed_when: false
+
+- name: Show final container state
   ansible.builtin.debug:
-    msg: "stage verify not yet implemented"
+    var: _netbootxyz_final_state.stdout_lines
