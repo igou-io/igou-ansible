@@ -1,0 +1,121 @@
+---
+# Ship built iPXE binaries from the control node's build cache to
+# flash:/netboot/ on the rb5009, then register each in /ip tftp so
+# PXE clients can fetch them by their public names.
+#
+# Honors netboot_arches_resolved (set by netboot_build.yml). When this
+# stage runs alone via --tags upload, the fact is recomputed from
+# netboot_arches and the static arches map.
+
+- name: Recompute arches map if running upload stage alone
+  ansible.builtin.set_fact:
+    _netboot_arches_map:
+      bios:
+        local_name: netboot.xyz.kpxe
+        public_name: netboot.xyz.kpxe
+      uefi-x64:
+        local_name: netboot.xyz.efi
+        public_name: netboot.xyz.efi
+      uefi-arm64:
+        local_name: netboot.xyz-arm64.efi
+        public_name: netboot.xyz-arm64.efi
+  when: netboot_arches_resolved is not defined
+
+- name: Recompute resolved arches list if running upload stage alone
+  ansible.builtin.set_fact:
+    netboot_arches_resolved: >-
+      {{
+        netboot_arches | map('extract', _netboot_arches_map) | list
+      }}
+  when: netboot_arches_resolved is not defined
+
+- name: Stat each local binary
+  ansible.builtin.stat:
+    path: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.local_name }}"
+  delegate_to: localhost
+  loop: "{{ netboot_arches_resolved }}"
+  loop_control:
+    label: "{{ item.public_name }}"
+  register: _netboot_local_stat
+
+- name: Assert each local binary exists
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Local binary
+      {{ netboot_local_build_dir }}/output/ipxe/{{ item.item.local_name }}
+      is missing. Run the build stage first
+      (--tags build).
+  loop: "{{ _netboot_local_stat.results }}"
+  loop_control:
+    label: "{{ item.item.public_name }}"
+
+- name: Count flash netboot directory
+  community.routeros.command:
+    commands:
+      - '/file print count-only where name="{{ netboot_flash_dir }}" and type=directory'
+  register: _netboot_flash_dir_count
+  changed_when: false
+
+- name: Create flash netboot directory
+  community.routeros.command:
+    commands:
+      - "/file add name={{ netboot_flash_dir }} type=directory"
+  when: (_netboot_flash_dir_count.stdout[0] | trim | int) == 0
+  changed_when: true
+
+- name: Count router-side binaries matching local size
+  community.routeros.command:
+    commands:
+      - >-
+        /file print count-only where
+        name="{{ netboot_flash_dir }}/{{ item.0.public_name }}"
+        and size={{ item.1.stat.size }}
+  register: _netboot_router_size_match
+  changed_when: false
+  loop: "{{ netboot_arches_resolved | zip(_netboot_local_stat.results) | list }}"
+  loop_control:
+    label: "{{ item.0.public_name }}"
+
+- name: Upload binary if size differs from router copy
+  ansible.netcommon.net_put:
+    src: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.0.local_name }}"
+    dest: "{{ netboot_flash_dir }}/{{ item.0.public_name }}"
+  vars:
+    ansible_command_timeout: 300
+  when:
+    - (_netboot_router_size_match.results[ansible_loop.index0].stdout[0] | trim | int) == 0
+  loop: "{{ netboot_arches_resolved | zip(_netboot_local_stat.results) | list }}"
+  loop_control:
+    label: "{{ item.0.public_name }}"
+    extended: true
+  register: _netboot_uploads
+
+- name: Count tftp rows for each arch
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp print count-only where
+        req-filename="{{ item.public_name }}" and
+        real-filename="{{ netboot_flash_dir }}/{{ item.public_name }}"
+  register: _netboot_tftp_count
+  changed_when: false
+  loop: "{{ netboot_arches_resolved }}"
+  loop_control:
+    label: "{{ item.public_name }}"
+
+- name: Add /ip tftp row for each arch
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp add
+        req-filename="{{ item.public_name }}"
+        real-filename="{{ netboot_flash_dir }}/{{ item.public_name }}"
+        allow=yes read-only=yes
+  when: (_netboot_tftp_count.results[ansible_loop.index0].stdout[0] | trim | int) == 0
+  changed_when: true
+  loop: "{{ netboot_arches_resolved }}"
+  loop_control:
+    label: "{{ item.public_name }}"
+    extended: true

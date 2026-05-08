@@ -19,7 +19,7 @@
 #   playbooks/routeros/files/netboot/cleanup-old-container.md
 
 - name: Build and deploy custom netboot.xyz iPXE binaries
-  hosts: "{{ host | default('routeros_netboot') }}"
+  hosts: "{{ host | default('rb5009.igou.systems') }}"
   gather_facts: false
   serial: 1
   tasks:
@@ -27,3 +27,7 @@
     - name: Build stage
       ansible.builtin.import_tasks: tasks/netboot_build.yml
       tags: [build]
+
+    - name: Upload stage
+      ansible.builtin.import_tasks: tasks/netboot_upload.yml
+      tags: [upload]
