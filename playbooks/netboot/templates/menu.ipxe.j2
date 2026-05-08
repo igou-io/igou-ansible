@@ -19,7 +19,7 @@ item fragment_{{ loop.index0 }} ${space} {{ f }}
 {% endfor %}
 {% endif %}
 item --gap
-item exit ${space} Exit
+item menu_exit ${space} Exit
 
 choose menu_choice || goto menu_exit
 echo ${cls}

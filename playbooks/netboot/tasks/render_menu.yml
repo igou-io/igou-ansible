@@ -112,6 +112,6 @@
 
 - name: Render — list rendered files
   ansible.builtin.debug:
-    msg: "{{ _render_summary.files | map(attribute='path') | map('regex_replace', _netboot_cache_dir + '/', '') | sort | list }}"
+    msg: "{{ _render_summary.files | map(attribute='path') | map('regex_replace', '^.*/.cache/netboot-menus/', '') | sort | list }}"
   delegate_to: localhost
   run_once: true

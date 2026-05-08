@@ -3,7 +3,7 @@
 ### Host pin: mac={{ pin.mac }}{% if pin.hostname is defined %} hostname={{ pin.hostname }}{% endif %}
 
 {% if pin.entry is defined %}
-chain entries/{{ pin.entry }}.ipxe
+chain ../entries/{{ pin.entry }}.ipxe
 {% elif pin.fragment is defined %}
 {{ pin.fragment }}
 {% else %}
