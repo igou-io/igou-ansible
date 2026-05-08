@@ -1,2 +1,111 @@
 ---
-# placeholder; implemented in Task 4
+# Sync rendered menus + static assets text to TrueNAS. Scoped synchronize
+# with delete=true is bounded to subdirs we own: menus/entries/, menus/host/,
+# menus/fragments/. Flat menus/ is left alone so the OpenShift add-node files
+# survive.
+
+- name: Push — define paths
+  ansible.builtin.set_fact:
+    _netboot_menus_dst: "{{ netbootxyz_root }}/config/menus"
+    _netboot_assets_dst: "{{ netbootxyz_root }}/assets"
+    _netboot_cache_dir: "{{ playbook_dir }}/../../.cache/netboot-menus"
+    _netboot_fragments_src: "{{ playbook_dir }}/files/fragments"
+    _netboot_kickstart_src: "{{ playbook_dir }}/files/kickstart"
+    _netboot_cloudinit_src: "{{ playbook_dir }}/files/cloud-init"
+
+- name: Push — ensure destination subdirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/entries"
+    - "{{ _netboot_menus_dst }}/host"
+    - "{{ _netboot_menus_dst }}/fragments"
+    - "{{ _netboot_menus_dst }}/local"
+    - "{{ _netboot_menus_dst }}/local/entries"
+    - "{{ _netboot_menus_dst }}/local/host"
+    - "{{ _netboot_menus_dst }}/local/fragments"
+    - "{{ _netboot_assets_dst }}/kickstart"
+    - "{{ _netboot_assets_dst }}/cloud-init"
+
+- name: Push — top-level menu.ipxe
+  ansible.builtin.copy:
+    src: "{{ _netboot_cache_dir }}/menu.ipxe"
+    dest: "{{ item }}/menu.ipxe"
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+
+- name: Push — entries/ (with delete-extras)
+  ansible.posix.synchronize:
+    src: "{{ _netboot_cache_dir }}/entries/"
+    dest: "{{ item }}/entries/"
+    delete: true
+    recursive: true
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown=1000:1000"
+      - "--chmod=F0644,D0755"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+
+- name: Push — host/ (with delete-extras)
+  ansible.posix.synchronize:
+    src: "{{ _netboot_cache_dir }}/host/"
+    dest: "{{ item }}/host/"
+    delete: true
+    recursive: true
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown=1000:1000"
+      - "--chmod=F0644,D0755"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+
+- name: Push — fragments/ (with delete-extras)
+  ansible.posix.synchronize:
+    src: "{{ _netboot_fragments_src }}/"
+    dest: "{{ item }}/fragments/"
+    delete: true
+    recursive: true
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown=1000:1000"
+      - "--chmod=F0644,D0755"
+      - "--exclude=.gitkeep"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+
+- name: Push — kickstart/
+  ansible.posix.synchronize:
+    src: "{{ _netboot_kickstart_src }}/"
+    dest: "{{ _netboot_assets_dst }}/kickstart/"
+    delete: false
+    recursive: true
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown=1000:1000"
+      - "--chmod=F0644,D0755"
+      - "--exclude=.gitkeep"
+
+- name: Push — cloud-init/
+  ansible.posix.synchronize:
+    src: "{{ _netboot_cloudinit_src }}/"
+    dest: "{{ _netboot_assets_dst }}/cloud-init/"
+    delete: false
+    recursive: true
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown=1000:1000"
+      - "--chmod=F0644,D0755"
+      - "--exclude=.gitkeep"
