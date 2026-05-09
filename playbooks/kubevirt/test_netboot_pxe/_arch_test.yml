@@ -42,7 +42,7 @@
             req-filename="{{ item.binary }}"
       register: _pxe_tftp_pre
       changed_when: false
-      delegate_to: rb5009.igou.systems
+      delegate_to: "{{ pxe_test_router }}"
 
     - name: "Extract pre-boot hit count"
       ansible.builtin.set_fact:
@@ -75,7 +75,7 @@
             req-filename="{{ item.binary }}"
       register: _pxe_tftp_post
       changed_when: false
-      delegate_to: rb5009.igou.systems
+      delegate_to: "{{ pxe_test_router }}"
 
     - name: "Extract post-boot hit count"
       ansible.builtin.set_fact:

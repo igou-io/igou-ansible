@@ -50,7 +50,7 @@
         where mac-address="{{ _vm_mac | upper }}"
   register: _pxe_lease_query
   changed_when: false
-  delegate_to: rb5009.igou.systems
+  delegate_to: "{{ pxe_test_router }}"
   retries: 6
   delay: 5
   until: _pxe_lease_query.stdout[0] is search('address=')

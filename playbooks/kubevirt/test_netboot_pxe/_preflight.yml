@@ -44,7 +44,7 @@
 
 - name: Preflight -- ensure host pin directory exists on TrueNAS
   ansible.builtin.file:
-    path: "/mnt/ssd/containers/netbootxyz/config/menus/host"
+    path: "{{ netbootxyz_root }}/config/menus/host"
     state: directory
     mode: '0755'
   delegate_to: "{{ groups[netbootxyz_host][0] }}"
@@ -53,7 +53,7 @@
 - name: Preflight -- deploy each smoke pin from inventory to /config/menus/host/
   ansible.builtin.copy:
     content: "{{ (netboot_host_pins | selectattr('mac', 'equalto', item) | first).fragment }}"
-    dest: "/mnt/ssd/containers/netbootxyz/config/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe"
+    dest: "{{ netbootxyz_root }}/config/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe"
     mode: '0644'
     owner: "1000"
     group: "1000"

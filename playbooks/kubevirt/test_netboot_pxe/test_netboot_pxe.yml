@@ -189,7 +189,7 @@
                 req-filename="{{ item.binary }}"
           register: _pxe_tftp_pre_all
           changed_when: false
-          delegate_to: rb5009.igou.systems
+          delegate_to: "{{ pxe_test_router }}"
           loop: "{{ pxe_test_arches }}"
           loop_control:
             label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
@@ -244,7 +244,7 @@
                 req-filename="{{ item.binary }}"
           register: _pxe_tftp_post_all
           changed_when: false
-          delegate_to: rb5009.igou.systems
+          delegate_to: "{{ pxe_test_router }}"
           loop: "{{ pxe_test_arches }}"
           loop_control:
             label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
