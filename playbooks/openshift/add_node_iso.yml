@@ -211,6 +211,14 @@
         owner: "1000"
         group: "1000"
 
+    - name: Ensure host pin directory exists on TrueNAS
+      ansible.builtin.file:
+        path: "{{ truenas_menus_root }}/host"
+        state: directory
+        mode: "0755"
+        owner: "1000"
+        group: "1000"
+
     - name: Sync boot artifacts to TrueNAS
       ansible.posix.synchronize:
         src: "{{ work_dir }}/"
@@ -222,10 +230,16 @@
           - "--exclude=nodes-config.yaml"
           - "--chown=1000:1000"
 
-    - name: Copy iPXE script per worker into menus dir
+    - name: Render iPXE script with managed-by header into host/MAC-<hex>.ipxe
       ansible.builtin.copy:
-        src: "{{ work_dir }}/node.{{ arch }}.ipxe"
-        dest: "{{ truenas_menus_root }}/{{ hostvars[item].openshift_add_node_mac | replace(':', '') }}-add-node-{{ cluster_host }}.ipxe"
+        dest: "{{ truenas_menus_root }}/host/MAC-{{ hostvars[item].openshift_add_node_mac | replace(':', '') | lower }}.ipxe"
+        content: |
+          #!ipxe
+          # Managed by playbooks/openshift/add_node_iso.yml
+          # Cluster: {{ cluster_host }}
+          # Worker:  {{ item }} (MAC {{ hostvars[item].openshift_add_node_mac }})
+          # DO NOT EDIT -- re-run add_node_iso.yml to refresh.
+          {{ lookup('file', work_dir + '/node.' + arch + '.ipxe') | regex_replace('^#!ipxe\r?\n', '') }}
         mode: "0644"
         owner: "1000"
         group: "1000"
@@ -233,15 +247,19 @@
       loop_control:
         label: "{{ item }}"
 
-    # Mirrors the netbootxyz workaround in deploy_pxe_assets.yml: a duplicate
-    # copy under /local/ that the menu chain references.
-    - name: Copy iPXE script per worker into menus/local dir
-      ansible.builtin.copy:
-        src: "{{ work_dir }}/node.{{ arch }}.ipxe"
-        dest: "{{ truenas_menus_root }}/local/{{ hostvars[item].openshift_add_node_mac | replace(':', '') }}-add-node-{{ cluster_host }}.ipxe"
-        mode: "0644"
-        owner: "1000"
-        group: "1000"
-      loop: "{{ groups['openshift_workers_' + cluster_host] }}"
+    - name: Cleanup -- locate stale flat-path add-node iPXE scripts on TrueNAS
+      ansible.builtin.find:
+        paths:
+          - "{{ truenas_menus_root }}"
+          - "{{ truenas_menus_root }}/local"
+        patterns: "*-add-node-*.ipxe"
+        file_type: file
+      register: _stale_add_node_files
+
+    - name: Cleanup -- remove each stale flat-path file
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _stale_add_node_files.files }}"
       loop_control:
-        label: "{{ item }}"
+        label: "{{ item.path }}"
