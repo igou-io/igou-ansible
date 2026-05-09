@@ -1,0 +1,67 @@
+---
+# Configure TrueNAS as an NFS netboot server.
+#
+# Provisions the ZFS layout, NFS export, and NFS service required by the
+# armbian_netboot collection's nfs_content role (which writes per-board
+# rootfs trees over SSH).
+#
+# Variables (group_vars/truenas.yml):
+#   truenas_netboot_pool             - ZFS pool that hosts the netboot tree
+#                                      (default: ssd)
+#   truenas_netboot_datasets         - list of datasets to create; each item
+#                                      may set atime, sync, compression,
+#                                      recordsize. Properties left unset
+#                                      inherit from the parent dataset.
+#   truenas_netboot_share_networks   - list of CIDRs allowed to mount the
+#                                      rootfs export
+#   truenas_netboot_required_tools   - list of CLI tools the nfs_content
+#                                      role expects to find on the host
+
+- name: Configure TrueNAS as NFS netboot server
+  hosts: truenas
+  gather_facts: false
+  become: false
+  vars:
+    _pool: "{{ truenas_netboot_pool | default('ssd') }}"
+    _rootfs_path: "/mnt/{{ _pool }}/netboot/rootfs"
+  tasks:
+
+    # The NFS service is assumed to be running with NFSv4 and the NFSv3
+    # ownership model already enabled. Configure those manually under
+    # System Settings -> Services -> NFS in the TrueNAS UI if needed.
+
+    - name: Create netboot ZFS datasets
+      arensb.truenas.filesystem:
+        name: "{{ item.name }}"
+        state: present
+        type: FILESYSTEM
+        create_ancestors: true
+        atime: "{{ item.atime | default(omit) }}"
+        sync: "{{ item.sync | default(omit) }}"
+        compression: "{{ item.compression | default(omit) }}"
+        recordsize: "{{ item.recordsize | default(omit) }}"
+      loop: "{{ truenas_netboot_datasets }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [datasets]
+
+    - name: Export rootfs over NFS
+      arensb.truenas.sharing_nfs:
+        path: "{{ _rootfs_path }}"
+        state: present
+        enabled: true
+        maproot_user: root
+        maproot_group: wheel
+        networks: "{{ truenas_netboot_share_networks }}"
+        name: "netboot rootfs"
+      tags: [nfs_share]
+
+    - name: Verify required CLI tools are reachable from the SSH user's PATH
+      ansible.builtin.command: "which {{ item }}"
+      register: _tool_check
+      changed_when: false
+      failed_when: _tool_check.rc != 0
+      loop: "{{ truenas_netboot_required_tools }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [sanity]
