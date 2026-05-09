@@ -1,0 +1,76 @@
+---
+# Resolve a VM's MAC and IP for the headless smoke test.
+#
+# Step A reads the VirtualMachineInstance to learn the MAC. KubeVirt
+# fills .spec.domain.devices.interfaces[].macAddress in regardless of
+# whether the test fixture pinned a MAC or asked KubeVirt to generate
+# one -- so this works for both pinned and random cases.
+#
+# Step B queries rb5009 for the DHCP lease for that MAC. Up to 30s of
+# retry budget because iPXE's DHCP exchange can lag VMI Ready by a few
+# seconds, especially in parallel mode.
+#
+# Inputs (task vars expected on caller):
+#   _vm_name   for messages and loop labels
+#   pxe_test_namespace -- already a play-level var
+#
+# Outputs (set as facts):
+#   _vm_mac    lowercase, with colons (e.g. "02:00:00:50:58:01")
+#   _vm_ip     dotted-quad string (e.g. "10.10.9.42")
+#
+# Failure modes are distinct: an unreadable VMI fails on Step A with a
+# k8s-flavoured message; a missing DHCP lease fails on Step C with a
+# network-layer-flavoured message. Neither is confused with a
+# netbootxyz problem.
+
+- name: "Read VirtualMachineInstance to learn its MAC -- {{ _vm_name }}"
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    namespace: "{{ pxe_test_namespace }}"
+    name: "{{ _vm_name }}"
+    validate_certs: false
+  register: _pxe_vmi_result
+  retries: 6
+  delay: 5
+  until:
+    - _pxe_vmi_result.resources | length == 1
+    - _pxe_vmi_result.resources[0].spec.domain.devices.interfaces | default([]) | length > 0
+    - _pxe_vmi_result.resources[0].spec.domain.devices.interfaces[0].macAddress is defined
+
+- name: "Set _vm_mac fact for {{ _vm_name }}"
+  ansible.builtin.set_fact:
+    _vm_mac: "{{ _pxe_vmi_result.resources[0].spec.domain.devices.interfaces[0].macAddress | lower }}"
+
+- name: "Wait for DHCP lease -- {{ _vm_name }}"
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server lease print detail without-paging
+        where mac-address="{{ _vm_mac | upper }}"
+  register: _pxe_lease_query
+  changed_when: false
+  delegate_to: "{{ pxe_test_router }}"
+  retries: 6
+  delay: 5
+  until: _pxe_lease_query.stdout[0] is search('address=')
+
+- name: "Extract IP from lease for {{ _vm_name }}"
+  ansible.builtin.set_fact:
+    _vm_ip: "{{ _pxe_lease_query.stdout[0] | regex_search('address=([0-9.]+)', '\\1') | first }}"
+
+- name: "Assert IP was extracted for {{ _vm_name }}"
+  ansible.builtin.assert:
+    that:
+      - _vm_ip is defined
+      - _vm_ip | length > 0
+    fail_msg: >-
+      VM {{ _vm_name }} (MAC {{ _vm_mac }}) appears to have a lease
+      entry on rb5009 but no address= field could be parsed. Raw:
+      {{ _pxe_lease_query.stdout[0] }}
+
+- name: "Append to address map (parallel caller) -- {{ _vm_name }}"
+  ansible.builtin.set_fact:
+    _pxe_vm_addr_map: >-
+      {{ (_pxe_vm_addr_map | default({}))
+         | combine({_vm_name: {'mac': _vm_mac, 'ip': _vm_ip}}) }}

@@ -1,0 +1,1077 @@
+# Headless verification for `test_netboot_pxe` — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Extend `playbooks/kubevirt/test_netboot_pxe/` so each smoke-test VM verifies — without console scraping — that the netbootxyz container's TFTP server (dnsmasq) responded the expected way to the per-host chain: `sent` if the MAC is pinned (file exists), `file not found` if it isn't.
+
+**Architecture:** Preflight stage validates the netbootxyz container's HTTP reachability and **deploys** the smoke pin files into `/mnt/ssd/containers/netbootxyz/config/menus/host/` from inventory's `netboot_host_pins[…].fragment`, then `docker exec cat`s each deployed file and asserts a substring match. Per-case verification snapshots the container's `docker logs` line count before the VM boots, reads the VMI to learn the actual MAC, queries rb5009 for the leased IP, and asserts that exactly one new `dnsmasq-tftp` line shows the expected outcome on `/config/menus/host/MAC-<hexraw>.ipxe` from the VM's IP. Two new shared task files (`_dhcp_lease_lookup.yml`, `_verify_tftp.yml`) keep serial and parallel paths DRY.
+
+**Tech Stack:** Ansible (kubernetes.core, community.routeros, ansible.builtin.uri/copy/command), `docker exec` and `docker logs` over the existing TrueNAS SSH connection, RouterOS DHCP lease API.
+
+---
+
+## Reference material
+
+- **Spec:** `docs/superpowers/specs/2026-05-09-test-netboot-pxe-headless-design.md` — read this first.
+- **Existing playbook tree:** `playbooks/kubevirt/test_netboot_pxe/{test_netboot_pxe.yml,_arch_test.yml,vm.yaml.j2}`.
+- **Inventory:** `igou-inventory/group_vars/all/netboot.yml` defines `netboot_host_pins`, `netbootxyz_host`, `netbootxyz_self_url`. **Read-only** from this plan's perspective.
+- **Smoke pin fragment substrings already in inventory:**
+  - MAC `02:00:00:50:58:01` body contains literal `=== pxe-test smoke pin: bios`
+  - MAC `02:00:00:50:58:02` body contains literal `=== pxe-test smoke pin: uefi-x64`
+- **Inventory file path:** `igou-inventory/inventory.yaml`. All commands assume CWD is `/workspace/igou-ansible`.
+
+## Spike outcome (Task 1, completed 2026-05-09; updated post-pivot)
+
+```
+runtime          = docker            (TrueNAS SCALE uses Docker, not podman)
+container_name   = ix-netbootxyz-netbootxyz-1   (TrueCharts naming)
+http_root_probe  = GET netbootxyz_self_url/ → 200 (nginx asset root)
+nginx_serves     = ONLY /assets/  (no /menus/ exposed via HTTP)
+chain_protocol   = TFTP for everything (menu.ipxe, host/MAC-*.ipxe, fall-through)
+docker_logs      = carry dnsmasq-tftp lines (NOT nginx access lines)
+pin_files_path   = /config/menus/host/MAC-<hex>.ipxe (inside container)
+host_bind_mount  = /mnt/ssd/containers/netbootxyz/config/menus/host/
+read_strategy    = wc -l on `docker logs` before; tail -n +<N> after; grep
+                   dnsmasq-tftp; parse `sent <path> to <ip>` or
+                   `file <path> not found for <ip>`.
+```
+
+Sample dnsmasq-tftp lines (verified empirically):
+```
+dnsmasq-tftp[23]: sent /config/menus/menu.ipxe to 10.10.9.42
+dnsmasq-tftp[23]: file /config/menus/host/MAC-029f47581bf6.ipxe not found for 10.10.9.42
+dnsmasq-tftp[23]: sent /config/menus/stock-menu.ipxe to 10.10.9.42
+```
+
+## Conventions
+
+- **Run from:** `/workspace/igou-ansible`.
+- **Run-the-playbook command:** `ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml -i igou-inventory/inventory.yaml`.
+- **Linters:** `ansible-lint --profile=production playbooks/kubevirt/test_netboot_pxe/` and `yamllint playbooks/kubevirt/test_netboot_pxe/`.
+- **YAML style** (matches the rest of the repo):
+  - `---` at file top, 2-space indent.
+  - YAML 1.2 booleans (`true`/`false`).
+  - Fact names prefixed `_pxe_…` to scope them.
+- **Connection assumptions** (already configured by group_vars):
+  - `rb5009.igou.systems` — `community.routeros.*` works (existing TFTP-hits step proves it).
+  - `truenas` — SSH with `become: true` works (existing `playbooks/truenas/*` use it).
+- **Each task ends with a commit.**
+
+## Files Created/Modified/Deleted
+
+**Create:**
+- `playbooks/kubevirt/test_netboot_pxe/_preflight.yml`
+- `playbooks/kubevirt/test_netboot_pxe/_dhcp_lease_lookup.yml`
+- `playbooks/kubevirt/test_netboot_pxe/_verify_tftp.yml`
+
+**Modify:**
+- `playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml`
+- `playbooks/kubevirt/test_netboot_pxe/_arch_test.yml`
+
+**Delete:** none.
+
+## Pre-flight assumptions
+
+Verify before Task 2:
+
+- `KUBECONFIG` is set; `ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml -i igou-inventory/inventory.yaml` runs the existing playbook end-to-end successfully (4 cases pass on TFTP-hits assertions). If this is broken, fix it BEFORE adding new assertions.
+- `playbooks/netboot/deploy_assets.yml` has been run recently enough that the rendered `host/MAC-020000505801.ipxe` and `host/MAC-020000505802.ipxe` files exist on the TrueNAS netbootxyz container with bodies containing the smoke pin substrings.
+- Static DHCP leases on rb5009 already exist for MACs `02:00:00:50:58:01` and `02:00:00:50:58:02` (referenced in the existing playbook header).
+
+If any of these is not true, surface it before starting Task 2.
+
+---
+
+## Task 1: Spike — DONE
+
+The spike completed on 2026-05-09. Outcomes are recorded in the "Spike outcome" section at the top of this plan and embedded into `_verify_tftp.yml` in Task 5. **No further action.**
+
+---
+
+## Task 2: Add `_preflight.yml` — netbootxyz HTTP root probe + wire into the playbook
+
+Goal: a runnable preflight stage that fails fast if netbootxyz is unreachable, with no other behaviour yet.
+
+**Files:**
+- Create: `playbooks/kubevirt/test_netboot_pxe/_preflight.yml`
+- Modify: `playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml`
+
+- [ ] **Step 1: Create `_preflight.yml`**
+
+Write the file with this exact content:
+
+```yaml
+---
+# Preflight for the netboot.xyz HTTP-side smoke test. Runs once at the
+# top of test_netboot_pxe.yml, before any VM is applied.
+#
+# Stages (each gated on the previous):
+#   1. HTTP-probe netbootxyz_self_url/ (the asset root) -- fails fast
+#      if nginx is down. NB: /menu.ipxe is NOT HTTP-served in this
+#      deployment; iPXE TFTP-fetches it from the netbootxyz container's
+#      built-in dnsmasq.
+#   2. (Task 3) Build set of pinned MACs from netboot_host_pins,
+#      HTTP-fetch every smoke pin file referenced by pxe_test_arches,
+#      assert each body contains its expected substring, cache bodies.
+#
+# All preflight tasks delegate_to: localhost -- no TrueNAS or rb5009
+# contact at this stage.
+
+- name: Preflight -- netbootxyz HTTP root is reachable
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/"
+    status_code: 200
+    timeout: 10
+  delegate_to: localhost
+  changed_when: false
+```
+
+- [ ] **Step 2: Wire `_preflight.yml` into `test_netboot_pxe.yml`**
+
+Modify `playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml`. Locate the `tasks:` block. Insert the include as the **first** task in `tasks:`, before the existing CUDN read:
+
+```yaml
+  tasks:
+    - name: Preflight -- netbootxyz HTTP-side checks
+      ansible.builtin.include_tasks: _preflight.yml
+
+    # --- Pre-flight (idempotent, never destructive) --------------------------
+
+    - name: Read each ClusterUserDefinedNetwork referenced by pxe_test_arches
+      ...
+```
+
+The existing CUDN-read block stays exactly where it is.
+
+- [ ] **Step 3: Run the playbook end-to-end and confirm preflight runs**
+
+```bash
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml
+```
+
+Expected: the first task is `Preflight -- netbootxyz HTTP root is reachable`. The full playbook still passes end-to-end (TFTP-hits checks unchanged).
+
+- [ ] **Step 4: Demonstrate the failure mode**
+
+Override `netbootxyz_self_url` to a known-bad URL:
+
+```bash
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml \
+  -e 'netbootxyz_self_url=http://127.0.0.1:1'
+```
+
+Expected: the preflight task fails with a connection error. No VMs applied. Non-zero return code.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add playbooks/kubevirt/test_netboot_pxe/_preflight.yml \
+  playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml
+git commit -m "$(cat <<'EOF'
+test_netboot_pxe: add preflight HTTP probe of netbootxyz_self_url
+
+Fails fast if nginx is down before any VM is applied. First step of
+the headless verification design (see
+docs/superpowers/specs/2026-05-09-test-netboot-pxe-headless-design.md).
+
+The probe targets the asset root (/), not /menu.ipxe -- the latter is
+served via TFTP, not HTTP, in this deployment.
+EOF
+)"
+```
+
+---
+
+## Task 3: Preflight — pinned-MAC set + smoke-pin substring assertions
+
+**Files:**
+- Modify: `playbooks/kubevirt/test_netboot_pxe/_preflight.yml`
+- Modify: `playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml` (add the `pxe_test_substring_defaults` map to `vars:`)
+
+- [ ] **Step 1: Add the substring defaults map to the playbook vars**
+
+In `playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml`, in the `vars:` block, just below `pxe_test_parallel: false` and above the `pxe_test_arches:` list comment, insert:
+
+```yaml
+    # Default substring to grep for in each smoke pin's served body,
+    # keyed by lowercase MAC. Drives only the preflight static check;
+    # per-case substring assertion is dropped because preflight already
+    # validates the body. Adding a new pinned smoke entry?  Add the
+    # MAC -> substring pair here.
+    pxe_test_substring_defaults:
+      "02:00:00:50:58:01": "=== pxe-test smoke pin: bios"
+      "02:00:00:50:58:02": "=== pxe-test smoke pin: uefi-x64"
+```
+
+- [ ] **Step 2: Extend `_preflight.yml` with pinned-MAC discovery**
+
+Append to `_preflight.yml`:
+
+```yaml
+- name: Preflight -- build set of pinned MACs (lowercase) from inventory
+  ansible.builtin.set_fact:
+    _pxe_pinned_macs: >-
+      {{ netboot_host_pins
+         | default([])
+         | selectattr('mac', 'defined')
+         | map(attribute='mac')
+         | map('lower')
+         | list }}
+
+- name: Preflight -- collect pinned MACs referenced by pxe_test_arches
+  ansible.builtin.set_fact:
+    _pxe_preflight_pin_macs: >-
+      {{ pxe_test_arches
+         | selectattr('mac', 'defined')
+         | map(attribute='mac')
+         | map('lower')
+         | unique
+         | select('in', _pxe_pinned_macs)
+         | list }}
+```
+
+- [ ] **Step 3 (REWORKED): Pivot _preflight.yml to deploy + read-back**
+
+The previously-committed Task 3 used HTTP fetches against `/menus/host/MAC-<hex>.ipxe`, which always 404s in the actual deployment (nginx serves only `/assets/`; per-host pins are TFTP-served from `/config/menus/host/`). Replace those two tasks with deploy + read-back. Locate in `_preflight.yml` the two tasks named:
+- `Preflight -- fetch each smoke pin file from netbootxyz`
+- `Preflight -- assert each smoke pin body contains its expected substring`
+
+DELETE both, then APPEND in their place:
+
+```yaml
+- name: Preflight -- ensure host pin directory exists on TrueNAS
+  ansible.builtin.file:
+    path: "/mnt/ssd/containers/netbootxyz/config/menus/host"
+    state: directory
+    mode: '0755'
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
+  become: true
+
+- name: Preflight -- deploy each smoke pin from inventory to /config/menus/host/
+  ansible.builtin.copy:
+    content: "{{ (netboot_host_pins | selectattr('mac', 'equalto', item) | first).fragment }}"
+    dest: "/mnt/ssd/containers/netbootxyz/config/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe"
+    mode: '0644'
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
+  become: true
+  loop: "{{ _pxe_preflight_pin_macs }}"
+  loop_control:
+    label: "MAC-{{ item | regex_replace(':', '') }}.ipxe"
+
+- name: Preflight -- read each deployed smoke pin back via docker exec
+  ansible.builtin.command:
+    cmd: >-
+      docker exec ix-netbootxyz-netbootxyz-1
+      cat /config/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe
+  register: _pxe_preflight_pin_readback
+  changed_when: false
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
+  become: true
+  loop: "{{ _pxe_preflight_pin_macs }}"
+  loop_control:
+    label: "MAC-{{ item | regex_replace(':', '') }}.ipxe"
+
+- name: Preflight -- assert each deployed smoke pin contains its expected substring
+  ansible.builtin.assert:
+    that:
+      - _expected_substring == '' or _expected_substring in item.stdout
+    fail_msg: >-
+      Pin file MAC-{{ item.item | regex_replace(':', '') }}.ipxe was
+      deployed to /config/menus/host/ but its body does not contain
+      the expected substring '{{ _expected_substring }}'. This means
+      inventory's netboot_host_pins[].fragment for that MAC has changed
+      and the substring map at pxe_test_substring_defaults is out of
+      sync. First 200 chars of deployed file: {{ item.stdout[:200] }}
+  vars:
+    _expected_substring: "{{ pxe_test_substring_defaults[item.item] | default('') }}"
+  loop: "{{ _pxe_preflight_pin_readback.results }}"
+  loop_control:
+    label: "{{ item.item | regex_replace(':', '') }}.ipxe"
+```
+
+- [ ] **Step 4: Run the playbook and verify preflight passes**
+
+```bash
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml
+```
+
+Expected: preflight deploys two pin files into `/mnt/ssd/containers/netbootxyz/config/menus/host/`, reads them back via `docker exec cat`, and asserts each contains the expected substring. Re-running shows `ok` (not `changed`) on the deploy step. Rest of the playbook still passes.
+
+- [ ] **Step 5: Demonstrate the failure mode**
+
+Override the substring defaults to values that won't appear:
+
+```bash
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml \
+  -e '{"pxe_test_substring_defaults": {"02:00:00:50:58:01": "DEFINITELY-NOT-IN-THE-BODY", "02:00:00:50:58:02": "DEFINITELY-NOT-IN-THE-BODY"}}'
+```
+
+Expected: the substring assertion fails for both pins. No VMs applied.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add playbooks/kubevirt/test_netboot_pxe/_preflight.yml \
+  playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml
+git commit -m "$(cat <<'EOF'
+test_netboot_pxe: pivot preflight to TFTP deploy + read-back
+
+The actual netbootxyz deployment serves nothing through HTTP except
+/assets/. Per-host pins are TFTP-served from /config/menus/host/.
+Replace the always-404 HTTP fetch with copy-from-inventory deploy
+into the TrueCharts bind-mount, then docker exec cat read-back
+substring check.
+
+Smoke pin file deployment is normally deploy_assets.yml's job (per
+docs/superpowers/specs/2026-05-08-netboot-asset-management-design.md);
+inlined here until that playbook lands.
+EOF
+)"
+```
+
+---
+
+## Task 4: Add `_dhcp_lease_lookup.yml` — VMI MAC + rb5009 DHCP lease IP
+
+**Files:**
+- Create: `playbooks/kubevirt/test_netboot_pxe/_dhcp_lease_lookup.yml`
+
+- [ ] **Step 1: Create the file**
+
+Write with this exact content:
+
+```yaml
+---
+# Resolve a VM's MAC and IP for the headless smoke test.
+#
+# Step A reads the VirtualMachineInstance to learn the MAC. KubeVirt
+# fills .spec.domain.devices.interfaces[].macAddress in regardless of
+# whether the test fixture pinned a MAC or asked KubeVirt to generate
+# one -- so this works for both pinned and random cases.
+#
+# Step B queries rb5009 for the DHCP lease for that MAC. Up to 30s of
+# retry budget because iPXE's DHCP exchange can lag VMI Ready by a few
+# seconds, especially in parallel mode.
+#
+# Inputs (task vars expected on caller):
+#   _vm_name   for messages and loop labels
+#   pxe_test_namespace -- already a play-level var
+#
+# Outputs (set as facts):
+#   _vm_mac    lowercase, with colons (e.g. "02:00:00:50:58:01")
+#   _vm_ip     dotted-quad string (e.g. "10.10.9.42")
+#
+# Failure modes are distinct: an unreadable VMI fails on Step A with a
+# k8s-flavoured message; a missing DHCP lease fails on Step C with a
+# network-layer-flavoured message. Neither is confused with a
+# netbootxyz problem.
+
+- name: "Read VirtualMachineInstance for {{ _vm_name }} to learn its MAC"
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    namespace: "{{ pxe_test_namespace }}"
+    name: "{{ _vm_name }}"
+    validate_certs: false
+  register: _pxe_vmi_result
+  retries: 6
+  delay: 5
+  until:
+    - _pxe_vmi_result.resources | length == 1
+    - _pxe_vmi_result.resources[0].spec.domain.devices.interfaces | default([]) | length > 0
+    - _pxe_vmi_result.resources[0].spec.domain.devices.interfaces[0].macAddress is defined
+
+- name: "Set _vm_mac fact for {{ _vm_name }}"
+  ansible.builtin.set_fact:
+    _vm_mac: "{{ _pxe_vmi_result.resources[0].spec.domain.devices.interfaces[0].macAddress | lower }}"
+
+- name: "Wait for {{ _vm_name }} DHCP lease (MAC {{ _vm_mac }})"
+  community.routeros.command:
+    commands:
+      - >-
+        /ip dhcp-server lease print detail without-paging
+        where mac-address="{{ _vm_mac | upper }}"
+  register: _pxe_lease_query
+  changed_when: false
+  delegate_to: rb5009.igou.systems
+  retries: 6
+  delay: 5
+  until: _pxe_lease_query.stdout[0] is search('address=')
+
+- name: "Extract IP from lease for {{ _vm_name }}"
+  ansible.builtin.set_fact:
+    _vm_ip: "{{ _pxe_lease_query.stdout[0] | regex_search('address=([0-9.]+)', '\\1') | first }}"
+
+- name: "Assert IP was extracted for {{ _vm_name }}"
+  ansible.builtin.assert:
+    that:
+      - _vm_ip is defined
+      - _vm_ip | length > 0
+    fail_msg: >-
+      VM {{ _vm_name }} (MAC {{ _vm_mac }}) appears to have a lease
+      entry on rb5009 but no address= field could be parsed. Raw:
+      {{ _pxe_lease_query.stdout[0] }}
+```
+
+- [ ] **Step 2: yamllint**
+
+```bash
+yamllint playbooks/kubevirt/test_netboot_pxe/_dhcp_lease_lookup.yml
+```
+
+Expected: no errors.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add playbooks/kubevirt/test_netboot_pxe/_dhcp_lease_lookup.yml
+git commit -m "$(cat <<'EOF'
+test_netboot_pxe: add _dhcp_lease_lookup helper
+
+Reads the VMI to learn the MAC (works for both pinned and KubeVirt-
+generated cases), then polls rb5009 for the DHCP lease IP. 30s budget.
+Wired in by Tasks 6 (serial) and 7 (parallel).
+EOF
+)"
+```
+
+---
+
+## Task 5: Add `_verify_tftp.yml` — `docker logs` slice + dnsmasq-tftp outcome assertion
+
+**Files:**
+- Create: `playbooks/kubevirt/test_netboot_pxe/_verify_tftp.yml`
+
+- [ ] **Step 1: Create the file**
+
+Write with this exact content:
+
+```yaml
+---
+# Per-case TFTP-side verification for the netboot.xyz smoke test.
+# Called from both _arch_test.yml (serial mode) and the inline parallel
+# block in test_netboot_pxe.yml.
+#
+# Spike outcome (2026-05-09, see plan section "Spike outcome"):
+#   runtime          = docker (TrueNAS SCALE uses Docker)
+#   container_name  = ix-netbootxyz-netbootxyz-1   (TrueCharts naming)
+#   docker_logs      = carries dnsmasq-tftp lines (NOT nginx access lines)
+#   read_strategy    = wc -l on `docker logs` before; tail -n +<N> after;
+#                      grep dnsmasq-tftp; parse two patterns.
+#
+# Sample lines:
+#   dnsmasq-tftp[23]: sent /config/menus/host/MAC-020000505801.ipxe to 10.10.9.40
+#   dnsmasq-tftp[23]: file /config/menus/host/MAC-525400deadbe.ipxe not found for 10.10.9.41
+#
+# Inputs (task vars expected on caller):
+#   vm_name              VM name, used in messages
+#   vm_mac               lowercase MAC (with colons)
+#   vm_ip                dotted-quad IP from DHCP lease
+#   expected_outcome     'sent' (pinned) or 'not_found' (random) --
+#                          the per-case discriminator. Pinned MAC has
+#                          a deployed host file -> dnsmasq sends it.
+#                          Random MAC -> dnsmasq returns "not found"
+#                          and iPXE falls through to stock-menu.ipxe.
+#   pre_log_line_count   line count of `docker logs` captured BEFORE
+#                          the VM was applied (snapshot in caller).
+#
+# Output: assertions only; no facts set.
+
+- name: "Read post-boot docker logs slice for {{ vm_name }}"
+  ansible.builtin.shell:
+    cmd: >-
+      docker logs ix-netbootxyz-netbootxyz-1 2>&1
+      | tail -n +{{ pre_log_line_count | int + 1 }}
+      | grep dnsmasq-tftp || true
+  register: _pxe_log_slice
+  changed_when: false
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
+  become: true
+
+- name: "Parse dnsmasq-tftp lines for {{ vm_name }} (sent pattern)"
+  ansible.builtin.set_fact:
+    _pxe_sent_lines: >-
+      {{ _pxe_log_slice.stdout_lines
+         | map('regex_search',
+               '^dnsmasq-tftp\[\d+\]: sent (\S+) to ([\d.]+)$',
+               '\\1', '\\2')
+         | select('truthy')
+         | list }}
+
+- name: "Parse dnsmasq-tftp lines for {{ vm_name }} (not_found pattern)"
+  ansible.builtin.set_fact:
+    _pxe_notfound_lines: >-
+      {{ _pxe_log_slice.stdout_lines
+         | map('regex_search',
+               '^dnsmasq-tftp\[\d+\]: file (\S+) not found for ([\d.]+)$',
+               '\\1', '\\2')
+         | select('truthy')
+         | list }}
+
+- name: "Compute expected per-host path for {{ vm_name }}"
+  ansible.builtin.set_fact:
+    _pxe_expected_path: "/config/menus/host/MAC-{{ vm_mac | regex_replace(':', '') | lower }}.ipxe"
+
+- name: "Filter sent/not_found lines to {{ vm_name }} (path + IP match)"
+  ansible.builtin.set_fact:
+    _pxe_match_sent: >-
+      {{ _pxe_sent_lines
+         | selectattr('0', 'equalto', _pxe_expected_path)
+         | selectattr('1', 'equalto', vm_ip)
+         | list }}
+    _pxe_match_notfound: >-
+      {{ _pxe_notfound_lines
+         | selectattr('0', 'equalto', _pxe_expected_path)
+         | selectattr('1', 'equalto', vm_ip)
+         | list }}
+
+- name: "Assert {{ vm_name }} produced exactly one matching dnsmasq-tftp line"
+  ansible.builtin.assert:
+    that:
+      - (_pxe_match_sent | length) + (_pxe_match_notfound | length) == 1
+    fail_msg: >-
+      VM {{ vm_name }} (IP {{ vm_ip }}) -- expected exactly one
+      dnsmasq-tftp line for {{ _pxe_expected_path }} from this IP.
+      Found {{ _pxe_match_sent | length }} 'sent' and
+      {{ _pxe_match_notfound | length }} 'not_found' matches. Either
+      iPXE never reached the netbootxyz chainload step (check the
+      rb5009 -> netbootxyz path), or the menu.ipxe served by netbootxyz
+      doesn't chain to host/MAC-<hex>.ipxe at all.
+
+- name: "Assert {{ vm_name }} got the expected outcome '{{ expected_outcome }}' on {{ _pxe_expected_path }}"
+  ansible.builtin.assert:
+    that:
+      - (expected_outcome == 'sent' and _pxe_match_sent | length == 1)
+        or
+        (expected_outcome == 'not_found' and _pxe_match_notfound | length == 1)
+    fail_msg: >-
+      VM {{ vm_name }} (IP {{ vm_ip }}) hit {{ _pxe_expected_path }} but
+      dnsmasq returned the wrong outcome (expected '{{ expected_outcome }}').
+      For a pinned MAC ('sent' expected), this means the deploy step
+      in preflight failed silently or the file was removed since.
+      For a random MAC ('not_found' expected), this means a per-host
+      file exists for what should be an unpinned MAC -- check
+      /config/menus/host/ on the netbootxyz container for stale files.
+```
+
+- [ ] **Step 2: yamllint**
+
+```bash
+yamllint playbooks/kubevirt/test_netboot_pxe/_verify_tftp.yml
+```
+
+Expected: no errors.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add playbooks/kubevirt/test_netboot_pxe/_verify_tftp.yml
+git commit -m "$(cat <<'EOF'
+test_netboot_pxe: add _verify_tftp helper
+
+Slices the netbootxyz container's `docker logs` (which carries
+dnsmasq-tftp lines), parses the two stable formats (`sent <path> to
+<ip>` and `file <path> not found for <ip>`), and asserts exactly one
+match for the VM's expected per-host path with the expected outcome
+('sent' for pinned MACs, 'not_found' for random MACs).
+EOF
+)"
+```
+
+---
+
+## Task 6: Wire TFTP verification into serial mode (`_arch_test.yml`)
+
+**Files:**
+- Modify: `playbooks/kubevirt/test_netboot_pxe/_arch_test.yml`
+
+The existing per-arch flow becomes:
+
+```
+snapshot pre `docker logs` line count (docker logs ... | wc -l)
+TFTP hits BEFORE
+apply VM, wait Ready
+include _dhcp_lease_lookup.yml -> _vm_mac, _vm_ip
+pause for boot
+TFTP hits AFTER
+assert TFTP hits incremented (existing)
+compute expected_outcome ('sent' if pinned else 'not_found')
+include _verify_tftp.yml
+always: delete VM
+```
+
+- [ ] **Step 1: Replace `_arch_test.yml` with the augmented version**
+
+Open `_arch_test.yml` and replace its entire contents with:
+
+```yaml
+---
+# Per-architecture smoke test, included once per entry in pxe_test_arches
+# by ../test_netboot_pxe.yml when pxe_test_parallel is false. Wrapped in
+# block/always so a failed assertion still tears down the VM before the
+# next entry attempts.
+#
+# Expects loop variables on `item`:
+#   item.arch    free-form arch label
+#   item.binary  TFTP filename to watch on rb5009
+# Optional per-entry overrides are documented in the parent playbook.
+#
+# Per-case assertions:
+#   1. rb5009 TFTP hit counter for `item.binary` incremented (existing).
+#   2. netbootxyz dnsmasq-tftp logs show the VM's leased IP requested
+#      /config/menus/host/MAC-<hexraw>.ipxe with outcome 'sent' (pinned
+#      MAC, file exists) or 'not_found' (random MAC, falls through to
+#      stock-menu.ipxe). See _verify_tftp.yml.
+
+- name: "Smoke-test {{ _vm_name }}"
+  vars:
+    _vm_name: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+    _wait: "{{ item.boot_wait_seconds | default(pxe_test_boot_wait_seconds) }}"
+  block:
+    - name: "Snapshot docker logs line count BEFORE {{ _vm_name }}"
+      ansible.builtin.shell:
+        cmd: docker logs ix-netbootxyz-netbootxyz-1 2>&1 | wc -l
+      register: _pxe_log_pre
+      changed_when: false
+      delegate_to: "{{ groups[netbootxyz_host][0] }}"
+      become: true
+
+    - name: "Capture pre log line count for {{ _vm_name }}"
+      ansible.builtin.set_fact:
+        _pre_log_line_count: "{{ _pxe_log_pre.stdout | int }}"
+
+    - name: "Snapshot rb5009 TFTP hits BEFORE boot for {{ item.binary }}"
+      community.routeros.command:
+        commands:
+          - >-
+            /ip tftp print detail without-paging where
+            req-filename="{{ item.binary }}"
+      register: _pxe_tftp_pre
+      changed_when: false
+      delegate_to: rb5009.igou.systems
+
+    - name: "Extract pre-boot hit count"
+      ansible.builtin.set_fact:
+        _pxe_hits_pre: "{{ _pxe_tftp_pre.stdout[0] | regex_search('hits=\\d+') | default('hits=0') | regex_replace('^hits=', '') | int }}"
+
+    - name: "Apply diskless PXE-boot VM ({{ _vm_name }})"
+      kubernetes.core.k8s:
+        state: present
+        validate_certs: false
+        namespace: "{{ pxe_test_namespace }}"
+        definition: "{{ lookup('ansible.builtin.template', 'vm.yaml.j2') | from_yaml }}"
+        wait: true
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 180
+
+    - name: "Resolve VM addressing for {{ _vm_name }}"
+      ansible.builtin.include_tasks: _dhcp_lease_lookup.yml
+
+    - name: "Pause to let iPXE complete its boot attempt ({{ _vm_name }})"
+      ansible.builtin.pause:
+        seconds: "{{ _wait }}"
+
+    - name: "Snapshot rb5009 TFTP hits AFTER boot for {{ item.binary }}"
+      community.routeros.command:
+        commands:
+          - >-
+            /ip tftp print detail without-paging where
+            req-filename="{{ item.binary }}"
+      register: _pxe_tftp_post
+      changed_when: false
+      delegate_to: rb5009.igou.systems
+
+    - name: "Extract post-boot hit count"
+      ansible.builtin.set_fact:
+        _pxe_hits_post: "{{ _pxe_tftp_post.stdout[0] | regex_search('hits=\\d+') | default('hits=0') | regex_replace('^hits=', '') | int }}"
+
+    - name: "Assert TFTP hits incremented for {{ item.binary }}"
+      ansible.builtin.assert:
+        that:
+          - (_pxe_hits_post | int) > (_pxe_hits_pre | int)
+        fail_msg: >-
+          VM {{ _vm_name }} did not fetch {{ item.binary }} from rb5009
+          within {{ _wait }}s. hits {{ _pxe_hits_pre }} ->
+          {{ _pxe_hits_post }}. Check the VMI status, the DHCP offer to
+          its MAC (`/log print where topics~"dhcp"` on rb5009), and
+          that the matcher table still routes option-93 to the right
+          binary.
+
+    - name: "Verify TFTP dispatch for {{ _vm_name }}"
+      ansible.builtin.include_tasks: _verify_tftp.yml
+      vars:
+        vm_name: "{{ _vm_name }}"
+        vm_mac: "{{ _vm_mac }}"
+        vm_ip: "{{ _vm_ip }}"
+        expected_outcome: "{{ 'sent' if (_vm_mac in _pxe_pinned_macs) else 'not_found' }}"
+        pre_log_line_count: "{{ _pre_log_line_count }}"
+
+  always:
+    - name: "Delete test VM ({{ _vm_name }})"
+      kubernetes.core.k8s:
+        state: absent
+        validate_certs: false
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        namespace: "{{ pxe_test_namespace }}"
+        name: "{{ _vm_name }}"
+        wait: true
+        wait_timeout: 120
+```
+
+- [ ] **Step 2: Run the playbook in serial mode**
+
+```bash
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml
+```
+
+Expected: 4 cases run sequentially. Each: TFTP-hits assertion (existing) + TFTP-dispatch assertion (new). Pinned cases see dnsmasq `sent`; random cases see `not_found`. All pass; `failed=0`.
+
+If a case fails on TFTP-dispatch: read the failure message — it differentiates between (a) no dnsmasq-tftp lines from the VM at all, (b) lines exist but for a different path, (c) right path wrong outcome.
+
+- [ ] **Step 3: Demonstrate the failure mode (pin file missing)**
+
+```bash
+# Rename the pin file on truenas to simulate stale deployment.
+ansible truenas -i igou-inventory/inventory.yaml -m ansible.builtin.command \
+  -a 'docker exec ix-netbootxyz-netbootxyz-1 mv /config/menus/host/MAC-020000505801.ipxe /config/menus/host/MAC-020000505801.ipxe.bak' \
+  -b
+```
+
+Run only the BIOS-pinned case:
+```bash
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml \
+  -e '{"pxe_test_arches": [{"name": "pxe-test-bios-pinned", "arch": "bios", "binary": "netboot.xyz.kpxe", "mac": "02:00:00:50:58:01"}]}'
+```
+
+Expected: preflight catches it (404 on the pre-fetch) BEFORE any VM boots. The static check fails fast.
+
+Restore:
+```bash
+ansible truenas -i igou-inventory/inventory.yaml -m ansible.builtin.command \
+  -a 'docker exec ix-netbootxyz-netbootxyz-1 mv /config/menus/host/MAC-020000505801.ipxe.bak /config/menus/host/MAC-020000505801.ipxe' \
+  -b
+```
+
+Re-run normally; expect pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add playbooks/kubevirt/test_netboot_pxe/_arch_test.yml
+git commit -m "$(cat <<'EOF'
+test_netboot_pxe: serial mode asserts TFTP-side dispatch per case
+
+Snapshots the netbootxyz container's docker logs line count, applies
+the VM, resolves its MAC and DHCP IP, then asserts exactly one
+dnsmasq-tftp line for /config/menus/host/MAC-<hex>.ipxe from the VM's
+IP with outcome 'sent' (pinned) or 'not_found' (random). The outcome
+is the per-case discriminator.
+EOF
+)"
+```
+
+---
+
+## Task 7: Wire TFTP verification into parallel mode (`test_netboot_pxe.yml`)
+
+**Files:**
+- Modify: `playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml`
+
+- [ ] **Step 1: Replace the parallel block**
+
+Locate the block named `Smoke-test architectures in parallel` (`when: pxe_test_parallel`) and replace it (entire block, including `always:`) with:
+
+```yaml
+    - name: Smoke-test architectures in parallel
+      when: pxe_test_parallel
+      block:
+        - name: Snapshot docker logs line count BEFORE the parallel batch
+          ansible.builtin.shell:
+            cmd: docker logs ix-netbootxyz-netbootxyz-1 2>&1 | wc -l
+          register: _pxe_log_pre_parallel
+          changed_when: false
+          delegate_to: "{{ groups[netbootxyz_host][0] }}"
+          become: true
+
+        - name: Capture pre log line count (parallel mode, shared)
+          ansible.builtin.set_fact:
+            _pre_log_line_count_parallel: "{{ _pxe_log_pre_parallel.stdout | int }}"
+
+        - name: Snapshot rb5009 TFTP hits BEFORE boot (all)
+          community.routeros.command:
+            commands:
+              - >-
+                /ip tftp print detail without-paging where
+                req-filename="{{ item.binary }}"
+          register: _pxe_tftp_pre_all
+          changed_when: false
+          delegate_to: rb5009.igou.systems
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+
+        - name: Apply all diskless PXE-boot VMs (no per-VM wait)
+          kubernetes.core.k8s:
+            state: present
+            validate_certs: false
+            namespace: "{{ pxe_test_namespace }}"
+            definition: "{{ lookup('ansible.builtin.template', 'vm.yaml.j2') | from_yaml }}"
+            wait: false
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+
+        - name: Wait for all VMs to reach Ready
+          kubernetes.core.k8s_info:
+            api_version: kubevirt.io/v1
+            kind: VirtualMachine
+            namespace: "{{ pxe_test_namespace }}"
+            name: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+            validate_certs: false
+            wait: true
+            wait_condition:
+              type: Ready
+              status: "True"
+            wait_timeout: 180
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+
+        - name: Resolve VM addressing for every VM (parallel)
+          ansible.builtin.include_tasks: _dhcp_lease_lookup.yml
+          vars:
+            _vm_name: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+          register: _pxe_parallel_addr_results
+
+        - name: Build {vm_name -> {mac, ip}} map for the parallel batch
+          ansible.builtin.set_fact:
+            _pxe_parallel_addr_map: >-
+              {{ _pxe_parallel_addr_map | default({})
+                 | combine({ (item.item.name | default('pxe-test-' ~ item.item.arch)):
+                             {'mac': item.ansible_facts._vm_mac,
+                              'ip':  item.ansible_facts._vm_ip} }) }}
+          loop: "{{ _pxe_parallel_addr_results.results }}"
+          loop_control:
+            label: "{{ item.item.name | default('pxe-test-' ~ item.item.arch) }}"
+
+        - name: Pause to let iPXE complete its boot attempts (longest effective wait)
+          ansible.builtin.pause:
+            seconds: >-
+              {{ pxe_test_arches
+                 | map(attribute='boot_wait_seconds', default=pxe_test_boot_wait_seconds)
+                 | map('int') | max }}
+
+        - name: Snapshot rb5009 TFTP hits AFTER boot (all)
+          community.routeros.command:
+            commands:
+              - >-
+                /ip tftp print detail without-paging where
+                req-filename="{{ item.binary }}"
+          register: _pxe_tftp_post_all
+          changed_when: false
+          delegate_to: rb5009.igou.systems
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+
+        - name: Assert TFTP hits incremented for each binary
+          ansible.builtin.assert:
+            that:
+              - (_pxe_post_hits | int) > (_pxe_pre_hits | int)
+            fail_msg: >-
+              VM {{ item.0.item.name | default('pxe-test-' ~ item.0.item.arch) }}
+              did not fetch {{ item.0.item.binary }} from rb5009. hits
+              {{ _pxe_pre_hits }} -> {{ _pxe_post_hits }}. Check the VMI
+              status, the DHCP offer to its MAC (`/log print where
+              topics~"dhcp"` on rb5009), and that the matcher table
+              still routes option-93 to the right binary.
+          vars:
+            _pxe_pre_hits: "{{ item.0.stdout[0] | regex_search('hits=\\d+') | default('hits=0') | regex_replace('^hits=', '') | int }}"
+            _pxe_post_hits: "{{ item.1.stdout[0] | regex_search('hits=\\d+') | default('hits=0') | regex_replace('^hits=', '') | int }}"
+          loop: "{{ _pxe_tftp_pre_all.results | zip(_pxe_tftp_post_all.results) | list }}"
+          loop_control:
+            label: "{{ item.0.item.name | default('pxe-test-' ~ item.0.item.arch) }}"
+
+        - name: Verify TFTP dispatch for every VM (parallel)
+          ansible.builtin.include_tasks: _verify_tftp.yml
+          vars:
+            _vm_name_inner: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+            vm_name: "{{ _vm_name_inner }}"
+            vm_mac: "{{ _pxe_parallel_addr_map[_vm_name_inner].mac }}"
+            vm_ip: "{{ _pxe_parallel_addr_map[_vm_name_inner].ip }}"
+            expected_outcome: "{{ 'sent' if (_pxe_parallel_addr_map[_vm_name_inner].mac in _pxe_pinned_macs) else 'not_found' }}"
+            pre_log_line_count: "{{ _pre_log_line_count_parallel }}"
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+
+      always:
+        - name: Delete all test VMs
+          kubernetes.core.k8s:
+            state: absent
+            api_version: kubevirt.io/v1
+            kind: VirtualMachine
+            namespace: "{{ pxe_test_namespace }}"
+            name: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+            validate_certs: false
+            wait: true
+            wait_timeout: 120
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+```
+
+- [ ] **Step 2: Run in parallel mode**
+
+```bash
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml \
+  -e 'pxe_test_parallel=true'
+```
+
+Expected: 4 VMs apply concurrently, all reach Ready, addressing resolved per-VM, single shared pause, TFTP-hits AND TFTP-dispatch assertions for each. All pass.
+
+- [ ] **Step 3: Re-run in serial mode (no regression)**
+
+```bash
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml
+```
+
+Expected: same end state, sequential execution, all assertions pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml
+git commit -m "$(cat <<'EOF'
+test_netboot_pxe: parallel mode asserts TFTP-side dispatch per case
+
+Shared pre-snapshot of the docker logs line count covers the whole
+batch; per-VM-IP filtering inside _verify_tftp.yml keeps cases
+independent. Same per-case discriminator as serial mode ('sent'
+pinned / 'not_found' random).
+EOF
+)"
+```
+
+---
+
+## Task 8: Lint, end-to-end verification, header-comment update
+
+**Files:**
+- Modify: `playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml` (header comment only)
+
+- [ ] **Step 1: ansible-lint**
+
+```bash
+ansible-lint --profile=production playbooks/kubevirt/test_netboot_pxe/
+```
+
+Expected: zero errors. Fix any warnings before proceeding.
+
+- [ ] **Step 2: yamllint**
+
+```bash
+yamllint playbooks/kubevirt/test_netboot_pxe/
+```
+
+Expected: zero errors.
+
+- [ ] **Step 3: Update the header comment in `test_netboot_pxe.yml`**
+
+The existing header includes:
+```
+# Iteration 1 scope:
+#   * Verifies the binary fetch via TFTP hit counter delta. Does NOT
+#     verify the iPXE -> TrueNAS chainload; that needs console
+#     scraping, which is intentionally deferred.
+```
+
+Replace this paragraph with:
+
+```
+# Verification (two layers):
+#   * TFTP hit counter on rb5009 increments for the expected binary
+#     (catches DHCP / matcher / TFTP regressions).
+#   * netbootxyz dnsmasq-tftp logs show the VM's leased IP made
+#     exactly one TFTP RRQ for /config/menus/host/MAC-<hexraw>.ipxe --
+#     with outcome 'sent' for pinned MACs (host file served) or
+#     'not_found' for random MACs (file absent; iPXE falls through to
+#     stock-menu.ipxe). Single
+#     observable, two interpretations; status code is the per-case
+#     discriminator. Substring assertions on pinned bodies catch
+#     deploy_assets.yml drift at preflight.
+#   No per-entry override fields; expectations are fully derived from
+#   inventory's netboot_host_pins (see _preflight.yml + _verify_tftp.yml).
+```
+
+- [ ] **Step 4: Final end-to-end runs (both modes)**
+
+```bash
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml
+
+ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i igou-inventory/inventory.yaml \
+  -e 'pxe_test_parallel=true'
+```
+
+Expected: both runs report `failed=0`, `unreachable=0`. Serial: ~12 minutes; parallel: ~5 minutes.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml
+git commit -m "$(cat <<'EOF'
+test_netboot_pxe: refresh header comment for headless verification
+
+The 'console scraping intentionally deferred' caveat no longer applies:
+the dnsmasq-tftp outcome assertion replaces it with a headless
+equivalent.
+EOF
+)"
+```
+
+---
+
+## Self-review summary (against the spec)
+
+**Spec coverage check:**
+
+- Goal: assert per-host pin / main-menu fetch headlessly via status code → Tasks 5, 6, 7.
+- Goal: detect three regression classes → preflight substring (Task 3), positive log slice + status assertion (Task 5), 404-vs-200 discriminator (Task 5).
+- Goal: leave reusable primitives → Tasks 4 (DHCP+VMI), 5 (log slice + parser).
+- Goal: block/always cleanup → preserved in Task 6's serial block and Task 7's parallel block.
+- Goal: serial AND parallel → Tasks 6 and 7.
+- Non-goal: boot-flip helper → not implemented.
+- Non-goal: fragment-execution proof → not implemented (no virtctl, no probe URL).
+- Non-goal: real-host pin booting → `pxe_test_arches` default unchanged.
+- Non-goal: inventory schema changes → no edits to `igou-inventory/`.
+- Architecture: preflight + per-case + always-cleanup → Tasks 2-3 (preflight), 4-7 (per-case).
+- Test-case schema (no override fields) → no schema changes; substring map default added in Task 3.
+- Verification primitives → primitive 1 (mac→pin path) inlined in Tasks 3, 5; primitive 2 (assert_pin_file_served) in Task 3 preflight; primitive 3 (DHCP lease + VMI MAC) in Task 4; primitive 4 (read_nbxyz_access_lines_since) in Task 5.
+- Edge cases: container name baked from spike (Task 5); DHCP retry (Task 4); slice-by-line-count survives skew (Task 5); 200-but-wrong-path (Task 5 negative arms); never-fetched (Task 5 first assertion).
+- Risks → all mitigated in tasks above.
+- Testing strategy → Task 6 step 3 (rename pin), Task 3 step 5 (corrupt body via substring override), Task 2 step 4 (down service), Tasks 6-7 (re-runs), Task 8 (lints).
+
+**Placeholder scan:** none.
+
+**Identifier consistency:**
+- Fact names: `_pxe_pinned_macs`, `_pxe_preflight_pin_macs`, `_pxe_preflight_pin_results`, `_pxe_tftp_pre`, `_pxe_tftp_post`, `_pxe_hits_pre`, `_pxe_hits_post`, `_pxe_log_pre`, `_pre_log_line_count`, `_pxe_log_pre_parallel`, `_pre_log_line_count_parallel`, `_pxe_log_slice`, `_pxe_parsed_lines`, `_pxe_vm_lines`, `_pxe_expected_path`, `_pxe_matching_lines`, `_pxe_lease_query`, `_pxe_vmi_result`, `_pxe_parallel_addr_results`, `_pxe_parallel_addr_map`, `_vm_name`, `_vm_mac`, `_vm_ip`, `_wait`. All consistent across tasks.
+- `_dhcp_lease_lookup.yml` outputs `_vm_mac` and `_vm_ip` as facts; both serial (Task 6) and parallel (Task 7) consume identically.
+- `_verify_tftp.yml` inputs: `vm_name`, `vm_mac`, `vm_ip`, `expected_outcome`, `pre_log_line_count`. Used identically in serial and parallel call sites.
+- Path constant: `/config/menus/host/MAC-<hexraw>.ipxe` — produced identically in Tasks 3 (deploy dest), 5 (computed expectation).
+- Container literal: `ix-netbootxyz-netbootxyz-1` appears in Tasks 5, 6, 7. Identical spelling.

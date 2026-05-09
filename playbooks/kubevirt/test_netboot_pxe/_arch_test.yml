@@ -1,32 +1,54 @@
 ---
-# Per-architecture smoke test, included once per entry in
-# pxe_test_arches by ../test_netboot_pxe.yml. Expects loop variables:
-#   item.arch    -- "bios" or "uefi-x64"
-#   item.binary  -- the corresponding netboot.xyz.* filename
+# Per-architecture smoke test, included once per entry in pxe_test_arches
+# by ../test_netboot_pxe.yml when pxe_test_parallel is false. Wrapped in
+# block/always so a failed assertion still tears down the VM before the
+# next entry attempts.
 #
-# Wrapped in block/always so a failed assertion still tears down the
-# VM before the next arch attempts.
+# Expects loop variables on `item`:
+#   item.arch    free-form arch label
+#   item.binary  TFTP filename to watch on rb5009
+# Optional per-entry overrides are documented in the parent playbook.
+#
+# Per-case assertions:
+#   1. rb5009 TFTP hit counter for `item.binary` incremented (existing).
+#   2. netbootxyz dnsmasq-tftp logs show the VM's leased IP requested
+#      /config/menus/host/MAC-<hexraw>.ipxe with outcome 'sent' (pinned
+#      MAC, file exists) or 'not_found' (random MAC, falls through to
+#      stock-menu.ipxe). See _verify_tftp.yml.
 
-- name: "Smoke-test {{ item.arch }}"
+- name: "Smoke-test {{ _vm_name }}"
   vars:
-    arch: "{{ item.arch }}"
-    binary: "{{ item.binary }}"
+    _vm_name: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+    _wait: "{{ item.boot_wait_seconds | default(pxe_test_boot_wait_seconds) }}"
   block:
-    - name: Snapshot rb5009 TFTP hits BEFORE boot for {{ binary }}
+    - name: "Snapshot docker logs line count BEFORE {{ _vm_name }}"
+      ansible.builtin.shell:
+        cmd: set -o pipefail && docker logs ix-netbootxyz-netbootxyz-1 2>&1 | wc -l
+        executable: /bin/bash
+      register: _pxe_log_pre
+      changed_when: false
+      delegate_to: "{{ groups[netbootxyz_host][0] }}"
+      become: true
+
+    - name: "Capture pre log line count for {{ _vm_name }}"
+      ansible.builtin.set_fact:
+        _pre_log_line_count: "{{ _pxe_log_pre.stdout | int }}"
+
+    - name: "Snapshot rb5009 TFTP hits BEFORE boot for {{ item.binary }}"
       community.routeros.command:
         commands:
           - >-
             /ip tftp print detail without-paging where
-            req-filename="{{ binary }}"
+            req-filename="{{ item.binary }}"
       register: _pxe_tftp_pre
       changed_when: false
       delegate_to: "{{ pxe_test_router }}"
 
-    - name: Extract pre-boot hit count
+    - name: "Extract pre-boot hit count"
       ansible.builtin.set_fact:
         _pxe_hits_pre: "{{ _pxe_tftp_pre.stdout[0] | regex_search('hits=\\d+') | default('hits=0') | regex_replace('^hits=', '') | int }}"
 
-    - name: Apply diskless PXE-boot VM ({{ arch }})
+    - name: "Apply diskless PXE-boot VM ({{ _vm_name }})"
       kubernetes.core.k8s:
         state: present
         validate_certs: false
@@ -38,43 +60,56 @@
           status: "True"
         wait_timeout: 180
 
-    - name: Pause to let iPXE complete its boot attempt ({{ arch }})
-      ansible.builtin.pause:
-        seconds: "{{ pxe_test_boot_wait_seconds }}"
+    - name: "Resolve VM addressing for {{ _vm_name }}"
+      ansible.builtin.include_tasks: _dhcp_lease_lookup.yml
 
-    - name: Snapshot rb5009 TFTP hits AFTER boot for {{ binary }}
+    - name: "Pause to let iPXE complete its boot attempt ({{ _vm_name }})"
+      ansible.builtin.pause:
+        seconds: "{{ _wait }}"
+
+    - name: "Snapshot rb5009 TFTP hits AFTER boot for {{ item.binary }}"
       community.routeros.command:
         commands:
           - >-
             /ip tftp print detail without-paging where
-            req-filename="{{ binary }}"
+            req-filename="{{ item.binary }}"
       register: _pxe_tftp_post
       changed_when: false
       delegate_to: "{{ pxe_test_router }}"
 
-    - name: Extract post-boot hit count
+    - name: "Extract post-boot hit count"
       ansible.builtin.set_fact:
         _pxe_hits_post: "{{ _pxe_tftp_post.stdout[0] | regex_search('hits=\\d+') | default('hits=0') | regex_replace('^hits=', '') | int }}"
 
-    - name: Assert TFTP hits incremented for {{ binary }}
+    - name: "Assert TFTP hits incremented for {{ item.binary }}"
       ansible.builtin.assert:
         that:
           - (_pxe_hits_post | int) > (_pxe_hits_pre | int)
         fail_msg: >-
-          VM pxe-test-{{ arch }} did not fetch {{ binary }} from rb5009
-          within {{ pxe_test_boot_wait_seconds }}s. hits {{ _pxe_hits_pre }}
-          -> {{ _pxe_hits_post }}. Check the VMI status, the DHCP offer to
-          its MAC (`/log print where topics~"dhcp"` on rb5009), and that
-          the matcher table still routes option-93 to the right binary.
+          VM {{ _vm_name }} did not fetch {{ item.binary }} from rb5009
+          within {{ _wait }}s. hits {{ _pxe_hits_pre }} ->
+          {{ _pxe_hits_post }}. Check the VMI status, the DHCP offer to
+          its MAC (`/log print where topics~"dhcp"` on rb5009), and
+          that the matcher table still routes option-93 to the right
+          binary.
+
+    - name: "Verify TFTP dispatch for {{ _vm_name }}"
+      ansible.builtin.include_tasks: _verify_tftp.yml
+      vars:
+        vm_name: "{{ _vm_name }}"
+        vm_mac: "{{ _vm_mac }}"
+        vm_ip: "{{ _vm_ip }}"
+        expected_outcome: "{{ 'sent' if (_vm_mac in _pxe_pinned_macs) else 'not_found' }}"
+        pre_log_line_count: "{{ _pre_log_line_count }}"
 
   always:
-    - name: Delete test VM ({{ arch }})
+    - name: "Delete test VM ({{ _vm_name }})"
       kubernetes.core.k8s:
         state: absent
         validate_certs: false
         api_version: kubevirt.io/v1
         kind: VirtualMachine
         namespace: "{{ pxe_test_namespace }}"
-        name: "pxe-test-{{ arch }}"
+        name: "{{ _vm_name }}"
         wait: true
         wait_timeout: 120

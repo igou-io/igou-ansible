@@ -1,28 +1,27 @@
 ---
 # Diskless PXE-boot VM for the netboot.xyz binary smoke test. Rendered
-# by ../test_netboot_pxe.yml with `arch` set to either `bios` or
-# `uefi-x64`. The two variants only differ in whether the firmware
-# block requests EFI; everything else is identical so the same hit
-# counter on rb5009 distinguishes which binary the VM fetched.
+# by ../test_netboot_pxe.yml against each entry in pxe_test_arches.
+# Per-entry fields override the playbook-level pxe_test_* defaults --
+# see the vars block in the parent playbook for the full field list.
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
-  name: pxe-test-{{ arch }}
+  name: {{ item.name | default('pxe-test-' ~ item.arch) }}
   namespace: {{ pxe_test_namespace }}
   labels:
     app: netboot-pxe-smoke-test
-    netboot.test/arch: {{ arch }}
+    netboot.test/arch: {{ item.arch }}
 spec:
   runStrategy: Always
   template:
     metadata:
       labels:
         app: netboot-pxe-smoke-test
-        netboot.test/arch: {{ arch }}
+        netboot.test/arch: {{ item.arch }}
     spec:
       architecture: amd64
       domain:
-{% if arch == 'uefi-x64' %}
+{% if (item.firmware | default(pxe_test_firmware)) == 'efi' %}
         firmware:
           bootloader:
             efi:
@@ -31,21 +30,24 @@ spec:
               secureBoot: false
 {% endif %}
         cpu:
-          cores: 1
+          cores: {{ item.cores | default(pxe_test_cores) }}
         memory:
-          guest: 1Gi
+          guest: {{ item.memory | default(pxe_test_memory) }}
         devices:
           # Default pod network would give the VM a second NIC and DHCP
-          # racing -- we want PXE to see only the vlan9 interface.
+          # racing -- we want PXE to see only the configured CUDN.
           autoattachPodInterface: false
           interfaces:
             - bridge: {}
               model: virtio
               name: nic
               bootOrder: 1
+{% if item.mac is defined %}
+              macAddress: {{ item.mac }}
+{% endif %}
         machine:
           type: pc-q35-rhel9.6.0
       networks:
         - multus:
-            networkName: {{ pxe_test_cudn }}
+            networkName: {{ item.cudn | default(pxe_test_cudn) }}
           name: nic

@@ -1,0 +1,94 @@
+---
+# Preflight for the netboot.xyz smoke test. Runs once at the top of
+# test_netboot_pxe.yml, before any VM is applied.
+#
+# Stages (each gated on the previous):
+#   1. HTTP-probe netbootxyz_self_url/ (the asset root) -- fails fast
+#      if nginx is down. NB: /menu.ipxe is NOT HTTP-served in this
+#      deployment; iPXE TFTP-fetches it from the netbootxyz container's
+#      built-in dnsmasq.
+#   2. Build set of pinned MACs from netboot_host_pins, then collect
+#      the subset referenced by pxe_test_arches.
+#   3. Deploy each smoke pin file into /config/menus/host/ on the
+#      netbootxyz container, then read it back via `docker exec cat`
+#      and assert substring.
+
+- name: Preflight -- netbootxyz HTTP root is reachable
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/"
+    status_code: 200
+    timeout: 10
+  delegate_to: localhost
+  changed_when: false
+
+- name: Preflight -- build set of pinned MACs (lowercase) from inventory
+  ansible.builtin.set_fact:
+    _pxe_pinned_macs: >-
+      {{ netboot_host_pins
+         | default([])
+         | selectattr('mac', 'defined')
+         | map(attribute='mac')
+         | map('lower')
+         | list }}
+
+- name: Preflight -- collect pinned MACs referenced by pxe_test_arches
+  ansible.builtin.set_fact:
+    _pxe_preflight_pin_macs: >-
+      {{ pxe_test_arches
+         | selectattr('mac', 'defined')
+         | map(attribute='mac')
+         | map('lower')
+         | unique
+         | select('in', _pxe_pinned_macs)
+         | list }}
+
+- name: Preflight -- ensure host pin directory exists on TrueNAS
+  ansible.builtin.file:
+    path: "{{ netbootxyz_root }}/config/menus/host"
+    state: directory
+    mode: '0755'
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
+  become: true
+
+- name: Preflight -- deploy each smoke pin from inventory to /config/menus/host/
+  ansible.builtin.copy:
+    content: "{{ (netboot_host_pins | selectattr('mac', 'equalto', item) | first).fragment }}"
+    dest: "{{ netbootxyz_root }}/config/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe"
+    mode: '0644'
+    owner: "1000"
+    group: "1000"
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
+  become: true
+  loop: "{{ _pxe_preflight_pin_macs }}"
+  loop_control:
+    label: "MAC-{{ item | regex_replace(':', '') }}.ipxe"
+
+- name: Preflight -- read each deployed smoke pin back via docker exec
+  ansible.builtin.command:
+    cmd: >-
+      docker exec ix-netbootxyz-netbootxyz-1
+      cat /config/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe
+  register: _pxe_preflight_pin_readback
+  changed_when: false
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
+  become: true
+  loop: "{{ _pxe_preflight_pin_macs }}"
+  loop_control:
+    label: "MAC-{{ item | regex_replace(':', '') }}.ipxe"
+
+- name: Preflight -- assert each deployed smoke pin contains its expected substring
+  ansible.builtin.assert:
+    that:
+      - _expected_substring == '' or _expected_substring in item.stdout
+    fail_msg: >-
+      Pin file MAC-{{ item.item | regex_replace(':', '') }}.ipxe was
+      deployed to /config/menus/host/ but its body does not contain
+      the expected substring '{{ _expected_substring }}'. This means
+      inventory's netboot_host_pins[].fragment for that MAC has changed
+      and the substring map at pxe_test_substring_defaults is out of
+      sync. First 200 chars of deployed file: {{ item.stdout[:200] }}
+  vars:
+    _expected_substring: "{{ pxe_test_substring_defaults[item.item] | default('') }}"
+  loop: "{{ _pxe_preflight_pin_readback.results }}"
+  loop_control:
+    label: "{{ item.item | regex_replace(':', '') }}.ipxe"
