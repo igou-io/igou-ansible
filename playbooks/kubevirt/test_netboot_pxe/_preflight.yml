@@ -1,0 +1,24 @@
+---
+# Preflight for the netboot.xyz HTTP-side smoke test. Runs once at the
+# top of test_netboot_pxe.yml, before any VM is applied.
+#
+# Stages (each gated on the previous):
+#   1. HTTP-probe netbootxyz_self_url/ (the asset root) -- fails fast
+#      if nginx is down. NB: /menu.ipxe is NOT HTTP-served in this
+#      deployment; iPXE TFTP-fetches it from the netbootxyz container's
+#      built-in dnsmasq.
+#   2. (Task 3) Build set of pinned MACs from netboot_host_pins,
+#      HTTP-fetch every smoke pin file referenced by pxe_test_arches,
+#      assert each body contains its expected substring, cache bodies.
+#
+# All preflight tasks delegate_to: localhost -- no TrueNAS or rb5009
+# contact at this stage.
+
+- name: Preflight -- netbootxyz HTTP root is reachable
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/"
+    status_code: 200
+    timeout: 10
+  register: _pxe_preflight_root
+  delegate_to: localhost
+  changed_when: false
