@@ -9,11 +9,19 @@
 # defaults, so a single run can mix architectures, firmware modes,
 # CUDNs, MACs, and per-VM wait windows.
 #
-# Iteration 1 scope:
-#   * Verifies the binary fetch via TFTP hit counter delta. Does NOT
-#     verify the iPXE -> TrueNAS chainload; that needs console
-#     scraping, which is intentionally deferred.
-#   * Namespace selector label is hardcoded to vlan9; testing CUDNs
+# Verification (two layers):
+#   * TFTP hit counter on rb5009 increments for the expected binary
+#     (catches DHCP / matcher / TFTP regressions on the rb5009 side).
+#   * netbootxyz dnsmasq-tftp logs show the VM's leased IP made
+#     exactly one TFTP RRQ for /config/menus/host/MAC-<hexraw>.ipxe --
+#     with outcome 'sent' for pinned MACs (host file served) or
+#     'not_found' for random MACs (file absent; iPXE falls through to
+#     stock-menu.ipxe). Single observable, two interpretations; the
+#     outcome is the per-case discriminator. Substring assertions on
+#     deployed pin bodies catch inventory drift at preflight.
+#   No per-entry override fields; expectations are fully derived from
+#   inventory's netboot_host_pins (see _preflight.yml + _verify_tftp.yml).
+#   Namespace selector label is hardcoded to vlan9; testing CUDNs
 #     in other VLANs requires the namespace to already carry the
 #     matching selector label.
 #
@@ -155,10 +163,10 @@
       loop: "{{ pxe_test_arches }}"
       loop_control:
         label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
-      when: not pxe_test_parallel
+      when: not (pxe_test_parallel | bool)
 
     - name: Smoke-test architectures in parallel
-      when: pxe_test_parallel
+      when: pxe_test_parallel | bool
       block:
         - name: Snapshot docker logs line count BEFORE the parallel batch
           ansible.builtin.shell:
