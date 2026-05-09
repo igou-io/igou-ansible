@@ -160,6 +160,19 @@
     - name: Smoke-test architectures in parallel
       when: pxe_test_parallel
       block:
+        - name: Snapshot docker logs line count BEFORE the parallel batch
+          ansible.builtin.shell:
+            cmd: set -o pipefail && docker logs ix-netbootxyz-netbootxyz-1 2>&1 | wc -l
+            executable: /bin/bash
+          register: _pxe_log_pre_parallel
+          changed_when: false
+          delegate_to: "{{ groups[netbootxyz_host][0] }}"
+          become: true
+
+        - name: Capture pre log line count (parallel mode, shared)
+          ansible.builtin.set_fact:
+            _pre_log_line_count_parallel: "{{ _pxe_log_pre_parallel.stdout | int }}"
+
         - name: Snapshot rb5009 TFTP hits BEFORE boot (all)
           community.routeros.command:
             commands:
@@ -168,7 +181,7 @@
                 req-filename="{{ item.binary }}"
           register: _pxe_tftp_pre_all
           changed_when: false
-          delegate_to: "{{ pxe_test_router }}"
+          delegate_to: rb5009.igou.systems
           loop: "{{ pxe_test_arches }}"
           loop_control:
             label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
@@ -200,6 +213,14 @@
           loop_control:
             label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
 
+        - name: Resolve VM addressing for every VM (parallel)
+          ansible.builtin.include_tasks: _dhcp_lease_lookup.yml
+          vars:
+            _vm_name: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+
         - name: Pause to let iPXE complete its boot attempts (longest effective wait)
           ansible.builtin.pause:
             seconds: >-
@@ -215,7 +236,7 @@
                 req-filename="{{ item.binary }}"
           register: _pxe_tftp_post_all
           changed_when: false
-          delegate_to: "{{ pxe_test_router }}"
+          delegate_to: rb5009.igou.systems
           loop: "{{ pxe_test_arches }}"
           loop_control:
             label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
@@ -237,6 +258,19 @@
           loop: "{{ _pxe_tftp_pre_all.results | zip(_pxe_tftp_post_all.results) | list }}"
           loop_control:
             label: "{{ item.0.item.name | default('pxe-test-' ~ item.0.item.arch) }}"
+
+        - name: Verify TFTP dispatch for every VM (parallel)
+          ansible.builtin.include_tasks: _verify_tftp.yml
+          vars:
+            _vm_name_inner: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+            vm_name: "{{ _vm_name_inner }}"
+            vm_mac: "{{ _pxe_vm_addr_map[_vm_name_inner].mac }}"
+            vm_ip: "{{ _pxe_vm_addr_map[_vm_name_inner].ip }}"
+            expected_outcome: "{{ 'sent' if (_pxe_vm_addr_map[_vm_name_inner].mac in _pxe_pinned_macs) else 'not_found' }}"
+            pre_log_line_count: "{{ _pre_log_line_count_parallel }}"
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
 
       always:
         - name: Delete all test VMs

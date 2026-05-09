@@ -68,3 +68,9 @@
       VM {{ _vm_name }} (MAC {{ _vm_mac }}) appears to have a lease
       entry on rb5009 but no address= field could be parsed. Raw:
       {{ _pxe_lease_query.stdout[0] }}
+
+- name: "Append to address map (parallel caller) -- {{ _vm_name }}"
+  ansible.builtin.set_fact:
+    _pxe_vm_addr_map: >-
+      {{ (_pxe_vm_addr_map | default({}))
+         | combine({_vm_name: {'mac': _vm_mac, 'ip': _vm_ip}}) }}
