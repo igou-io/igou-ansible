@@ -246,7 +246,7 @@ DELETE both, then APPEND in their place:
     path: "/mnt/ssd/containers/netbootxyz/config/menus/host"
     state: directory
     mode: '0755'
-  delegate_to: "{{ netbootxyz_host }}"
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
   become: true
 
 - name: Preflight -- deploy each smoke pin from inventory to /config/menus/host/
@@ -254,7 +254,7 @@ DELETE both, then APPEND in their place:
     content: "{{ (netboot_host_pins | selectattr('mac', 'equalto', item) | first).fragment }}"
     dest: "/mnt/ssd/containers/netbootxyz/config/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe"
     mode: '0644'
-  delegate_to: "{{ netbootxyz_host }}"
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
   become: true
   loop: "{{ _pxe_preflight_pin_macs }}"
   loop_control:
@@ -267,7 +267,7 @@ DELETE both, then APPEND in their place:
       cat /config/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe
   register: _pxe_preflight_pin_readback
   changed_when: false
-  delegate_to: "{{ netbootxyz_host }}"
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
   become: true
   loop: "{{ _pxe_preflight_pin_macs }}"
   loop_control:
@@ -489,7 +489,7 @@ Write with this exact content:
       | grep dnsmasq-tftp || true
   register: _pxe_log_slice
   changed_when: false
-  delegate_to: "{{ netbootxyz_host }}"
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
   become: true
 
 - name: "Parse dnsmasq-tftp lines for {{ vm_name }} (sent pattern)"
@@ -637,7 +637,7 @@ Open `_arch_test.yml` and replace its entire contents with:
         cmd: docker logs ix-netbootxyz-netbootxyz-1 2>&1 | wc -l
       register: _pxe_log_pre
       changed_when: false
-      delegate_to: "{{ netbootxyz_host }}"
+      delegate_to: "{{ groups[netbootxyz_host][0] }}"
       become: true
 
     - name: "Capture pre log line count for {{ _vm_name }}"
@@ -799,7 +799,7 @@ Locate the block named `Smoke-test architectures in parallel` (`when: pxe_test_p
             cmd: docker logs ix-netbootxyz-netbootxyz-1 2>&1 | wc -l
           register: _pxe_log_pre_parallel
           changed_when: false
-          delegate_to: "{{ netbootxyz_host }}"
+          delegate_to: "{{ groups[netbootxyz_host][0] }}"
           become: true
 
         - name: Capture pre log line count (parallel mode, shared)
