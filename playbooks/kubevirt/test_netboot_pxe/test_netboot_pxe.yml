@@ -59,6 +59,14 @@
     # single pass, then torn down -- noticeably faster for >2 entries
     # but harder to attribute failures.
     pxe_test_parallel: false
+    # Default substring to grep for in each smoke pin's served body,
+    # keyed by lowercase MAC. Drives only the preflight static check;
+    # per-case substring assertion is dropped because preflight already
+    # validates the body. Adding a new pinned smoke entry?  Add the
+    # MAC -> substring pair here.
+    pxe_test_substring_defaults:
+      "02:00:00:50:58:01": "=== pxe-test smoke pin: bios"
+      "02:00:00:50:58:02": "=== pxe-test smoke pin: uefi-x64"
     # Each entry must set: arch (free-form label, used in resource
     # labels and the default name), binary (TFTP filename to watch on
     # rb5009). All other fields are optional overrides:

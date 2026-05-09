@@ -21,3 +21,54 @@
     timeout: 10
   delegate_to: localhost
   changed_when: false
+
+- name: Preflight -- build set of pinned MACs (lowercase) from inventory
+  ansible.builtin.set_fact:
+    _pxe_pinned_macs: >-
+      {{ netboot_host_pins
+         | default([])
+         | selectattr('mac', 'defined')
+         | map(attribute='mac')
+         | map('lower')
+         | list }}
+
+- name: Preflight -- collect pinned MACs referenced by pxe_test_arches
+  ansible.builtin.set_fact:
+    _pxe_preflight_pin_macs: >-
+      {{ pxe_test_arches
+         | selectattr('mac', 'defined')
+         | map(attribute='mac')
+         | map('lower')
+         | unique
+         | select('in', _pxe_pinned_macs)
+         | list }}
+
+- name: Preflight -- fetch each smoke pin file from netbootxyz
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe"
+    return_content: true
+    status_code: 200
+    timeout: 10
+  register: _pxe_preflight_pin_results
+  delegate_to: localhost
+  changed_when: false
+  loop: "{{ _pxe_preflight_pin_macs }}"
+  loop_control:
+    label: "MAC-{{ item | regex_replace(':', '') }}.ipxe"
+
+- name: Preflight -- assert each smoke pin body contains its expected substring
+  ansible.builtin.assert:
+    that:
+      - _expected_substring == '' or _expected_substring in item.content
+    fail_msg: >-
+      Pin file MAC-{{ item.item | regex_replace(':', '') }}.ipxe at
+      {{ netbootxyz_self_url }} returned 200 but its body does not contain
+      the expected substring '{{ _expected_substring }}'. This usually
+      means inventory's netboot_host_pins was changed but
+      playbooks/netboot/deploy_assets.yml has not been re-run.
+      First 200 chars: {{ item.content[:200] }}
+  vars:
+    _expected_substring: "{{ pxe_test_substring_defaults[item.item] | default('') }}"
+  loop: "{{ _pxe_preflight_pin_results.results }}"
+  loop_control:
+    label: "{{ item.item | regex_replace(':', '') }}.ipxe"
