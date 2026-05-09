@@ -1,0 +1,105 @@
+---
+# Per-case TFTP-side verification for the netboot.xyz smoke test.
+# Called from both _arch_test.yml (serial mode) and the inline parallel
+# block in test_netboot_pxe.yml.
+#
+# Spike outcome (2026-05-09, see plan section "Spike outcome"):
+#   runtime          = docker (TrueNAS SCALE uses Docker)
+#   container_name  = ix-netbootxyz-netbootxyz-1   (TrueCharts naming)
+#   docker_logs      = carries dnsmasq-tftp lines (NOT nginx access lines)
+#   read_strategy    = wc -l on `docker logs` before; tail -n +<N> after;
+#                      grep dnsmasq-tftp; parse two patterns.
+#
+# Sample lines:
+#   dnsmasq-tftp[23]: sent /config/menus/host/MAC-020000505801.ipxe to 10.10.9.40
+#   dnsmasq-tftp[23]: file /config/menus/host/MAC-525400deadbe.ipxe not found for 10.10.9.41
+#
+# Inputs (task vars expected on caller):
+#   vm_name              VM name, used in messages
+#   vm_mac               lowercase MAC (with colons)
+#   vm_ip                dotted-quad IP from DHCP lease
+#   expected_outcome     'sent' (pinned) or 'not_found' (random) --
+#                          the per-case discriminator. Pinned MAC has
+#                          a deployed host file -> dnsmasq sends it.
+#                          Random MAC -> dnsmasq returns "not found"
+#                          and iPXE falls through to stock-menu.ipxe.
+#   pre_log_line_count   line count of `docker logs` captured BEFORE
+#                          the VM was applied (snapshot in caller).
+#
+# Output: assertions only; no facts set.
+
+- name: "Read post-boot docker logs slice for {{ vm_name }}"
+  ansible.builtin.shell:
+    cmd: >-
+      docker logs ix-netbootxyz-netbootxyz-1 2>&1
+      | tail -n +{{ pre_log_line_count | int + 1 }}
+      | grep dnsmasq-tftp || true
+  register: _pxe_log_slice
+  changed_when: false
+  delegate_to: "{{ groups[netbootxyz_host][0] }}"
+  become: true
+
+- name: "Parse dnsmasq-tftp lines for {{ vm_name }} (sent pattern)"
+  ansible.builtin.set_fact:
+    _pxe_sent_lines: >-
+      {{ _pxe_log_slice.stdout_lines
+         | map('regex_search',
+               '^dnsmasq-tftp\[\d+\]: sent (\S+) to ([\d.]+)$',
+               '\\1', '\\2')
+         | select('truthy')
+         | list }}
+
+- name: "Parse dnsmasq-tftp lines for {{ vm_name }} (not_found pattern)"
+  ansible.builtin.set_fact:
+    _pxe_notfound_lines: >-
+      {{ _pxe_log_slice.stdout_lines
+         | map('regex_search',
+               '^dnsmasq-tftp\[\d+\]: file (\S+) not found for ([\d.]+)$',
+               '\\1', '\\2')
+         | select('truthy')
+         | list }}
+
+- name: "Compute expected per-host path for {{ vm_name }}"
+  ansible.builtin.set_fact:
+    _pxe_expected_path: "/config/menus/host/MAC-{{ vm_mac | regex_replace(':', '') | lower }}.ipxe"
+
+- name: "Filter sent/not_found lines to {{ vm_name }} (path + IP match)"
+  ansible.builtin.set_fact:
+    _pxe_match_sent: >-
+      {{ _pxe_sent_lines
+         | selectattr('0', 'equalto', _pxe_expected_path)
+         | selectattr('1', 'equalto', vm_ip)
+         | list }}
+    _pxe_match_notfound: >-
+      {{ _pxe_notfound_lines
+         | selectattr('0', 'equalto', _pxe_expected_path)
+         | selectattr('1', 'equalto', vm_ip)
+         | list }}
+
+- name: "Assert {{ vm_name }} produced exactly one matching dnsmasq-tftp line"
+  ansible.builtin.assert:
+    that:
+      - (_pxe_match_sent | length) + (_pxe_match_notfound | length) == 1
+    fail_msg: >-
+      VM {{ vm_name }} (IP {{ vm_ip }}) -- expected exactly one
+      dnsmasq-tftp line for {{ _pxe_expected_path }} from this IP.
+      Found {{ _pxe_match_sent | length }} 'sent' and
+      {{ _pxe_match_notfound | length }} 'not_found' matches. Either
+      iPXE never reached the netbootxyz chainload step (check the
+      rb5009 -> netbootxyz path), or the menu.ipxe served by netbootxyz
+      doesn't chain to host/MAC-<hex>.ipxe at all.
+
+- name: "Assert {{ vm_name }} got the expected outcome '{{ expected_outcome }}' on {{ _pxe_expected_path }}"
+  ansible.builtin.assert:
+    that:
+      - (expected_outcome == 'sent' and _pxe_match_sent | length == 1)
+        or
+        (expected_outcome == 'not_found' and _pxe_match_notfound | length == 1)
+    fail_msg: >-
+      VM {{ vm_name }} (IP {{ vm_ip }}) hit {{ _pxe_expected_path }} but
+      dnsmasq returned the wrong outcome (expected '{{ expected_outcome }}').
+      For a pinned MAC ('sent' expected), this means the deploy step
+      in preflight failed silently or the file was removed since.
+      For a random MAC ('not_found' expected), this means a per-host
+      file exists for what should be an unpinned MAC -- check
+      /config/menus/host/ on the netbootxyz container for stale files.
