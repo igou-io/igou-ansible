@@ -1,10 +1,25 @@
 ---
 # Add worker nodes to an existing OpenShift cluster by generating PXE
-# assets via `oc adm node-image create --pxe` and copying them to
-# TrueNAS netbootxyz.
+# assets via `oc adm node-image create --pxe` and copying them to the
+# TrueNAS netbootxyz container.
 #
 # Source procedure:
 #   https://github.com/openshift/openshift-docs/blob/main/nodes/nodes/nodes-nodes-adding-node-iso.adoc
+#
+# Layout (after this playbook runs against `truenas`):
+#   /mnt/ssd/containers/netbootxyz/
+#     assets/<cluster>-add-node/
+#       node.<arch>-vmlinuz, node.<arch>-initrd.img, node.<arch>-rootfs.img
+#     config/menus/host/MAC-<hexraw>.ipxe   # one per worker; chained from
+#                                             menu.ipxe via TFTP
+#
+# The deployed iPXE script in host/MAC-<hex>.ipxe carries a managed-by
+# header. host/MAC-<hex>.ipxe is shared with future
+# playbooks/netboot/deploy_assets.yml (which would render it from
+# inventory's netboot_host_pins[].fragment); add-node currently
+# overwrites whatever was there. If a worker MAC also has a static
+# netboot_host_pins entry (e.g. hpg5 / f8:b4:6a:ab:55:c7), running
+# add_node_iso.yml replaces it. Re-run is the only way to refresh.
 #
 # Operator workflow:
 #   1. Add worker(s) to inventory under group `openshift_workers_<cluster>`
