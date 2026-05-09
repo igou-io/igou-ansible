@@ -114,7 +114,6 @@ Write the file with this exact content:
     url: "{{ netbootxyz_self_url }}/"
     status_code: 200
     timeout: 10
-  register: _pxe_preflight_root
   delegate_to: localhost
   changed_when: false
 ```
@@ -1028,7 +1027,7 @@ EOF
 **Placeholder scan:** none.
 
 **Identifier consistency:**
-- Fact names: `_pxe_preflight_root`, `_pxe_pinned_macs`, `_pxe_preflight_pin_macs`, `_pxe_preflight_pin_results`, `_pxe_tftp_pre`, `_pxe_tftp_post`, `_pxe_hits_pre`, `_pxe_hits_post`, `_pxe_log_pre`, `_pre_log_line_count`, `_pxe_log_pre_parallel`, `_pre_log_line_count_parallel`, `_pxe_log_slice`, `_pxe_parsed_lines`, `_pxe_vm_lines`, `_pxe_expected_path`, `_pxe_matching_lines`, `_pxe_lease_query`, `_pxe_vmi_result`, `_pxe_parallel_addr_results`, `_pxe_parallel_addr_map`, `_vm_name`, `_vm_mac`, `_vm_ip`, `_wait`. All consistent across tasks.
+- Fact names: `_pxe_pinned_macs`, `_pxe_preflight_pin_macs`, `_pxe_preflight_pin_results`, `_pxe_tftp_pre`, `_pxe_tftp_post`, `_pxe_hits_pre`, `_pxe_hits_post`, `_pxe_log_pre`, `_pre_log_line_count`, `_pxe_log_pre_parallel`, `_pre_log_line_count_parallel`, `_pxe_log_slice`, `_pxe_parsed_lines`, `_pxe_vm_lines`, `_pxe_expected_path`, `_pxe_matching_lines`, `_pxe_lease_query`, `_pxe_vmi_result`, `_pxe_parallel_addr_results`, `_pxe_parallel_addr_map`, `_vm_name`, `_vm_mac`, `_vm_ip`, `_wait`. All consistent across tasks.
 - `_dhcp_lease_lookup.yml` outputs `_vm_mac` and `_vm_ip` as facts; both serial (Task 6) and parallel (Task 7) consume identically.
 - `_verify_http.yml` inputs: `vm_name`, `vm_mac`, `vm_ip`, `expected_status`, `pre_log_line_count`. Used identically in serial and parallel call sites.
 - Path constant: `/menus/host/MAC-<hexraw>.ipxe` — produced identically in Tasks 3 (URL fetch), 5 (computed expectation).
