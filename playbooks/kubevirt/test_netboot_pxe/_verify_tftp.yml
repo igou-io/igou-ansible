@@ -31,39 +31,33 @@
 - name: "Read post-boot docker logs slice for {{ vm_name }}"
   ansible.builtin.shell:
     cmd: >-
+      set -o pipefail &&
       docker logs ix-netbootxyz-netbootxyz-1 2>&1
       | tail -n +{{ pre_log_line_count | int + 1 }}
       | grep dnsmasq-tftp || true
+    executable: /bin/bash
   register: _pxe_log_slice
   changed_when: false
   delegate_to: "{{ groups[netbootxyz_host][0] }}"
   become: true
 
-- name: "Parse dnsmasq-tftp lines for {{ vm_name }} (sent pattern)"
+- name: "Parse dnsmasq-tftp sent lines -- {{ vm_name }}"
   ansible.builtin.set_fact:
     _pxe_sent_lines: >-
-      {{ _pxe_log_slice.stdout_lines
-         | map('regex_search',
-               '^dnsmasq-tftp\[\d+\]: sent (\S+) to ([\d.]+)$',
-               '\\1', '\\2')
-         | select('truthy')
-         | list }}
+      {{ _pxe_log_slice.stdout
+         | regex_findall('dnsmasq-tftp\[\d+\]: sent (\S+) to ([\d.]+)') }}
 
-- name: "Parse dnsmasq-tftp lines for {{ vm_name }} (not_found pattern)"
+- name: "Parse dnsmasq-tftp not_found lines -- {{ vm_name }}"
   ansible.builtin.set_fact:
     _pxe_notfound_lines: >-
-      {{ _pxe_log_slice.stdout_lines
-         | map('regex_search',
-               '^dnsmasq-tftp\[\d+\]: file (\S+) not found for ([\d.]+)$',
-               '\\1', '\\2')
-         | select('truthy')
-         | list }}
+      {{ _pxe_log_slice.stdout
+         | regex_findall('dnsmasq-tftp\[\d+\]: file (\S+) not found for ([\d.]+)') }}
 
 - name: "Compute expected per-host path for {{ vm_name }}"
   ansible.builtin.set_fact:
     _pxe_expected_path: "/config/menus/host/MAC-{{ vm_mac | regex_replace(':', '') | lower }}.ipxe"
 
-- name: "Filter sent/not_found lines to {{ vm_name }} (path + IP match)"
+- name: "Filter sent/not_found lines by path and IP -- {{ vm_name }}"
   ansible.builtin.set_fact:
     _pxe_match_sent: >-
       {{ _pxe_sent_lines
@@ -76,7 +70,7 @@
          | selectattr('1', 'equalto', vm_ip)
          | list }}
 
-- name: "Assert {{ vm_name }} produced exactly one matching dnsmasq-tftp line"
+- name: "Assert exactly one matching dnsmasq-tftp line -- {{ vm_name }}"
   ansible.builtin.assert:
     that:
       - (_pxe_match_sent | length) + (_pxe_match_notfound | length) == 1
@@ -89,7 +83,7 @@
       rb5009 -> netbootxyz path), or the menu.ipxe served by netbootxyz
       doesn't chain to host/MAC-<hex>.ipxe at all.
 
-- name: "Assert {{ vm_name }} got the expected outcome '{{ expected_outcome }}' on {{ _pxe_expected_path }}"
+- name: "Assert expected dnsmasq outcome on host path -- {{ vm_name }}"
   ansible.builtin.assert:
     that:
       - (expected_outcome == 'sent' and _pxe_match_sent | length == 1)

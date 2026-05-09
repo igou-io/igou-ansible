@@ -55,6 +55,8 @@
     content: "{{ (netboot_host_pins | selectattr('mac', 'equalto', item) | first).fragment }}"
     dest: "/mnt/ssd/containers/netbootxyz/config/menus/host/MAC-{{ item | regex_replace(':', '') }}.ipxe"
     mode: '0644'
+    owner: "1000"
+    group: "1000"
   delegate_to: "{{ groups[netbootxyz_host][0] }}"
   become: true
   loop: "{{ _pxe_preflight_pin_macs }}"

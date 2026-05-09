@@ -23,7 +23,7 @@
 # network-layer-flavoured message. Neither is confused with a
 # netbootxyz problem.
 
-- name: "Read VirtualMachineInstance for {{ _vm_name }} to learn its MAC"
+- name: "Read VirtualMachineInstance to learn its MAC -- {{ _vm_name }}"
   kubernetes.core.k8s_info:
     api_version: kubevirt.io/v1
     kind: VirtualMachineInstance
@@ -42,7 +42,7 @@
   ansible.builtin.set_fact:
     _vm_mac: "{{ _pxe_vmi_result.resources[0].spec.domain.devices.interfaces[0].macAddress | lower }}"
 
-- name: "Wait for {{ _vm_name }} DHCP lease (MAC {{ _vm_mac }})"
+- name: "Wait for DHCP lease -- {{ _vm_name }}"
   community.routeros.command:
     commands:
       - >-
