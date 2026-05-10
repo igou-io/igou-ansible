@@ -39,7 +39,7 @@ These are *assumptions baked into this plan*. If any is wrong, stop and clarify 
 1. **Control node has podman.** This codebase's CLAUDE.md confirms it. `podman --version` should work.
 2. **Control node has internet to ghcr.io and github.com.** Per CLAUDE.md, github.com is whitelisted; ghcr.io is also allowed because the EE build CI relies on it.
 3. **rb5009 reachable on `ansible_port=3480` from the control node.** Recent commits in this branch have already deployed playbooks against it.
-4. **The rb5009 nbxyz container deployed by `2026-05-07-netbootxyz-rb5009-design.md` is currently running.** This plan does NOT remove it; the cleanup README does. The new TFTP files don't conflict with anything that container did, because the binaries land in `flash:/netboot/` (new dir) and the existing container's data is in `flash:/containers/netbootxyz/`.
+4. **An rb5009 nbxyz container existed during early experimentation** (the matching design has since been deleted as the homelab consolidated on the TrueNAS-hosted netbootxyz). This plan does NOT remove it; if the container is still running, the cleanup README handles it. The new TFTP files don't conflict with anything that container did, because the binaries land in `flash:/netboot/` (new dir) and the container's data was in `flash:/containers/netbootxyz/`.
 5. **The DHCP server names on rb5009 for the two target subnets are not yet known.** Task 1 has the operator confirm them with `/ip dhcp-server print` before populating the inventory placeholders.
 6. **Existing `/ip dhcp-server network` rows for `10.10.9.0/24` and `10.10.45.0/24` exist.** Task 6 modifies them with `set [find address=...]` — if the rows don't exist, the `set` is a no-op and Task 7 verify will fail loudly.
 

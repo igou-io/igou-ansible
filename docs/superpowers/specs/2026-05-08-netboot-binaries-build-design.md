@@ -4,7 +4,7 @@
 **Status:** approved (brainstorming complete)
 **Scope:** one new playbook `playbooks/routeros/deploy_netboot_binaries.yml` (plus four task files under `playbooks/routeros/tasks/`) that builds custom `netboot.xyz.kpxe` / `.efi` / `.arm64.efi` binaries embedded with our internal chainload URL, ships them to the rb5009 TFTP server, and wires up DHCP `next-server` + `boot-file-name` so PXE clients land on the binaries. The binaries chainload to the existing TrueNAS netbootxyz container at `tftp://10.10.45.242/menu.ipxe` for the actual menu.
 
-This replaces the rb5009 netbootxyz container deployment from `2026-05-07-netbootxyz-rb5009-design.md`. RouterOS does only DHCP + TFTP; menu serving stays on TrueNAS where it has been working.
+This replaces an earlier (since-abandoned) plan to host netbootxyz as a RouterOS container on rb5009. RouterOS does only DHCP + TFTP; menu serving stays on TrueNAS where it has been working.
 
 ## Goals
 
