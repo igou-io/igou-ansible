@@ -1,0 +1,57 @@
+---
+# Manage netboot.xyz menu, kickstart/cloud-init seeds, and per-host PXE
+# pins on the TrueNAS-hosted netbootxyz container.
+#
+# Stages (each tag-gated):
+#   preflight  — schema validation, always runs.
+#   render     — Jinja-render menu.ipxe + entries/ + host/ to .cache/.
+#   push       — sync rendered + static text content to TrueNAS.
+#   fetch      — idempotent download of upstream URLs into /assets.
+#   local      — copy locally-built kernels/initrds into /assets.
+#   verify     — HTTP probes for menu.ipxe, host files, and ISOs.
+#
+# Inventory schema:
+#   See igou-inventory/group_vars/all/netboot.yml and the design spec
+#   docs/superpowers/specs/2026-05-08-netboot-asset-management-design.md.
+#
+# Common invocations:
+#   ansible-navigator run playbooks/netboot/deploy_assets.yml \
+#     -i igou-inventory/inventory.yaml
+#   # local-only render, no TrueNAS contact:
+#   ansible-navigator run playbooks/netboot/deploy_assets.yml \
+#     -i igou-inventory/inventory.yaml \
+#     --tags render -e netbootxyz_host=localhost --check
+#   # menu touch-up, skip the slow stages:
+#   ansible-navigator run playbooks/netboot/deploy_assets.yml \
+#     -i igou-inventory/inventory.yaml \
+#     --tags render,push,verify
+#
+# Add an entry: edit netboot_entries in
+#   igou-inventory/group_vars/all/netboot.yml.
+# Add a per-host pin: edit netboot_host_pins in the same file.
+# Add a hand-written .ipxe fragment: drop it in
+#   playbooks/netboot/files/fragments/. Auto-included on next render.
+
+- name: Deploy netboot.xyz custom menu and assets
+  hosts: "{{ netbootxyz_host | default('truenas') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Preflight stage
+      ansible.builtin.import_tasks: tasks/preflight.yml
+      tags: [preflight, render, push, fetch, local, verify, always]
+    - name: Render stage
+      ansible.builtin.import_tasks: tasks/render_menu.yml
+      tags: [render]
+    - name: Push text stage
+      ansible.builtin.import_tasks: tasks/push_text.yml
+      tags: [push]
+    - name: Fetch binaries stage
+      ansible.builtin.import_tasks: tasks/fetch_binaries.yml
+      tags: [fetch]
+    - name: Push local artifacts stage
+      ansible.builtin.import_tasks: tasks/push_local_artifacts.yml
+      tags: [local]
+    - name: Verify stage
+      ansible.builtin.import_tasks: tasks/verify.yml
+      tags: [verify]

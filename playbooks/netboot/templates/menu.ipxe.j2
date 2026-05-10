@@ -1,0 +1,52 @@
+#!ipxe
+### Managed by playbooks/netboot/deploy_assets.yml — do not edit manually.
+
+### Per-host hooks fetch via TFTP relative to this file's location, since
+### the netbootxyz container's nginx serves /assets/* at URL root /* and
+### does NOT serve /config/menus/* over HTTP. dnsmasq serves
+### /config/menus/ at TFTP root, so a relative chain stays in TFTP.
+:per_host
+isset ${hostname} && chain host/HOSTNAME-${hostname}.ipxe || goto check_mac
+:check_mac
+isset ${mac} && chain host/MAC-${mac:hexraw}.ipxe || goto stock_fallback
+
+### When no per-host pin matches, fall through to the stock netbootxyz
+### menu. push_text.yml preserves the original menu.ipxe as
+### stock-menu.ipxe before overwriting menu.ipxe with this template, so
+### the upstream multi-distro UX still works for unpinned hosts.
+:stock_fallback
+chain stock-menu.ipxe || goto main_menu
+
+:main_menu
+clear menu_choice
+menu netboot.xyz custom menu
+{% for entry in netboot_entries %}
+item {{ entry.id }} ${space} {{ entry.name }}
+{% endfor %}
+{% if _netboot_fragments | length > 0 %}
+item --gap -- Custom fragments
+{% for f in _netboot_fragments %}
+item fragment_{{ loop.index0 }} ${space} {{ f }}
+{% endfor %}
+{% endif %}
+item --gap
+item menu_exit ${space} Exit
+
+choose menu_choice || goto menu_exit
+echo ${cls}
+goto ${menu_choice}
+
+{% for entry in netboot_entries %}
+:{{ entry.id }}
+chain entries/{{ entry.id }}.ipxe
+goto menu_exit
+
+{% endfor %}
+{% for f in _netboot_fragments %}
+:fragment_{{ loop.index0 }}
+chain fragments/{{ f }}
+goto menu_exit
+
+{% endfor %}
+:menu_exit
+exit

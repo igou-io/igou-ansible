@@ -1,0 +1,100 @@
+---
+# Two kinds of verification:
+#   1. Filesystem stats on netbootxyz_host — confirm the menu/entry/host
+#      files we wrote actually landed at the expected paths under
+#      /config/menus/. These are TFTP-served (dnsmasq tftp-root is
+#      /config/menus/), so we can't probe them over HTTP.
+#   2. HTTP probes from localhost — only for files actually served over
+#      HTTP by the container's nginx, which serves /assets/* at URL /*.
+#      That's ISO assets and cached kernels.
+
+- name: Verify — recompute have-custom-menu fact
+  ansible.builtin.set_fact:
+    _netboot_have_custom_menu: >-
+      {{ (netboot_entries | length > 0)
+         or (netboot_host_pins | length > 0)
+         or (_netboot_fragments | length > 0) }}
+
+- name: Verify — stat menu.ipxe on the netbootxyz host
+  ansible.builtin.stat:
+    path: "{{ netbootxyz_root }}/config/menus/menu.ipxe"
+  register: _verify_menu_stat
+  when: _netboot_have_custom_menu | bool
+  failed_when:
+    - _netboot_have_custom_menu | bool
+    - not (_verify_menu_stat.stat.exists | default(false))
+
+- name: Verify — read menu.ipxe content
+  ansible.builtin.slurp:
+    src: "{{ netbootxyz_root }}/config/menus/menu.ipxe"
+  register: _verify_menu_slurp
+  when: _netboot_have_custom_menu | bool
+
+- name: Verify — menu.ipxe is well-formed
+  ansible.builtin.assert:
+    that:
+      - "'#!ipxe' in (_verify_menu_slurp.content | b64decode)"
+    fail_msg: "menu.ipxe at {{ netbootxyz_root }}/config/menus/menu.ipxe is missing the #!ipxe shebang."
+  when: _netboot_have_custom_menu | bool
+
+- name: Verify — every entry's name appears in menu.ipxe
+  ansible.builtin.assert:
+    that:
+      - "item.name in (_verify_menu_slurp.content | b64decode)"
+    fail_msg: "Entry {{ item.id }} ({{ item.name }}) not found in served menu.ipxe."
+  loop: "{{ netboot_entries }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when: _netboot_have_custom_menu | bool
+
+- name: Verify — each entry .ipxe exists on disk
+  ansible.builtin.stat:
+    path: "{{ netbootxyz_root }}/config/menus/entries/{{ item.id }}.ipxe"
+  register: _verify_entry_stat
+  loop: "{{ netboot_entries }}"
+  loop_control:
+    label: "{{ item.id }}"
+  failed_when:
+    - not _verify_entry_stat.stat.exists
+
+- name: Verify — each kind=iso asset is reachable over HTTP
+  ansible.builtin.uri:
+    url: "{{ netbootxyz_self_url }}/iso/{{ item.id }}.iso"
+    method: HEAD
+    status_code: 200
+  loop: "{{ netboot_entries | selectattr('kind', 'equalto', 'iso') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Verify — each host pin MAC file exists on disk
+  ansible.builtin.stat:
+    path: "{{ netbootxyz_root }}/config/menus/host/MAC-{{ item.mac | lower | replace(':', '') }}.ipxe"
+  register: _verify_mac_stat
+  loop: "{{ netboot_host_pins }}"
+  loop_control:
+    label: "{{ item.mac }}"
+  failed_when:
+    - not _verify_mac_stat.stat.exists
+
+- name: Verify — each host pin HOSTNAME file exists on disk (when set)
+  ansible.builtin.stat:
+    path: "{{ netbootxyz_root }}/config/menus/host/HOSTNAME-{{ item.hostname }}.ipxe"
+  register: _verify_hostname_stat
+  loop: "{{ netboot_host_pins | selectattr('hostname', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  failed_when:
+    - not _verify_hostname_stat.stat.exists
+
+- name: Verify — summary
+  ansible.builtin.debug:
+    msg:
+      - >-
+        {{ 'custom menu.ipxe on disk (' + (_verify_menu_stat.stat.size | string) + ' bytes)'
+           if _netboot_have_custom_menu | bool
+           else 'no custom menu (entries/pins/fragments empty); stock menu.ipxe untouched' }}
+      - "entries verified: {{ netboot_entries | length }}"
+      - "host pins verified: {{ netboot_host_pins | length }}"
+      - "fragments: {{ _netboot_fragments | length }}"

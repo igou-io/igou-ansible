@@ -1,0 +1,103 @@
+---
+# Schema validation. delegate_to: localhost — pure data work, no remote contact.
+# Runs under every stage tag so every other task can rely on validated input.
+
+- name: Preflight — validate netboot_entries shape
+  ansible.builtin.assert:
+    that:
+      - netboot_entries is iterable
+      - netboot_entries is not string
+    fail_msg: "netboot_entries must be a list (got {{ netboot_entries | type_debug }})."
+  delegate_to: localhost
+  run_once: true
+
+- name: Preflight — validate each entry
+  ansible.builtin.assert:
+    that:
+      - item.id is defined
+      - item.id is match('^[a-z0-9][a-z0-9._-]*$')
+      - item.name is defined
+      - item.kind is defined
+      - item.kind in ['kernel', 'iso', 'chainload', 'local']
+      - (item.kind != 'kernel') or (item.kernel is defined and item.initrd is defined)
+      - (item.kind != 'iso') or (item.url is defined and item.sha256 is defined)
+      - (item.kind != 'chainload') or (item.url is defined)
+      - (item.kind != 'local') or (item.kernel_src is defined and item.initrd_src is defined)
+    fail_msg: |
+      Invalid netboot_entries item: {{ item | to_nice_yaml }}
+      Slug must match ^[a-z0-9][a-z0-9._-]*$. Required fields per kind:
+        kernel:    kernel, initrd
+        iso:       url, sha256
+        chainload: url
+        local:     kernel_src, initrd_src
+  loop: "{{ netboot_entries }}"
+  loop_control:
+    label: "{{ item.id | default('<missing-id>') }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Preflight — collect entry ids for cross-reference
+  ansible.builtin.set_fact:
+    _netboot_entry_ids: "{{ netboot_entries | map(attribute='id') | list }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Preflight — validate each host pin
+  ansible.builtin.assert:
+    that:
+      - item.mac is defined
+      - item.mac is match('^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$')
+      - >-
+        ((item.entry is defined) | int)
+        + ((item.kernel is defined and item.initrd is defined) | int)
+        + ((item.fragment is defined) | int)
+        == 1
+      - (item.entry is not defined) or (item.entry in _netboot_entry_ids)
+    fail_msg: |
+      Invalid netboot_host_pins item: {{ item | to_nice_yaml }}
+      Each pin must:
+        - have a MAC matching aa:bb:cc:dd:ee:ff
+        - specify exactly one of: entry, kernel+initrd, fragment
+        - if entry is set, reference an id present in netboot_entries
+  loop: "{{ netboot_host_pins }}"
+  loop_control:
+    label: "{{ item.mac | default('<missing-mac>') }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Preflight — verify referenced kickstart files exist locally
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/files/kickstart/{{ item.kickstart }}"
+  register: _ks_check
+  loop: "{{ netboot_entries | selectattr('kickstart', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.id }} -> {{ item.kickstart }}"
+  delegate_to: localhost
+  run_once: true
+  failed_when:
+    - _ks_check.stat is defined
+    - not _ks_check.stat.exists
+
+- name: Preflight — discover fragment files
+  ansible.builtin.find:
+    paths: "{{ playbook_dir }}/files/fragments"
+    patterns: "*.ipxe"
+    file_type: file
+  register: _fragments_find
+  delegate_to: localhost
+  run_once: true
+
+- name: Preflight — register fragment filename list
+  ansible.builtin.set_fact:
+    _netboot_fragments: "{{ _fragments_find.files | map(attribute='path') | map('basename') | sort | list }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Preflight — summary
+  ansible.builtin.debug:
+    msg:
+      - "entries:    {{ netboot_entries | length }}"
+      - "host pins:  {{ netboot_host_pins | length }}"
+      - "fragments:  {{ _netboot_fragments | length }} ({{ _netboot_fragments | join(', ') }})"
+  delegate_to: localhost
+  run_once: true

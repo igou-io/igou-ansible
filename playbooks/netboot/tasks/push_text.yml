@@ -1,0 +1,228 @@
+---
+# Sync rendered menus + static assets text to TrueNAS. Scoped synchronize
+# with delete=true is bounded to subdirs we own: menus/entries/, menus/host/,
+# menus/fragments/. Flat menus/ is left alone so the OpenShift add-node files
+# survive.
+
+- name: Push — define paths
+  ansible.builtin.set_fact:
+    _netboot_menus_dst: "{{ netbootxyz_root }}/config/menus"
+    _netboot_assets_dst: "{{ netbootxyz_root }}/assets"
+    _netboot_cache_dir: "{{ playbook_dir }}/../../.cache/netboot-menus"
+    _netboot_fragments_src: "{{ playbook_dir }}/files/fragments"
+    _netboot_kickstart_src: "{{ playbook_dir }}/files/kickstart"
+    _netboot_cloudinit_src: "{{ playbook_dir }}/files/cloud-init"
+    # Only replace the stock netbootxyz menu.ipxe + own the entries/host/
+    # subdirs when we actually have custom content to put there. The stock
+    # menu and any pre-existing flat-named .ipxe files (e.g. OpenShift
+    # add-node, hand-placed MAC files) stay untouched otherwise.
+    _netboot_have_custom_menu: >-
+      {{ (netboot_entries | length > 0)
+         or (netboot_host_pins | length > 0)
+         or (_netboot_fragments | length > 0) }}
+
+- name: Push — verify render cache exists (run --tags render first if this fails)
+  ansible.builtin.stat:
+    path: "{{ _netboot_cache_dir }}/menu.ipxe"
+  register: _netboot_cache_check
+  delegate_to: localhost
+  run_once: true
+
+- name: Push — assert render cache is populated
+  ansible.builtin.assert:
+    that:
+      - _netboot_cache_check.stat.exists
+    fail_msg: |
+      Render cache not found at {{ _netboot_cache_dir }}/menu.ipxe.
+      Run with --tags render,push (or just no tag filter) so render produces the cache before push reads it. Running --tags push standalone with a stale or missing cache would silently regress the live netbootxyz state because synchronize uses delete=true on entries/ and host/.
+  delegate_to: localhost
+  run_once: true
+
+- name: Push — ensure destination subdirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/entries"
+    - "{{ _netboot_menus_dst }}/host"
+    - "{{ _netboot_menus_dst }}/fragments"
+    - "{{ _netboot_menus_dst }}/local"
+    - "{{ _netboot_menus_dst }}/local/entries"
+    - "{{ _netboot_menus_dst }}/local/host"
+    - "{{ _netboot_menus_dst }}/local/fragments"
+    - "{{ _netboot_assets_dst }}/kickstart"
+    - "{{ _netboot_assets_dst }}/cloud-init"
+  loop_control:
+    label: "{{ item | basename }}"
+
+- name: Push — stat existing menu.ipxe (source of stock-menu preservation)
+  ansible.builtin.stat:
+    path: "{{ item }}/menu.ipxe"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  register: _netboot_existing_menu_stat
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — stat existing stock-menu.ipxe (target of preservation)
+  ansible.builtin.stat:
+    path: "{{ item }}/stock-menu.ipxe"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  register: _netboot_existing_stock_stat
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — preserve stock netbootxyz menu before overwriting menu.ipxe
+  ansible.builtin.copy:
+    src: "{{ item.0 }}/menu.ipxe"
+    dest: "{{ item.0 }}/stock-menu.ipxe"
+    remote_src: true
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+  loop: >-
+    {{ [_netboot_menus_dst, _netboot_menus_dst + '/local']
+       | zip(_netboot_existing_menu_stat.results | default([]),
+             _netboot_existing_stock_stat.results | default([])) }}
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item.0 else 'canonical' }}"
+  when:
+    - _netboot_have_custom_menu | bool
+    - item.1.stat.exists | default(false)
+    - not (item.2.stat.exists | default(false))
+
+- name: Push — top-level menu.ipxe
+  ansible.builtin.copy:
+    src: "{{ _netboot_cache_dir }}/menu.ipxe"
+    dest: "{{ item }}/menu.ipxe"
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — entries/ (with delete-extras)
+  ansible.posix.synchronize:
+    src: "{{ _netboot_cache_dir }}/entries/"
+    dest: "{{ item }}/entries/"
+    delete: true
+    recursive: true
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown=1000:1000"
+      - "--chmod=F0644,D0755"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — find add_node_iso-managed files in host/ to preserve through delete-extras
+  # The host/ synchronize below uses delete=true scoped to host/, which would
+  # otherwise wipe per-host iPXE scripts written by playbooks/openshift/
+  # add_node_iso.yml. Those files start with a "# Managed by playbooks/
+  # openshift/add_node_iso.yml" header line; collect their basenames and
+  # pass them as rsync excludes so synchronize leaves them alone.
+  # Both canonical menus/host/ and local/host/ are scanned because either
+  # mirror could hold the source-of-truth on a partial run.
+  ansible.builtin.find:
+    paths:
+      - "{{ _netboot_menus_dst }}/host"
+      - "{{ _netboot_menus_dst }}/local/host"
+    patterns: "MAC-*.ipxe"
+    contains: "^# Managed by playbooks/openshift/add_node_iso\\.yml"
+    file_type: file
+  register: _netboot_add_node_managed
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — build rsync exclude list for add_node_iso-managed files
+  ansible.builtin.set_fact:
+    _netboot_host_excludes: >-
+      {{ (_netboot_add_node_managed.files | default([]))
+         | map(attribute='path')
+         | map('basename')
+         | unique
+         | map('regex_replace', '^', '--exclude=')
+         | list }}
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — log preserved add_node_iso-managed files (if any)
+  ansible.builtin.debug:
+    msg: >-
+      host/ sync will preserve {{ _netboot_host_excludes | length }} file(s)
+      managed by add_node_iso.yml: {{ _netboot_host_excludes | map('regex_replace',
+      '^--exclude=', '') | list }}
+  when:
+    - _netboot_have_custom_menu | bool
+    - _netboot_host_excludes | length > 0
+
+- name: Push — host/ (with delete-extras; preserves add_node_iso-managed files)
+  ansible.posix.synchronize:
+    src: "{{ _netboot_cache_dir }}/host/"
+    dest: "{{ item }}/host/"
+    delete: true
+    recursive: true
+    use_ssh_args: true
+    rsync_opts: "{{ ['--chown=1000:1000', '--chmod=F0644,D0755'] + _netboot_host_excludes }}"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — fragments/ (with delete-extras)
+  ansible.posix.synchronize:
+    src: "{{ _netboot_fragments_src }}/"
+    dest: "{{ item }}/fragments/"
+    delete: true
+    recursive: true
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown=1000:1000"
+      - "--chmod=F0644,D0755"
+      - "--exclude=.gitkeep"
+  loop:
+    - "{{ _netboot_menus_dst }}"
+    - "{{ _netboot_menus_dst }}/local"
+  loop_control:
+    label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — kickstart/
+  ansible.posix.synchronize:
+    src: "{{ _netboot_kickstart_src }}/"
+    dest: "{{ _netboot_assets_dst }}/kickstart/"
+    delete: false
+    recursive: true
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown=1000:1000"
+      - "--chmod=F0644,D0755"
+      - "--exclude=.gitkeep"
+
+- name: Push — cloud-init/
+  ansible.posix.synchronize:
+    src: "{{ _netboot_cloudinit_src }}/"
+    dest: "{{ _netboot_assets_dst }}/cloud-init/"
+    delete: false
+    recursive: true
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown=1000:1000"
+      - "--chmod=F0644,D0755"
+      - "--exclude=.gitkeep"

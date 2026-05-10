@@ -1,0 +1,41 @@
+---
+# Copy locally-built kernel/initrd artifacts into the netbootxyz /assets tree.
+# Source path comes from the entry's kernel_src/initrd_src; destination is
+# /assets/local/<id>/. Idempotent via copy's checksum comparison.
+
+- name: Local — define filtered list
+  ansible.builtin.set_fact:
+    _netboot_local_entries: "{{ netboot_entries | selectattr('kind', 'equalto', 'local') | list }}"
+
+- name: Local — ensure /assets/local/<id> exists
+  ansible.builtin.file:
+    path: "{{ netbootxyz_root }}/assets/local/{{ item.id }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+  loop: "{{ _netboot_local_entries }}"
+  loop_control:
+    label: "{{ item.id }}"
+
+- name: Local — copy vmlinuz
+  ansible.builtin.copy:
+    src: "{{ item.kernel_src }}"
+    dest: "{{ netbootxyz_root }}/assets/local/{{ item.id }}/vmlinuz"
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+  loop: "{{ _netboot_local_entries }}"
+  loop_control:
+    label: "{{ item.id }} vmlinuz"
+
+- name: Local — copy initrd
+  ansible.builtin.copy:
+    src: "{{ item.initrd_src }}"
+    dest: "{{ netbootxyz_root }}/assets/local/{{ item.id }}/initrd"
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+  loop: "{{ _netboot_local_entries }}"
+  loop_control:
+    label: "{{ item.id }} initrd"

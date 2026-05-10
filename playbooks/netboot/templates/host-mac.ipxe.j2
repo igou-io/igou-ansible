@@ -1,0 +1,13 @@
+#!ipxe
+### Managed by playbooks/netboot/deploy_assets.yml — do not edit manually.
+### Host pin: mac={{ pin.mac }}{% if pin.hostname is defined %} hostname={{ pin.hostname }}{% endif %}
+
+{% if pin.entry is defined %}
+chain ../entries/{{ pin.entry }}.ipxe
+{% elif pin.fragment is defined %}
+{{ pin.fragment }}
+{% else %}
+kernel {{ pin.kernel | replace('${netboot_self}', netbootxyz_self_url) }} {{ pin.cmdline | default('') | replace('${netboot_self}', netbootxyz_self_url) }}
+initrd {{ pin.initrd | replace('${netboot_self}', netbootxyz_self_url) }}
+boot
+{% endif %}
