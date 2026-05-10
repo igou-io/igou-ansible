@@ -131,16 +131,53 @@
     label: "{{ 'local mirror' if '/local' in item else 'canonical' }}"
   when: _netboot_have_custom_menu | bool
 
-- name: Push — host/ (with delete-extras)
+- name: Push — find add_node_iso-managed files in host/ to preserve through delete-extras
+  # The host/ synchronize below uses delete=true scoped to host/, which would
+  # otherwise wipe per-host iPXE scripts written by playbooks/openshift/
+  # add_node_iso.yml. Those files start with a "# Managed by playbooks/
+  # openshift/add_node_iso.yml" header line; collect their basenames and
+  # pass them as rsync excludes so synchronize leaves them alone.
+  # Both canonical menus/host/ and local/host/ are scanned because either
+  # mirror could hold the source-of-truth on a partial run.
+  ansible.builtin.find:
+    paths:
+      - "{{ _netboot_menus_dst }}/host"
+      - "{{ _netboot_menus_dst }}/local/host"
+    patterns: "MAC-*.ipxe"
+    contains: "^# Managed by playbooks/openshift/add_node_iso\\.yml"
+    file_type: file
+  register: _netboot_add_node_managed
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — build rsync exclude list for add_node_iso-managed files
+  ansible.builtin.set_fact:
+    _netboot_host_excludes: >-
+      {{ (_netboot_add_node_managed.files | default([]))
+         | map(attribute='path')
+         | map('basename')
+         | unique
+         | map('regex_replace', '^', '--exclude=')
+         | list }}
+  when: _netboot_have_custom_menu | bool
+
+- name: Push — log preserved add_node_iso-managed files (if any)
+  ansible.builtin.debug:
+    msg: >-
+      host/ sync will preserve {{ _netboot_host_excludes | length }} file(s)
+      managed by add_node_iso.yml: {{ _netboot_host_excludes | map('regex_replace',
+      '^--exclude=', '') | list }}
+  when:
+    - _netboot_have_custom_menu | bool
+    - _netboot_host_excludes | length > 0
+
+- name: Push — host/ (with delete-extras; preserves add_node_iso-managed files)
   ansible.posix.synchronize:
     src: "{{ _netboot_cache_dir }}/host/"
     dest: "{{ item }}/host/"
     delete: true
     recursive: true
     use_ssh_args: true
-    rsync_opts:
-      - "--chown=1000:1000"
-      - "--chmod=F0644,D0755"
+    rsync_opts: "{{ ['--chown=1000:1000', '--chmod=F0644,D0755'] + _netboot_host_excludes }}"
   loop:
     - "{{ _netboot_menus_dst }}"
     - "{{ _netboot_menus_dst }}/local"
