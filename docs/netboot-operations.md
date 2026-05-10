@@ -231,9 +231,7 @@ After dropping the file: `--tags push,verify`.
 - Entry: delete the dict from `netboot_entries`. Next `--tags render,push,verify`
   cleans up `entries/<id>.ipxe` (synchronize `--delete=true`).
 - Pin: delete from `netboot_host_pins`. Next `--tags render,push,verify` removes
-  the rendered `host/MAC-<hex>.ipxe` — **unless** the file carries the
-  `# Managed by playbooks/openshift/add_node_iso.yml` header, in which case
-  it's preserved (add-node owns those slots).
+  the rendered `host/MAC-<hex>.ipxe`.
 - Hand-written fragment: `git rm playbooks/netboot/files/fragments/<file>.ipxe`,
   then `--tags render,push,verify`.
 - Kickstart / cloud-init file: must be removed manually on TrueNAS — the sync
@@ -244,6 +242,16 @@ After dropping the file: `--tags push,verify`.
 
 ## OpenShift: add a worker via PXE
 
+Two concerns are separated now:
+- **Boot artifacts** (kernel/initrd/rootfs, baked with a token that rotates)
+  are written by `playbooks/openshift/add_node_iso.yml` into
+  `/assets/<cluster>-add-node/`. Re-run when tokens expire.
+- **Per-host iPXE script** (the `host/MAC-<hex>.ipxe` chain target) is owned
+  by `deploy_assets.yml`, rendered from inventory's `netboot_host_pins`. The
+  pin's URL paths are stable across artifact refreshes; render once.
+
+### Initial setup
+
 ```bash
 # 1. Add the worker to inventory (igou-inventory/inventory.yaml):
 #    openshift_workers_<cluster>:
@@ -252,36 +260,63 @@ After dropping the file: `--tags push,verify`.
 #          openshift_add_node_mac: aa:bb:cc:dd:ee:ff
 #          # optional: openshift_add_node_network_config (nmstate) for static IPs
 
-# 2. Set on the cluster host (igou-inventory/host_vars/<cluster>.yml):
+# 2. Add a netboot_host_pins entry for the worker MAC in
+#    igou-inventory/group_vars/all/netboot.yml. Either a direct-boot
+#    fragment that points at the OCP add-node URLs, or an interactive
+#    menu (e.g. the hpg5 example). The fragment should chain to:
+#      http://10.10.45.242/<cluster>-add-node/node.<arch>-vmlinuz
+#      http://10.10.45.242/<cluster>-add-node/node.<arch>-initrd.img
+#      http://10.10.45.242/<cluster>-add-node/node.<arch>-rootfs.img
+
+# 3. Set on the cluster host (igou-inventory/host_vars/<cluster>.yml):
 #    openshift_add_node_arch: x86_64
 #    openshift_add_node_boot_artifacts_base_url: http://10.10.45.242/<cluster>-add-node/
 
-# 3. Generate PXE assets and write the per-host iPXE script
+# 4. Deploy the per-host pin (one time, for this MAC):
+ansible-playbook playbooks/netboot/deploy_assets.yml \
+  -i igou-inventory/inventory.yaml --tags render,push,verify
+
+# 5. Generate the boot artifacts:
 export KUBECONFIG=~/.kube/<cluster>-config
 ansible-playbook playbooks/openshift/add_node_iso.yml \
   -i igou-inventory/inventory.yaml \
   -e target_cluster=<cluster>
 
-# 4. PXE-boot the worker (BMC, IPMI, manual reboot — whatever you do today).
+# 6. PXE-boot the worker (BMC, IPMI, manual reboot — whatever you do today).
 
-# 5. Optionally watch the cluster see it:
+# 7. Optionally watch the cluster see it:
 ansible-playbook playbooks/openshift/add_node_iso.yml \
   -i igou-inventory/inventory.yaml \
   -e target_cluster=<cluster> --tags monitor
 
-# 6. Approve any pending CSRs:
+# 8. Approve any pending CSRs:
 oc get csr
 oc adm certificate approve <name>
 ```
 
-Re-running `add_node_iso.yml` regenerates fresh assets every time (the cluster's
-agent-install token rotates). It's not idempotent in the "no change" sense —
-`changed=2` is normal even on a re-run with no inventory edits.
+### Subsequent runs (token refresh, cluster reinstall, etc.)
 
-The generated `host/MAC-<hex>.ipxe` carries a `# Managed by ...` header line.
-`deploy_assets.yml` recognises that header and skips the file in its `host/`
-synchronize delete-extras pass — both playbooks coexist on the same
-`config/menus/host/` namespace.
+Just re-run step 5. The pin file in `host/` doesn't need updating — the
+URLs it references stay the same; only the artifacts behind those URLs
+rotate.
+
+```bash
+ansible-playbook playbooks/openshift/add_node_iso.yml \
+  -i igou-inventory/inventory.yaml -e target_cluster=<cluster>
+```
+
+`add_node_iso.yml` is intentionally not idempotent: `oc adm node-image
+create --pxe` always re-bakes the artifacts, so `changed=2` (or so) on
+every run is normal.
+
+### Cleanup of older flat-path / managed-by-add-node files
+
+`add_node_iso.yml` retains a cleanup pass that removes any leftover files
+from older versions of itself: anything matching `*-add-node-*.ipxe` or
+`MAC-*.ipxe` files that contain the legacy `# Managed by playbooks/
+openshift/add_node_iso.yml` header. Idempotent (no-op once the
+deployment has migrated). Pin files maintained by deploy_assets.yml are
+NOT touched (they have a different managed-by header).
 
 ---
 
@@ -429,7 +464,7 @@ ansible truenas ... 'docker exec ix-netbootxyz-netbootxyz-1 cp /config/menus/sto
 │   ├── menu.ipxe                       # rendered (or stock if no custom content)
 │   ├── stock-menu.ipxe                 # preserved upstream menu
 │   ├── entries/<id>.ipxe               # one per netboot_entries
-│   ├── host/MAC-<hex>.ipxe             # one per pin (also add-node-managed files)
+│   ├── host/MAC-<hex>.ipxe             # one per pin
 │   ├── fragments/<file>.ipxe           # auto-included custom .ipxe
 │   ├── local/                          # mirror of menu/entries/host/fragments
 │   └── <upstream menus>.ipxe           # rhcos.ipxe, ubuntu.ipxe, …  (untouched)

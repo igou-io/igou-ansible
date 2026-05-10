@@ -1,42 +1,52 @@
 ---
 # Add worker nodes to an existing OpenShift cluster by generating PXE
-# assets via `oc adm node-image create --pxe` and copying them to the
-# TrueNAS netbootxyz container.
+# boot artifacts via `oc adm node-image create --pxe` and copying them
+# into the TrueNAS netbootxyz container's /assets/ tree.
 #
 # Source procedure:
 #   https://github.com/openshift/openshift-docs/blob/main/nodes/nodes/nodes-nodes-adding-node-iso.adoc
 #
-# Layout (after this playbook runs against `truenas`):
-#   /mnt/ssd/containers/netbootxyz/
-#     assets/<cluster>-add-node/
-#       node.<arch>-vmlinuz, node.<arch>-initrd.img, node.<arch>-rootfs.img
-#     config/menus/host/MAC-<hexraw>.ipxe   # one per worker; chained from
-#                                             menu.ipxe via TFTP
+# What this playbook owns:
+#   /mnt/ssd/containers/netbootxyz/assets/<cluster>-add-node/
+#     node.<arch>-vmlinuz, node.<arch>-initrd.img, node.<arch>-rootfs.img
 #
-# The deployed iPXE script in host/MAC-<hex>.ipxe carries a managed-by
-# header. host/MAC-<hex>.ipxe is shared with future
-# playbooks/netboot/deploy_assets.yml (which would render it from
-# inventory's netboot_host_pins[].fragment); add-node currently
-# overwrites whatever was there. If a worker MAC also has a static
-# netboot_host_pins entry (e.g. hpg5 / f8:b4:6a:ab:55:c7), running
-# add_node_iso.yml replaces it. Re-run is the only way to refresh.
+# What this playbook does NOT own (deploy_assets.yml owns it):
+#   /mnt/ssd/containers/netbootxyz/config/menus/host/MAC-<hex>.ipxe
 #
-# Operator workflow:
+# The per-host iPXE script that points iPXE at the boot artifacts is
+# rendered by playbooks/netboot/deploy_assets.yml from inventory's
+# netboot_host_pins. The operator maintains the pin entry there;
+# add_node_iso.yml only refreshes the boot artifacts (kernel/initrd/
+# rootfs) when invoked. The artifacts behind the URL rotate (token
+# embedded in initrd has limited lifetime); the pin file stays stable.
+#
+# Operator workflow (initial):
 #   1. Add worker(s) to inventory under group `openshift_workers_<cluster>`
 #      with at minimum `openshift_add_node_mac`. Add
 #      `openshift_add_node_network_config` (nmstate) for static IPs.
-#   2. Set on the cluster host (e.g., host_vars/ocp.yml):
+#   2. Add a netboot_host_pins entry for the worker MAC in
+#      igou-inventory/group_vars/all/netboot.yml. The pin's iPXE script
+#      should reference http://<netboot-host>/<cluster>-add-node/{vmlinuz,
+#      initrd.img,rootfs.img} (e.g. as a menu option, or directly).
+#   3. Set on the cluster host (e.g., host_vars/ocp.yml):
 #        openshift_add_node_arch: x86_64
 #        openshift_add_node_boot_artifacts_base_url: http://<netboot-host>/<cluster>-add-node/
-#   3. export KUBECONFIG=<path-to-cluster-kubeconfig>
-#   4. ansible-navigator run playbooks/openshift/add_node_iso.yml \
-#        -i igou-inventory/inventory.yaml \
-#        -e target_cluster=<cluster>
-#   5. PXE-boot the worker.
-#   6. Optionally: re-run with `--tags monitor` to watch the join.
-#   7. Approve any pending CSRs manually:
+#   4. Deploy the pin once:
+#        ansible-playbook playbooks/netboot/deploy_assets.yml \
+#          -i igou-inventory/inventory.yaml --tags render,push,verify
+#   5. export KUBECONFIG=<path-to-cluster-kubeconfig>
+#   6. Generate / refresh the boot artifacts:
+#        ansible-playbook playbooks/openshift/add_node_iso.yml \
+#          -i igou-inventory/inventory.yaml -e target_cluster=<cluster>
+#   7. PXE-boot the worker.
+#   8. Optionally: re-run with `--tags monitor` to watch the join.
+#   9. Approve any pending CSRs manually:
 #        oc get csr
 #        oc adm certificate approve <name>
+#
+# Operator workflow (subsequent runs, e.g. token refresh):
+#   Steps 5-9 only. The pin file stays in place; just refresh the
+#   artifacts behind the URL.
 
 - name: Generate OpenShift add-node PXE assets
   # default('all') keeps ansible-lint happy at parse time; target_cluster must
@@ -206,29 +216,9 @@
     truenas_menus_root: /mnt/ssd/containers/netbootxyz/config/menus
     asset_subdir: "{{ cluster_host }}-add-node"
   tasks:
-    - name: Verify netbootxyz menus directory exists
-      ansible.builtin.stat:
-        path: "{{ truenas_menus_root }}"
-      register: _menus_stat
-
-    - name: Fail if netbootxyz menus directory is missing
-      ansible.builtin.assert:
-        that:
-          - _menus_stat.stat.exists
-          - _menus_stat.stat.isdir
-        fail_msg: "netbootxyz menus directory {{ truenas_menus_root }} is missing"
-
     - name: Ensure asset destination directory exists
       ansible.builtin.file:
         path: "{{ truenas_assets_root }}/{{ asset_subdir }}"
-        state: directory
-        mode: "0755"
-        owner: "1000"
-        group: "1000"
-
-    - name: Ensure host pin directory exists on TrueNAS
-      ansible.builtin.file:
-        path: "{{ truenas_menus_root }}/host"
         state: directory
         mode: "0755"
         owner: "1000"
@@ -245,36 +235,40 @@
           - "--exclude=nodes-config.yaml"
           - "--chown=1000:1000"
 
-    - name: Render iPXE script with managed-by header into host/MAC-<hex>.ipxe
-      ansible.builtin.copy:
-        dest: "{{ truenas_menus_root }}/host/MAC-{{ hostvars[item].openshift_add_node_mac | replace(':', '') | lower }}.ipxe"
-        content: |
-          #!ipxe
-          # Managed by playbooks/openshift/add_node_iso.yml
-          # Cluster: {{ cluster_host }}
-          # Worker:  {{ item }} (MAC {{ hostvars[item].openshift_add_node_mac }})
-          # DO NOT EDIT -- re-run add_node_iso.yml to refresh.
-          {{ lookup('file', work_dir + '/node.' + arch + '.ipxe') | regex_replace('^#!ipxe\r?\n', '') }}
-        mode: "0644"
-        owner: "1000"
-        group: "1000"
-      loop: "{{ groups['openshift_workers_' + cluster_host] }}"
-      loop_control:
-        label: "{{ item }}"
+    # Cleanup of stale per-host iPXE scripts written by older versions of
+    # this playbook. The host/MAC-<hex>.ipxe slot is now owned by
+    # playbooks/netboot/deploy_assets.yml (rendered from inventory's
+    # netboot_host_pins). Removing only files that carry the old "Managed
+    # by playbooks/openshift/add_node_iso.yml" header — leaves
+    # deploy_assets-managed pins untouched. Plus the even-older
+    # *-add-node-*.ipxe flat-path filenames if any linger.
+    - name: Cleanup -- locate stale add_node_iso-written iPXE scripts on TrueNAS
+      ansible.builtin.find:
+        paths:
+          - "{{ truenas_menus_root }}"
+          - "{{ truenas_menus_root }}/local"
+          - "{{ truenas_menus_root }}/host"
+          - "{{ truenas_menus_root }}/local/host"
+        patterns: "*-add-node-*.ipxe,MAC-*.ipxe"
+        contains: "^# Managed by playbooks/openshift/add_node_iso\\.yml"
+        file_type: file
+      register: _stale_add_node_files
 
-    - name: Cleanup -- locate stale flat-path add-node iPXE scripts on TrueNAS
+    - name: Cleanup -- find any add_node_iso flat-path filenames (no content match needed)
       ansible.builtin.find:
         paths:
           - "{{ truenas_menus_root }}"
           - "{{ truenas_menus_root }}/local"
         patterns: "*-add-node-*.ipxe"
         file_type: file
-      register: _stale_add_node_files
+      register: _stale_flat_path_files
 
-    - name: Cleanup -- remove each stale flat-path file
+    - name: Cleanup -- remove each stale file
       ansible.builtin.file:
         path: "{{ item.path }}"
         state: absent
-      loop: "{{ _stale_add_node_files.files }}"
+      loop: >-
+        {{ (_stale_add_node_files.files | default([]))
+           + (_stale_flat_path_files.files | default([])) }}
       loop_control:
         label: "{{ item.path }}"

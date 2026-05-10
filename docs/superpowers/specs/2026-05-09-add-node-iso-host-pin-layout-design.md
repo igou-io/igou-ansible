@@ -1,7 +1,7 @@
 # OpenShift add-node ISO — host-pin layout compatibility — design
 
 **Date:** 2026-05-09
-**Status:** approved (brainstorming complete; user authorized auto-accept)
+**Status:** SUPERSEDED 2026-05-10. The decision to have `add_node_iso.yml` write `host/MAC-<hex>.ipxe` with a managed-by header was reverted. `deploy_assets.yml` is now the sole writer of `host/MAC-<hex>.ipxe`; `add_node_iso.yml` writes only the boot artifacts, and the per-host iPXE script is rendered from inventory's `netboot_host_pins`. The cleanup task added by this spec stays in `add_node_iso.yml` (now scoped to remove its own legacy output). See the playbook header comment in `playbooks/openshift/add_node_iso.yml` for the current design.
 **Scope:** Update `playbooks/openshift/add_node_iso.yml` Play 2 so the per-MAC iPXE script lands at the path the live `menu.ipxe` chain actually loads (`config/menus/host/MAC-<hexraw>.ipxe`). Drop the now-dead flat-path and `local/` mirror writes. Add a one-shot cleanup pass for stale flat-path files left by previous runs.
 
 ## Background
