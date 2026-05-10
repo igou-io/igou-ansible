@@ -34,7 +34,7 @@ Connection (`igou-inventory/group_vars/routeros.yml`):
 
 - `ansible_connection: ansible.netcommon.network_cli`
 - `ansible_network_os: community.routeros.routeros`
-- `ansible_port: 3480`
+- `ansible_port:` (inventory-managed; non-default SSH port)
 - `ansible_user: igou+cet1024w` *(changed from `ansible-netboot+cet1024w`; the obsolete bootstrap comment block above the line will be pruned in the same edit)*
 
 The `+cet1024w` terminal hint stays — it prevents network_cli timeouts on long output lines.
@@ -153,7 +153,7 @@ Per host:
 3. **Disable unused services.** For each name in `routeros_disabled_services`:
    - Read `/ip service print where name=<name>`. If `disabled=no`, run `/ip service set <name> disabled=yes`.
    - `ssh` and `winbox` are explicitly excluded — never touched.
-   - SSH port (3480) is not managed here — changing it mid-run would lock out the connection.
+   - The SSH port (set via inventory's `ansible_port`) is not managed here — changing it mid-run would lock out the connection.
 4. **Recap.** Final `community.routeros.command` reads `/system clock print` and `/ip service print`; debug-printed when run with `-v`.
 
 Properties:
@@ -226,7 +226,7 @@ ansible-navigator run playbooks/routeros/upgrade_apply.yml -i igou-inventory/inv
 
 Used only by `upgrade_apply.yml`.
 
-1. `wait_for` (control-node side) on `inventory_hostname`, port 3480, `delay: 30, timeout: 600`. Waits for SSH to close, then come back.
+1. `wait_for` (control-node side) on `inventory_hostname`, port from `ansible_port`, `delay: 30, timeout: 600`. Waits for SSH to close, then come back.
 2. `meta: reset_connection` to drop the stale network_cli session.
 3. Smoke test: `community.routeros.command: /system identity print`.
 

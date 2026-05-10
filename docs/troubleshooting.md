@@ -77,7 +77,7 @@ oc adm wait-for ... # or oc get nodes -w
 - Connection vars in `igou-inventory/group_vars/routeros.yml`: user is
   `igou+cet1024w` (the `+cet1024w` suffix hints to RouterOS the client
   supports specific terminal sizes / encodings — required for the API).
-- Port is `3480` (custom, not default `8728`).
+- The connection uses a non-default SSH port set in `group_vars/routeros.yml::ansible_port` — not the default 22 and not the RouterOS API default 8728.
 - If the command hangs: the device may have an active interactive session
   blocking new ones. Close Winbox, retry.
 

@@ -6,7 +6,7 @@
 
 **Architecture:** Single playbook `playbooks/routeros/deploy_netboot_binaries.yml` with four tagged stages backed by per-stage task files (`build`, `upload`, `dhcp`, `verify`). The build stage runs `delegate_to: localhost` and invokes `podman run ghcr.io/netbootxyz/builder:latest ansible-playbook -i localhost, /ansible/site.yml` against a templated `user_overrides.yml`; the other three stages run against the rb5009 via `community.routeros.command`. No molecule scenarios — consistent with the rest of `playbooks/routeros/`. Idempotency is enforced via build-output hashing, file size compare for uploads, and `print count-only` checks before each RouterOS mutation.
 
-**Tech Stack:** Ansible (`community.routeros.command`, `ansible.netcommon.net_put`, `ansible.builtin.git`, `ansible.builtin.template`, `ansible.builtin.command`), Podman (for the netboot.xyz builder container), Jinja2 templates, MikroTik RouterOS RouterOS connection over SSH (`ansible_port=3480`), `curl` (for the TFTP-fetch verification probes).
+**Tech Stack:** Ansible (`community.routeros.command`, `ansible.netcommon.net_put`, `ansible.builtin.git`, `ansible.builtin.template`, `ansible.builtin.command`), Podman (for the netboot.xyz builder container), Jinja2 templates, MikroTik RouterOS connection over SSH (port from inventory's `ansible_port`), `curl` (for the TFTP-fetch verification probes).
 
 ---
 
@@ -38,7 +38,7 @@ These are *assumptions baked into this plan*. If any is wrong, stop and clarify 
 
 1. **Control node has podman.** This codebase's CLAUDE.md confirms it. `podman --version` should work.
 2. **Control node has internet to ghcr.io and github.com.** Per CLAUDE.md, github.com is whitelisted; ghcr.io is also allowed because the EE build CI relies on it.
-3. **rb5009 reachable on `ansible_port=3480` from the control node.** Recent commits in this branch have already deployed playbooks against it.
+3. **rb5009 reachable on the inventory-configured `ansible_port` from the control node.** Recent commits in this branch have already deployed playbooks against it.
 4. **An rb5009 nbxyz container existed during early experimentation** (the matching design has since been deleted as the homelab consolidated on the TrueNAS-hosted netbootxyz). This plan does NOT remove it; if the container is still running, the cleanup README handles it. The new TFTP files don't conflict with anything that container did, because the binaries land in `flash:/netboot/` (new dir) and the container's data was in `flash:/containers/netbootxyz/`.
 5. **The DHCP server names on rb5009 for the two target subnets are not yet known.** Task 1 has the operator confirm them with `/ip dhcp-server print` before populating the inventory placeholders.
 6. **Existing `/ip dhcp-server network` rows for `10.10.9.0/24` and `10.10.45.0/24` exist.** Task 6 modifies them with `set [find address=...]` — if the rows don't exist, the `set` is a no-op and Task 7 verify will fail loudly.

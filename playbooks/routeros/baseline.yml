@@ -5,9 +5,9 @@
 #   - Specified IP services disabled (telnet, ftp, www, www-ssl,
 #     api, api-ssl by default)
 #
-# ssh and winbox are explicitly excluded from the disable list. SSH
-# port (3480) is not managed here — changing it mid-run would lock out
-# the connection.
+# ssh and winbox are explicitly excluded from the disable list. The SSH
+# port (set via inventory's ansible_port) is not managed here — changing
+# it mid-run would lock out the connection.
 #
 # Run idempotently; second run reports changed=0.
 - name: Apply RouterOS baseline configuration

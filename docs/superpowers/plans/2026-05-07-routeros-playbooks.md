@@ -68,15 +68,16 @@ Open `/workspace/igou-inventory/group_vars/routeros.yml`. Replace the entire fil
 # MikroTik RouterOS devices.
 #
 # These hosts listen for SSH on a non-default port. The local user's
-# ~/.ssh/config sets `Port 3480` for these hostnames; we mirror that here
-# so the connection works from inside an execution environment too, where
-# the user's ssh config is not available.
+# ~/.ssh/config sets that port for these hostnames; we mirror it here
+# (in the live inventory) so the connection works from inside an
+# execution environment too, where the user's ssh config is not
+# available.
 #
 # The `+cet1024w` terminal hint prevents network_cli timeouts on long
 # output lines.
 ansible_connection: ansible.netcommon.network_cli
 ansible_network_os: community.routeros.routeros
-ansible_port: 3480
+ansible_port: <inventory-managed; non-default SSH port>
 ansible_user: igou+cet1024w
 
 # --- Variables consumed by playbooks/routeros/*.yml ---
@@ -590,9 +591,9 @@ EOF
 #   - System timezone set
 #   - Specified IP services disabled (telnet, ftp, www, www-ssl, api, api-ssl by default)
 #
-# ssh and winbox are explicitly excluded from the disable list. SSH port
-# (3480) is not managed here — changing it mid-run would lock out the
-# connection.
+# ssh and winbox are explicitly excluded from the disable list. The SSH
+# port (set via inventory's ansible_port) is not managed here — changing
+# it mid-run would lock out the connection.
 #
 # Run idempotently; second run reports changed=0.
 - name: Apply RouterOS baseline configuration
@@ -838,11 +839,12 @@ EOF
 # come back, then smoke-test the connection. Used by upgrade_apply.yml.
 #
 # Operates on `inventory_hostname` and the inventory's ansible_port
-# (default 3480). Uses control-node-side wait_for; no agent on device.
+# (must be set; no fallback). Uses control-node-side wait_for; no agent
+# on device.
 - name: "Wait for {{ inventory_hostname }} SSH to drop"
   ansible.builtin.wait_for:
     host: "{{ inventory_hostname }}"
-    port: "{{ ansible_port | default(3480) }}"
+    port: "{{ ansible_port }}"
     state: stopped
     delay: 5
     timeout: 60
@@ -851,7 +853,7 @@ EOF
 - name: "Wait for {{ inventory_hostname }} SSH to return"
   ansible.builtin.wait_for:
     host: "{{ inventory_hostname }}"
-    port: "{{ ansible_port | default(3480) }}"
+    port: "{{ ansible_port }}"
     state: started
     delay: 30
     timeout: 600

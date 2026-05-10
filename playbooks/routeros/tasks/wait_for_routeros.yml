@@ -2,12 +2,13 @@
 # Wait for a RouterOS device to disconnect (after a /system reboot) and
 # come back, then smoke-test the connection. Used by upgrade_apply.yml.
 #
-# Operates on `inventory_hostname` and the inventory's ansible_port
-# (default 3480). Uses control-node-side wait_for; no agent on device.
+# Operates on `inventory_hostname` and the inventory-managed ansible_port
+# (must be set; no fallback). Uses control-node-side wait_for; no agent
+# on device.
 - name: Wait for SSH port to drop
   ansible.builtin.wait_for:
     host: "{{ inventory_hostname }}"
-    port: "{{ ansible_port | default(3480) }}"
+    port: "{{ ansible_port }}"
     state: stopped
     delay: 5
     timeout: 60
@@ -16,7 +17,7 @@
 - name: Wait for SSH port to return
   ansible.builtin.wait_for:
     host: "{{ inventory_hostname }}"
-    port: "{{ ansible_port | default(3480) }}"
+    port: "{{ ansible_port }}"
     state: started
     delay: 30
     timeout: 600

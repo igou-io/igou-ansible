@@ -29,7 +29,7 @@ This replaces an earlier (since-abandoned) plan to host netbootxyz as a RouterOS
 
 ## Inventory & connection
 
-No connection changes. rb5009 already in `igou-inventory/inventory.yaml`; `igou-inventory/group_vars/routeros.yml` already configures network_cli + port 3480 + user `igou+cet1024w`.
+No connection changes. rb5009 already in `igou-inventory/inventory.yaml`; `igou-inventory/group_vars/routeros.yml` already configures network_cli + the inventory-managed SSH port + the management user.
 
 The TrueNAS container's IP (`10.10.45.242`) lives in `group_vars/truenas.yml` under `truenas_docker_containers[name=netbootxyz].networks.vlan45.ipv4_address`. We don't reference truenas inventory directly — the address is captured as a string in the new variable `netboot_chainload_host`. If the TrueNAS container ever moves, both inventory entries get updated together.
 
