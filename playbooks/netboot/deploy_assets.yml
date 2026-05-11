@@ -1,41 +1,39 @@
 ---
-# Manage netboot.xyz menu, kickstart/cloud-init seeds, and per-host PXE
-# pins on the TrueNAS-hosted netbootxyz container.
+# Manage netboot menu, kickstart/cloud-init seeds, and per-host PXE
+# pins. Post-2026-05-11: assets live on the public nginx container
+# (https://public.igou.systems/boot-files/); per-host pins live on
+# rb5009 flash. The TrueNAS netbootxyz container is retired.
 #
 # Stages (each tag-gated):
-#   preflight  — schema validation, always runs.
-#   render     — Jinja-render menu.ipxe + entries/ + host/ to .cache/.
-#   push       — sync rendered + static text content to TrueNAS.
-#   fetch      — idempotent download of upstream URLs into /assets.
-#   local      — copy locally-built kernels/initrds into /assets.
-#   verify     — HTTP probes for menu.ipxe, host files, and ISOs.
+#   preflight  — schema validation + HTTPS reachability.
+#   render     — Jinja-render menu.ipxe + entries/ + per_host/ to .cache/.
+#   push       — sync rendered + static text to public nginx; upload
+#                per-host pin files and /ip tftp rows to rb5009.
+#   fetch      — idempotent download of upstream ISO URLs into
+#                netboot_public_root/iso/.
+#   local      — copy locally-built kernels/initrds into
+#                netboot_public_root/local/.
+#   verify     — HTTPS probes for menu.ipxe + entries; rb5009 /file +
+#                /ip tftp checks for pins; HEAD probes for ISO URLs.
 #
 # Inventory schema:
-#   See igou-inventory/group_vars/all/netboot.yml and the design spec
-#   docs/superpowers/specs/2026-05-08-netboot-asset-management-design.md.
+#   igou-inventory/group_vars/all/netboot.yml (netboot_public_*,
+#   netboot_host_pins, netboot_entries).
+#   igou-inventory/group_vars/routeros.yml (netboot_pin_flash_subdir).
 #
 # Common invocations:
-#   ansible-navigator run playbooks/netboot/deploy_assets.yml \
+#   ansible-playbook playbooks/netboot/deploy_assets.yml \
+#     -i 'localhost ansible_connection=local,' \
 #     -i igou-inventory/inventory.yaml
-#   # local-only render, no TrueNAS contact:
-#   ansible-navigator run playbooks/netboot/deploy_assets.yml \
-#     -i igou-inventory/inventory.yaml \
-#     --tags render -e netbootxyz_host=localhost --check
-#   # menu touch-up, skip the slow stages:
-#   ansible-navigator run playbooks/netboot/deploy_assets.yml \
+#   # menu touch-up, skip slow stages:
+#   ansible-playbook playbooks/netboot/deploy_assets.yml \
+#     -i 'localhost ansible_connection=local,' \
 #     -i igou-inventory/inventory.yaml \
 #     --tags render,push,verify
-#
-# Add an entry: edit netboot_entries in
-#   igou-inventory/group_vars/all/netboot.yml.
-# Add a per-host pin: edit netboot_host_pins in the same file.
-# Add a hand-written .ipxe fragment: drop it in
-#   playbooks/netboot/files/fragments/. Auto-included on next render.
 
-- name: Deploy netboot.xyz custom menu and assets
-  hosts: "{{ netbootxyz_host | default('truenas') }}"
+- name: Deploy netboot menu and assets
+  hosts: localhost
   gather_facts: false
-  become: true
   tasks:
     - name: Preflight stage
       ansible.builtin.import_tasks: tasks/preflight.yml
@@ -45,6 +43,9 @@
       tags: [render]
     - name: Push text stage
       ansible.builtin.import_tasks: tasks/push_text.yml
+      tags: [push]
+    - name: Push pins to rb5009
+      ansible.builtin.import_tasks: tasks/push_pins_rb5009.yml
       tags: [push]
     - name: Fetch binaries stage
       ansible.builtin.import_tasks: tasks/fetch_binaries.yml
