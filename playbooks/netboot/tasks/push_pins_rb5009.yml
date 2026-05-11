@@ -1,0 +1,203 @@
+---
+# Upload per-host pin files (MAC-<hexraw>.ipxe / HOSTNAME-<host>.ipxe)
+# from the render cache to rb5009 flash, and register a /ip tftp row
+# per file. Stale files and rows (pins removed from inventory since
+# the last run) are pruned.
+#
+# Idempotency: each upload step compares local file size to the
+# existing router copy; the row-add step uses count-only checks; the
+# prune step computes set differences between expected vs. actual.
+
+- name: Push pins — compute expected pin filenames
+  ansible.builtin.set_fact:
+    _pin_expected_files: >-
+      {{
+        (netboot_host_pins
+         | map(attribute='mac')
+         | map('lower')
+         | map('regex_replace', ':', '')
+         | map('regex_replace', '^', 'MAC-')
+         | map('regex_replace', '$', '.ipxe')
+         | list)
+        +
+        (netboot_host_pins
+         | selectattr('hostname', 'defined')
+         | map(attribute='hostname')
+         | map('regex_replace', '^', 'HOSTNAME-')
+         | map('regex_replace', '$', '.ipxe')
+         | list)
+      }}
+  delegate_to: localhost
+  run_once: true
+
+- name: Push pins — ensure flash subdirectory exists on rb5009
+  community.routeros.command:
+    commands:
+      - >-
+        /file print count-only where
+        name="{{ netboot_pin_flash_subdir }}" and type=directory
+  register: _pin_dir_count
+  changed_when: false
+  delegate_to: rb5009.igou.systems
+
+- name: Push pins — create flash subdirectory if missing
+  community.routeros.command:
+    commands:
+      - "/file add name={{ netboot_pin_flash_subdir }} type=directory"
+  when: (_pin_dir_count.stdout[0] | trim | int) == 0
+  changed_when: true
+  delegate_to: rb5009.igou.systems
+
+- name: Push pins — stat each local pin file
+  ansible.builtin.stat:
+    path: "{{ _netboot_cache_dir }}/per_host/{{ item }}"
+  loop: "{{ _pin_expected_files }}"
+  loop_control:
+    label: "{{ item }}"
+  register: _pin_local_stat
+  delegate_to: localhost
+
+- name: Push pins — assert each expected pin exists locally
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Pin file {{ item.item }} is expected (from inventory) but missing
+      in render cache {{ _netboot_cache_dir }}/per_host/. Run --tags
+      render first.
+  loop: "{{ _pin_local_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Push pins — count rb5009 file rows matching local size
+  community.routeros.command:
+    commands:
+      - >-
+        /file print count-only where
+        name="{{ netboot_pin_flash_subdir }}/{{ item.0 }}"
+        and size={{ item.1.stat.size }}
+  register: _pin_router_size_match
+  changed_when: false
+  delegate_to: rb5009.igou.systems
+  loop: "{{ _pin_expected_files | zip(_pin_local_stat.results) | list }}"
+  loop_control:
+    label: "{{ item.0 }}"
+
+- name: Push pins — upload each pin if missing or size differs
+  ansible.netcommon.net_put:
+    src: "{{ _netboot_cache_dir }}/per_host/{{ item.0 }}"
+    dest: "{{ netboot_pin_flash_subdir }}/{{ item.0 }}"
+  vars:
+    ansible_command_timeout: 60
+  when:
+    - (_pin_router_size_match.results[ansible_loop.index0].stdout[0] | trim | int) == 0
+  loop: "{{ _pin_expected_files | zip(_pin_local_stat.results) | list }}"
+  loop_control:
+    label: "{{ item.0 }}"
+    extended: true
+  delegate_to: rb5009.igou.systems
+
+- name: Push pins — count /ip tftp rows for each pin
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp print count-only where
+        req-filename="{{ item }}" and
+        real-filename="{{ netboot_pin_flash_subdir }}/{{ item }}"
+  register: _pin_tftp_row_count
+  changed_when: false
+  delegate_to: rb5009.igou.systems
+  loop: "{{ _pin_expected_files }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Push pins — add /ip tftp row for each pin if missing
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp add
+        req-filename="{{ item }}"
+        real-filename="{{ netboot_pin_flash_subdir }}/{{ item }}"
+        allow=yes read-only=yes
+  when: (_pin_tftp_row_count.results[ansible_loop.index0].stdout[0] | trim | int) == 0
+  changed_when: true
+  delegate_to: rb5009.igou.systems
+  loop: "{{ _pin_expected_files }}"
+  loop_control:
+    label: "{{ item }}"
+    extended: true
+
+# --- Prune ----------------------------------------------------------
+
+- name: Push pins — list current pin files in rb5009 flash
+  community.routeros.command:
+    commands:
+      - >-
+        :foreach i in=[/file find where name~"^{{ netboot_pin_flash_subdir }}/(MAC|HOSTNAME)-"]
+        do={ :put [/file get $i name] }
+  register: _pin_router_files
+  changed_when: false
+  delegate_to: rb5009.igou.systems
+
+- name: Push pins — compute stale file basenames
+  ansible.builtin.set_fact:
+    _pin_stale_files: >-
+      {{
+        (_pin_router_files.stdout[0]
+          | default('')
+          | split('\n')
+          | map('trim')
+          | reject('equalto', '')
+          | map('regex_replace', '^' ~ (netboot_pin_flash_subdir | regex_escape) ~ '/', '')
+          | list)
+        | difference(_pin_expected_files)
+      }}
+  delegate_to: localhost
+  run_once: true
+
+- name: Push pins — remove stale pin files from rb5009 flash
+  community.routeros.command:
+    commands:
+      - >-
+        /file remove [find where name="{{ netboot_pin_flash_subdir }}/{{ item }}"]
+  loop: "{{ _pin_stale_files }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+  delegate_to: rb5009.igou.systems
+
+- name: Push pins — list current /ip tftp rows pointing at the flash subdir
+  community.routeros.command:
+    commands:
+      - >-
+        :foreach i in=[/ip tftp find where real-filename~"^{{ netboot_pin_flash_subdir }}/"]
+        do={ :put [/ip tftp get $i req-filename] }
+  register: _pin_router_tftp_rows
+  changed_when: false
+  delegate_to: rb5009.igou.systems
+
+- name: Push pins — compute stale tftp req-filenames
+  ansible.builtin.set_fact:
+    _pin_stale_tftp_rows: >-
+      {{
+        (_pin_router_tftp_rows.stdout[0]
+          | default('')
+          | split('\n')
+          | map('trim')
+          | reject('equalto', '')
+          | list)
+        | difference(_pin_expected_files)
+      }}
+  delegate_to: localhost
+  run_once: true
+
+- name: Push pins — remove stale /ip tftp rows
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp remove [find where req-filename="{{ item }}"]
+  loop: "{{ _pin_stale_tftp_rows }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+  delegate_to: rb5009.igou.systems
