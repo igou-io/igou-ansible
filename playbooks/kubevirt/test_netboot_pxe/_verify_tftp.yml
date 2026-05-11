@@ -17,7 +17,20 @@
   ansible.builtin.set_fact:
     _pxe_expected_pin: "MAC-{{ vm_mac | regex_replace(':', '') | lower }}.ipxe"
 
-- name: "Read /ip tftp row for {{ vm_name }}'s MAC (post-boot)"
+- name: "Count /ip tftp rows for {{ vm_name }}'s MAC (post-boot)"
+  # count-only avoids RouterOS's header-only output when there are no matches
+  # ('Flags: X - disabled' is non-empty even on zero rows). With count-only,
+  # stdout is exactly the number of matching rows.
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp print count-only where
+        req-filename="{{ _pxe_expected_pin }}"
+  register: _pxe_tftp_post_count
+  changed_when: false
+  delegate_to: "{{ pxe_test_router }}"
+
+- name: "Read /ip tftp row hit counter for {{ vm_name }} (when row exists)"
   community.routeros.command:
     commands:
       - >-
@@ -26,6 +39,7 @@
   register: _pxe_tftp_post
   changed_when: false
   delegate_to: "{{ pxe_test_router }}"
+  when: (_pxe_tftp_post_count.stdout[0] | trim | int) > 0
 
 - name: "Parse post-boot hit count for {{ vm_name }}"
   ansible.builtin.set_fact:
@@ -37,12 +51,12 @@
   ansible.builtin.assert:
     that:
       - (expected_outcome == 'sent'
-          and (_pxe_tftp_post.stdout[0] | default('') | trim) != ''
+          and (_pxe_tftp_post_count.stdout[0] | trim | int) > 0
           and (_pxe_hits_post_pin | int) > (tftp_hits_pre | int))
         or
         (expected_outcome == 'not_found'
-          and (_pxe_tftp_post.stdout[0] | default('') | trim) == '')
+          and (_pxe_tftp_post_count.stdout[0] | trim | int) == 0)
     fail_msg: >-
       VM {{ vm_name }} (MAC {{ vm_mac }}): expected '{{ expected_outcome }}'
-      but row present={{ (_pxe_tftp_post.stdout[0] | default('') | trim) != '' }},
+      but rows={{ _pxe_tftp_post_count.stdout[0] | trim }},
       hits pre={{ tftp_hits_pre }} post={{ _pxe_hits_post_pin }}.
