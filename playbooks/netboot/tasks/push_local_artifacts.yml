@@ -1,7 +1,7 @@
 ---
-# Copy locally-built kernel/initrd artifacts into the netbootxyz /assets tree.
+# Copy locally-built kernel/initrd artifacts into the public nginx tree.
 # Source path comes from the entry's kernel_src/initrd_src; destination is
-# /assets/local/<id>/. Idempotent via copy's checksum comparison.
+# {{ netboot_public_root }}/local/<id>/. Idempotent via copy's checksum comparison.
 
 - name: Local — define filtered list
   ansible.builtin.set_fact:
@@ -9,10 +9,10 @@
 
 - name: Local — ensure /assets/local/<id> exists
   ansible.builtin.file:
-    path: "{{ netbootxyz_root }}/assets/local/{{ item.id }}"
+    path: "{{ netboot_public_root }}/local/{{ item.id }}"
     state: directory
-    owner: "1000"
-    group: "1000"
+    owner: "950"
+    group: "950"
     mode: "0755"
   loop: "{{ _netboot_local_entries }}"
   loop_control:
@@ -21,9 +21,9 @@
 - name: Local — copy vmlinuz
   ansible.builtin.copy:
     src: "{{ item.kernel_src }}"
-    dest: "{{ netbootxyz_root }}/assets/local/{{ item.id }}/vmlinuz"
-    owner: "1000"
-    group: "1000"
+    dest: "{{ netboot_public_root }}/local/{{ item.id }}/vmlinuz"
+    owner: "950"
+    group: "950"
     mode: "0644"
   loop: "{{ _netboot_local_entries }}"
   loop_control:
@@ -32,9 +32,9 @@
 - name: Local — copy initrd
   ansible.builtin.copy:
     src: "{{ item.initrd_src }}"
-    dest: "{{ netbootxyz_root }}/assets/local/{{ item.id }}/initrd"
-    owner: "1000"
-    group: "1000"
+    dest: "{{ netboot_public_root }}/local/{{ item.id }}/initrd"
+    owner: "950"
+    group: "950"
     mode: "0644"
   loop: "{{ _netboot_local_entries }}"
   loop_control:
