@@ -1,6 +1,17 @@
 ---
-# Schema validation. delegate_to: localhost — pure data work, no remote contact.
+# Schema validation + HTTPS reachability probe. delegate_to: localhost for
+# pure data work; one HTTPS probe contacts the public nginx host.
 # Runs under every stage tag so every other task can rely on validated input.
+
+- name: Preflight — public asset host is reachable
+  ansible.builtin.uri:
+    url: "{{ netboot_public_url }}/"
+    status_code: 200
+    timeout: 10
+    validate_certs: true
+  delegate_to: localhost
+  changed_when: false
+  run_once: true
 
 - name: Preflight — validate netboot_entries shape
   ansible.builtin.assert:
@@ -42,23 +53,23 @@
   delegate_to: localhost
   run_once: true
 
-- name: Preflight — validate each host pin
+- name: Preflight — validate each host pin (Form 3 fragment only)
+  # Form 1 (entry: <id>) and Form 2 (inline kernel/initrd) would need an
+  # HTTP-chain back to the public nginx for entries; not implemented for
+  # the rb5009-served pin layout. Force fragment-only here so a future
+  # Form 1/2 pin fails loudly instead of silently disappearing.
   ansible.builtin.assert:
     that:
       - item.mac is defined
       - item.mac is match('^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$')
-      - >-
-        ((item.entry is defined) | int)
-        + ((item.kernel is defined and item.initrd is defined) | int)
-        + ((item.fragment is defined) | int)
-        == 1
-      - (item.entry is not defined) or (item.entry in _netboot_entry_ids)
+      - item.fragment is defined
+      - item.entry is not defined
+      - item.kernel is not defined
     fail_msg: |
       Invalid netboot_host_pins item: {{ item | to_nice_yaml }}
       Each pin must:
         - have a MAC matching aa:bb:cc:dd:ee:ff
-        - specify exactly one of: entry, kernel+initrd, fragment
-        - if entry is set, reference an id present in netboot_entries
+        - use Form 3 only (fragment: |…). entry: and kernel: are rejected.
   loop: "{{ netboot_host_pins }}"
   loop_control:
     label: "{{ item.mac | default('<missing-mac>') }}"
