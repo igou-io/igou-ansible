@@ -1,6 +1,7 @@
 ---
-# Render menu.ipxe + entries/<id>.ipxe + host/MAC-*.ipxe + host/HOSTNAME-*.ipxe
-# into the local cache at .cache/netboot-menus/. Push stage handles the upload.
+# Render menu.ipxe + entries/<id>.ipxe + per_host/{MAC,HOSTNAME}-*.ipxe
+# into the local cache at .cache/netboot-menus/. Push stage handles the
+# upload to public nginx (menu.ipxe + entries) and rb5009 (per-host pins).
 
 - name: Render — define cache root
   ansible.builtin.set_fact:
@@ -23,7 +24,7 @@
   loop:
     - ""
     - entries
-    - host
+    - per_host
   delegate_to: localhost
   run_once: true
 
@@ -77,7 +78,7 @@
 - name: Render — host pins (MAC file)
   ansible.builtin.template:
     src: host-mac.ipxe.j2
-    dest: "{{ _netboot_cache_dir }}/host/MAC-{{ item.mac | lower | replace(':', '') }}.ipxe"
+    dest: "{{ _netboot_cache_dir }}/per_host/MAC-{{ item.mac | lower | replace(':', '') }}.ipxe"
     mode: "0644"
   vars:
     pin: "{{ item }}"
@@ -88,11 +89,17 @@
   run_once: true
 
 - name: Render — host pins (HOSTNAME alias chains to MAC file)
+  # Same-server bare-name chain: HOSTNAME-*.ipxe and MAC-*.ipxe both
+  # live as /ip tftp rows at rb5009 (mapped to flash files under
+  # {{ netboot_pin_flash_subdir }}/). A bare filename chain inside the
+  # HOSTNAME file resolves via TFTP from the same rb5009 server and
+  # hits the MAC file's /ip tftp row.
   ansible.builtin.copy:
-    dest: "{{ _netboot_cache_dir }}/host/HOSTNAME-{{ item.hostname }}.ipxe"
+    dest: "{{ _netboot_cache_dir }}/per_host/HOSTNAME-{{ item.hostname }}.ipxe"
     content: |
       #!ipxe
       ### Managed by playbooks/netboot/deploy_assets.yml — do not edit manually.
+      ### Host alias: hostname={{ item.hostname }} -> mac={{ item.mac }}
       chain MAC-{{ item.mac | lower | replace(':', '') }}.ipxe
     mode: "0644"
   loop: "{{ netboot_host_pins | selectattr('hostname', 'defined') | list }}"
