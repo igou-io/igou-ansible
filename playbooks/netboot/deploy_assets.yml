@@ -32,8 +32,9 @@
 #     --tags render,push,verify
 
 - name: Deploy netboot menu and assets
-  hosts: localhost
+  hosts: "{{ netboot_public_host | default('truenas') }}"
   gather_facts: false
+  become: true
   tasks:
     - name: Preflight stage
       ansible.builtin.import_tasks: tasks/preflight.yml

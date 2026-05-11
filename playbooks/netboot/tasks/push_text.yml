@@ -61,8 +61,6 @@
     - "{{ _netboot_public_dst }}/cloud-init"
   loop_control:
     label: "{{ item | basename }}"
-  delegate_to: "{{ groups[netboot_public_host][0] }}"
-  become: true
 
 - name: Push — menu.ipxe
   ansible.builtin.copy:
@@ -71,8 +69,6 @@
     owner: "950"
     group: "950"
     mode: "0644"
-  delegate_to: "{{ groups[netboot_public_host][0] }}"
-  become: true
 
 - name: Push — entries/ (with delete-extras)
   ansible.posix.synchronize:
@@ -84,8 +80,6 @@
     rsync_opts:
       - "--chown=950:950"
       - "--chmod=F0644,D0755"
-  delegate_to: "{{ groups[netboot_public_host][0] }}"
-  become: true
 
 - name: Push — fragments/ (with delete-extras)
   ansible.posix.synchronize:
@@ -98,8 +92,6 @@
       - "--chown=950:950"
       - "--chmod=F0644,D0755"
       - "--exclude=.gitkeep"
-  delegate_to: "{{ groups[netboot_public_host][0] }}"
-  become: true
 
 - name: Push — kickstart/ (with delete-extras)
   ansible.posix.synchronize:
@@ -111,8 +103,6 @@
     rsync_opts:
       - "--chown=950:950"
       - "--chmod=F0644,D0755"
-  delegate_to: "{{ groups[netboot_public_host][0] }}"
-  become: true
 
 - name: Push — cloud-init/ (with delete-extras)
   ansible.posix.synchronize:
@@ -124,5 +114,3 @@
     rsync_opts:
       - "--chown=950:950"
       - "--chmod=F0644,D0755"
-  delegate_to: "{{ groups[netboot_public_host][0] }}"
-  become: true
