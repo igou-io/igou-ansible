@@ -202,7 +202,7 @@
               --ip-addresses {{ _worker_ips | join(',') }}
           changed_when: false
 
-- name: Deliver PXE assets to TrueNAS netbootxyz
+- name: Deliver PXE assets to TrueNAS public nginx
   hosts: truenas
   become: true
   gather_facts: false
@@ -212,8 +212,7 @@
     # not promoted into hostvars across plays, but set_fact values are.
     work_dir: "{{ hostvars[cluster_host]['openshift_add_node_pxe_assets']['work_dir'] }}"
     arch: "{{ hostvars[cluster_host]['openshift_add_node_pxe_assets']['arch'] }}"
-    truenas_assets_root: /mnt/ssd/containers/netbootxyz/assets
-    truenas_menus_root: /mnt/ssd/containers/netbootxyz/config/menus
+    truenas_assets_root: /mnt/ssd/public/boot-files
     asset_subdir: "{{ cluster_host }}-add-node"
   tasks:
     - name: Ensure asset destination directory exists
@@ -221,8 +220,8 @@
         path: "{{ truenas_assets_root }}/{{ asset_subdir }}"
         state: directory
         mode: "0755"
-        owner: "1000"
-        group: "1000"
+        owner: "950"
+        group: "950"
 
     - name: Sync boot artifacts to TrueNAS
       ansible.posix.synchronize:
@@ -233,42 +232,4 @@
           - "--exclude=*.ipxe"
           - "--exclude=auth.json"
           - "--exclude=nodes-config.yaml"
-          - "--chown=1000:1000"
-
-    # Cleanup of stale per-host iPXE scripts written by older versions of
-    # this playbook. The host/MAC-<hex>.ipxe slot is now owned by
-    # playbooks/netboot/deploy_assets.yml (rendered from inventory's
-    # netboot_host_pins). Removing only files that carry the old "Managed
-    # by playbooks/openshift/add_node_iso.yml" header — leaves
-    # deploy_assets-managed pins untouched. Plus the even-older
-    # *-add-node-*.ipxe flat-path filenames if any linger.
-    - name: Cleanup -- locate stale add_node_iso-written iPXE scripts on TrueNAS
-      ansible.builtin.find:
-        paths:
-          - "{{ truenas_menus_root }}"
-          - "{{ truenas_menus_root }}/local"
-          - "{{ truenas_menus_root }}/host"
-          - "{{ truenas_menus_root }}/local/host"
-        patterns: "*-add-node-*.ipxe,MAC-*.ipxe"
-        contains: "^# Managed by playbooks/openshift/add_node_iso\\.yml"
-        file_type: file
-      register: _stale_add_node_files
-
-    - name: Cleanup -- find any add_node_iso flat-path filenames (no content match needed)
-      ansible.builtin.find:
-        paths:
-          - "{{ truenas_menus_root }}"
-          - "{{ truenas_menus_root }}/local"
-        patterns: "*-add-node-*.ipxe"
-        file_type: file
-      register: _stale_flat_path_files
-
-    - name: Cleanup -- remove each stale file
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: >-
-        {{ (_stale_add_node_files.files | default([]))
-           + (_stale_flat_path_files.files | default([])) }}
-      loop_control:
-        label: "{{ item.path }}"
+          - "--chown=950:950"
