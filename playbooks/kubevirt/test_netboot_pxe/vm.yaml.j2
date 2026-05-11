@@ -51,3 +51,9 @@ spec:
         - multus:
             networkName: {{ item.cudn | default(pxe_test_cudn) }}
           name: nic
+      # Pin to ocp.igou.systems so the test always exercises the same
+      # bridge/CUDN/DHCP path. Multi-node OCP clusters with the same
+      # CUDN on every node would otherwise schedule the VM anywhere
+      # and introduce a confounding variable when a test fails.
+      nodeSelector:
+        kubernetes.io/hostname: ocp.igou.systems

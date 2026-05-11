@@ -10,30 +10,20 @@
 # Optional per-entry overrides are documented in the parent playbook.
 #
 # Per-case assertions:
-#   1. rb5009 TFTP hit counter for `item.binary` incremented (existing).
-#   2. netbootxyz dnsmasq-tftp logs show the VM's leased IP requested
-#      /config/menus/host/MAC-<hexraw>.ipxe with outcome 'sent' (pinned
-#      MAC, file exists) or 'not_found' (random MAC, falls through to
-#      stock-menu.ipxe). See _verify_tftp.yml.
+#   1. rb5009 TFTP hit counter for `item.binary` (the bootstrap iPXE
+#      binary) incremented -- catches DHCP/matcher/binary-TFTP regressions.
+#   2. rb5009 /ip tftp hit counter for MAC-<hexraw>.ipxe (the per-host
+#      pin file the netbootxyz binary's :tftpmenu autoexec chains to)
+#      either:
+#        'sent'      pinned MAC: row exists AND hits incremented;
+#        'not_found' random MAC: no /ip tftp row exists for the MAC.
+#      See _verify_tftp.yml.
 
 - name: "Smoke-test {{ _vm_name }}"
   vars:
     _vm_name: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
     _wait: "{{ item.boot_wait_seconds | default(pxe_test_boot_wait_seconds) }}"
   block:
-    - name: "Snapshot docker logs line count BEFORE {{ _vm_name }}"
-      ansible.builtin.shell:
-        cmd: set -o pipefail && docker logs ix-netbootxyz-netbootxyz-1 2>&1 | wc -l
-        executable: /bin/bash
-      register: _pxe_log_pre
-      changed_when: false
-      delegate_to: "{{ groups[netbootxyz_host][0] }}"
-      become: true
-
-    - name: "Capture pre log line count for {{ _vm_name }}"
-      ansible.builtin.set_fact:
-        _pre_log_line_count: "{{ _pxe_log_pre.stdout | int }}"
-
     - name: "Snapshot rb5009 TFTP hits BEFORE boot for {{ item.binary }}"
       community.routeros.command:
         commands:
@@ -44,9 +34,29 @@
       changed_when: false
       delegate_to: "{{ pxe_test_router }}"
 
-    - name: "Extract pre-boot hit count"
+    - name: "Extract pre-boot binary hit count"
       ansible.builtin.set_fact:
-        _pxe_hits_pre: "{{ _pxe_tftp_pre.stdout[0] | regex_search('hits=\\d+') | default('hits=0') | regex_replace('^hits=', '') | int }}"
+        _pxe_hits_pre: >-
+          {{ _pxe_tftp_pre.stdout[0]
+             | regex_search('hits=\d+') | default('hits=0')
+             | regex_replace('^hits=', '') | int }}
+
+    - name: "Snapshot rb5009 pin hits BEFORE boot for {{ _vm_name }}"
+      community.routeros.command:
+        commands:
+          - >-
+            /ip tftp print detail without-paging where
+            req-filename="MAC-{{ (item.mac | default('00:00:00:00:00:00')) | regex_replace(':', '') | lower }}.ipxe"
+      register: _pxe_pin_tftp_pre
+      changed_when: false
+      delegate_to: "{{ pxe_test_router }}"
+
+    - name: "Extract pin pre-boot hit count for {{ _vm_name }}"
+      ansible.builtin.set_fact:
+        _pxe_pin_hits_pre: >-
+          {{ (_pxe_pin_tftp_pre.stdout[0] | default(''))
+             | regex_search('hits=\d+') | default('hits=0')
+             | regex_replace('^hits=', '') | int }}
 
     - name: "Apply diskless PXE-boot VM ({{ _vm_name }})"
       kubernetes.core.k8s:
@@ -77,9 +87,12 @@
       changed_when: false
       delegate_to: "{{ pxe_test_router }}"
 
-    - name: "Extract post-boot hit count"
+    - name: "Extract post-boot binary hit count"
       ansible.builtin.set_fact:
-        _pxe_hits_post: "{{ _pxe_tftp_post.stdout[0] | regex_search('hits=\\d+') | default('hits=0') | regex_replace('^hits=', '') | int }}"
+        _pxe_hits_post: >-
+          {{ _pxe_tftp_post.stdout[0]
+             | regex_search('hits=\d+') | default('hits=0')
+             | regex_replace('^hits=', '') | int }}
 
     - name: "Assert TFTP hits incremented for {{ item.binary }}"
       ansible.builtin.assert:
@@ -98,9 +111,8 @@
       vars:
         vm_name: "{{ _vm_name }}"
         vm_mac: "{{ _vm_mac }}"
-        vm_ip: "{{ _vm_ip }}"
         expected_outcome: "{{ 'sent' if (_vm_mac in _pxe_pinned_macs) else 'not_found' }}"
-        pre_log_line_count: "{{ _pre_log_line_count }}"
+        tftp_hits_pre: "{{ _pxe_pin_hits_pre | int }}"
 
   always:
     - name: "Delete test VM ({{ _vm_name }})"

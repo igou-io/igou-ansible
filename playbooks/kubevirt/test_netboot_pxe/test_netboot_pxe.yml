@@ -10,15 +10,15 @@
 # CUDNs, MACs, and per-VM wait windows.
 #
 # Verification (two layers):
-#   * TFTP hit counter on rb5009 increments for the expected binary
-#     (catches DHCP / matcher / TFTP regressions on the rb5009 side).
-#   * netbootxyz dnsmasq-tftp logs show the VM's leased IP made
-#     exactly one TFTP RRQ for /config/menus/host/MAC-<hexraw>.ipxe --
-#     with outcome 'sent' for pinned MACs (host file served) or
-#     'not_found' for random MACs (file absent; iPXE falls through to
-#     stock-menu.ipxe). Single observable, two interpretations; the
-#     outcome is the per-case discriminator. Substring assertions on
-#     deployed pin bodies catch inventory drift at preflight.
+#   * TFTP hit counter on rb5009 increments for the expected bootstrap
+#     iPXE binary (catches DHCP / matcher / TFTP regressions on rb5009).
+#   * rb5009 /ip tftp hit counter for the per-host pin filename either
+#     increments by 1 (pinned MAC: 'sent') or shows no matching row
+#     exists at all (random MAC: 'not_found'). Pin storage lives at
+#     {{ netboot_pin_flash_subdir }} on rb5009 flash, registered via
+#     /ip tftp rows by playbooks/netboot/deploy_assets.yml. Substring
+#     assertions on deployed pin bodies catch inventory drift at
+#     preflight.
 #   No per-entry override fields; expectations are fully derived from
 #   inventory's netboot_host_pins (see _preflight.yml + _verify_tftp.yml).
 #   Namespace selector label is hardcoded to vlan9; testing CUDNs
@@ -90,10 +90,13 @@
     #                     parallel mode the max effective wait wins)
     # Default mix: each arch is exercised twice -- once with a
     # KubeVirt-generated MAC (random, exercises the un-pinned path
-    # through netboot.xyz's main menu) and once with a fixed MAC that
+    # where the iPXE binary's :tftpmenu MAC lookup misses on rb5009
+    # and the HTTPS fallback to public.igou.systems/boot-files/menu.ipxe
+    # serves the unpinned-host menu) and once with a fixed MAC that
     # has a matching netboot_host_pins entry in
-    # igou-inventory/group_vars/all/netboot.yml (exercises the per-host
-    # short-circuit in menu.ipxe).
+    # igou-inventory/group_vars/all/netboot.yml (exercises the
+    # bootstrap iPXE's native per-host MAC-<hexraw>.ipxe lookup against
+    # rb5009 TFTP).
     pxe_test_arches:
       - name: pxe-test-bios-random
         arch: bios
@@ -168,26 +171,26 @@
     - name: Smoke-test architectures in parallel
       when: pxe_test_parallel | bool
       block:
-        - name: Snapshot docker logs line count BEFORE the parallel batch
-          ansible.builtin.shell:
-            cmd: set -o pipefail && docker logs ix-netbootxyz-netbootxyz-1 2>&1 | wc -l
-            executable: /bin/bash
-          register: _pxe_log_pre_parallel
-          changed_when: false
-          delegate_to: "{{ groups[netbootxyz_host][0] }}"
-          become: true
-
-        - name: Capture pre log line count (parallel mode, shared)
-          ansible.builtin.set_fact:
-            _pre_log_line_count_parallel: "{{ _pxe_log_pre_parallel.stdout | int }}"
-
-        - name: Snapshot rb5009 TFTP hits BEFORE boot (all)
+        - name: Snapshot rb5009 TFTP hits BEFORE boot (all, binary)
           community.routeros.command:
             commands:
               - >-
                 /ip tftp print detail without-paging where
                 req-filename="{{ item.binary }}"
           register: _pxe_tftp_pre_all
+          changed_when: false
+          delegate_to: "{{ pxe_test_router }}"
+          loop: "{{ pxe_test_arches }}"
+          loop_control:
+            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+
+        - name: Snapshot rb5009 pin hits BEFORE boot (all, per pin MAC)
+          community.routeros.command:
+            commands:
+              - >-
+                /ip tftp print detail without-paging where
+                req-filename="MAC-{{ (item.mac | default('00:00:00:00:00:00')) | regex_replace(':', '') | lower }}.ipxe"
+          register: _pxe_pin_tftp_pre_all
           changed_when: false
           delegate_to: "{{ pxe_test_router }}"
           loop: "{{ pxe_test_arches }}"
@@ -270,15 +273,17 @@
         - name: Verify TFTP dispatch for every VM (parallel)
           ansible.builtin.include_tasks: _verify_tftp.yml
           vars:
-            _vm_name_inner: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+            _vm_name_inner: "{{ item.0.name | default('pxe-test-' ~ item.0.arch) }}"
             vm_name: "{{ _vm_name_inner }}"
             vm_mac: "{{ _pxe_vm_addr_map[_vm_name_inner].mac }}"
-            vm_ip: "{{ _pxe_vm_addr_map[_vm_name_inner].ip }}"
             expected_outcome: "{{ 'sent' if (_pxe_vm_addr_map[_vm_name_inner].mac in _pxe_pinned_macs) else 'not_found' }}"
-            pre_log_line_count: "{{ _pre_log_line_count_parallel }}"
-          loop: "{{ pxe_test_arches }}"
+            tftp_hits_pre: >-
+              {{ (item.1.stdout[0] | default(''))
+                 | regex_search('hits=\d+') | default('hits=0')
+                 | regex_replace('^hits=', '') | int }}
+          loop: "{{ pxe_test_arches | zip(_pxe_pin_tftp_pre_all.results) | list }}"
           loop_control:
-            label: "{{ item.name | default('pxe-test-' ~ item.arch) }}"
+            label: "{{ item.0.name | default('pxe-test-' ~ item.0.arch) }}"
 
       always:
         - name: Delete all test VMs
