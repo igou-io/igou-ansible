@@ -1,52 +1,54 @@
 #!ipxe
 ### Managed by playbooks/netboot/deploy_assets.yml — do not edit manually.
+###
+### Fallback menu for unpinned hosts. The netbootxyz iPXE binary's
+### :tftpmenu autoexec first chains tftp://${tftp-server}/MAC-${mac:hexraw}.ipxe
+### against rb5009; if no per-host pin matches, the binary falls through
+### to chain ${conn_type}://${boot_domain}/menu.ipxe which is this file.
+### Choices are deliberately minimal -- pinned hosts should be the norm;
+### this menu is for one-off interactive selection on the rare host
+### that boots without a pin.
 
-### Per-host hooks fetch via TFTP relative to this file's location, since
-### the netbootxyz container's nginx serves /assets/* at URL root /* and
-### does NOT serve /config/menus/* over HTTP. dnsmasq serves
-### /config/menus/ at TFTP root, so a relative chain stays in TFTP.
-:per_host
-isset ${hostname} && chain host/HOSTNAME-${hostname}.ipxe || goto check_mac
-:check_mac
-isset ${mac} && chain host/MAC-${mac:hexraw}.ipxe || goto stock_fallback
-
-### When no per-host pin matches, fall through to the stock netbootxyz
-### menu. push_text.yml preserves the original menu.ipxe as
-### stock-menu.ipxe before overwriting menu.ipxe with this template, so
-### the upstream multi-distro UX still works for unpinned hosts.
-:stock_fallback
-chain stock-menu.ipxe || goto main_menu
-
-:main_menu
-clear menu_choice
-menu netboot.xyz custom menu
+:start
+menu netboot.igou.systems - default Boot from local disk in 30s
+item local       Boot from local disk
+item ocp-add     Boot OCP add-node ISO (installs an OCP worker)
 {% for entry in netboot_entries %}
-item {{ entry.id }} ${space} {{ entry.name }}
+item {{ entry.id }}      {{ entry.name }}
 {% endfor %}
 {% if _netboot_fragments | length > 0 %}
 item --gap -- Custom fragments
 {% for f in _netboot_fragments %}
-item fragment_{{ loop.index0 }} ${space} {{ f }}
+item fragment_{{ loop.index0 }}      {{ f }}
 {% endfor %}
 {% endif %}
-item --gap
-item menu_exit ${space} Exit
+item shell       iPXE shell
+choose --timeout 30000 --default local target || goto local
+goto ${target}
 
-choose menu_choice || goto menu_exit
-echo ${cls}
-goto ${menu_choice}
+:local
+echo Booting from local disk ...
+sanboot --no-describe --drive 0x80 || exit 1
+
+:ocp-add
+imgfree
+initrd --name initrd {{ netboot_public_url }}/ocp-add-node/node.x86_64-initrd.img
+kernel {{ netboot_public_url }}/ocp-add-node/node.x86_64-vmlinuz initrd=initrd coreos.live.rootfs_url={{ netboot_public_url }}/ocp-add-node/node.x86_64-rootfs.img rw ignition.firstboot ignition.platform.id=metal
+boot
 
 {% for entry in netboot_entries %}
 :{{ entry.id }}
-chain entries/{{ entry.id }}.ipxe
-goto menu_exit
+chain {{ netboot_public_url }}/entries/{{ entry.id }}.ipxe
+goto start
 
 {% endfor %}
 {% for f in _netboot_fragments %}
 :fragment_{{ loop.index0 }}
-chain fragments/{{ f }}
-goto menu_exit
+chain {{ netboot_public_url }}/fragments/{{ f }}
+goto start
 
 {% endfor %}
-:menu_exit
-exit
+:shell
+echo Type "exit" to return to menu.
+shell
+goto start
