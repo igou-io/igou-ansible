@@ -6,24 +6,31 @@ the topic docs. Each entry: symptom → quick diagnostic → likely cause(s)
 
 ## PXE / netboot
 
-### A VM or host PXE-boots into the upstream netbootxyz menu instead of its custom pin
+### A VM or host PXE-boots into the fallback menu instead of its custom pin
 
 ```bash
-# Check what dnsmasq served
-ssh truenas 'docker logs --tail=100 ix-netbootxyz-netbootxyz-1 | grep dnsmasq-tftp | tail -10'
+# Check whether rb5009's /ip tftp row for the MAC saw a hit
+SSH_AUTH_SOCK= ssh -i ~/.ssh/id_ed25519 igou@rb5009.igou.systems -p 3480 \
+  "/ip tftp print detail without-paging where req-filename=\"MAC-<hex>.ipxe\""
 ```
 
-- `file /config/menus/host/MAC-<hex>.ipxe not found` → no per-host file on
-  disk for that MAC. Either it's not in `netboot_host_pins`, or
-  `deploy_assets.yml` hasn't run since the inventory edit. Fix:
+- No matching row → the MAC isn't in `netboot_host_pins`, or `deploy_assets.yml`
+  hasn't run since the inventory edit. Fix:
   ```bash
   ansible-playbook playbooks/netboot/deploy_assets.yml \
+    -i 'localhost ansible_connection=local,' \
     -i igou-inventory/inventory.yaml --tags render,push,verify
   ```
-- `sent /config/menus/host/MAC-<hex>.ipxe to <ip>` but the host still drops
-  to stock menu → the pin's iPXE script `goto`s a label that doesn't match.
-  `docker exec ix-netbootxyz-netbootxyz-1 cat /config/menus/host/MAC-<hex>.ipxe`
-  and inspect.
+- Row exists but `hits=N` didn't increment after a real boot → the binary's
+  `:tftpmenu` chain isn't reaching rb5009. Check that the new iPXE binaries
+  are deployed (`/file print where name~"netboot/netboot.xyz"`) and that
+  DHCP next-server points at rb5009 (`/ip dhcp-server network print`).
+- Row exists and hits++ but boot drops to fallback menu → the pin's
+  fragment runs to completion (no `boot` line, or `boot` failed). Read the
+  pin body:
+  ```
+  /file print value-list where name="netboot/per-host/MAC-<hex>.ipxe"
+  ```
 
 ### A VM/host doesn't PXE-boot at all (no logs anywhere)
 
@@ -54,14 +61,21 @@ oc adm wait-for ... # or oc get nodes -w
   CSR-readiness if reverse DNS isn't available — that's documented and
   fine.
 
-### Smoke test fails on `dnsmasq-tftp` assertion
+### Smoke test fails on `/ip tftp` hit-counter assertion
 
-`test_netboot_pxe.yml` asserts exactly one matching dnsmasq line per VM.
-- 0 matches → VM never reached netbootxyz at all. Check rb5009 logs.
-- 2+ matches → the smoke pin fragment is causing a re-PXE loop. Pin's
-  `exit 0` (Boot from disk) on a diskless VM may cycle back to PXE; raise
-  `pxe_test_boot_wait_seconds` doesn't help, but reducing the smoke pin's
-  in-script `sleep` does. Inspect inventory's smoke pin.
+`test_netboot_pxe.yml` asserts:
+- Pinned MAC: row exists AND `hits` incremented from pre-snapshot to post-snapshot.
+- Random MAC: no row exists for the auto-generated MAC.
+
+Common failures:
+- Pinned: `hits` unchanged → VM never reached rb5009 with the pin lookup.
+  Check rb5009 `/log print where topics~"dhcp"` for the VM's MAC; if no
+  DHCP offer, check the matcher table (`/ip dhcp-server matcher print`).
+- Random: row unexpectedly exists for the random MAC → some prior pin in
+  inventory matches the auto-generated MAC. (`pxe_test_pinned_macs` should
+  be the only set with rows in `flash:/netboot/per-host/`.) Check
+  `/file print where name~"^netboot/per-host/MAC-"` and reconcile with
+  inventory.
 
 ## DHCP / RouterOS
 
@@ -210,12 +224,24 @@ after a full run; should report `changed=0`.
 
 ## Network
 
-### Worker can't reach `http://10.10.45.242` from its boot environment
+### Worker can't reach `https://public.igou.systems/boot-files/` from its boot environment
 
-The netbootxyz HTTP root serves on `:80` only. If a worker is on a VLAN
-where firewall rules block that port, the iPXE chain (or kernel-stage
-rootfs fetch) will fail. Check rb5009 firewall rules: `/ip firewall filter
-print` and look for src-address-list entries.
+The public nginx serves both HTTP (`:80`) and HTTPS (`:443`) on `10.10.45.241`
+(macvlan vlan45). If a worker is on a VLAN where firewall rules block those
+ports, iPXE's HTTPS fallback chain (or the kernel-stage rootfs fetch) fails.
+Check rb5009 firewall: `/ip firewall filter print` and look for
+src-address-list entries blocking `10.10.45.241`.
+
+If the cert validation fails (iPXE error chain ending in "certificate not
+trusted"), check the cert subject + issuer on truenas:
+```bash
+sudo openssl x509 -in /etc/certificates/_public_igou_systems.crt -noout -issuer -subject
+```
+A Let's Encrypt R3+ chain is in iPXE's built-in CA bundle. Self-signed or
+private-CA certs would need to be embedded into the iPXE build — fall back
+to HTTP by setting `netboot_public_scheme: http` in inventory and re-running
+`deploy_assets --tags push` (no iPXE rebuild needed; the binary tries
+HTTPS-then-HTTP automatically and the change only affects rendered scripts).
 
 ### A VLAN's CUDN isn't synced into the cluster
 

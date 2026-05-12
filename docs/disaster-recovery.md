@@ -8,12 +8,16 @@ them noted up front.
 If the homelab burned to the ground, components must come back roughly in
 this order — each depends on the ones above it being alive:
 
-1. **`rb5009`** — DHCP, DNS, gateway, TFTP. Without this nothing PXE-boots.
-2. **`truenas`** — netbootxyz container (TFTP+HTTP for menu/assets), NFS,
-   container datasets, ZFS storage. Most other services live here.
-3. **netbootxyz container on truenas** — needed before any host can PXE.
-4. **rb5009 iPXE binaries** — embedded chainload URL points at the
-   netbootxyz container. Rebuild only after truenas is reachable.
+1. **`rb5009`** — DHCP, DNS, gateway, TFTP (iPXE binaries + per-host pin
+   files). Without this nothing PXE-boots.
+2. **`truenas`** — public nginx container (HTTPS for menu/entries/kickstart/
+   cloud-init/ocp/ocp-add-node/images/iso), NFS, container datasets, ZFS
+   storage. Most other services live here.
+3. **public nginx container on truenas** — needed for unpinned-host menu
+   fallback and for asset URLs that pin fragments reference.
+4. **rb5009 iPXE binaries** — embedded HTTPS fallback URL points at public
+   nginx (`public.igou.systems/boot-files`). Rebuild only after truenas is
+   reachable.
 5. **OCP cluster** — depends on rb5009 + truenas (PXE) and the rendezvous
    host being able to boot.
 6. **Homelab pets** (helpernode, p330, hpg5 if not OCP) — PXE-driven; depend
@@ -85,8 +89,9 @@ The hardest to rebuild from scratch. Most homelab services live here.
 
 - ZFS pools: `ssd` (warm/services), and possibly `tank` (cold/bulk).
 - Datasets under `ssd/containers/<service>/` for every Docker container.
-- The netbootxyz container (`ix-netbootxyz-netbootxyz-1`) and its bind-mount
-  at `/mnt/ssd/containers/netbootxyz/`.
+- The public nginx container (`ix-public-public-1`) and its bind-mount at
+  `/mnt/ssd/public/` — serves netboot HTTPS assets (and other public-facing
+  HTTPS content).
 - Local user homes (if any).
 - NFS exports (used by armbian netboot).
 
@@ -115,9 +120,10 @@ playbooks recreates the structure.
    ansible-playbook playbooks/truenas/configure_netboot_nfs.yml \
      -i igou-inventory/inventory.yaml   # if NFS netboot is in use
    ```
-5. If the netbootxyz container didn't survive: see "netbootxyz container"
-   below.
-6. Verify dataset ownership: linuxserver-style images expect `1000:1000`.
+5. If the public nginx container didn't survive: see "netboot assets" below.
+6. Verify dataset ownership: public nginx expects files readable by the
+   nginx user (typically uid 101 inside the container; on the host,
+   anything 0755 dirs + 0644 files works regardless of owner).
 
 ### Restore — just one container
 
@@ -135,40 +141,58 @@ ansible-playbook playbooks/truenas/configure_docker_containers.yml \
 
 ---
 
-## netbootxyz container
+## netboot assets
 
-Lives at `/mnt/ssd/containers/netbootxyz/` on truenas, deployed by
-`configure_docker_containers.yml`, populated by
-`playbooks/netboot/deploy_assets.yml`.
+Two storage layers, both recoverable from inventory + playbooks:
+
+- **Public nginx HTTPS assets** at `/mnt/ssd/public/boot-files/` on truenas
+  (menu.ipxe, entries, fragments, kickstart, cloud-init, ocp/, ocp-add-node/,
+  images/, iso/). Container = `ix-public-public-1` (TrueCharts/compose),
+  declarative spec in `igou-inventory/group_vars/truenas.yml`.
+- **rb5009 TFTP files** at `flash:/netboot/` (iPXE binaries + `per-host/`
+  pin files), with matching `/ip tftp` rows. Declarative spec across
+  `igou-inventory/group_vars/{routeros,all}/netboot.yml` and the routeros
+  build playbook.
 
 ### Restore
 
 ```bash
-# 1. Make sure the container itself is back up
+# 1. Make sure the public nginx container itself is up
 ansible-playbook playbooks/truenas/configure_docker_containers.yml \
   -i igou-inventory/inventory.yaml
 
-# 2. Re-render and push menus, host pins, kickstart, cloud-init, ISOs
-ansible-playbook playbooks/netboot/deploy_assets.yml \
+# 2. Rebuild + upload iPXE binaries to rb5009 (also clones netboot.xyz source
+#    if .cache/netboot-build/ was lost)
+ansible-playbook playbooks/routeros/deploy_netboot_binaries.yml \
+  -i 'localhost ansible_connection=local,' \
   -i igou-inventory/inventory.yaml
 
-# 3. Smoke-test
+# 3. Re-render and push menu.ipxe + entries + kickstart + cloud-init + ISOs
+#    to public nginx, AND per-host pins to rb5009
+ansible-playbook playbooks/netboot/deploy_assets.yml \
+  -i 'localhost ansible_connection=local,' \
+  -i igou-inventory/inventory.yaml
+
+# 4. Smoke-test
 ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i 'localhost ansible_connection=local,' \
   -i igou-inventory/inventory.yaml -e 'pxe_test_parallel=true'
 ```
 
-If `/mnt/ssd/containers/netbootxyz/config/` was wiped, the upstream
-`stock-menu.ipxe` was also lost. The first `deploy_assets.yml` run will
-preserve the menu the container ships with on its next start (the preserve
-task only runs if a menu is already present), so:
+### Big-asset trees (ocp/, ocp-add-node/, images/) are NOT in this repo
 
-```bash
-# Force the container to re-init its baked-in stock menu, then deploy
-ssh truenas 'docker rm -f ix-netbootxyz-netbootxyz-1 && docker compose -f /mnt/ssd/containers/netbootxyz/compose.yaml up -d'
-# Wait ~30s for the container to populate /config/menus/menu.ipxe with the stock content
-ansible-playbook playbooks/netboot/deploy_assets.yml \
-  -i igou-inventory/inventory.yaml
-```
+These are generated by other playbooks or by external workflows:
+- `ocp/agent.x86_64-{vmlinuz,initrd,rootfs}.img` — written by
+  `playbooks/openshift/agent-install/deploy_pxe_assets.yml` (the initial
+  cluster install).
+- `ocp-add-node/node.x86_64-{vmlinuz,initrd,rootfs}.img` — written by
+  `playbooks/openshift/add_node_iso.yml --tags pxe-assets` per cluster
+  (regenerate per cluster when restoring).
+- `images/orangepi*/` — written by the Armbian build playbook.
+
+If they're lost, re-run the source playbook for each. If the OCP cluster
+itself is gone, you'll regenerate them as part of the cluster install
+(see [`openshift-operations.md`](openshift-operations.md)).
 
 ---
 
@@ -211,7 +235,7 @@ The `ansible` ServiceAccount token (used by AAP/AWX) is at
 
 If the cluster is unrecoverable:
 
-1. Ensure rb5009 + truenas + netbootxyz are healthy.
+1. Ensure rb5009 + truenas + public nginx are healthy (see "netboot assets" above).
 2. Edit `host_vars/<cluster>.yml` if anything's changed (version, network
    plan, rendezvous MAC).
 3. Run the full agent-install flow — see
@@ -227,9 +251,10 @@ If the cluster is unrecoverable:
 
 ### Lost a single worker
 
-Just re-PXE-boot it. The `host/MAC-<hex>.ipxe` pin chains it into the
-add-node ISO; CoreOS reinstalls; CSR approval finishes the loop.
-Pre-existing pod tolerations / PVCs are recreated by GitOps.
+Just re-PXE-boot it. The `MAC-<hex>.ipxe` pin on rb5009 chains it into the
+add-node ISO (served via HTTPS from public.igou.systems); CoreOS reinstalls;
+CSR approval finishes the loop. Pre-existing pod tolerations / PVCs are
+recreated by GitOps.
 
 ---
 
@@ -242,9 +267,10 @@ Each is configured via a per-host `netboot_host_pins` entry in
 To rebuild one:
 1. Confirm its kickstart is current in `playbooks/netboot/files/kickstart/`.
 2. PXE-boot the host.
-3. Watch dnsmasq logs to confirm chain reaches the right pin file:
+3. Watch rb5009's TFTP hit counter for the pin file:
    ```bash
-   ssh truenas 'docker logs --tail=80 ix-netbootxyz-netbootxyz-1 | grep dnsmasq-tftp'
+   SSH_AUTH_SOCK= ssh -i ~/.ssh/id_ed25519 igou@rb5009.igou.systems -p 3480 \
+     "/ip tftp print detail without-paging where req-filename~\"MAC-\""
    ```
 4. Wait for autoinstall to complete (10-30 min depending on hardware).
 5. If the host should re-join a higher-level service (k3s, monitoring),
@@ -269,13 +295,15 @@ means loss of "what should be running where."
 
 ## Test the recovery procedure
 
-The headless smoke test exercises the netbootxyz path end-to-end without
-risking real hardware:
+The headless smoke test exercises the rb5009 → public-nginx PXE path
+end-to-end without risking real hardware:
 
 ```bash
 ansible-playbook playbooks/kubevirt/test_netboot_pxe/test_netboot_pxe.yml \
+  -i 'localhost ansible_connection=local,' \
   -i igou-inventory/inventory.yaml -e 'pxe_test_parallel=true'
 ```
 
-`failed=0` means rb5009 + truenas + netbootxyz container are all functional
-end-to-end. Run after any DR exercise to confirm the homelab is back.
+`failed=0` means rb5009 + truenas + public nginx + the iPXE chain are all
+functional end-to-end. Run after any DR exercise to confirm the homelab is
+back.
