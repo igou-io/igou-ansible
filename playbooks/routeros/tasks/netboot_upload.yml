@@ -32,6 +32,7 @@
 - name: Stat each local binary
   ansible.builtin.stat:
     path: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.local_name }}"
+    checksum_algorithm: sha256
   delegate_to: localhost
   loop: "{{ netboot_arches_resolved }}"
   loop_control:
@@ -65,32 +66,69 @@
   when: (_netboot_flash_dir_count.stdout[0] | trim | int) == 0
   changed_when: true
 
-- name: Count router-side binaries matching local size
+# Compare local SHA256 against a sidecar .sha256 file on rb5009 (uploaded
+# alongside each binary). Size-only is not enough: iPXE outputs are
+# sector-padded, so a rebuild with a different embedded boot_domain can
+# produce a byte-size-identical binary whose content differs (see the
+# 2026-05-11 .efi staleness incident). The :do { } on-error={ } wrapper
+# treats a missing sidecar as empty content -> always uploads, which
+# also recovers gracefully on first run after this fix.
+
+- name: Read router-side SHA256 sidecar for each binary
   community.routeros.command:
     commands:
       - >-
-        /file print count-only where
-        name="{{ netboot_flash_dir }}/{{ item.0.public_name }}"
-        and size={{ item.1.stat.size }}
-  register: _netboot_router_size_match
+        :do { :put [/file get
+        [find where name="{{ netboot_flash_dir }}/{{ item.public_name }}.sha256"]
+        contents] } on-error={ :put "" }
+  register: _netboot_router_sha256
   changed_when: false
-  loop: "{{ netboot_arches_resolved | zip(_netboot_local_stat.results) | list }}"
+  loop: "{{ netboot_arches_resolved }}"
   loop_control:
-    label: "{{ item.0.public_name }}"
+    label: "{{ item.public_name }}.sha256"
 
-- name: Upload binary if size differs from router copy
+- name: Render local SHA256 sidecar alongside each binary
+  ansible.builtin.copy:
+    content: "{{ item.stat.checksum }}\n"
+    dest: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.item.local_name }}.sha256"
+    mode: "0644"
+  delegate_to: localhost
+  loop: "{{ _netboot_local_stat.results }}"
+  loop_control:
+    label: "{{ item.item.public_name }}.sha256"
+
+- name: Upload binary when local SHA256 differs from router sidecar
   ansible.netcommon.net_put:
     src: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.0.local_name }}"
     dest: "{{ netboot_flash_dir }}/{{ item.0.public_name }}"
   vars:
     ansible_command_timeout: 300
-  when:
-    - (_netboot_router_size_match.results[ansible_loop.index0].stdout[0] | trim | int) == 0
+    _local_hash: "{{ item.1.stat.checksum }}"
+    _router_hash: >-
+      {{ (_netboot_router_sha256.results[ansible_loop.index0].stdout[0]
+          | default('')) | trim }}
+  when: _local_hash != _router_hash
   loop: "{{ netboot_arches_resolved | zip(_netboot_local_stat.results) | list }}"
   loop_control:
     label: "{{ item.0.public_name }}"
     extended: true
   register: _netboot_uploads
+
+- name: Upload SHA256 sidecar after binary upload
+  ansible.netcommon.net_put:
+    src: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.0.local_name }}.sha256"
+    dest: "{{ netboot_flash_dir }}/{{ item.0.public_name }}.sha256"
+  vars:
+    ansible_command_timeout: 30
+    _local_hash: "{{ item.1.stat.checksum }}"
+    _router_hash: >-
+      {{ (_netboot_router_sha256.results[ansible_loop.index0].stdout[0]
+          | default('')) | trim }}
+  when: _local_hash != _router_hash
+  loop: "{{ netboot_arches_resolved | zip(_netboot_local_stat.results) | list }}"
+  loop_control:
+    label: "{{ item.0.public_name }}.sha256"
+    extended: true
 
 - name: Count tftp rows for each arch
   community.routeros.command:

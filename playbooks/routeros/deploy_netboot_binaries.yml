@@ -22,6 +22,12 @@
   hosts: "{{ host | default('rb5009.igou.systems') }}"
   gather_facts: false
   serial: 1
+  # Play-level connection: local serves as the fallback for delegate_to
+  # localhost tasks (stat, render). rb5009 has its own ansible_connection
+  # in group_vars/routeros.yml so its tasks still use network_cli.
+  # Inventory's localhost entry has no explicit connection so it would
+  # otherwise default to ssh, which fails in the claude-run container.
+  connection: local
   tasks:
 
     - name: Build stage
