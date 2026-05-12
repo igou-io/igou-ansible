@@ -116,6 +116,7 @@
 
   always:
     - name: "Delete test VM ({{ _vm_name }})"
+      when: not (pxe_test_keep_vms | default(false) | bool)
       kubernetes.core.k8s:
         state: absent
         validate_certs: false

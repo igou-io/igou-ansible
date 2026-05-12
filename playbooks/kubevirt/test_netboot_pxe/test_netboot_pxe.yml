@@ -47,6 +47,7 @@
 
 - name: Test netboot.xyz custom binaries via KubeVirt VM PXE boot
   hosts: localhost
+  connection: local
   gather_facts: false
   vars:
     pxe_test_namespace: netboot-pxe-test
@@ -287,6 +288,7 @@
 
       always:
         - name: Delete all test VMs
+          when: not (pxe_test_keep_vms | default(false) | bool)
           kubernetes.core.k8s:
             state: absent
             api_version: kubevirt.io/v1
