@@ -17,7 +17,7 @@
   ansible.builtin.set_fact:
     _pxe_expected_pin: "MAC-{{ vm_mac | regex_replace(':', '') | lower }}.ipxe"
 
-- name: "Count /ip tftp rows for {{ vm_name }}'s MAC (post-boot)"
+- name: "Count post-boot /ip tftp rows matching pin for {{ vm_name }}"
   # count-only avoids RouterOS's header-only output when there are no matches
   # ('Flags: X - disabled' is non-empty even on zero rows). With count-only,
   # stdout is exactly the number of matching rows.
@@ -30,7 +30,7 @@
   changed_when: false
   delegate_to: "{{ pxe_test_router }}"
 
-- name: "Read /ip tftp row hit counter for {{ vm_name }} (when row exists)"
+- name: "Read /ip tftp row hit counter (when row exists) for {{ vm_name }}"
   community.routeros.command:
     commands:
       - >-
