@@ -56,9 +56,12 @@ From `clusters/ocp/pac-tenants/values.yaml:15` in `igou-openshift`:
 
 ## PipelineRun: `.tekton/igou-aap-ee-rhel9-push.yml`
 
-### Annotations
+API version matches the rh1-ee push.yml: `tekton.dev/v1` for the PipelineRun.
 
 ```yaml
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
 metadata:
   name: igou-aap-ee-rhel9-push
   annotations:
@@ -69,16 +72,16 @@ metadata:
       )
     pipelinesascode.tekton.dev/task: ".tekton/tasks/ansible-builder-task.yml"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
-```
-
-`git-clone` is fetched via cluster resolver (see pipelineSpec below) — no annotation needed.
-
-### Pipeline-level params
-
-A single list-of-strings param assembled from Repository.params, passed downstream to buildah as `--build-arg`s:
-
-```yaml
 spec:
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
   params:
     - name: ansible_galaxy_environment_variables
       value:
@@ -90,87 +93,92 @@ spec:
         - "ANSIBLE_GALAXY_SERVER_VALIDATED_AUTH_URL={{ ansible_galaxy_server_validated_auth_url }}"
         - "ANSIBLE_GALAXY_SERVER_VALIDATED_TOKEN={{ ansible_galaxy_server_validated_token }}"
         - "ANSIBLE_GALAXY_SERVER_COMMUNITY_URL={{ ansible_galaxy_server_community_url }}"
+  pipelineSpec:
+    workspaces:
+      - name: shared-workspace
+    tasks:
+      - name: fetch-source
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone
+            - name: namespace
+              value: openshift-pipelines
+        params:
+          - name: url
+            value: "{{ repo_url }}"
+          - name: revision
+            value: "{{ revision }}"
+          - name: verbose
+            value: "true"
+        workspaces:
+          - name: output
+            workspace: shared-workspace
+
+      - name: ansible-builder
+        runAfter:
+          - fetch-source
+        taskRef:
+          name: ansible-builder
+        params:
+          - name: FILENAME
+            value: "execution-environments/igou-aap-ee-rhel9/execution-environment.yml"
+          - name: BUILD_CONTEXT
+            value: "execution-environments/igou-aap-ee-rhel9/context"
+          - name: OUTPUT_FILENAME
+            value: "Containerfile"
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+
+      - name: build-image
+        runAfter:
+          - ansible-builder
+        matrix:
+          params:
+            - name: IMAGE
+              value:
+                - "quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:{{ revision }}"
+                - "quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:latest"
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: buildah
+            - name: namespace
+              value: openshift-pipelines
+        params:
+          - name: DOCKERFILE
+            value: "Containerfile"
+          - name: CONTEXT
+            value: "execution-environments/igou-aap-ee-rhel9/context"
+          - name: VERBOSE
+            value: "true"
+          - name: BUILD_ARGS
+            value: "$(params.ansible_galaxy_environment_variables[*])"
+        workspaces:
+          - name: source
+            workspace: shared-workspace
 ```
 
-No `COMMUNITY_TOKEN` / `COMMUNITY_AUTH_URL` — public Galaxy needs neither and they aren't on the Repository CR.
+Notes on this manifest:
 
-### Workspaces
-
-```yaml
-spec:
-  workspaces:
-    - name: shared-workspace
-      volumeClaimTemplate:
-        spec:
-          accessModes: [ReadWriteOnce]
-          resources:
-            requests:
-              storage: 1Gi
-```
-
-1Gi matches rh1-ee. Bump later if needed; the tenant `ResourceQuota` allows up to 50Gi requests.storage / 5 PVCs.
-
-### `pipelineSpec` — three serial tasks
-
-```yaml
-pipelineSpec:
-  workspaces:
-    - name: shared-workspace
-  tasks:
-
-    - name: fetch-source
-      taskRef:
-        resolver: cluster
-        params:
-          - { name: kind,      value: task }
-          - { name: name,      value: git-clone }
-          - { name: namespace, value: openshift-pipelines }
-      params:
-        - { name: url,      value: "{{ repo_url }}" }
-        - { name: revision, value: "{{ revision }}" }
-        - { name: verbose,  value: "true" }
-      workspaces:
-        - { name: output, workspace: shared-workspace }
-
-    - name: ansible-builder
-      runAfter: [fetch-source]
-      taskRef:
-        name: ansible-builder
-      params:
-        - { name: FILENAME,        value: "execution-environments/igou-aap-ee-rhel9/execution-environment.yml" }
-        - { name: BUILD_CONTEXT,   value: "execution-environments/igou-aap-ee-rhel9/context" }
-        - { name: OUTPUT_FILENAME, value: "Containerfile" }
-      workspaces:
-        - { name: source, workspace: shared-workspace }
-
-    - name: build-image
-      runAfter: [ansible-builder]
-      matrix:
-        params:
-          - name: IMAGE
-            value:
-              - "quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:{{ revision }}"
-              - "quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:latest"
-      taskRef:
-        resolver: cluster
-        params:
-          - { name: kind,      value: task }
-          - { name: name,      value: buildah }
-          - { name: namespace, value: openshift-pipelines }
-      params:
-        - { name: DOCKERFILE, value: "Containerfile" }
-        - { name: CONTEXT,    value: "execution-environments/igou-aap-ee-rhel9/context" }
-        - { name: VERBOSE,    value: "true" }
-        - { name: BUILD_ARGS, value: "$(params.ansible_galaxy_environment_variables[*])" }
-      workspaces:
-        - { name: source, workspace: shared-workspace }
-```
+- `git-clone` is fetched via cluster resolver, so no `pipelinesascode.tekton.dev/task-N: "[git-clone]"` annotation is needed (and no Hub fallback either).
+- `COMMUNITY_TOKEN` / `COMMUNITY_AUTH_URL` are intentionally absent — public Galaxy needs neither, and they aren't on our `Repository` CR.
+- 1Gi workspace matches rh1-ee. The tenant `ResourceQuota` allows up to 50Gi `requests.storage` and 5 PVCs total, so we have headroom to bump later if the build outgrows it.
 
 ## Task: `.tekton/tasks/ansible-builder-task.yml`
 
-Identical in structure to `djdanielsson/rh1-ee/.tekton/tasks/ansible-builder-task.yml` — copied verbatim except for the pinned `BUILDER_IMAGE`:
+API version matches the rh1-ee Task: `tekton.dev/v1beta1`. Identical in structure to `djdanielsson/rh1-ee/.tekton/tasks/ansible-builder-task.yml`.
 
 ```yaml
+---
+# yaml-language-server: $schema=https://www.schemastore.org/api/json/catalog.json
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
@@ -183,11 +191,26 @@ spec:
     - name: source
       description: Source workspace containing the cloned repo.
   params:
-    - { name: FILENAME,        type: string, default: "execution-environment.yml" }
-    - { name: BUILD_CONTEXT,   type: string, default: "context" }
-    - { name: OUTPUT_FILENAME, type: string, default: "Containerfile" }
-    - { name: VERBOSITY,       type: string, default: "2" }
-    - { name: BUILDER_IMAGE,   type: string, default: "ghcr.io/ansible/community-ansible-dev-tools:v25.9.0" }
+    - name: FILENAME
+      description: Execution environment file definition.
+      type: string
+      default: "execution-environment.yml"
+    - name: BUILD_CONTEXT
+      description: Execution environment build context.
+      type: string
+      default: "context"
+    - name: OUTPUT_FILENAME
+      description: Name of file to write image definition to (Dockerfile or Containerfile).
+      type: string
+      default: "Containerfile"
+    - name: VERBOSITY
+      description: ansible-builder output verbosity.
+      type: string
+      default: "2"
+    - name: BUILDER_IMAGE
+      description: The location of the ansible-builder image.
+      type: string
+      default: "ghcr.io/ansible/community-ansible-dev-tools:v25.9.0"
   steps:
     - name: ansible-builder-create
       workingDir: $(workspaces.source.path)
