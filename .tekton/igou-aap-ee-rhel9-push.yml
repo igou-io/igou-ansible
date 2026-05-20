@@ -1,0 +1,103 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: igou-aap-ee-rhel9-push
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[execution-environments/igou-aap-ee-rhel9/execution-environment.yml, execution-environments/igou-aap-ee-rhel9/requirements.txt]"
+    pipelinesascode.tekton.dev/task: ".tekton/tasks/ansible-builder-task.yml"
+    pipelinesascode.tekton.dev/max-keep-runs: "3"
+spec:
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+  params:
+    - name: ansible_galaxy_environment_variables
+      value:
+        - "ANSIBLE_GALAXY_SERVER_LIST={{ ansible_galaxy_server_list }}"
+        - "ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_URL={{ ansible_galaxy_server_rh_certified_url }}"
+        - "ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_AUTH_URL={{ ansible_galaxy_server_rh_certified_auth_url }}"
+        - "ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN={{ ansible_galaxy_server_rh_certified_token }}"
+        - "ANSIBLE_GALAXY_SERVER_VALIDATED_URL={{ ansible_galaxy_server_validated_url }}"
+        - "ANSIBLE_GALAXY_SERVER_VALIDATED_AUTH_URL={{ ansible_galaxy_server_validated_auth_url }}"
+        - "ANSIBLE_GALAXY_SERVER_VALIDATED_TOKEN={{ ansible_galaxy_server_validated_token }}"
+        - "ANSIBLE_GALAXY_SERVER_COMMUNITY_URL={{ ansible_galaxy_server_community_url }}"
+  pipelineSpec:
+    workspaces:
+      - name: shared-workspace
+    tasks:
+      - name: fetch-source
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone
+            - name: namespace
+              value: openshift-pipelines
+        params:
+          - name: url
+            value: "{{ repo_url }}"
+          - name: revision
+            value: "{{ revision }}"
+          - name: verbose
+            value: "true"
+        workspaces:
+          - name: output
+            workspace: shared-workspace
+
+      - name: ansible-builder
+        runAfter:
+          - fetch-source
+        taskRef:
+          name: ansible-builder
+        params:
+          - name: FILENAME
+            value: "execution-environments/igou-aap-ee-rhel9/execution-environment.yml"
+          - name: BUILD_CONTEXT
+            value: "execution-environments/igou-aap-ee-rhel9/context"
+          - name: OUTPUT_FILENAME
+            value: "Containerfile"
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+
+      - name: build-image
+        runAfter:
+          - ansible-builder
+        matrix:
+          params:
+            - name: IMAGE
+              value:
+                - "quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:{{ revision }}"
+                - "quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:latest"
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: buildah
+            - name: namespace
+              value: openshift-pipelines
+        params:
+          - name: DOCKERFILE
+            value: "Containerfile"
+          - name: CONTEXT
+            value: "execution-environments/igou-aap-ee-rhel9/context"
+          - name: VERBOSE
+            value: "true"
+          - name: BUILD_ARGS
+            value: "$(params.ansible_galaxy_environment_variables[*])"
+        workspaces:
+          - name: source
+            workspace: shared-workspace
