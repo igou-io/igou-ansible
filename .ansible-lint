@@ -4,6 +4,7 @@ profile: production
 # Exclude files that reference roles/collections not installable in this environment
 exclude_paths:
   - .ansible/
+  - .tekton/  # Tekton/PaC manifests — Kubernetes CRDs, not Ansible content
   - playbooks/netbox/  # davidwittman.redis
   - playbooks/openshift_virtualization/aap-25-vm/  # ansible-role-kubevirt_vm_manage, redhat.rhel_system_roles.rhc
   - playbooks/openshift_virtualization/virtualmachine-manage-testing.yml  # ansible-role-kubevirt_vm_manage
