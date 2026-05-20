@@ -45,11 +45,11 @@ spec:
             - name: namespace
               value: openshift-pipelines
         params:
-          - name: url
+          - name: URL
             value: "{{ repo_url }}"
-          - name: revision
+          - name: REVISION
             value: "{{ revision }}"
-          - name: verbose
+          - name: VERBOSE
             value: "true"
         workspaces:
           - name: output
