@@ -1,4 +1,6 @@
 ---
+# Built and pushed to quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9
+# by .tekton/igou-aap-ee-rhel9-push.yml on every PaC trigger.
 version: 3
 build_arg_defaults:
   ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: '--pre'
