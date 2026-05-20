@@ -65,11 +65,9 @@ kind: PipelineRun
 metadata:
   name: igou-aap-ee-rhel9-push
   annotations:
-    pipelinesascode.tekton.dev/on-cel-expression: |
-      event == "push" && target_branch == "main" && (
-        files.all.exists(f, f.startsWith("execution-environments/igou-aap-ee-rhel9/"))
-        || files.all.exists(f, f == "requirements.yml")
-      )
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[execution-environments/igou-aap-ee-rhel9/execution-environment.yml, execution-environments/igou-aap-ee-rhel9/requirements.txt]"
     pipelinesascode.tekton.dev/task: ".tekton/tasks/ansible-builder-task.yml"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:
@@ -234,23 +232,33 @@ Short (~30 lines), covering:
 - What this directory is (PaC manifests, triggered by Forgejo mirror).
 - Pointer to `igou-openshift/clusters/ocp/pac-tenants/values.yaml` (line 15) for the cluster-side wiring — namespace, ServiceAccount, secrets, Repository CR, Galaxy params.
 - How the pipeline runs: PaC → fetch-source → ansible-builder → buildah matrix → push to internal Quay.
-- How to add Tekton for the other EEs: copy `igou-aap-ee-rhel9-push.yml`, rename, swap the three `execution-environments/<ee-name>/` paths, swap the image name.
+- How to add Tekton for the other EEs: copy `igou-aap-ee-rhel9-push.yml`, rename, swap the three `execution-environments/<ee-name>/` paths in the params, swap the image name, and update both file paths in the `on-path-change` annotation.
 - Known issue: `execution-environments/igou-aap-ee-rhel9/ansible.cfg` is missing — pipeline will fail at `ansible-builder create` until added.
 
 ## Triggers
 
 | Event | Branch / Ref | Path filter | Action |
 | --- | --- | --- | --- |
-| `push` | `main` | `execution-environments/igou-aap-ee-rhel9/**` *or* `requirements.yml` | Build & push `:latest` + `:<sha>` |
+| `push` | `main` | `execution-environments/igou-aap-ee-rhel9/execution-environment.yml` *or* `execution-environments/igou-aap-ee-rhel9/requirements.txt` | Build & push `:latest` + `:<sha>` |
 
 No `pull_request`, no tag-based release pipeline. Add later if needed.
+
+### Why `on-path-change` instead of `on-cel-expression`
+
+Both Pipelines-as-Code mechanisms can filter on changed files, and the Forgejo provider (which uses the Gitea provider implementation in PaC, `pkg/provider/gitea/gitea.go:588`) populates the full `files.{all,added,modified,deleted,renamed}` set. We use `on-path-change` here because:
+
+- The filter is exact-path matching against two known files. A glob list is shorter and easier to read than the equivalent CEL `files.all.exists(f, f == "...")`.
+- `.pathChanged()` (the CEL suffix function) is GitHub/GitLab only — not portable if we ever swap providers.
+- The two annotations are mutually exclusive: if `on-cel-expression` is present, PaC silently ignores `on-path-change`. We pick one and stick with it.
+
+If we later need conditional logic that can't be expressed as a glob list (e.g., trigger only on additions, exclude specific subpaths), switch to `on-cel-expression` with `files.added.exists(...)` and drop both `on-path-change` and `on-event`/`on-target-branch` (CEL must declare event/branch inline).
 
 ## Test plan
 
 Manual, post-merge — there is no local PaC simulator. In order:
 
 1. **Lint locally**: `yamllint .tekton/ && kubeconform -strict .tekton/igou-aap-ee-rhel9-push.yml .tekton/tasks/ansible-builder-task.yml`. (`kubeconform` won't know the PaC `Repository` CRD or Tekton beta APIs, so expect schema-load skips — the assertion is "no parse errors".)
-2. **Merge to main** with a no-op touch under `execution-environments/igou-aap-ee-rhel9/` (e.g., whitespace in `execution-environment.yml`).
+2. **Merge to main** with a no-op touch in one of the trigger files (e.g., a whitespace change in `execution-environments/igou-aap-ee-rhel9/execution-environment.yml` or a comment in `execution-environments/igou-aap-ee-rhel9/requirements.txt`). Verify the glob first with `tkn pac info globbing "execution-environments/igou-aap-ee-rhel9/execution-environment.yml"` from the repo root.
 3. **Observe PipelineRun on the cluster**: `oc -n igou-ansible get pipelinerun -w`. Expect three TaskRuns: `fetch-source` → `ansible-builder` → `build-image` (two matrix instances).
 4. **Expected first-run failure** at `ansible-builder` step: `additional_build_files` references `ansible.cfg`, which doesn't exist. This validates the pipeline plumbing is correct; the EE-config gap is a separate task.
 5. **Once `ansible.cfg` is added**: re-run. Expect `build-image` matrix to push both `:latest` and `:<sha>` to `quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9`.
