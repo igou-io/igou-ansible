@@ -1,0 +1,27 @@
+---
+# Per-playbook navigator config for AAP configuration runs. Selected via
+# ANSIBLE_NAVIGATOR_CONFIG=playbooks/aap/ansible-navigator.yml (the Make
+# targets in the repo root Makefile set this). Navigator reads exactly one
+# config; the repo-root ansible-navigator.yml is untouched and non-AAP
+# plays keep using igou-awx-ee.
+ansible-navigator:
+  ansible:
+    config:
+      path: ansible.cfg
+  ansible-runner:
+    artifact-dir: ~/ansible-navigator
+  execution-environment:
+    container-engine: podman
+    enabled: true
+    environment-variables:
+      pass:
+        - OP_SERVICE_ACCOUNT_TOKEN
+    image: quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:latest
+    pull:
+      policy: missing
+  logging:
+    file: ~/ansible-navigator/ansible-navigator.log
+    level: debug
+  mode: stdout
+  playbook-artifact:
+    enable: false
