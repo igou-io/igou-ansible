@@ -15,3 +15,6 @@ syntax-check:
 		fi; \
 	done; \
 	exit "$${failed}"
+
+pac-sim:
+	tkn pac resolve -f .tekton/igou-aap-ee-rhel9-push.yml | oc create -n ci-igou-ansible -f -

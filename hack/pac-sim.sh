@@ -52,6 +52,13 @@ repo=$(oc get repository -n "$NS" -o json | jq '.items[0]')
 
 cd "$(git rev-parse --show-toplevel)"
 
+# tkn-pac resolve's directory scan only matches `.yaml`, not `.yml`, and
+# stops at the top level — so enumerate files explicitly.
+mapfile -t tekton_files < <(find .tekton -type f \( -name '*.yml' -o -name '*.yaml' \))
+[[ ${#tekton_files[@]} -gt 0 ]] || { echo "no .tekton/ pipeline files found" >&2; exit 1; }
+fargs=()
+for f in "${tekton_files[@]}"; do fargs+=( -f "$f" ); done
+
 if (( SYNC )); then
   api=${URL%/*/*}
   path=${URL#"$api"/}
@@ -61,7 +68,7 @@ if (( SYNC )); then
     "$api/api/v1/repos/$path/mirror-sync" -w 'mirror-sync HTTP:%{http_code}\n'
 fi
 
-out=$(tkn-pac resolve -f .tekton/ --no-secret \
+out=$(tkn-pac resolve "${fargs[@]}" --no-secret \
         -p "revision=$REF" -p "repo_url=$URL")
 
 # Inline Repository.spec.params the way PaC does at trigger time.

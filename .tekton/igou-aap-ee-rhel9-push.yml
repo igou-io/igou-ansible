@@ -10,6 +10,15 @@ metadata:
     pipelinesascode.tekton.dev/task: ".tekton/tasks/ansible-builder-task.yml"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:
+  taskRunSpecs:
+    # buildah needs to run as root inside the container. The cluster
+    # TektonConfig injects default-pod-template.securityContext.runAsNonRoot=true
+    # into every taskrun, which kubelet rejects for this image. pipelines-scc
+    # is RunAsAny, so dropping runAsNonRoot for this task only is safe.
+    - pipelineTaskName: build-image
+      podTemplate:
+        securityContext:
+          runAsNonRoot: false
   workspaces:
     - name: shared-workspace
       volumeClaimTemplate:
