@@ -8,6 +8,11 @@
 # igou-inventory/group_vars/aap/credential_types.yml).
 - name: Manage a KubeVirt VirtualMachine
   hosts: "{{ host | default('localhost') }}"
+  # The play talks to the kubevirt API via env-injected K8S_AUTH_* vars —
+  # no SSH needed. Force local connection because the inventory's
+  # `localhost` entry omits ansible_connection: local, which would
+  # otherwise default to ssh and fail.
+  connection: local
   gather_facts: false
   vars:
     create_namespace: false
