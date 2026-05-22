@@ -1,28 +1,110 @@
 ---
-- name: Set the state of an Kubevirt VM
-  hosts: sno
+# Manage a KubeVirt VirtualMachine (idempotent create/delete/rebuild).
+#
+# Used by AAP job template `openshift_virtualization_machine` and by
+# workflow nodes in `rhel-server-e2e` / `build_ees_e2e`. Reads the
+# kubevirt API via env vars injected by the `virtualmachine-deployer-token`
+# credential (custom credential type `Kubernetes API Token`, see
+# igou-inventory/group_vars/aap/credential_types.yml).
+- name: Manage a KubeVirt VirtualMachine
+  hosts: "{{ host | default('localhost') }}"
   gather_facts: false
   vars:
     create_namespace: false
     set_stat: true
-    vm_state: "absent"
+    rebuild: false
+    vm_state: "present"
+    vm_target_burst: false
     vm_labels:
       created_by: "ansible"
     vm_name: kubevirt-manage-testing
     vm_instancetype: "u1.small"
     vm_namespace: "default"
-    vm_os_image_datasource: rhel9
-  roles:
-    - role: David-Igou.kubevirt_vm_manage
-      when: rebuild is true
-      vars:
-        vm_state: absent
-    - role: David-Igou.kubevirt_vm_manage
-  tasks:
+    vm_virtualmachineclusterpreference: rhel.9
+    vm_data_volume:
+      sourceRef:
+        name: rhel9
+    vm_devices:
+      interfaces:
+        - bridge: {}
+          name: default
+    vm_networks:
+      - name: default
+        pod: {}
+    vm_user_data: |
+      #cloud-config
+      ssh_pwauth: true
+      chpasswd:
+        expire: false
 
-    - name: Set stat for vm name
+  tasks:
+    - name: Ensure namespace exists
+      when: create_namespace | bool
+      kubernetes.core.k8s:
+        state: present
+        kind: Namespace
+        name: "{{ vm_namespace }}"
+
+    - name: Tear down existing VM (rebuild mode)
+      when:
+        - rebuild | bool
+        - vm_state == "present"
+      kubevirt.core.kubevirt_vm:
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 300
+
+    - name: Enforce VM state
+      kubevirt.core.kubevirt_vm:
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+        state: "{{ vm_state }}"
+        labels: "{{ vm_labels }}"
+        wait: true
+        wait_timeout: "{{ vm_wait_timeout | default(600) }}"
+        instancetype:
+          kind: virtualmachineclusterinstancetype
+          name: "{{ vm_instancetype }}"
+        preference:
+          kind: virtualmachineclusterpreference
+          name: "{{ vm_virtualmachineclusterpreference }}"
+        data_volume_templates:
+          - metadata:
+              name: "{{ vm_name }}-volume"
+            spec:
+              sourceRef:
+                kind: "{{ vm_data_volume.sourceRef.kind | default('DataSource') }}"
+                name: "{{ vm_data_volume.sourceRef.name }}"
+                namespace: "{{ vm_data_volume.sourceRef.namespace | default('openshift-virtualization-os-images') }}"
+              storage:
+                resources: "{{ vm_data_volume.storage.resources | default({}) }}"
+        spec:
+          architecture: amd64
+          # Burst placement (casval). nodeSelector matches the CAPI-propagated
+          # node-role label; toleration matches the workload=burst:NoSchedule
+          # taint on the casval MachineSet template.
+          nodeSelector: "{{ {'node-role.kubernetes.io/burst': ''} if vm_target_burst | bool else omit }}"
+          tolerations: "{{ [{'key': 'workload', 'operator': 'Equal', 'value': 'burst', 'effect': 'NoSchedule'}] if vm_target_burst | bool else omit }}"
+          domain:
+            devices: "{{ vm_devices }}"
+            resources: {}
+          subdomain: headless
+          networks: "{{ vm_networks }}"
+          volumes:
+            - dataVolume:
+                name: "{{ vm_name }}-volume"
+              name: rootdisk
+            - cloudInitNoCloud:
+                userDataBase64: "{{ vm_user_data | b64encode }}"
+              name: cloudinitdisk
+
+    - name: Set workflow stat for downstream nodes
+      when:
+        - set_stat | bool
+        - vm_state == "present"
       ansible.builtin.set_stats:
         data:
           host: "{{ vm_namespace }}-{{ vm_name }}"
         per_host: false
-      when: set_stat is true
