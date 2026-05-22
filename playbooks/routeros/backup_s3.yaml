@@ -1,0 +1,115 @@
+---
+# Take a fresh RouterOS backup (binary + plaintext export) on every
+# device in scope and upload both artifacts to the rustfs cold S3
+# bucket. Files are staged into a per-host tempdir on the control
+# node, uploaded to
+#   s3://routeros-backups/routeros/<inventory_hostname>/<inventory_hostname>-<ts>.{backup,rsc}
+# then the staging dir is removed. fetch_artifact.yml also removes
+# the artifact from the device after the fetch, so nothing lingers
+# on the router.
+#
+# Uploaded objects are tagged with tier={{ routeros_s3_tier }}
+# (default: daily). The rustfs bucket's lifecycle policy keys off
+# this tag.
+#
+# S3 credentials are resolved at runtime from 1Password
+# (vault: awx, item: routeros-backups-rustfs-cold,
+#  fields: username / password / host).
+#
+# Default scope: the routeros group. Override target with:
+#   -e host=<inventory_hostname>
+# Override tier with:
+#   -e routeros_s3_tier=<weekly|monthly|...>
+- name: Back up RouterOS devices to S3
+  hosts: "{{ host | default('routeros') }}"
+  gather_facts: false
+
+  vars:
+    routeros_s3_bucket: routeros-backups
+    routeros_s3_prefix: routeros
+    routeros_s3_region: us-east-1
+    routeros_s3_tier: daily
+    routeros_s3_endpoint: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='host', vault='awx') }}"
+    routeros_s3_access_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='username', vault='awx') }}"
+    routeros_s3_secret_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='password', vault='awx') }}"
+
+  tasks:
+    - name: Compute per-host backup timestamp
+      ansible.builtin.set_fact:
+        backup_ts: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+
+    - name: Create staging directory on the control node
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: "routeros-backup-{{ inventory_hostname }}-"
+      register: routeros_stage
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Tighten staging directory to mode 0700
+      ansible.builtin.file:
+        path: "{{ routeros_stage.path }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Back up device and ship artifacts to S3
+      block:
+        - name: Save binary backup on device
+          community.routeros.command:
+            commands:
+              - "/system backup save name={{ inventory_hostname }}-{{ backup_ts }} dont-encrypt=yes"
+
+        - name: Export plaintext config with sensitive values
+          community.routeros.command:
+            commands:
+              - "/export show-sensitive file={{ inventory_hostname }}-{{ backup_ts }}"
+
+        - name: Fetch binary backup
+          ansible.builtin.include_tasks: tasks/fetch_artifact.yml
+          vars:
+            remote_filename: "{{ inventory_hostname }}-{{ backup_ts }}.backup"
+            local_dir: "{{ routeros_stage.path }}"
+
+        - name: Fetch plaintext export
+          ansible.builtin.include_tasks: tasks/fetch_artifact.yml
+          vars:
+            remote_filename: "{{ inventory_hostname }}-{{ backup_ts }}.rsc"
+            local_dir: "{{ routeros_stage.path }}"
+
+        - name: Upload binary backup to S3
+          amazon.aws.s3_object:
+            bucket: "{{ routeros_s3_bucket }}"
+            object: "{{ routeros_s3_prefix }}/{{ inventory_hostname }}/{{ inventory_hostname }}-{{ backup_ts }}.backup"
+            src: "{{ routeros_stage.path }}/{{ inventory_hostname }}-{{ backup_ts }}.backup"
+            mode: put
+            tags:
+              tier: "{{ routeros_s3_tier }}"
+            endpoint_url: "{{ routeros_s3_endpoint }}"
+            access_key: "{{ routeros_s3_access_key }}"
+            secret_key: "{{ routeros_s3_secret_key }}"
+            region: "{{ routeros_s3_region }}"
+          delegate_to: localhost
+
+        - name: Upload plaintext export to S3
+          amazon.aws.s3_object:
+            bucket: "{{ routeros_s3_bucket }}"
+            object: "{{ routeros_s3_prefix }}/{{ inventory_hostname }}/{{ inventory_hostname }}-{{ backup_ts }}.rsc"
+            src: "{{ routeros_stage.path }}/{{ inventory_hostname }}-{{ backup_ts }}.rsc"
+            mode: put
+            tags:
+              tier: "{{ routeros_s3_tier }}"
+            endpoint_url: "{{ routeros_s3_endpoint }}"
+            access_key: "{{ routeros_s3_access_key }}"
+            secret_key: "{{ routeros_s3_secret_key }}"
+            region: "{{ routeros_s3_region }}"
+          delegate_to: localhost
+      always:
+        - name: Remove staging directory on the control node
+          ansible.builtin.file:
+            path: "{{ routeros_stage.path }}"
+            state: absent
+          delegate_to: localhost
+          when: routeros_stage.path is defined
+          changed_when: false
