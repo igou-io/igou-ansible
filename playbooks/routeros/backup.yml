@@ -10,6 +10,7 @@
 - name: Back up RouterOS devices
   hosts: "{{ host | default('routeros') }}"
   gather_facts: false
+  connection: local   # localhost-delegated file tasks; routeros hosts override via group_vars/routeros.yml
 
   tasks:
     - name: Compute per-host backup timestamp

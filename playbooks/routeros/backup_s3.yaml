@@ -23,13 +23,14 @@
 - name: Back up RouterOS devices to S3
   hosts: "{{ host | default('routeros') }}"
   gather_facts: false
+  connection: local   # localhost-delegated tempfile/file tasks; routeros hosts override via group_vars/routeros.yml
 
   vars:
     routeros_s3_bucket: routeros-backups
     routeros_s3_prefix: routeros
     routeros_s3_region: us-east-1
     routeros_s3_tier: daily
-    routeros_s3_endpoint: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='host', vault='awx') }}"
+    routeros_s3_endpoint: "https://{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='host', vault='awx') }}"
     routeros_s3_access_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='username', vault='awx') }}"
     routeros_s3_secret_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='password', vault='awx') }}"
 
