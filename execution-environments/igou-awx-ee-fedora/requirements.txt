@@ -1,7 +1,7 @@
 awxkit==24.6.1
 git+https://github.com/ansible/ansible-sign
 ncclient==0.7.1
-paramiko==4.0.0
+paramiko==5.0.0
 pykerberos==1.2.4
 distlib==0.4.0
 pyOpenSSL==26.2.0
@@ -12,5 +12,5 @@ pexpect==4.9.0
 python-daemon==3.1.2
 pyyaml==6.0.3
 six==1.17.0
-receptorctl==1.6.4
-boto3==1.43.5
+receptorctl==1.6.5
+boto3==1.43.9
