@@ -70,7 +70,7 @@ additional_build_steps:
     RUN chmod 600 /etc/ssh/ssh_config.d/custom.conf
     RUN rm /etc/ssh/ssh_config.d/50-redhat.conf
     # renovate: datasource=github-releases depName=ansible/receptor
-    ARG RECEPTOR_VERSION="v1.6.4"
+    ARG RECEPTOR_VERSION="v1.6.5"
     RUN curl -L -o /tmp/receptor.tar.gz "https://github.com/ansible/receptor/releases/download/${RECEPTOR_VERSION}/receptor_${RECEPTOR_VERSION#v}_linux_amd64.tar.gz" && \
         tar xzf /tmp/receptor.tar.gz -C /usr/bin/ receptor && \
         chmod +x /usr/bin/receptor && \
