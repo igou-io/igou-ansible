@@ -21,10 +21,6 @@ molecule/
 │   ├── converge.yml
 │   ├── molecule.yml
 │   └── verify.yml
-├── kubernetes-create-serviceaccount-kind
-│   ├── converge.yml
-│   ├── molecule.yml
-│   └── verify.yml
 ├── shared
 │   ├── base.yml
 │   ├── playbooks

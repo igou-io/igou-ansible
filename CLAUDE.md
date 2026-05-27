@@ -97,7 +97,7 @@ Scenarios in `molecule/` with shared infrastructure in `molecule/shared/` (base 
 
 ### Inventory (separate repo)
 
-`igou-inventory/` contains `inventory.yaml` with groups: `metal`, `k8s_internal_nodes`, `k8s_internal_api`, `openshift_clusters`, `aap`, `truenas`. Group/host vars in `group_vars/` and `host_vars/`.
+`igou-inventory/` contains `inventory.yaml` with groups: `metal`, `rk8s` (with `rk8s_control_plane` / `rk8s_workers` children), `openshift_clusters`, `openshift_workers_ocp`, `aap`, `truenas`, `routeros`, `armbian`/`boards`, `netboot_server`. Group/host vars in `group_vars/` and `host_vars/`.
 
 ## Code Style
 
