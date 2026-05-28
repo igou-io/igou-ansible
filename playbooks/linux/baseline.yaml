@@ -1,0 +1,72 @@
+---
+- name: Baseline configure and harden a Linux host
+  hosts: "{{ ansible_limit | default('all') }}"
+  become: true
+  gather_facts: true
+
+  # baseline_* variables are defined in igou-inventory group_vars/all/main.yml
+
+  # pre_tasks run before roles, so the admin user + key + sudo exist before
+  # ssh_hardening disables root login and password auth (prevents lockout).
+  pre_tasks:
+    - name: Ensure sudo is installed
+      ansible.builtin.package:
+        name: sudo
+        state: present
+
+    - name: Create admin user
+      ansible.builtin.user:
+        name: "{{ baseline_user }}"
+        groups: "{{ baseline_user_groups }}"
+        append: true
+        shell: "{{ baseline_user_shell }}"
+        create_home: true
+        password_lock: true  # no password login; key + sudo only
+        state: present
+
+    - name: Install authorized SSH keys
+      ansible.posix.authorized_key:
+        user: "{{ baseline_user }}"
+        key: "{{ item }}"
+        state: present
+      loop: "{{ baseline_authorized_keys }}"
+
+    - name: Grant passwordless sudo
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/90-{{ baseline_user }}"
+        content: "{{ baseline_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+      when: baseline_passwordless_sudo | bool
+
+    # ssh_hardening's crypto_hostkeys task assumes rsa+ecdsa+ed25519 host keys
+    # all exist (it derives the list from the OpenSSH version, not from disk)
+    # and errors on any missing one. Generate any that are absent first.
+    - name: Check which SSH host keys exist
+      ansible.builtin.stat:
+        path: "/etc/ssh/{{ item }}"
+      loop:
+        - ssh_host_rsa_key
+        - ssh_host_ecdsa_key
+        - ssh_host_ed25519_key
+      register: baseline_ssh_host_keys
+
+    - name: Generate missing SSH host keys
+      ansible.builtin.command: ssh-keygen -A
+      when: baseline_ssh_host_keys.results | rejectattr('stat.exists') | list | length > 0
+      changed_when: true
+
+  roles:
+    - role: devsec.hardening.os_hardening
+      vars:
+        sysctl_overwrite:
+          # Re-enable unprivileged user namespaces for rootless podman.
+          # devsec sets this to 0 (CVE-2021-33909) in its Ubuntu vars.
+          kernel.unprivileged_userns_clone: 1
+
+    - role: devsec.hardening.ssh_hardening
+      vars:
+        ssh_permit_root_login: "no"
+        ssh_server_password_login: false
