@@ -1,0 +1,15 @@
+---
+- name: Install Linux packages
+  hosts: "{{ ansible_limit | default('all') }}"
+  become: true
+  gather_facts: true
+  vars:
+    # List of package names to install. Override at launch, e.g.
+    # -e '{"install_packages": ["podman"]}'
+    install_packages: []
+  tasks:
+    - name: Ensure requested packages are present
+      ansible.builtin.package:
+        name: "{{ install_packages }}"
+        state: present
+      when: install_packages | length > 0

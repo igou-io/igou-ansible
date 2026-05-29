@@ -2,6 +2,8 @@
 roles:
   - name: xanmanning.k3s
     version: v3.6.2
+  - name: linux-system-roles.podman
+    version: 1.11.1
   - name: githubixx.iscsi_target
     version: 2.0.0
   - name: githubixx.ansible_role_wireguard
