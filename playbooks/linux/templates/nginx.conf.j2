@@ -1,0 +1,79 @@
+# Managed by Ansible - playbooks/linux/podman_quadlets.yaml
+# Reverse proxy for {{ inventory_hostname }}. Edit linux_proxied_services in
+# inventory to add/remove sites; this file is regenerated from that list.
+worker_processes auto;
+
+events {
+  worker_connections 1024;
+}
+
+http {
+  sendfile on;
+  tcp_nopush on;
+  server_tokens off;
+
+  # Placeholder for the apex and any unmatched SNI. The *.igou.io wildcard does
+  # not cover the bare apex, so the apex is served over HTTP and the HTTPS
+  # default server presents the wildcard cert (browsers warn on the apex name).
+  # Override linux_placeholder_html to customise (single line, no double quotes).
+{% set _placeholder = linux_placeholder_html | default('<!doctype html><meta charset=utf-8><title>' ~ inventory_hostname ~ '</title><body style=font-family:sans-serif;text-align:center;margin-top:4rem><h1>' ~ inventory_hostname ~ '</h1><p>Coming soon.</p></body>') %}
+
+  # Apex over HTTP -> placeholder (not redirected; the apex has no valid cert).
+  server {
+    listen 80;
+    listen [::]:80;
+    server_name {{ inventory_hostname }};
+    location / {
+      default_type text/html;
+      return 200 "{{ _placeholder }}";
+    }
+  }
+
+  # Other plaintext (subdomains) is redirected to HTTPS. 443 is the entrypoint.
+  server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    return 301 https://$host$request_uri;
+  }
+
+  # Default HTTPS server: apex + unmatched SNI get the placeholder (wildcard
+  # cert; warns on the bare apex). Also stops unknown SNI from leaking a backend.
+  server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
+    server_name {{ inventory_hostname }};
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    location / {
+      default_type text/html;
+      return 200 "{{ _placeholder }}";
+    }
+  }
+
+{% for svc in linux_proxied_services | default([]) %}
+  # {{ svc.server_name }} -> {{ svc.upstream }}
+  server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name {{ svc.server_name }};
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    location / {
+      proxy_pass {{ svc.upstream }};
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+  }
+
+{% endfor %}
+}

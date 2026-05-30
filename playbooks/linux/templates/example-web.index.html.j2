@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>example.igou.io</title>
+  </head>
+  <body>
+    <h1>example backend</h1>
+    <p>
+      Served by the <code>example</code> container on
+      {{ inventory_hostname }}, reached through the nginx reverse proxy.
+      Both this page and the server's nginx config were delivered via
+      <code>linux_podman_config_files</code> and bind-mounted into the
+      container - a demo of config-file delivery for a backend workload.
+    </p>
+  </body>
+</html>
