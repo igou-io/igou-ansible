@@ -1,0 +1,40 @@
+---
+# Second-layer retry for the post-boot SSH wait.
+#
+# After the first-layer cold_boot_with_retry succeeded (TCP/22 +
+# sustained ssh-ping passed), this file wraps the longer
+# wait_for_connection in a block/rescue: a late-falling board triggers
+# another cold-cycle and one more attempt.
+#
+# Inputs:
+#   _phase_label    human label
+#   _wait_timeout   post-boot wait_for_connection timeout
+
+- name: "Wait for SSH with cycle retry on failure — {{ _phase_label }}"
+  block:
+    - name: "Wait for SSH, first attempt — {{ _phase_label }}"
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: "{{ _wait_timeout }}"
+
+  rescue:
+    - name: "SSH wait failed, cycle and retry — {{ _phase_label }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ _phase_label }}: post-boot SSH wait failed. Cycling via
+          cold_boot_with_retry, then trying the SSH wait once more.
+
+    - name: "Capture nested-cycle label — {{ _phase_label }}"
+      ansible.builtin.set_fact:
+        _ssh_retry_label: "{{ _phase_label }} SSH-wait retry"
+
+    - name: "Second-layer cold cycle — {{ _phase_label }}"
+      ansible.builtin.include_tasks: cold_boot_with_retry.yml
+      vars:
+        _phase_label: "{{ _ssh_retry_label }}"
+        _boot_max_attempts: "{{ armbian_ssh_wait_retry_attempts | default(armbian_boot_retry_attempts | default(0)) | int + 1 }}"
+
+    - name: "Wait for SSH, second attempt post cycle — {{ _phase_label }}"
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: "{{ _wait_timeout }}"

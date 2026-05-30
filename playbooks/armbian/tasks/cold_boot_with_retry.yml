@@ -1,0 +1,41 @@
+---
+# Reusable cold-boot-with-retry sequence (replaces v2 boot_mode role's
+# cold_boot_with_retry.yml).
+#
+# Wraps a parameterised PoE-cycle hook + wait_for TCP/22 + sustained
+# ssh-ping in a retry loop. Each attempt is a block/rescue; the rescue
+# allows the loop to advance.
+#
+# Inputs (vars from caller):
+#   _phase_label         human label (e.g. "boot_mode[nfs]")
+#   _boot_max_attempts   total attempts incl. first; 1 = no retry
+#
+# Transport hook (defaulted, overridable):
+#   armbian_poe_cycle_tasks_file  default: routeros/tasks/poe_cycle.yml
+
+- name: "Initialize boot tracking — {{ _phase_label }}"
+  ansible.builtin.set_fact:
+    _boot_succeeded: false
+
+- name: "Attempt boot — {{ _phase_label ~ ' (' ~ _boot_max_attempts ~ ' max)' }}"
+  ansible.builtin.include_tasks: cold_boot_single_attempt.yml
+  loop: "{{ range(1, _boot_max_attempts | int + 1) | list }}"
+  loop_control:
+    loop_var: _attempt_num
+    label: "{{ _phase_label }} attempt {{ _attempt_num }}/{{ _boot_max_attempts }}"
+  when: not _boot_succeeded
+
+- name: "Assert boot succeeded — {{ _phase_label }}"
+  ansible.builtin.assert:
+    that: _boot_succeeded
+    fail_msg: >-
+      {{ _phase_label }} cold boot failed after {{ _boot_max_attempts }}
+      attempt(s). Each attempt = PoE cycle (off → drain → on) +
+      wait_for TCP/22
+      ({{ armbian_boot_attempt_timeout | default(180) }}s timeout)
+      + wait_for_connection
+      ({{ armbian_ssh_wait_timeout | default(90) }}s).
+      Either raise armbian_boot_retry_attempts (if iters are
+      hardware-flaky but eventually consistent), raise the per-attempt
+      timeouts, or investigate the underlying boot stall (serial trace,
+      board hardware, PSU sufficiency).

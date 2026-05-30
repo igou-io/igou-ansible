@@ -1,0 +1,46 @@
+---
+# One attempt at PoE cycle + wait_for TCP/22 + reachability probe.
+# Wrapped in block/rescue so a failure here doesn't propagate up the
+# include chain — the outer loop in cold_boot_with_retry.yml advances
+# to the next attempt instead.
+
+- name: "Boot attempt block — {{ _phase_label ~ ' attempt ' ~ _attempt_num }}"
+  when: not (_boot_succeeded | default(false))
+  block:
+    - name: "PoE cycle — {{ _phase_label ~ ' attempt ' ~ _attempt_num }}"
+      ansible.builtin.include_tasks: "{{ armbian_poe_cycle_tasks_file
+                                          | default('../transport/poe_cycle.yml') }}"
+
+    - name: "Wait for board TCP/22 — {{ _phase_label ~ ' attempt ' ~ _attempt_num }}"
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: 22
+        timeout: "{{ armbian_boot_attempt_timeout | default(180) }}"
+        state: started
+      delegate_to: localhost
+
+    # SSH-stability gate uses the inventory user's identity. Callers
+    # whose SSH identity isn't guaranteed to exist yet on the booting
+    # board (Phase A of test_fleet_e2e against a stock-Armbian SD card,
+    # for instance) can set _skip_ssh_stability_check=true and chain a
+    # following call to tasks/auto_bootstrap_if_needed.yml, which
+    # probe-then-bootstraps the inventory user before any later
+    # wait_for_connection runs.
+    - name: "Wait for SSH ready (stability) — {{ _phase_label ~ ' attempt ' ~ _attempt_num }}"
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: "{{ armbian_ssh_wait_timeout | default(90) }}"
+      when: not (_skip_ssh_stability_check | default(false) | bool)
+
+    - name: "Boot succeeded — {{ _phase_label ~ ' attempt ' ~ _attempt_num }}"
+      ansible.builtin.set_fact:
+        _boot_succeeded: true
+
+  rescue:
+    - name: "Attempt failed, will retry if attempts remain — {{ _phase_label ~ ' attempt ' ~ _attempt_num }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ _phase_label }} cold boot attempt {{ _attempt_num }} of
+          {{ _boot_max_attempts }} failed (PoE cycle, TCP/22 timeout,
+          or board fell off the network post-TCP/22). Will continue to
+          the next attempt if any remain.
