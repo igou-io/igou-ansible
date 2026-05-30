@@ -1,0 +1,115 @@
+---
+# playbooks/tasks/_resolve_rootfs_src.yml
+#
+# Per-host resolver for armbian_rootfs_src. Precedence:
+#   1. host_vars value set → use as-is
+#   2. published manifest at armbian_nfs_assets_export/images/<host>/manifest.json
+#      (stat'd on the first netboot_server host) → derive an HTTP URL from
+#      armbian_assets_base_url + the manifest's image_filename. Both the
+#      netboot_server (rootfs_provision) and the boards (disk_image) fetch
+#      this same URL.
+#   3. neither → fail with actionable message
+
+- name: Skip resolution when host_vars armbian_rootfs_src is already set
+  ansible.builtin.set_fact:
+    __armbian_rootfs_src_was_set: "{{ armbian_rootfs_src is defined and (armbian_rootfs_src | length > 0) }}"
+
+# Resolve the manifest-lookup delegate target once. Default the group NAME
+# (not just the [0] subscript) so an undefined armbian_netboot_server_group
+# degrades to localhost rather than raising. become only when the group
+# actually resolves to real hosts (a remote netboot_server needs sudo to
+# read its export; a localhost fallback does not).
+- name: Resolve netboot_server delegate target for manifest lookup
+  ansible.builtin.set_fact:
+    __netboot_delegate_host: >-
+      {{ groups[armbian_netboot_server_group | default('netboot_server')][0]
+         | default('localhost') }}
+    __netboot_delegate_become: >-
+      {{ (groups[armbian_netboot_server_group | default('netboot_server')]
+          | default([]) | length) > 0 }}
+
+- name: Compute published manifest path candidate
+  ansible.builtin.set_fact:
+    __published_manifest_path: >-
+      {{ armbian_nfs_assets_export }}/images/{{ inventory_hostname }}/manifest.json
+  when: not __armbian_rootfs_src_was_set
+
+- name: Stat published manifest on netboot server (delegated)
+  ansible.builtin.stat:
+    path: "{{ __published_manifest_path }}"
+  delegate_to: "{{ __netboot_delegate_host }}"
+  become: "{{ __netboot_delegate_become }}"
+  register: __published_manifest_stat
+  when: not __armbian_rootfs_src_was_set
+
+- name: Slurp published manifest if present
+  ansible.builtin.slurp:
+    src: "{{ __published_manifest_path }}"
+  delegate_to: "{{ __netboot_delegate_host }}"
+  become: "{{ __netboot_delegate_become }}"
+  register: __published_manifest_raw
+  when:
+    - not __armbian_rootfs_src_was_set
+    - __published_manifest_stat.stat.exists | default(false)
+
+# Extract image_filename separately so a manifest that exists but is
+# malformed (no/empty image_filename) fails with an actionable message
+# instead of a raw templating error inside the URL derivation.
+- name: Extract image_filename from published manifest
+  ansible.builtin.set_fact:
+    __published_image_filename: >-
+      {{ (__published_manifest_raw.content | b64decode | from_json).image_filename | default('') }}
+  when:
+    - not __armbian_rootfs_src_was_set
+    - __published_manifest_stat.stat.exists | default(false)
+
+- name: Fail when the manifest has no image_filename
+  ansible.builtin.fail:
+    msg: >-
+      Host {{ inventory_hostname }}: manifest at {{ __published_manifest_path }}
+      has no image_filename. Republish with build_and_publish_from_inventory.yml,
+      or pin armbian_rootfs_src in host_vars.
+  when:
+    - not __armbian_rootfs_src_was_set
+    - __published_manifest_stat.stat.exists | default(false)
+    - (__published_image_filename | default('') | length) == 0
+
+# Single HTTP URL consumed by both rootfs_provision (netboot_server) and
+# disk_image (boards). Requires armbian_assets_base_url; the guard task
+# below fails clearly when a manifest exists but no base URL is set.
+- name: Derive armbian_rootfs_src (HTTP URL from manifest + base URL)
+  ansible.builtin.set_fact:
+    armbian_rootfs_src: >-
+      {{ armbian_assets_base_url }}/images/{{ inventory_hostname
+         }}/{{ __published_image_filename }}
+  when:
+    - not __armbian_rootfs_src_was_set
+    - __published_manifest_stat.stat.exists | default(false)
+    - armbian_assets_base_url is defined
+    - armbian_assets_base_url | length > 0
+
+- name: Fail when a manifest exists but armbian_assets_base_url is unset
+  ansible.builtin.fail:
+    msg: >-
+      Host {{ inventory_hostname }}: a published manifest exists at
+      {{ __published_manifest_path }} but armbian_assets_base_url is unset,
+      so a fetchable image URL cannot be derived. Set armbian_assets_base_url
+      (e.g. https://public.example.systems/boot-files) at group_vars/all scope,
+      or pin armbian_rootfs_src in host_vars.
+  when:
+    - not __armbian_rootfs_src_was_set
+    - __published_manifest_stat.stat.exists | default(false)
+    - not (armbian_assets_base_url is defined and (armbian_assets_base_url | length > 0))
+
+- name: Fail if no source could be resolved
+  ansible.builtin.fail:
+    msg: >-
+      Host {{ inventory_hostname }}: cannot resolve armbian_rootfs_src.
+      Remediation:
+        (a) set armbian_rootfs_src in host_vars to an upstream Armbian URL
+            (e.g. "https://redirect.armbian.com/<model>/Bookworm_current_minimal"), OR
+        (b) run build_and_publish_from_inventory.yml first so a manifest
+            lands at {{ armbian_nfs_assets_export }}/images/{{ inventory_hostname }}/manifest.json.
+  when:
+    - not __armbian_rootfs_src_was_set
+    - not (__published_manifest_stat.stat.exists | default(false))

@@ -1,0 +1,27 @@
+---
+# Per-host resolver: merges three inventory layers into the fact
+# armbian_board_config. Run once per host that needs hardware facts.
+# Layers (low -> high precedence):
+#   armbian_board_config_family — group_vars/<family>.yml
+#   armbian_board_config_model  — group_vars/<model_group>.yml
+#   armbian_board_config_host   — host_vars/<host>.yml
+- name: Resolve effective armbian_board_config (family then model then host)
+  ansible.builtin.set_fact:
+    armbian_board_config: >-
+      {{
+        (armbian_board_config_family | default({}))
+        | combine(armbian_board_config_model | default({}), recursive=true)
+        | combine(armbian_board_config_host  | default({}), recursive=true)
+      }}
+
+- name: Assert required hardware fields are present after merge
+  ansible.builtin.assert:
+    that:
+      - armbian_board_config.armbian_board_name | default('') | length > 0
+      - armbian_board_config.dtb | default('') | length > 0
+      - armbian_board_config.console | default('') | length > 0
+    fail_msg: >-
+      Host {{ inventory_hostname }}: armbian_board_config missing required
+      field(s) after merge (armbian_board_name, dtb, console). Check
+      group_vars/<family>.yml, group_vars/<model_group>.yml, and
+      host_vars/{{ inventory_hostname }}.yml.

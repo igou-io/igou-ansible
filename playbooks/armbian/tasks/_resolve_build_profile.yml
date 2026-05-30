@@ -1,0 +1,53 @@
+---
+# Per-host resolver: merges four layers into the fact armbian_build.
+# Layers (low -> high): armbian_build_defaults (group_vars/all.yml),
+# armbian_build_family, armbian_build_model, armbian_build_host.
+# Scalars + compile_args merge via recursive combine; userpatches are
+# list-concatenated with a duplicate-dest hard fail.
+- name: Assert armbian_build_defaults is defined (expected from group_vars/all.yml)
+  ansible.builtin.assert:
+    that:
+      - armbian_build_defaults is defined
+      - armbian_build_defaults | length > 0
+    fail_msg: >-
+      armbian_build_defaults is undefined. Set it in group_vars/all.yml.
+      Expected keys: release, ref, min_free_gb, timeout, compile_args, userpatches.
+
+- name: Merge scalars + compile_args via recursive combine
+  ansible.builtin.set_fact:
+    __armbian_build_scalars: >-
+      {{
+        (armbian_build_defaults | default({}))
+        | combine(armbian_build_family | default({}), recursive=true)
+        | combine(armbian_build_model  | default({}), recursive=true)
+        | combine(armbian_build_host   | default({}), recursive=true)
+      }}
+
+- name: Concatenate userpatches across layers
+  ansible.builtin.set_fact:
+    __armbian_build_userpatches_concat: >-
+      {{
+        (armbian_build_defaults.userpatches | default([]))
+        + (armbian_build_family.userpatches | default([]))
+        + (armbian_build_model.userpatches  | default([]))
+        + (armbian_build_host.userpatches   | default([]))
+      }}
+
+- name: Fail if any userpatch dest appears more than once across layers
+  ansible.builtin.assert:
+    that:
+      - >-
+        (__armbian_build_userpatches_concat | map(attribute='dest') | list
+         | unique | length) == (__armbian_build_userpatches_concat | length)
+    fail_msg: >-
+      Host {{ inventory_hostname }}: duplicate userpatch dest across
+      armbian_build layers. dests =
+      {{ __armbian_build_userpatches_concat | map(attribute='dest') | list }}.
+
+- name: Assemble resolved armbian_build
+  ansible.builtin.set_fact:
+    armbian_build: >-
+      {{
+        __armbian_build_scalars
+        | combine({'userpatches': __armbian_build_userpatches_concat})
+      }}
