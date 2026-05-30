@@ -1,0 +1,37 @@
+---
+# Tasks-file form for uploading ONE board's pxelinux.cfg to the router.
+# Used by orchestrator playbooks (e.g. test_hardware_e2e.yml) that
+# need to interleave render + upload within a single play targeting
+# boards. Caller is responsible for delegating these tasks to the
+# router (e.g. via `delegate_to: {{ armbian_router }}` on a
+# wrapping block).
+#
+# Required vars on include:
+#   _upload_pxe_hostname            inventory hostname of the board whose
+#                                   pxelinux file is being uploaded
+#   armbian_tftp_cache_dir  controller-side dir holding the rendered file
+#   armbian_tftp_flash_dir  top-level dir on router flash
+
+- name: Ensure pxelinux.cfg directory exists on router flash
+  community.routeros.command:
+    commands:
+      - >-
+        :if ([/file find name="{{ armbian_tftp_flash_dir }}/pxelinux.cfg" type=directory] = "")
+        do={/file add name="{{ armbian_tftp_flash_dir }}/pxelinux.cfg" type=directory}
+  register: _pxedir
+  retries: 3
+  delay: 5
+  until: _pxedir is succeeded
+  changed_when: false
+
+- name: Compute per-host pxelinux filename
+  ansible.builtin.set_fact:
+    _pxe_filename: "01-{{ hostvars[_upload_pxe_hostname].armbian_board_mac | lower | replace(':', '-') }}"
+
+- name: Upload this host's pxelinux.cfg via shared primitive
+  ansible.builtin.include_tasks: upload_file.yml
+  vars:
+    _upload_local_src: "{{ armbian_tftp_cache_dir }}/pxelinux.cfg/{{ _pxe_filename }}"
+    _upload_remote_path: "{{ armbian_tftp_flash_dir }}/pxelinux.cfg/{{ _pxe_filename }}"
+    _upload_req_filename: "{{ _pxe_filename }}"
+    _upload_req_filename_is_regex: true
