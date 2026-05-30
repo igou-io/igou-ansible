@@ -12,6 +12,15 @@ http {
   tcp_nopush on;
   server_tokens off;
 
+  # Resolve upstream container names at request time, not just once at startup.
+  # A backend restart (config change, auto-update, reboot) gives it a new IP on
+  # the podman network; with a static proxy_pass nginx caches the old IP and
+  # 502s until it is itself restarted. Pairing this resolver with a variable in
+  # proxy_pass (below) makes nginx re-resolve within the TTL, so backends can
+  # come and go without touching nginx. 10.89.0.1 is podman's aardvark-dns on
+  # the proxy network; override via linux_proxy_resolver if the subnet differs.
+  resolver {{ linux_proxy_resolver | default('10.89.0.1') }} valid=10s ipv6=off;
+
   # Placeholder for the apex and any unmatched SNI. The *.igou.io wildcard does
   # not cover the bare apex, so the apex is served over HTTP and the HTTPS
   # default server presents the wildcard cert (browsers warn on the apex name).
@@ -67,7 +76,10 @@ http {
     ssl_prefer_server_ciphers off;
 
     location / {
-      proxy_pass {{ svc.upstream }};
+      # Variable in proxy_pass forces runtime DNS re-resolution (see resolver
+      # above); $request_uri preserves the original path + query string.
+      set $upstream {{ svc.upstream }};
+      proxy_pass $upstream$request_uri;
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

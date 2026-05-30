@@ -41,6 +41,38 @@
         validate: "visudo -cf %s"
       when: baseline_passwordless_sudo | bool
 
+    # Unprivileged service accounts that own workloads (e.g. the rootless
+    # podman run user). Deliberately NOT in wheel/sudo and login-locked with a
+    # nologin shell, so a compromised container cannot reach root. Ansible still
+    # drives them via become_user from the admin user's session, so they need no
+    # SSH access of their own. Created as regular (non-system) users so useradd
+    # allocates the /etc/subuid + /etc/subgid ranges rootless podman requires;
+    # linger is enabled later by linux-system-roles.podman, not here.
+    - name: Create unprivileged service users
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        shell: "{{ item.shell | default('/usr/sbin/nologin') }}"
+        create_home: true
+        password_lock: true
+        system: false
+        state: present
+      loop: "{{ baseline_service_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Enable linger now so each service user's systemd instance + /run/user/<uid>
+    # exist at boot, before any session. linux-system-roles.podman also enables
+    # linger, but a nologin service user has no login session to create the
+    # runtime dir, and plays that query its rootless podman (e.g. the cert
+    # renewal decision) run BEFORE that role does - so seed it here.
+    - name: Enable linger for service users
+      ansible.builtin.command: "loginctl enable-linger {{ item.name }}"
+      args:
+        creates: "/var/lib/systemd/linger/{{ item.name }}"
+      loop: "{{ baseline_service_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+
     # ssh_hardening's crypto_hostkeys task assumes rsa+ecdsa+ed25519 host keys
     # all exist (it derives the list from the OpenSSH version, not from disk)
     # and errors on any missing one. Generate any that are absent first.

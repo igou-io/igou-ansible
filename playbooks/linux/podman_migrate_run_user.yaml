@@ -1,0 +1,99 @@
+---
+# One-time migration: tear down a rootless podman stack that was running under a
+# previous run user, so a new linux_podman_run_as_user can own it cleanly.
+#
+# Two rootless users cannot both publish 80/443, so before pointing the cert +
+# quadlet playbooks at the new user this play stops the OLD user's units (frees
+# the ports immediately), removes their quadlet definitions (so systemd can't
+# regenerate them), reloads that user's systemd, and disables their linger (so
+# nothing comes back at boot or when the admin's SSH session ends).
+#
+# Run once, before acme_certificate_podman_secret.yaml + podman_quadlets.yaml:
+#   ansible-navigator run playbooks/linux/podman_migrate_run_user.yaml \
+#     -i igou-inventory/inventory.yaml
+#
+# This is a CLEAN rebuild: the new user starts with fresh secrets (the cert
+# re-issues on bootstrap) and fresh data dirs. The old user's home/containers,
+# secrets and data are left on disk untouched for you to inspect/remove.
+#
+# Variables:
+#   linux_podman_old_run_user - the user to tear down (default: igou)
+
+- name: Tear down the previous rootless podman run user's stack
+  hosts: "{{ ansible_limit | default('vps') }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    _old_user: "{{ linux_podman_old_run_user | default('igou') }}"
+    _quadlet_dir: "/home/{{ _old_user }}/.config/containers/systemd"
+    _rootless_env:
+      XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[_old_user][1] }}"
+
+  tasks:
+    - name: Resolve the old run user's uid (for its rootless runtime dir)
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ _old_user }}"
+
+    - name: Find the old user's quadlet definitions
+      ansible.builtin.find:
+        paths: "{{ _quadlet_dir }}"
+        patterns:
+          - "*.container"
+          - "*.network"
+          - "*.volume"
+          - "*.pod"
+          - "*.kube"
+      register: _old_quadlets
+
+    # Map each quadlet file to the systemd unit the generator produces:
+    #   foo.container / foo.kube -> foo.service
+    #   foo.network -> foo-network.service   foo.volume -> foo-volume.service
+    #   foo.pod     -> foo-pod.service
+    - name: Derive the unit names from the quadlet files
+      ansible.builtin.set_fact:
+        _old_units: >-
+          {{ _old_quadlets.files | map(attribute='path') | map('basename')
+             | map('regex_replace', '\.container$', '.service')
+             | map('regex_replace', '\.kube$', '.service')
+             | map('regex_replace', '\.network$', '-network.service')
+             | map('regex_replace', '\.volume$', '-volume.service')
+             | map('regex_replace', '\.pod$', '-pod.service')
+             | list }}
+
+    - name: Stop the old user's podman units (frees 80/443)
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        scope: user
+        state: stopped
+      become: true
+      become_user: "{{ _old_user }}"
+      environment: "{{ _rootless_env }}"
+      loop: "{{ _old_units }}"
+      failed_when: false
+
+    - name: Remove the old user's quadlet definitions
+      ansible.builtin.file:
+        path: "{{ _quadlet_dir }}"
+        state: absent
+
+    - name: Reload the old user's systemd so the removed units disappear
+      ansible.builtin.systemd:
+        daemon_reload: true
+        scope: user
+      become: true
+      become_user: "{{ _old_user }}"
+      environment: "{{ _rootless_env }}"
+      failed_when: false
+
+    - name: Disable linger so the old user's manager stops and stays down
+      ansible.builtin.command: "loginctl disable-linger {{ _old_user }}"
+      changed_when: true
+
+    - name: Report what was torn down
+      ansible.builtin.debug:
+        msg: >-
+          Stopped and removed {{ _old_units | length }} unit(s) for
+          '{{ _old_user }}'. Its home/containers, secrets and data remain on
+          disk; remove them manually once the new run user is verified.
