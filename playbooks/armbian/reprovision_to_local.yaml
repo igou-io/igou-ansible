@@ -1,0 +1,63 @@
+---
+# Headless full-lifecycle reprovision to local-disk boot.
+#   1. Converge to NFS (safe state for wiping local disks).
+#   2. Assert / is NFS-rooted; cross-binding validate armbian_local_disks.
+#   3. disk_provision each disk.
+#   4. Converge to local; on failure converge back to NFS and fail loudly.
+#
+# Requires per host: armbian_local_disks (list of disk_binding dicts).
+# Usage:
+#   ansible-playbook playbooks/armbian/reprovision_to_local.yaml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=orange-pi-5-max-01
+- name: 1. Converge board into NFS before wiping local disks
+  ansible.builtin.import_playbook: converge_boot_mode.yaml
+  vars:
+    armbian_boot_mode: nfs
+
+- name: 2-3. Cross-binding validate + provision each disk
+  hosts: "{{ target_hosts | default('boards') }}"
+  gather_facts: true
+  gather_subset: [mounts]
+  pre_tasks:
+    - name: Assert / is on NFS before wiping anything
+      ansible.builtin.assert:
+        that: >-
+          ansible_mounts | selectattr('mount', 'equalto', '/')
+          | map(attribute='fstype') | first in ['nfs', 'nfs4']
+        fail_msg: "Board must be NFS-booted before reprovisioning local disks."
+
+    - name: Cross-binding validate - no two disks share a mount path
+      ansible.builtin.assert:
+        that:
+          - >-
+            (armbian_local_disks | map(attribute='layout') | flatten
+             | selectattr('mount', 'defined') | map(attribute='mount') | list | length)
+            ==
+            (armbian_local_disks | map(attribute='layout') | flatten
+             | selectattr('mount', 'defined') | map(attribute='mount') | list | unique | length)
+        fail_msg: >-
+          Two or more disks declare the same mount path. Mount paths:
+          {{ armbian_local_disks | map(attribute='layout') | flatten | selectattr('mount', 'defined') | map(attribute='mount') | list }}
+
+    - name: Cross-binding validate - exactly one '/' across all disks
+      ansible.builtin.assert:
+        that:
+          - (armbian_local_disks | map(attribute='layout') | flatten | selectattr('mount', 'equalto', '/') | list | length) == 1
+        fail_msg: >-
+          Expected exactly one partition with mount: / across all
+          armbian_local_disks; found
+          {{ armbian_local_disks | map(attribute='layout') | flatten | selectattr('mount', 'equalto', '/') | list | length }}.
+  tasks:
+    - name: Provision each disk
+      ansible.builtin.include_role:
+        name: david_igou.armbian.disk_provision
+      vars:
+        disk_binding: "{{ item }}"
+      loop: "{{ armbian_local_disks }}"
+      loop_control:
+        label: "{{ item.device }}"
+
+- name: 4. Converge to local boot mode
+  ansible.builtin.import_playbook: converge_boot_mode.yaml
+  vars:
+    armbian_boot_mode: local
