@@ -1,0 +1,90 @@
+---
+# Per-host custom Armbian image build pipeline.
+#   1. boards group: resolve board_config + build profile, mark opt-in.
+#   2. builders group: image_build per opted-in host, rsync output to controller.
+#   3. netboot_server group: publish staged per-host dirs to images/<host>/.
+# A host opts in by setting any of armbian_build_{family,model,host}.
+- name: Resolve effective configs per board host
+  hosts: "{{ armbian_boards_group | default('boards') }}"
+  gather_facts: false
+  tasks:
+    - name: Resolve effective armbian_board_config
+      ansible.builtin.include_tasks: tasks/_resolve_board_config.yml
+    - name: Resolve effective armbian_build
+      ansible.builtin.include_tasks: tasks/_resolve_build_profile.yml
+    - name: Set custom-build opt-in fact
+      ansible.builtin.set_fact:
+        __wants_custom_build: >-
+          {{ (armbian_build_family is defined)
+             or (armbian_build_model is defined)
+             or (armbian_build_host is defined) }}
+
+- name: Build custom images per opted-in host; stage on controller
+  hosts: "{{ armbian_builders_group | default('armbian_builders') }}"
+  gather_facts: false
+  vars:
+    __build_hosts: >-
+      {{ groups[armbian_boards_group | default('boards')] | map('extract', hostvars)
+         | selectattr('__wants_custom_build', 'equalto', true)
+         | map(attribute='inventory_hostname') | list }}
+  tasks:
+    - name: Report build targets
+      ansible.builtin.debug:
+        msg: "Will build images for: {{ __build_hosts }}"
+        verbosity: 1
+
+    - name: Build per opted-in host
+      ansible.builtin.include_role:
+        name: david_igou.armbian.image_build
+      vars:
+        armbian_build_host: "{{ item }}"
+        armbian_build_board: "{{ hostvars[item].armbian_board_config.armbian_board_name }}"
+        armbian_build_branch: "{{ hostvars[item].armbian_build.branch }}"
+        armbian_build_release: "{{ hostvars[item].armbian_build.release }}"
+        armbian_build_ref: "{{ hostvars[item].armbian_build.ref }}"
+        armbian_build_userpatches: "{{ hostvars[item].armbian_build.userpatches }}"
+        armbian_build_compile_args: "{{ hostvars[item].armbian_build.compile_args }}"
+        armbian_build_timeout: "{{ hostvars[item].armbian_build.timeout }}"
+        armbian_build_min_free_gb: "{{ hostvars[item].armbian_build.min_free_gb }}"
+      loop: "{{ __build_hosts }}"
+
+    - name: Stage per-host build dir on controller via direct rsync
+      ansible.builtin.command:
+        argv:
+          - rsync
+          - --archive
+          - --compress
+          - --delete
+          - --mkpath
+          - --rsh
+          - "ssh -p {{ ansible_port | default(22) }} -o IdentityAgent=none -o StrictHostKeyChecking=accept-new"
+          - "{{ ansible_user }}@{{ ansible_host | default(inventory_hostname) }}:{{ armbian_build_output_dir }}/{{ item }}/"
+          - "/tmp/armbian_publish/{{ item }}/"
+      delegate_to: localhost
+      connection: local
+      changed_when: true
+      loop: "{{ __build_hosts }}"
+
+- name: Publish staged per-host directories to netboot server
+  hosts: "{{ armbian_netboot_server_group | default('netboot_server') }}"
+  gather_facts: false
+  tasks:
+    - name: Push staged per-host image + manifest (sudo on receive)
+      ansible.builtin.command:
+        argv:
+          - rsync
+          - --archive
+          - --compress
+          - --mkpath
+          - --rsync-path=sudo rsync
+          - --rsh
+          - "ssh -p {{ ansible_port | default(22) }} -o IdentityAgent=none -o StrictHostKeyChecking=accept-new"
+          - "/tmp/armbian_publish/{{ item }}/"
+          - "{{ ansible_user }}@{{ inventory_hostname }}:{{ armbian_nfs_assets_export }}/images/{{ item }}/"
+      delegate_to: localhost
+      connection: local
+      changed_when: true
+      loop: >-
+        {{ groups[armbian_boards_group | default('boards')] | map('extract', hostvars)
+           | selectattr('__wants_custom_build', 'equalto', true)
+           | map(attribute='inventory_hostname') | list }}

@@ -1,0 +1,63 @@
+---
+# Provision a local block device with a copy of the running rootfs.
+# Transport-agnostic: composes the disk_provision role with a synthesized
+# single-root-partition binding. WIPES armbian_local_disk_device.
+#
+# Usage:
+#   ansible-playbook playbooks/armbian/provision_local_disk.yaml \
+#     -i igou-inventory/inventory.yaml --limit orange-pi-5-max-01 \
+#     -e armbian_local_disk_device=/dev/nvme0n1
+- name: Provision a local block device with a copy of the running rootfs
+  hosts: "{{ target_hosts | default('boards') }}"
+  gather_facts: true
+  gather_subset:
+    - "!all"
+    - "!min"
+    - mounts
+  vars:
+    armbian_local_disk_label: "armbi_root_local"
+    armbian_local_disk_force: false
+    armbian_local_disk_fast_wipe: true
+  pre_tasks:
+    - name: Assert armbian_local_disk_device is set
+      ansible.builtin.assert:
+        that:
+          - armbian_local_disk_device is defined
+          - armbian_local_disk_device | length > 0
+          - armbian_local_disk_device.startswith('/dev/')
+        fail_msg: >-
+          Set armbian_local_disk_device (e.g. /dev/nvme0n1) in host_vars or
+          via -e. Must be a whole-disk path under /dev/.
+
+    - name: Find the source of the running rootfs
+      ansible.builtin.set_fact:
+        _root_source: "{{ ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='device') | first }}"
+
+    - name: Assert we are not about to wipe the disk we are running from
+      ansible.builtin.assert:
+        that:
+          - not _root_source.startswith(armbian_local_disk_device)
+        fail_msg: >-
+          REFUSING: rootfs is mounted from {{ _root_source }}, which is on
+          {{ armbian_local_disk_device }} (the disk this play would wipe).
+          Reboot the board into a different rootfs (NFS or SD) first.
+        success_msg: >-
+          OK: rootfs is on {{ _root_source }} (not {{ armbian_local_disk_device }}).
+  tasks:
+    - name: Provision the local disk
+      ansible.builtin.import_role:
+        name: david_igou.armbian.disk_provision
+      vars:
+        disk_provision_source: "/"
+        disk_binding:
+          device: "{{ armbian_local_disk_device }}"
+          wipe: true
+          fast_wipe: "{{ armbian_local_disk_fast_wipe | bool }}"
+          force: "{{ armbian_local_disk_force | bool }}"
+          layout:
+            - id: root
+              size: grow
+              type: root
+              format: ext4
+              label: "{{ armbian_local_disk_label }}"
+              mount: /
