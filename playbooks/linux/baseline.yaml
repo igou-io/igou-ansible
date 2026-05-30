@@ -61,10 +61,18 @@
   roles:
     - role: devsec.hardening.os_hardening
       vars:
-        sysctl_overwrite:
-          # Re-enable unprivileged user namespaces for rootless podman.
-          # devsec sets this to 0 (CVE-2021-33909) in its Ubuntu vars.
-          kernel.unprivileged_userns_clone: 1
+        # Base sysctls applied to every baselined host, merged with an
+        # optional per-host/group baseline_sysctl_overwrite from inventory.
+        # combine() lets inventory ADD keys (or override a base key by
+        # repeating it) without clobbering the base. We merge here rather
+        # than letting a host set sysctl_overwrite directly: this role param
+        # outranks inventory host_vars, so a bare host_vars value would be
+        # silently ignored.
+        #
+        # kernel.unprivileged_userns_clone re-enables unprivileged user
+        # namespaces for rootless podman; devsec sets it to 0 on Ubuntu
+        # (CVE-2021-33909).
+        sysctl_overwrite: "{{ {'kernel.unprivileged_userns_clone': 1} | combine(baseline_sysctl_overwrite | default({})) }}"
 
     - role: devsec.hardening.ssh_hardening
       vars:
