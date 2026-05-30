@@ -1,0 +1,37 @@
+# Managed by Ansible (linux-system-roles.podman template_src).
+# Rootless nginx that terminates TLS on 443 and reverse-proxies to backend
+# containers on the shared {{ linux_proxy_network | default('proxy') }} network.
+[Unit]
+Description=nginx TLS-terminating reverse proxy
+After=network-online.target
+Wants=network-online.target
+# Never give up: nginx exits if a backend name is unresolvable or a prior
+# rootlessport hasn't freed the port yet, so it can flap on boot. Disabling the
+# start-limit (vs the default 5-in-10s) keeps it retrying until things settle
+# instead of latching into `failed`.
+StartLimitIntervalSec=0
+
+[Container]
+Image={{ linux_nginx_image | default('docker.io/library/nginx:stable-alpine') }}
+ContainerName=nginx
+# 80 stays up only for the HTTP->HTTPS redirect; 443 is the secure entrypoint.
+PublishPort=80:80
+PublishPort=443:443
+Network={{ linux_proxy_network | default('proxy') }}.network
+# TLS material is delivered as podman secrets by
+# playbooks/linux/acme_certificate_podman_secret.yaml - never as files on disk.
+Secret={{ linux_tls_fullchain_secret | default('igou-tls-fullchain') }},type=mount,target=/etc/nginx/ssl/fullchain.pem,mode=0444
+Secret={{ linux_tls_key_secret | default('igou-tls-key') }},type=mount,target=/etc/nginx/ssl/privkey.pem,mode=0400
+# Reverse-proxy config templated onto the host (linux_podman_config_files).
+Volume=%h/containers/nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z
+
+[Service]
+# nginx fails to start if a backend name is not yet resolvable; Restart lets
+# it self-heal once the backend container registers in the network DNS.
+# RestartSec is generous so a failed attempt's rootlessport is fully torn down
+# before the next try (avoids "address already in use" self-collisions).
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

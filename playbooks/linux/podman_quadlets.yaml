@@ -1,0 +1,90 @@
+---
+- name: Enforce podman quadlet state from inventory
+  hosts: "{{ ansible_limit | default('vps') }}"
+  become: true
+  gather_facts: true
+
+  # Config files a quadlet bind-mounts (e.g. nginx.conf) are templated onto
+  # the host before the role brings the units up. linux_podman_config_files
+  # is a list of {src, dest, mode?}; src is a template on the control node.
+  # Owned by the rootless run user so the container can read them.
+  pre_tasks:
+    - name: Ensure quadlet config directories exist
+      ansible.builtin.file:
+        path: "{{ item.dest | dirname }}"
+        state: directory
+        owner: "{{ linux_podman_run_as_user | default('root') }}"
+        group: "{{ linux_podman_run_as_user | default('root') }}"
+        mode: "0755"
+      loop: "{{ linux_podman_config_files | default([]) }}"
+      loop_control:
+        label: "{{ item.dest | dirname }}"
+
+    - name: Template quadlet config files onto the host
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ linux_podman_run_as_user | default('root') }}"
+        group: "{{ linux_podman_run_as_user | default('root') }}"
+        mode: "{{ item.mode | default('0644') }}"
+      loop: "{{ linux_podman_config_files | default([]) }}"
+      loop_control:
+        label: "{{ item.dest }}"
+      register: _config_files
+
+    # Persistent data dirs a quadlet bind-mounts (e.g. a database/state dir).
+    # Podman does NOT create bind-mount sources for :Z volumes (it statfs's them
+    # to relabel and fails if missing), so create them up front, owned by the
+    # rootless run user. linux_podman_data_dirs is a list of absolute paths.
+    - name: Ensure quadlet data directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ linux_podman_run_as_user | default('root') }}"
+        group: "{{ linux_podman_run_as_user | default('root') }}"
+        mode: "0755"
+      loop: "{{ linux_podman_data_dirs | default([]) }}"
+
+  roles:
+    - role: linux-system-roles.podman
+      vars:
+        # Quadlets are defined per host/group in inventory via
+        # linux_podman_quadlet_specs; the role creates each unit and
+        # reconciles its state. Defaults keep things rootless under the
+        # igou user (the role enables linger) and no-op when a host
+        # defines no quadlets. Use default() so inventory values win.
+        podman_run_as_user: "{{ linux_podman_run_as_user | default('igou') }}"
+        podman_quadlet_specs: "{{ linux_podman_quadlet_specs | default([]) }}"
+        # App secrets declared in inventory (e.g. a service's admin password),
+        # mounted/injected into containers via Secret= in their quadlet spec.
+        podman_secrets: "{{ linux_podman_secrets | default([]) }}"
+
+  # A bind-mounted config file is re-templated to a NEW inode, which a running
+  # container does not pick up (and `reload` re-reads the stale mount), so any
+  # unit whose config changed must be restarted. The role only (re)starts units
+  # whose quadlet file changed, so do it here, once per affected unit.
+  post_tasks:
+    - name: Find units whose bind-mounted config changed
+      ansible.builtin.set_fact:
+        _config_reload_units: >-
+          {{ _config_files.results | default([])
+             | selectattr('changed')
+             | selectattr('item.reload', 'defined')
+             | map(attribute='item.reload') | unique | list }}
+
+    - name: Resolve the run user's uid (for the rootless podman runtime dir)
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ linux_podman_run_as_user | default('root') }}"
+      when: _config_reload_units | length > 0
+
+    - name: Restart units whose config changed
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        scope: user
+        state: restarted
+      become: true
+      become_user: "{{ linux_podman_run_as_user | default('igou') }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[linux_podman_run_as_user | default('root')][1] }}"
+      loop: "{{ _config_reload_units }}"

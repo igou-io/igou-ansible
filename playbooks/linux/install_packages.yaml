@@ -3,13 +3,12 @@
   hosts: "{{ ansible_limit | default('all') }}"
   become: true
   gather_facts: true
-  vars:
-    # List of package names to install. Override at launch, e.g.
-    # -e '{"install_packages": ["podman"]}'
-    install_packages: []
   tasks:
+    # linux_install_packages is supplied via inventory (host/group vars) or
+    # at launch, e.g. -e '{"linux_install_packages": ["podman"]}'. Defaulted
+    # here rather than in play vars so inventory values are not shadowed.
     - name: Ensure requested packages are present
       ansible.builtin.package:
-        name: "{{ install_packages }}"
+        name: "{{ linux_install_packages }}"
         state: present
-      when: install_packages | length > 0
+      when: linux_install_packages | default([]) | length > 0

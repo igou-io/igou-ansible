@@ -35,6 +35,7 @@ dependencies:
     gcc-c++ [platform:rpm compile]
     make [platform:rpm compile]
     openssl-devel [platform:rpm compile]
+    openssl [platform:rpm]
     nmstate
     1password-cli
     terraform
