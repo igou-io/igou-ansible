@@ -1,0 +1,33 @@
+---
+# DESTRUCTIVE. For each candidate run user that has a live rootless podman
+# runtime on the host, this stops its quadlet units (removing their containers +
+# networks), force-removes any remaining containers, and DELETES every podman
+# secret it owns (including TLS certs).
+#
+# It deliberately LEAVES quadlet definition files, bind-mounted data/config
+# dirs, the users, and linger in place - so a `systemctl --user daemon-reload`
+# or a reboot can bring the (now secret-less) stack back. To also remove those,
+# tear them down separately.
+#
+# Run:
+#   ansible-navigator run playbooks/linux/podman_teardown.yaml -i igou-inventory/inventory.yaml
+#   # or: ansible-playbook playbooks/linux/podman_teardown.yaml -i igou-inventory/inventory.yaml
+#
+# Variables:
+#   linux_podman_teardown_users - candidate users to check
+#                                 (default: [igou, containers])
+
+- name: Tear down rootless podman containers and secrets
+  hosts: "{{ ansible_limit | default('vps') }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    _candidate_users: "{{ linux_podman_teardown_users | default(['igou', 'containers']) }}"
+
+  tasks:
+    - name: Tear down each candidate run user's podman stack
+      ansible.builtin.include_tasks: tasks/podman_teardown_user.yml
+      loop: "{{ _candidate_users }}"
+      loop_control:
+        loop_var: _user

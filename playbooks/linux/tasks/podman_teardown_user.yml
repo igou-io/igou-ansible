@@ -1,0 +1,104 @@
+---
+# Tear down one rootless run user's podman containers + secrets.
+# Caller passes _user (loop_var). Safe no-op when the user is absent or has no
+# live rootless runtime (e.g. linger off and no session), so the candidate list
+# can name users that may not exist on every host.
+
+- name: "Check for run user {{ _user }}"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ _user }}"
+    fail_key: false
+
+- name: "Tear down podman stack for {{ _user }}"
+  when: getent_passwd[_user] | default([], true) | length > 0
+  vars:
+    _uid: "{{ getent_passwd[_user][1] }}"
+    _rootless_env:
+      XDG_RUNTIME_DIR: "/run/user/{{ _uid }}"
+  block:
+    - name: "Check rootless runtime dir for {{ _user }}"
+      ansible.builtin.stat:
+        path: "/run/user/{{ _uid }}"
+      register: _rt
+
+    - name: "Report no live runtime for {{ _user }}"
+      ansible.builtin.debug:
+        msg: "{{ _user }}: no /run/user/{{ _uid }} (no active rootless podman); nothing to tear down."
+      when: not _rt.stat.exists
+
+    - name: "Operate on podman runtime for {{ _user }}"
+      when: _rt.stat.exists
+      become: true
+      become_user: "{{ _user }}"
+      environment: "{{ _rootless_env }}"
+      block:
+        - name: "Find quadlet definitions for {{ _user }}"
+          ansible.builtin.find:
+            paths: "/home/{{ _user }}/.config/containers/systemd"
+            patterns: ["*.container", "*.network", "*.volume", "*.pod", "*.kube"]
+          register: _quadlets
+
+        # foo.container/.kube -> foo.service; foo.network -> foo-network.service;
+        # foo.volume -> foo-volume.service; foo.pod -> foo-pod.service.
+        - name: "Stop quadlet units (removes containers + networks) for {{ _user }}"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            scope: user
+            state: stopped
+          loop: >-
+            {{ _quadlets.files | map(attribute='path') | map('basename')
+               | map('regex_replace', '\.container$', '.service')
+               | map('regex_replace', '\.kube$', '.service')
+               | map('regex_replace', '\.network$', '-network.service')
+               | map('regex_replace', '\.volume$', '-volume.service')
+               | map('regex_replace', '\.pod$', '-pod.service')
+               | list }}
+          failed_when: false
+
+        - name: "Gather remaining containers for {{ _user }}"
+          containers.podman.podman_container_info:
+          register: _ctrs
+
+        - name: "Force-remove remaining containers for {{ _user }}"
+          containers.podman.podman_container:
+            name: "{{ item }}"
+            state: absent
+          loop: "{{ _ctrs.containers | map(attribute='Name') | list }}"
+          loop_control:
+            label: "{{ item }}"
+
+        # Quadlet *.network units create the network on start but do not remove
+        # it on stop, so the network object lingers after the units are down.
+        # Remove every network except podman's built-in default.
+        - name: "Gather networks for {{ _user }}"
+          containers.podman.podman_network_info:
+          register: _nets
+
+        - name: "Remove non-default networks for {{ _user }}"
+          containers.podman.podman_network:
+            name: "{{ item }}"
+            state: absent
+          loop: "{{ _nets.networks | map(attribute='name') | reject('equalto', 'podman') | list }}"
+          loop_control:
+            label: "{{ item }}"
+
+        - name: "Gather secrets for {{ _user }}"
+          containers.podman.podman_secret_info:
+          register: _secs
+
+        - name: "Delete secrets for {{ _user }}"
+          containers.podman.podman_secret:
+            name: "{{ item }}"
+            state: absent
+          loop: "{{ _secs.secrets | map(attribute='Spec.Name') | list }}"
+          loop_control:
+            label: "{{ item }}"
+
+        - name: "Report teardown for {{ _user }}"
+          ansible.builtin.debug:
+            msg: >-
+              {{ _user }}: stopped {{ _quadlets.files | length }} quadlet unit(s),
+              removed {{ _ctrs.containers | length }} container(s),
+              removed {{ _nets.networks | map(attribute='name') | reject('equalto', 'podman') | list | length }} network(s),
+              deleted {{ _secs.secrets | length }} secret(s).
