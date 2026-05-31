@@ -7,6 +7,12 @@
 #   armbian_tftp_cache_dir, armbian_tftp_flash_dir, armbian_router
 - name: Render pxelinux.cfg locally
   delegate_to: localhost
+  # Force a real local connection so the rendered file lands on the real
+  # controller /tmp that net_put reads. Inventory `localhost` defaults to
+  # SSH (build host) and this devcontainer's sshd has PrivateTmp, so an
+  # SSH-delegated render would write to an invisible private /tmp.
+  vars:
+    ansible_connection: local
   become: false
   block:
     - name: Include pxelinux_render role
