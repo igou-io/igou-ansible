@@ -25,6 +25,7 @@
   vars:
     __build_hosts: >-
       {{ groups[armbian_boards_group | default('boards')] | map('extract', hostvars)
+         | selectattr('__wants_custom_build', 'defined')
          | selectattr('__wants_custom_build', 'equalto', true)
          | map(attribute='inventory_hostname') | list }}
   tasks:
@@ -86,5 +87,6 @@
       changed_when: true
       loop: >-
         {{ groups[armbian_boards_group | default('boards')] | map('extract', hostvars)
+           | selectattr('__wants_custom_build', 'defined')
            | selectattr('__wants_custom_build', 'equalto', true)
            | map(attribute='inventory_hostname') | list }}
