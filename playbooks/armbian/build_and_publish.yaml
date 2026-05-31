@@ -21,7 +21,10 @@
 
 - name: Build custom images per opted-in host; stage on controller
   hosts: "{{ armbian_builders_group | default('armbian_builders') }}"
-  gather_facts: false
+  # gather_facts is required: the image_build role's argument_specs default
+  # several paths to "{{ ansible_env.HOME }}/...", and validate_argument_spec
+  # templates those at role entry (before the role's own setup runs).
+  gather_facts: true
   vars:
     __build_hosts: >-
       {{ groups[armbian_boards_group | default('boards')] | map('extract', hostvars)
