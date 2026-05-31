@@ -16,7 +16,7 @@
       run_once: true
       block:
         - name: Include plumbing check tasks
-          ansible.builtin.include_tasks: "{{ playbook_dir }}/transport/plumbing_check.yml"
+          ansible.builtin.include_tasks: transport/plumbing_check.yml
 
     - name: Resolve effective armbian_board_config
       ansible.builtin.include_tasks: tasks/_resolve_board_config.yml

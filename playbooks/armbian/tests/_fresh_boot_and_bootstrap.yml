@@ -1,0 +1,56 @@
+---
+# Fresh-image boot + bootstrap + verify — used by fleet_e2e Phases 2 & 4.
+#
+# A board booting a freshly-provisioned rootfs (NFS clone or dd'd SD) has
+# only root + the Armbian default password and a freshly-regenerated SSH
+# host key. So we: render+upload pxelinux (no cycle), PoE-cycle and wait
+# for TCP/22 only (skip the SSH-as-inventory-user stability gate), run
+# bootstrap_armbian as root to create the inventory user, reset the
+# connection, then wait for SSH as the inventory user and verify.
+#
+# Caller (the phase play) provides via vars:
+#   _e2e_boot_mode    nfs | sd
+#   _e2e_phase_label  human label
+# and must have resolved armbian_board_config in its pre_tasks.
+- name: "Plumbing check on router — {{ _e2e_phase_label }}"
+  delegate_to: "{{ armbian_router }}"
+  run_once: true
+  block:
+    - name: "Include plumbing check — {{ _e2e_phase_label }}"
+      ansible.builtin.include_tasks: ../transport/plumbing_check.yml
+
+- name: "Render + upload pxelinux, no cycle — {{ _e2e_phase_label }}"
+  ansible.builtin.include_tasks: ../tasks/render_and_upload_pxelinux.yml
+  vars:
+    armbian_boot_mode: "{{ _e2e_boot_mode }}"
+
+- name: "PoE cycle + TCP/22 wait, skip SSH-as-user — {{ _e2e_phase_label }}"
+  ansible.builtin.include_tasks: ../tasks/cold_boot_with_retry.yml
+  vars:
+    _phase_label: "{{ _e2e_phase_label }}"
+    _boot_max_attempts: "{{ armbian_boot_retry_attempts | default(1) | int + 1 }}"
+    _skip_ssh_stability_check: true
+
+- name: "Bootstrap inventory user as root on fresh image — {{ _e2e_phase_label }}"
+  ansible.builtin.include_role:
+    name: david_igou.armbian.bootstrap_armbian
+  vars:
+    ansible_user: root
+    ansible_password: "{{ armbian_default_password }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    ansible_become: false
+
+- name: "Reset connection to use inventory user — {{ _e2e_phase_label }}"
+  ansible.builtin.meta: reset_connection
+
+- name: "Wait for SSH as inventory user, post-bootstrap — {{ _e2e_phase_label }}"
+  ansible.builtin.include_tasks: ../tasks/wait_for_ssh.yml
+  vars:
+    _phase_label: "{{ _e2e_phase_label }}"
+    _wait_timeout: "{{ armbian_post_boot_wait_timeout | default(300) }}"
+
+- name: "Verify rootfs matches declared mode — {{ _e2e_phase_label }}"
+  ansible.builtin.include_role:
+    name: david_igou.armbian.board_boot_verify
+  vars:
+    boot_mode: "{{ _e2e_boot_mode }}"
