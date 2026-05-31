@@ -1,0 +1,29 @@
+---
+# Per-host rootfs provisioning on the netboot server.
+#   1. boards group: resolve board_config + rootfs_src per host.
+#   2. netboot_server group: rootfs_provision role per board host.
+- name: Resolve effective board configs and rootfs sources per board host
+  hosts: "{{ armbian_boards_group | default('boards') }}"
+  gather_facts: false
+  tasks:
+    - name: Resolve effective armbian_board_config
+      ansible.builtin.include_tasks: tasks/_resolve_board_config.yml
+    - name: Resolve armbian_rootfs_src per host
+      ansible.builtin.include_tasks: tasks/_resolve_rootfs_src.yml
+
+- name: Provision per-host NFS rootfs + TFTP artifacts
+  hosts: "{{ armbian_netboot_server_group | default('netboot_server') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run rootfs_provision per board host
+      ansible.builtin.include_role:
+        name: david_igou.armbian.rootfs_provision
+      vars:
+        armbian_rootfs_src: "{{ hostvars[_board].armbian_rootfs_src }}"
+        armbian_rootfs_host: "{{ _board }}"
+        armbian_rootfs_dtb: "{{ hostvars[_board].armbian_board_config.dtb }}"
+        armbian_rootfs_force_refresh: "{{ armbian_force_refresh | default(false) }}"
+      loop: "{{ groups[armbian_boards_group | default('boards')] }}"
+      loop_control:
+        loop_var: _board

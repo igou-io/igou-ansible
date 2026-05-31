@@ -1,0 +1,25 @@
+---
+# Deploy Prometheus node_exporter as a host systemd service via the
+# prometheus.prometheus collection (downloads the binary, creates a system
+# user + hardened unit, enables the service).
+#
+# Internal by default: binds to 127.0.0.1 so metrics are NOT exposed on the
+# host's public interface. The eventual scrape path is OpenShift Prometheus
+# reaching this host over Tailscale; once Tailscale is on the host, either
+#   - expose localhost:9100 on the tailnet with `tailscale serve` (no rebind), or
+#   - set node_exporter_listen_address to the host's Tailscale (100.x) address
+#     in inventory and re-run.
+#
+# Variables:
+#   node_exporter_listen_address - "host:port" to bind (default 127.0.0.1:9100)
+- name: Deploy Prometheus node_exporter
+  hosts: "{{ ansible_limit | default('all') }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: prometheus.prometheus.node_exporter
+      vars:
+        # Internal-only default; override per host/group in inventory to expose
+        # on a specific interface (e.g. a Tailscale 100.x address).
+        node_exporter_web_listen_address: "{{ node_exporter_listen_address | default('127.0.0.1:9100') }}"

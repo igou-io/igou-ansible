@@ -1,0 +1,20 @@
+---
+# Set a board's boot mode via -e override (highest precedence), then
+# converge. Thin wrapper over converge_boot_mode.yaml.
+#
+# Usage:
+#   ansible-playbook playbooks/armbian/set_boot_mode.yaml \
+#     -i igou-inventory/inventory.yaml \
+#     -e target_hosts=orange-pi-5-pro-01 -e armbian_boot_mode=sd
+- name: Validate boot mode was provided
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert armbian_boot_mode is set via -e
+      ansible.builtin.assert:
+        that: armbian_boot_mode is defined
+        fail_msg: "set_boot_mode requires -e armbian_boot_mode=nfs|sd|local"
+
+- name: Converge to the requested boot mode
+  ansible.builtin.import_playbook: converge_boot_mode.yaml

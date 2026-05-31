@@ -1,0 +1,97 @@
+---
+# Shared primitive: upload a single file to RouterOS flash and register
+# a matching /ip tftp row. Idempotent; size-gated; retry-tolerant.
+#
+# Required vars on include:
+#   _upload_local_src   path on the controller to the file to push
+#   _upload_remote_path flash:-relative destination (e.g. sbc/foo)
+#   _upload_req_filename req-filename string for /ip tftp row
+#   _upload_req_filename_is_regex bool (default false) — when true,
+#                       the row is registered with a permissive ".*"
+#                       prefix and a regex match (used for pxelinux.cfg)
+
+- name: Stat local source
+  ansible.builtin.stat:
+    path: "{{ _upload_local_src }}"
+  delegate_to: localhost
+  become: false
+  register: _upload_local_stat
+
+- name: Assert local source exists
+  ansible.builtin.assert:
+    that:
+      - _upload_local_stat.stat.exists
+    fail_msg: "Local file {{ _upload_local_src }} is missing — upstream step did not run."
+
+- name: Reset persistent connection before remote size check
+  ansible.builtin.meta: reset_connection
+
+- name: Count remote file matching local size
+  community.routeros.command:
+    commands:
+      - >-
+        /file print count-only where
+        name="{{ _upload_remote_path }}"
+        and size={{ _upload_local_stat.stat.size }}
+  register: _upload_size_match
+  retries: 3
+  delay: 5
+  until: _upload_size_match is succeeded
+  changed_when: false
+
+- name: Reset persistent connection before net_put
+  ansible.builtin.meta: reset_connection
+  when: (_upload_size_match.stdout[0] | trim | int) == 0
+
+- name: Upload file when size differs or file missing
+  ansible.netcommon.net_put:
+    src: "{{ _upload_local_src }}"
+    dest: "{{ _upload_remote_path }}"
+  vars:
+    ansible_command_timeout: 300
+  register: _upload_net_put
+  retries: 3
+  delay: 5
+  until: _upload_net_put is succeeded
+  when: (_upload_size_match.stdout[0] | trim | int) == 0
+
+- name: Reset persistent connection before /ip tftp count
+  ansible.builtin.meta: reset_connection
+
+- name: Build effective req-filename match
+  ansible.builtin.set_fact:
+    _upload_req_match: >-
+      {{ ('.*' + _upload_req_filename) if (_upload_req_filename_is_regex | default(false) | bool)
+         else _upload_req_filename }}
+
+- name: Count /ip tftp rows for this file
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp print count-only where
+        req-filename="{{ _upload_req_match }}"
+        and real-filename="{{ _upload_remote_path }}"
+  register: _upload_tftp_count
+  retries: 3
+  delay: 5
+  until: _upload_tftp_count is succeeded
+  changed_when: false
+
+- name: Reset persistent connection before /ip tftp add
+  ansible.builtin.meta: reset_connection
+  when: (_upload_tftp_count.stdout[0] | trim | int) == 0
+
+- name: Add /ip tftp row when missing
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp add
+        req-filename="{{ _upload_req_match }}"
+        real-filename="{{ _upload_remote_path }}"
+        allow=yes read-only=yes
+  register: _upload_tftp_add
+  retries: 3
+  delay: 5
+  until: _upload_tftp_add is succeeded
+  when: (_upload_tftp_count.stdout[0] | trim | int) == 0
+  changed_when: true

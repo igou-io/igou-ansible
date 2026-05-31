@@ -1,0 +1,48 @@
+---
+# Converge board(s) to a boot mode: plumbing check, render+upload
+# pxelinux, PoE cycle + wait, verify rootfs. Transport is homelab-owned.
+#
+# Usage:
+#   ansible-playbook playbooks/armbian/converge_boot_mode.yaml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=orange-pi-5-pro-01
+#   # write router state only, do not cycle the board:
+#   ... -e armbian_cycle_board=false
+- name: Converge boot mode
+  hosts: "{{ target_hosts | default('boards') }}"
+  gather_facts: false
+  tasks:
+    - name: Pre-flight plumbing check on router
+      delegate_to: "{{ armbian_router }}"
+      run_once: true
+      block:
+        - name: Include plumbing check tasks
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/transport/plumbing_check.yml"
+
+    - name: Resolve effective armbian_board_config
+      ansible.builtin.include_tasks: tasks/_resolve_board_config.yml
+
+    - name: Render pxelinux.cfg + upload to router
+      ansible.builtin.include_tasks: tasks/render_and_upload_pxelinux.yml
+
+    - name: PoE cycle + cold-boot retry
+      ansible.builtin.include_tasks: tasks/cold_boot_with_retry.yml
+      vars:
+        _phase_label: "converge[{{ armbian_boot_mode }}]"
+        _boot_max_attempts: "{{ armbian_boot_retry_attempts | default(0) | int + 1 }}"
+      when: armbian_cycle_board | default(true) | bool
+
+    - name: Wait for SSH after cold boot
+      ansible.builtin.include_tasks: tasks/wait_for_ssh.yml
+      vars:
+        _phase_label: "converge[{{ armbian_boot_mode }}]"
+        _wait_timeout: "{{ armbian_post_boot_wait_timeout | default(300) }}"
+      when: armbian_cycle_board | default(true) | bool
+
+    - name: Verify rootfs matches declared mode
+      ansible.builtin.include_role:
+        name: david_igou.armbian.board_boot_verify
+      vars:
+        boot_mode: "{{ armbian_boot_mode }}"
+      when:
+        - armbian_cycle_board | default(true) | bool
+        - armbian_verify_state | default(true) | bool

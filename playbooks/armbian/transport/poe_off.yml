@@ -1,0 +1,17 @@
+---
+# Shared primitive: power a single board's PoE port OFF (no re-enable).
+# Used as a clean-slate step (e.g. fleet_e2e Phase 0). Delegated to the
+# per-board switch.
+#
+# Required hostvars:
+#   armbian_poe_switch
+#   armbian_poe_port
+- name: PoE off
+  community.routeros.command:
+    commands:
+      - '/interface ethernet poe set [find name="{{ armbian_poe_port }}"] poe-out=off'
+  delegate_to: "{{ armbian_poe_switch }}"
+  register: _poe_off
+  retries: 3
+  delay: 5
+  until: _poe_off is succeeded

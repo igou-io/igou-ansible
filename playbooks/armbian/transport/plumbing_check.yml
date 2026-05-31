@@ -1,0 +1,45 @@
+---
+# Per-host-invocable form of the plumbing check. Verifies that /ip tftp
+# rows exist on the router for one board's per-host TFTP assets. Used by
+# _converge_boot_mode.yml (which needs to run from a single-play/block
+# context where import_playbook is unavailable).
+#
+# Designed to be included with:
+#   delegate_to: "{{ armbian_router }}"
+#   run_once: true
+#
+# Required vars (from play scope or include vars):
+#   inventory_hostname    board host (used as the TFTP path segment)
+#   armbian_tftp_flash_dir top-level dir on router flash (e.g. sbc)
+#
+# TFTP rows are keyed by inventory_hostname (per-host layout), not by
+# armbian_board_model (per-model layout). When called inside a multi-host
+# play via run_once, inventory_hostname must resolve to the intended host.
+
+- name: Count /ip tftp rows per asset for this host
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp print count-only where
+        req-filename="armbian/{{ inventory_hostname }}/{{ item }}"
+  register: _plumbing_check_one_row_count
+  retries: 3
+  delay: 5
+  until: _plumbing_check_one_row_count is succeeded
+  changed_when: false
+  loop: [vmlinuz, initrd.img, board.dtb]
+  loop_control:
+    label: "armbian/{{ inventory_hostname }}/{{ item }}"
+
+- name: Assert each /ip tftp row exists
+  ansible.builtin.assert:
+    that:
+      - (item.stdout[0] | trim | int) >= 1
+    fail_msg: >-
+      Router has no /ip tftp row for
+      armbian/{{ inventory_hostname }}/{{ item.item }}.
+      Run playbooks/stage_router.yml to populate TFTP assets
+      before invoking converge_boot_mode.
+  loop: "{{ _plumbing_check_one_row_count.results }}"
+  loop_control:
+    label: "armbian/{{ inventory_hostname }}/{{ item.item }}"

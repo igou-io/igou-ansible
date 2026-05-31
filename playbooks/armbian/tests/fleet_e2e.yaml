@@ -1,0 +1,67 @@
+---
+# Multi-board deterministic fleet end-to-end test. DESTRUCTIVE: wipes SD
+# (/dev/mmcblk0) and NVMe on every target host. Guarded by
+# armbian_e2e_confirm. Default target is a narrow group, never the whole
+# fleet implicitly.
+#
+# Phases: 0 PoE-off all targets; 1 force-refresh NFS rootfs; 2 converge
+# NFS + bootstrap + verify; 3 dd SD image; 4 converge SD + bootstrap +
+# verify; 5 converge NFS + reprovision NVMe + converge local_kernel.
+#
+# Usage:
+#   ansible-playbook playbooks/armbian/tests/fleet_e2e.yaml \
+#     -i igou-inventory/inventory.yaml \
+#     -e target_hosts=board_e2e_canaries -e armbian_e2e_confirm=true
+- name: Phase 0 - PoE-off all target boards (clean slate)
+  hosts: "{{ target_hosts | default('board_e2e_canaries') }}"
+  gather_facts: false
+  tasks:
+    - name: Assert destructive run was explicitly confirmed
+      ansible.builtin.assert:
+        that:
+          - armbian_e2e_confirm | default(false) | bool
+        fail_msg: >-
+          fleet_e2e is destructive (wipes SD + NVMe). Re-run with
+          -e armbian_e2e_confirm=true once you are sure of target_hosts.
+
+    - name: PoE-off each board
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../transport/poe_off.yml"
+
+- name: Phase 1 - force-refresh per-host NFS rootfs on netboot server
+  ansible.builtin.import_playbook: ../stage_netboot_assets.yaml
+  vars:
+    armbian_force_refresh: true
+
+- name: Phase 2 - converge NFS, power on, verify
+  ansible.builtin.import_playbook: ../converge_boot_mode.yaml
+  vars:
+    armbian_boot_mode: nfs
+
+- name: Phase 2b - bootstrap freshly NFS-booted boards
+  ansible.builtin.import_playbook: ../bootstrap.yaml
+
+- name: Phase 3 - dd canonical SD image from NFS
+  hosts: "{{ target_hosts | default('board_e2e_canaries') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Resolve rootfs source (published image URL) per host
+      ansible.builtin.include_tasks: ../tasks/_resolve_rootfs_src.yml
+
+    - name: Write SD image via disk_image role
+      ansible.builtin.include_role:
+        name: david_igou.armbian.disk_image
+      vars:
+        image_source: "{{ armbian_rootfs_src }}"
+        target_device: /dev/mmcblk0
+
+- name: Phase 4 - converge SD, verify
+  ansible.builtin.import_playbook: ../converge_boot_mode.yaml
+  vars:
+    armbian_boot_mode: sd
+
+- name: Phase 4b - bootstrap freshly SD-booted boards
+  ansible.builtin.import_playbook: ../bootstrap.yaml
+
+- name: Phase 5 - reprovision NVMe then converge local_kernel
+  ansible.builtin.import_playbook: ../reprovision_to_local.yaml

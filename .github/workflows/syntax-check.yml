@@ -41,11 +41,12 @@ jobs:
             playbooks/openshift_virtualization/aap-25-vm/2-register-to-rhsm.yml
         run: |
           # Exclude non-playbook YAML: task-include sidecars (_*.yml), any
-          # tasks/ subdirectory (Ansible convention), and files/ data dirs
+          # tasks/ subdirectory (Ansible convention), transport/ task-include
+          # sidecars (e.g. playbooks/armbian/transport/*), and files/ data dirs
           # (e.g. cloud-init user-data shipped via ansible.builtin.copy).
           failed=0
           for playbook in $(find playbooks \
-              \( -path '*/tasks/*' -o -path '*/files/*' -o -name '_*' \) -prune \
+              \( -path '*/tasks/*' -o -path '*/transport/*' -o -path '*/files/*' -o -name '_*' \) -prune \
               -o \( -name '*.yml' -o -name '*.yaml' \) -print | sort); do
             if echo "${SKIP_PLAYBOOKS}" | grep -qx "${playbook}"; then
               echo "Skipping ${playbook} (requires subscription-only collection)"
