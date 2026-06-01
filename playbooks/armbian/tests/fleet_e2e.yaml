@@ -8,11 +8,16 @@
 # NFS + bootstrap + verify; 3 dd SD image; 4 converge SD + bootstrap +
 # verify; 5 converge NFS + reprovision NVMe + converge local_kernel.
 #
+# Fresh-image phases (2 + 4) boot a rootfs that has only root + the
+# Armbian default password and a freshly-regenerated SSH host key, so the
+# shared _fresh_boot_and_bootstrap.yml cycles + boots without waiting for
+# the inventory user, bootstraps it as root, then verifies as that user.
+#
 # Usage:
 #   ansible-playbook playbooks/armbian/tests/fleet_e2e.yaml \
 #     -i igou-inventory/inventory.yaml \
 #     -e target_hosts=board_e2e_canaries -e armbian_e2e_confirm=true
-- name: Phase 0 - PoE-off all target boards (clean slate)
+- name: Pre-flight (confirm + known_hosts bypass + retry defaults)
   hosts: "{{ target_hosts | default('board_e2e_canaries') }}"
   gather_facts: false
   tasks:
@@ -24,21 +29,47 @@
           fleet_e2e is destructive (wipes SD + NVMe). Re-run with
           -e armbian_e2e_confirm=true once you are sure of target_hosts.
 
+    - name: Clear stale known_hosts entries on the controller
+      ansible.builtin.command:
+        cmd: "ssh-keygen -R {{ item }}"
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+      become: false
+      changed_when: false
+      failed_when: false
+      loop: "{{ [inventory_hostname, ansible_host | default(inventory_hostname)] | unique }}"
+
+    - name: Bypass known_hosts for the run (boot-mode transitions swap host keys)
+      ansible.builtin.set_fact:
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR"
+        armbian_boot_retry_attempts: "{{ armbian_boot_retry_attempts | default(1) | int }}"
+        armbian_poe_cycle_delay: "{{ armbian_poe_cycle_delay | default(30) | int }}"
+
+- name: Phase 0 - PoE-off all target boards (clean slate)
+  hosts: "{{ target_hosts | default('board_e2e_canaries') }}"
+  gather_facts: false
+  tasks:
     - name: PoE-off each board
-      ansible.builtin.include_tasks: "{{ playbook_dir }}/../transport/poe_off.yml"
+      ansible.builtin.include_tasks: ../transport/poe_off.yml
 
 - name: Phase 1 - force-refresh per-host NFS rootfs on netboot server
   ansible.builtin.import_playbook: ../stage_netboot_assets.yaml
   vars:
     armbian_force_refresh: true
 
-- name: Phase 2 - converge NFS, power on, verify
-  ansible.builtin.import_playbook: ../converge_boot_mode.yaml
-  vars:
-    armbian_boot_mode: nfs
-
-- name: Phase 2b - bootstrap freshly NFS-booted boards
-  ansible.builtin.import_playbook: ../bootstrap.yaml
+- name: Phase 2 - NFS boot + bootstrap + verify
+  hosts: "{{ target_hosts | default('board_e2e_canaries') }}"
+  gather_facts: false
+  pre_tasks:
+    - name: Resolve effective armbian_board_config
+      ansible.builtin.include_tasks: ../tasks/_resolve_board_config.yml
+  tasks:
+    - name: Fresh NFS boot + bootstrap + verify
+      ansible.builtin.include_tasks: _fresh_boot_and_bootstrap.yml
+      vars:
+        _e2e_boot_mode: nfs
+        _e2e_phase_label: "Phase 2 (nfs)"
 
 - name: Phase 3 - dd canonical SD image from NFS
   hosts: "{{ target_hosts | default('board_e2e_canaries') }}"
@@ -47,21 +78,25 @@
   tasks:
     - name: Resolve rootfs source (published image URL) per host
       ansible.builtin.include_tasks: ../tasks/_resolve_rootfs_src.yml
-
     - name: Write SD image via disk_image role
       ansible.builtin.include_role:
         name: david_igou.armbian.disk_image
       vars:
         image_source: "{{ armbian_rootfs_src }}"
-        target_device: /dev/mmcblk0
+        target_device: "{{ armbian_sd_device | default('/dev/mmcblk0') }}"
 
-- name: Phase 4 - converge SD, verify
-  ansible.builtin.import_playbook: ../converge_boot_mode.yaml
-  vars:
-    armbian_boot_mode: sd
-
-- name: Phase 4b - bootstrap freshly SD-booted boards
-  ansible.builtin.import_playbook: ../bootstrap.yaml
+- name: Phase 4 - SD boot + bootstrap + verify
+  hosts: "{{ target_hosts | default('board_e2e_canaries') }}"
+  gather_facts: false
+  pre_tasks:
+    - name: Resolve effective armbian_board_config
+      ansible.builtin.include_tasks: ../tasks/_resolve_board_config.yml
+  tasks:
+    - name: Fresh SD boot + bootstrap + verify
+      ansible.builtin.include_tasks: _fresh_boot_and_bootstrap.yml
+      vars:
+        _e2e_boot_mode: sd
+        _e2e_phase_label: "Phase 4 (sd)"
 
 - name: Phase 5 - reprovision NVMe then converge local_kernel
   ansible.builtin.import_playbook: ../reprovision_to_local.yaml

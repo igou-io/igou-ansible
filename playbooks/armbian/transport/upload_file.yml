@@ -14,6 +14,13 @@
   ansible.builtin.stat:
     path: "{{ _upload_local_src }}"
   delegate_to: localhost
+  # Force a real local connection: inventory `localhost` defaults to SSH
+  # (it is an SSH-able build host), and this devcontainer's sshd has
+  # PrivateTmp, so an SSH-delegated stat reads a private /tmp the local
+  # net_put cannot see. net_put reads the real controller fs, so the
+  # stat must too. See feedback_localhost_connection / devcontainer sshd.
+  vars:
+    ansible_connection: local
   become: false
   register: _upload_local_stat
 

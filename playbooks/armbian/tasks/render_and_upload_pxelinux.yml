@@ -7,6 +7,12 @@
 #   armbian_tftp_cache_dir, armbian_tftp_flash_dir, armbian_router
 - name: Render pxelinux.cfg locally
   delegate_to: localhost
+  # Force a real local connection so the rendered file lands on the real
+  # controller /tmp that net_put reads. Inventory `localhost` defaults to
+  # SSH (build host) and this devcontainer's sshd has PrivateTmp, so an
+  # SSH-delegated render would write to an invisible private /tmp.
+  vars:
+    ansible_connection: local
   become: false
   block:
     - name: Include pxelinux_render role
@@ -28,6 +34,8 @@
   delegate_to: "{{ armbian_router }}"
   block:
     - name: Include per-host pxelinux upload tasks
-      ansible.builtin.include_tasks: "{{ playbook_dir }}/transport/upload_pxelinux_cfg.yml"
+      # Relative to this task file (tasks/) so it resolves regardless of
+      # playbook_dir (works when included from converge or the e2e tests).
+      ansible.builtin.include_tasks: ../transport/upload_pxelinux_cfg.yml
       vars:
         _upload_pxe_hostname: "{{ inventory_hostname }}"
