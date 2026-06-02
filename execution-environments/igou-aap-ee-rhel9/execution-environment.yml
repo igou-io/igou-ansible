@@ -1,6 +1,10 @@
 ---
 # Built and pushed to quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9
 # by .tekton/igou-aap-ee-rhel9-push.yml on every PaC trigger.
+#
+# base_image below is the in-cluster mirror of
+# registry.redhat.io/ansible-automation-platform-27/ee-minimal-rhel9,
+# matching the deployed AAP gateway 2.7 / controller 4.8.0.
 version: 3
 build_arg_defaults:
   ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: '--pre'
