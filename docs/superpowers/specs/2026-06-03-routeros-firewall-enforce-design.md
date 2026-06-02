@@ -36,15 +36,15 @@ Flip the existing `routeros_firewall` role from audit-only to enforcing: when in
 
 **Rejected:** Separate `tasks/enforce.yml` entrypoint (more code paths to keep in sync; encourages drift between audit and enforce); "always enforce + check_mode at playbook layer" (too easy to forget the check_mode in a new playbook and accidentally write to prod).
 
-### 3.3 Pre-write safety: backup snapshot
+### 3.3 Pre-write safety: chain the existing backup_s3 playbook
 
-**Decision:** When `routeros_firewall_enforce=true`, the role's first task (before any `api_modify`) is to drop a backup to the device's flash via `community.routeros.command` running `/system backup save name=...` and `/export compact file=...`. Filenames include the playbook run timestamp.
+**Decision:** Pre-enforce backup is handled at the playbook layer, not in the role. `firewall-audit.yaml` `import_playbook`s the existing `backup_s3.yaml` (which already takes a binary `.backup` + plaintext `.rsc` and ships both to the rustfs S3 bucket with a configurable `routeros_s3_tier` tag) before invoking the role, gated on two flags both being true: `routeros_firewall_enforce` AND `routeros_firewall_pre_enforce_backup`. The AAP `_enforce` job template sets both to true. The tier is `pre-enforce` so the S3 lifecycle policy can treat these distinct from `daily`/`weekly`/`monthly` schedules.
 
-**Why:** Cheap insurance against a botched apply. RouterOS doesn't expose a transactional firewall edit — `api_modify`'s per-row updates can succeed, fail, or partially apply if the connection drops mid-run. With a backup on flash, recovery is `/system backup load name=<file>` from console or netinstall; without one, the operator is reconstructing the prior state by hand. The existing scheduled `routeros_backup_dir` workflow grabs backups off-device on a cadence (`routeros_backup_retain: 30` per host per file type), which is great for off-box archival but the most recent scheduled backup may be hours stale. The pre-enforce backup guarantees the snapshot was taken seconds before the changes that broke things.
+**Why:** Reuse over reinvention. `backup_s3.yaml` already exists, already handles credentials via 1Password, already lands artifacts in tagged S3 storage. Building a role-level backup task would duplicate that logic, leave the artifacts on-device only (worse recovery story if the device itself is bricked), and break the lab-agnostic role contract — the role would assume the consumer has S3 wired up.
 
-The exported `.rsc` file is captured alongside the `.backup` because RouterOS backups are version-pinned (you can't restore a 7.x backup onto an 8.x device, etc.) while `.rsc` is portable plaintext — belt and suspenders.
+The opt-in via `routeros_firewall_pre_enforce_backup` (default false) means consumers without an S3 backend can still use enforce mode by chaining their own backup strategy externally, or by accepting the risk if their lab has different recovery primitives.
 
-**Rejected:** Relying on the existing scheduled backups (staleness risk); fetching backups off-device as part of enforce (slow; not necessary — on-device is enough for rollback).
+**Rejected:** Role-level backup task (dupes existing playbook, on-device only, breaks lab-agnostic contract); relying on the existing scheduled S3 backups (staleness risk — most recent scheduled backup may be hours old).
 
 ## 4. What changes
 
@@ -52,20 +52,18 @@ The exported `.rsc` file is captured alongside the `.backup` because RouterOS ba
 
 - `defaults/main.yml`: add `routeros_firewall_enforce: false`.
 - `tasks/main.yml`: change `check_mode: true` (hardcoded) → `check_mode: "{{ not routeros_firewall_enforce | bool }}"` on both the IPv4 and IPv6 `api_modify` loops.
-- New file `tasks/_backup_before_enforce.yml`: gated on `routeros_firewall_enforce | bool`, runs the backup + export commands and logs the filenames. Imported from `main.yml` after input assertions, before any `api_modify`.
-- The existing `tasks/_assert_inputs.yml` gets one additional check when `routeros_firewall_enforce=true`: confirm the API user has the `write` policy. Cheaper to fail fast on a permission error in a pre-task than to fail mid-enforce after the backup has already been taken.
 
-No changes to `tasks/export.yml`, `templates/firewall.yml.j2`, or `defaults/main.yml`'s other variables.
+No changes to `tasks/export.yml`, `tasks/_assert_inputs.yml`, `templates/firewall.yml.j2`, or `defaults/main.yml`'s other variables. The role stays lab-agnostic and doesn't know about backups, S3, or 1Password.
 
 ### Audit playbook (`playbooks/routeros/firewall-audit.yaml`)
 
-No code change. The same playbook serves both audit and enforce — what differs is the variable passed in. Doc string in the file gets a one-line note saying so.
+Add a leading `import_playbook` for `backup_s3.yaml` with `routeros_s3_tier: pre-enforce`, gated on `routeros_firewall_enforce` AND `routeros_firewall_pre_enforce_backup` both being true. The existing audit play is unchanged.
 
 ### AAP (lives in `igou-inventory`, not this repo)
 
 Add one job template:
 
-- `routeros_firewall_enforce` — manual trigger only (no schedule). Uses the same `firewall-audit.yaml` playbook and the `igou-aap-ee-rhel9` EE. Passes `routeros_firewall_enforce=true` as an extra-var (configured as a surveyed prompt, so the operator confirms-by-typing at trigger time). Optionally: gated behind an AAP approval node so a second operator has to click before the job actually runs.
+- `routeros_firewall_enforce` — manual trigger only (no schedule). Uses the same `firewall-audit.yaml` playbook and the `igou-aap-ee-rhel9` EE. Passes `routeros_firewall_enforce=true` AND `routeros_firewall_pre_enforce_backup=true` as extra-vars (configured as surveyed prompts, so the operator confirms at trigger time). Optionally: gated behind an AAP approval node so a second operator has to click before the job actually runs.
 
 ### Inventory (`igou-inventory/group_vars/routeros.yml`)
 
@@ -75,19 +73,19 @@ No change. The API user already has write (done as part of the Phase 1 onboardin
 
 ### Connection drops mid-enforce
 
-`api_modify` processes each path independently and commits changes incrementally inside that path. If the API connection drops between paths, earlier paths are committed, later paths aren't. If it drops mid-path, the per-row updates that already landed stay applied. There is no rollback automation in this design — the operator restores from the pre-enforce backup. The audit job re-run after recovery surfaces what was applied.
+`api_modify` processes each path independently and commits changes incrementally inside that path. If the API connection drops between paths, earlier paths are committed, later paths aren't. If it drops mid-path, the per-row updates that already landed stay applied. There is no rollback automation in this design — the operator restores from the S3-staged pre-enforce backup. The audit job re-run after recovery surfaces what was applied.
 
 ### Permission error mid-enforce
 
-The pre-enforce permission check should catch this. If it doesn't (e.g. the user has write on `/ip firewall` but not `/ip firewall connection tracking`), the partial-apply story applies — restore from backup, fix permissions, re-run.
+If the API user is read-only or lacks per-path write, `api_modify` fails fast on the first write attempt; nothing partially applies because the failure is at task level, not row level. Operator fixes permissions and re-runs.
 
 ### Operator pushes a bad rule
 
-Audit was supposed to catch this before enforce ran. If it didn't (operator skipped the audit step, or the rule is syntactically valid but semantically wrong like "drop all input"), the backup is the recovery mechanism. This is operator error, not role error.
+Audit was supposed to catch this before enforce ran. If it didn't (operator skipped the audit step, or the rule is syntactically valid but semantically wrong like "drop all input"), the S3-staged backup is the recovery mechanism: pull the `.rsc` from S3, `/import` it from console.
 
 ### Backup itself fails
 
-Enforce aborts. Hard fail before any `api_modify`. The role refuses to write without a successful backup.
+`backup_s3.yaml` runs as its own play before the role play. If S3 upload fails, that play fails and the second play (role invocation) doesn't run — enforce aborts before any write. This is the expected behavior; the operator can either bypass via `routeros_firewall_pre_enforce_backup=false` (accepting the risk) or fix the S3 issue and re-run.
 
 ## 6. Operator workflow
 
@@ -95,8 +93,8 @@ Enforce aborts. Hard fail before any `api_modify`. The role refuses to write wit
 2. CI lints (existing). PR merges to `main`.
 3. Nightly scheduled `routeros_firewall_audit` runs — drift surfaces as job failure with the diff in the AAP run log.
 4. Operator reads the diff, decides "yes, apply this," triggers `routeros_firewall_enforce` in AAP.
-5. Role takes the backup, applies the changes, runs a final audit pass (or operator triggers the audit template manually right after) to confirm zero drift.
-6. If anything goes sideways, operator restores from the on-device backup via console or `/system backup load`.
+5. Playbook chains `backup_s3.yaml` first (tier=pre-enforce → S3 with that tag), then role applies the changes. Operator triggers the `routeros_firewall_audit` template manually right after to confirm zero drift.
+6. If anything goes sideways, operator pulls the matching `<host>-<ts>.{backup,rsc}` object from S3 (filter by `tier=pre-enforce`), then restores via `/system/backup/load` or `/import` from console.
 
 ## 7. Out of scope / deferred
 

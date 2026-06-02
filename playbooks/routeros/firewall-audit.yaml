@@ -5,16 +5,33 @@
 # Default mode is audit (read-only): the role runs community.routeros.api_modify
 # with check_mode: true and emits a structured drift report. Pass
 # `-e routeros_firewall_enforce=true` to flip it to enforce mode — the role
-# takes an on-device backup snapshot first, then applies the desired YAML
-# for real. AAP uses two job templates pointing at this same playbook:
-# routeros_firewall_audit (default) and routeros_firewall_enforce (with the
-# override).
+# applies the desired YAML for real (additions, modifications, deletions,
+# re-ordering).
+#
+# Pre-enforce safety: when both routeros_firewall_enforce AND
+# routeros_firewall_pre_enforce_backup are true, this playbook chains
+# backup_s3.yaml first so a fresh `tier=pre-enforce` snapshot lands in S3
+# before the role writes. Recovery in case of a botched apply is via the
+# normal RouterOS restore path (download the .backup or .rsc from S3,
+# /system/backup/load or /import).
 #
 # Run with --diff to see per-field before/after:
 #   ansible-navigator run playbooks/routeros/firewall-audit.yaml \
 #     -i igou-inventory/inventory.yaml --diff
 #
 # Default target: routeros_router (rb5009). Override with -e host=<name>.
+- name: Pre-enforce S3 backup (opt-in via routeros_firewall_pre_enforce_backup)
+  ansible.builtin.import_playbook: backup_s3.yaml
+  vars:
+    # Align backup_s3.yaml's default host (routeros, whole group) with this
+    # playbook's default (routeros_router, just rb5009). `-e host=<group>` on
+    # the CLI overrides this literal — extra-vars beat play vars.
+    host: routeros_router
+    routeros_s3_tier: pre-enforce
+  when:
+    - routeros_firewall_enforce | default(false) | bool
+    - routeros_firewall_pre_enforce_backup | default(false) | bool
+
 - name: Audit or enforce RouterOS firewall against desired state
   hosts: "{{ host | default('routeros_router') }}"
   gather_facts: false
