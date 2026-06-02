@@ -48,7 +48,7 @@
           {{
             _routeros_firewall_flat | default([])
             + (
-                (routeros_firewall[item] | default([]))
+                (routeros_firewall[item] | default([], true))
                 | map('combine', {'_path': item})
                 | list
               )
