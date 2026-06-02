@@ -1,0 +1,70 @@
+---
+# routeros_firewall — audit (drift report) entrypoint. Default tasks_from
+# for this role.
+#
+# Validates inputs, then calls community.routeros.api_modify in check_mode
+# against each managed sub-path, passing the desired-state list from
+# routeros_firewall[<path>]. Module computes adds/removes/modifies
+# internally. Aggregated diff is emitted to stdout.
+#
+# The play MUST be invoked with `--diff` (or `diff: true` on the tasks)
+# for the per-field before/after to appear. Without --diff the module
+# still reports changed=true|false but no actionable detail.
+
+- name: Validate inputs (credentials + desired state)
+  ansible.builtin.import_tasks: _assert_inputs.yml
+  vars:
+    _assert_check_desired: true
+
+- name: Audit IPv4 firewall sub-paths
+  community.routeros.api_modify:
+    hostname: "{{ routeros_firewall_api_host }}"
+    port: "{{ routeros_firewall_api_port }}"
+    username: "{{ routeros_firewall_api_username }}"
+    password: "{{ routeros_firewall_api_password }}"
+    tls: "{{ routeros_firewall_api_tls }}"
+    validate_certs: "{{ routeros_firewall_api_validate_certs }}"
+    path: "ip firewall {{ _routeros_firewall_path }}"
+    data: "{{ routeros_firewall[_routeros_firewall_path] | default([], true) }}"
+    handle_absent_entries: remove
+    ensure_order: "{{ routeros_firewall_ordered[_routeros_firewall_path] | default(true) }}"
+  register: _routeros_firewall_audit_results_v4
+  check_mode: true
+  diff: true
+  loop: "{{ routeros_firewall_paths }}"
+  loop_control:
+    loop_var: _routeros_firewall_path
+    label: "ip firewall {{ _routeros_firewall_path }}"
+  delegate_to: localhost
+
+- name: Audit IPv6 firewall sub-paths
+  community.routeros.api_modify:
+    hostname: "{{ routeros_firewall_api_host }}"
+    port: "{{ routeros_firewall_api_port }}"
+    username: "{{ routeros_firewall_api_username }}"
+    password: "{{ routeros_firewall_api_password }}"
+    tls: "{{ routeros_firewall_api_tls }}"
+    validate_certs: "{{ routeros_firewall_api_validate_certs }}"
+    path: "ipv6 firewall {{ _routeros_firewall_path }}"
+    data: "{{ routeros_firewall['ipv6-' ~ _routeros_firewall_path] | default([], true) }}"
+    handle_absent_entries: remove
+    ensure_order: "{{ routeros_firewall_ordered[_routeros_firewall_path] | default(true) }}"
+  register: _routeros_firewall_audit_results_v6
+  check_mode: true
+  diff: true
+  loop: "{{ routeros_firewall_ipv6_paths }}"
+  loop_control:
+    loop_var: _routeros_firewall_path
+    label: "ipv6 firewall {{ _routeros_firewall_path }}"
+  delegate_to: localhost
+  when: routeros_firewall_ipv6_paths | length > 0
+
+- name: Summarize drift per path
+  ansible.builtin.debug:
+    msg: |-
+      Drift summary for {{ inventory_hostname }}:
+      {% for r in (_routeros_firewall_audit_results_v4.results | default([])) +
+                  (_routeros_firewall_audit_results_v6.results | default([])) %}
+        {{ r._routeros_firewall_path }}: changed={{ r.changed }}
+      {% endfor %}
+      (Drift exists where changed=true. Run with --diff for per-field before/after.)
