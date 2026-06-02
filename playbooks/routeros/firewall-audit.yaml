@@ -27,7 +27,10 @@
     # playbook's default (routeros_router, just rb5009). `-e host=<group>` on
     # the CLI overrides this literal — extra-vars beat play vars.
     host: routeros_router
-    routeros_s3_tier: pre-enforce
+    # Tier 'daily' — backup_s3.yaml's existing default. The pre-enforce
+    # snapshot lives under the same S3 lifecycle as the scheduled daily
+    # backups; no separate retention treatment needed.
+    routeros_s3_tier: daily
   when:
     - routeros_firewall_enforce | default(false) | bool
     - routeros_firewall_pre_enforce_backup | default(false) | bool

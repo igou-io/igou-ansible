@@ -38,7 +38,7 @@ Flip the existing `routeros_firewall` role from audit-only to enforcing: when in
 
 ### 3.3 Pre-write safety: chain the existing backup_s3 playbook
 
-**Decision:** Pre-enforce backup is handled at the playbook layer, not in the role. `firewall-audit.yaml` `import_playbook`s the existing `backup_s3.yaml` (which already takes a binary `.backup` + plaintext `.rsc` and ships both to the rustfs S3 bucket with a configurable `routeros_s3_tier` tag) before invoking the role, gated on two flags both being true: `routeros_firewall_enforce` AND `routeros_firewall_pre_enforce_backup`. The AAP `_enforce` job template sets both to true. The tier is `pre-enforce` so the S3 lifecycle policy can treat these distinct from `daily`/`weekly`/`monthly` schedules.
+**Decision:** Pre-enforce backup is handled at the playbook layer, not in the role. `firewall-audit.yaml` `import_playbook`s the existing `backup_s3.yaml` (which already takes a binary `.backup` + plaintext `.rsc` and ships both to the rustfs S3 bucket with a configurable `routeros_s3_tier` tag) before invoking the role, gated on two flags both being true: `routeros_firewall_enforce` AND `routeros_firewall_pre_enforce_backup`. The AAP `_enforce` job template sets both to true. The tier is `daily` so the pre-enforce snapshot lives under the same S3 lifecycle as scheduled daily backups — no separate retention treatment.
 
 **Why:** Reuse over reinvention. `backup_s3.yaml` already exists, already handles credentials via 1Password, already lands artifacts in tagged S3 storage. Building a role-level backup task would duplicate that logic, leave the artifacts on-device only (worse recovery story if the device itself is bricked), and break the lab-agnostic role contract — the role would assume the consumer has S3 wired up.
 
@@ -93,8 +93,8 @@ Audit was supposed to catch this before enforce ran. If it didn't (operator skip
 2. CI lints (existing). PR merges to `main`.
 3. Nightly scheduled `routeros_firewall_audit` runs — drift surfaces as job failure with the diff in the AAP run log.
 4. Operator reads the diff, decides "yes, apply this," triggers `routeros_firewall_enforce` in AAP.
-5. Playbook chains `backup_s3.yaml` first (tier=pre-enforce → S3 with that tag), then role applies the changes. Operator triggers the `routeros_firewall_audit` template manually right after to confirm zero drift.
-6. If anything goes sideways, operator pulls the matching `<host>-<ts>.{backup,rsc}` object from S3 (filter by `tier=pre-enforce`), then restores via `/system/backup/load` or `/import` from console.
+5. Playbook chains `backup_s3.yaml` first (tier=daily → S3 with that tag), then role applies the changes. Operator triggers the `routeros_firewall_audit` template manually right after to confirm zero drift.
+6. If anything goes sideways, operator pulls the most recent `<host>-<ts>.{backup,rsc}` object from S3 (sort by mtime under `routeros/<host>/`), then restores via `/system/backup/load` or `/import` from console.
 
 ## 7. Out of scope / deferred
 

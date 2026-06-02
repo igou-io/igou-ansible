@@ -67,7 +67,8 @@ Prepend an `import_playbook` of `backup_s3.yaml` with:
 - name: Pre-enforce S3 backup (opt-in via routeros_firewall_pre_enforce_backup)
   ansible.builtin.import_playbook: backup_s3.yaml
   vars:
-    routeros_s3_tier: pre-enforce
+    host: routeros_router
+    routeros_s3_tier: daily
   when:
     - routeros_firewall_enforce | default(false) | bool
     - routeros_firewall_pre_enforce_backup | default(false) | bool
@@ -75,9 +76,9 @@ Prepend an `import_playbook` of `backup_s3.yaml` with:
 
 Update the playbook's docstring to explain the chained-backup behavior.
 
-`import_playbook` is a static import — the `when` is applied to every task in the imported playbook, so when the gate is false the backup play's tasks are simply skipped. No special-casing needed.
+`import_playbook` is a static import — the `when` is applied to every task in the imported playbook, so when the gate is false the backup play's tasks are simply skipped. No special-casing needed. `host: routeros_router` pins backup_s3.yaml's host scope to match this playbook's default; CLI `-e host=<group>` overrides both consistently.
 
-**Acceptance:** with both flags true, the backup play runs and an object lands in S3 with `tier=pre-enforce`. With either flag false, the backup play's tasks all skip.
+**Acceptance:** with both flags true, the backup play runs and a `.backup` + `.rsc` pair lands in S3 with `tier=daily`. With either flag false, the backup play's tasks all skip.
 
 ## Task 4: AAP `_enforce` job template (inventory side)
 
@@ -98,12 +99,12 @@ Add a new entry mirroring the existing `routeros_firewall_audit` template, but:
 
 1. **Audit baseline.** Run `firewall-audit.yaml` (no extra vars). PLAY RECAP should show all paths `changed=False`.
 2. **Enforce with no drift, no backup flag.** Pass `routeros_firewall_enforce=true`. Backup play skips (no extra-var for the backup flag); all paths `changed=False`.
-3. **Enforce with no drift, backup flag on.** Pass both flags. Backup play runs end-to-end, S3 object lands with `tier=pre-enforce`; all paths `changed=False`.
+3. **Enforce with no drift, backup flag on.** Pass both flags. Backup play runs end-to-end, S3 object lands with `tier=daily`; all paths `changed=False`.
 4. **Introduce a small drift.** Change one rule's comment in `firewall.yml`.
 5. **Enforce.** Both flags on. Backup play runs; the one drifted rule updates on the device; final state matches model.
 6. **Confirm.** Re-run `firewall-audit.yaml`. PLAY RECAP zero-drift.
 7. **Revert the test drift.** Edit `firewall.yml` back, re-run enforce, re-run audit, confirm zero drift.
-8. **Verify backup recoverability.** List the rustfs `routeros-backups` bucket filtered on `tier=pre-enforce` — at least three objects (one per enforce-with-backup run) should be visible.
+8. **Verify backup recoverability.** List the rustfs `routeros-backups` bucket under `routeros/<host>/` — the most recent `.backup` + `.rsc` pair should be the one this run just uploaded.
 
 **Acceptance:** all eight steps succeed; rb5009 ends in the same state it started.
 
@@ -125,4 +126,4 @@ No `TODO`s in the plan steps.
 
 - `routeros_firewall_enforce` (bool) — used in Tasks 1, 2, 3, 4.
 - `routeros_firewall_pre_enforce_backup` (bool) — used in Tasks 3, 4.
-- `routeros_s3_tier: pre-enforce` — distinct from `daily`/`weekly`/`monthly` so S3 lifecycle can handle pre-enforce snapshots differently.
+- `routeros_s3_tier: daily` — reuses the existing daily tier so the S3 lifecycle policy treats pre-enforce snapshots the same as scheduled daily backups.
