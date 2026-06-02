@@ -57,4 +57,4 @@ routeros_firewall_export_path: "{{ inventory_dir }}/host_vars/{{ inventory_hostn
 # Shape: { filter: [...], nat: [...], mangle: [...], raw: [...],
 #         address-list: [...], ipv6-filter: [...], ... }
 # See docs/superpowers/specs/2026-06-02-routeros-declarative-firewall-design.md §6.
-routeros_firewall: {}
+routeros_firewall_rules: {}

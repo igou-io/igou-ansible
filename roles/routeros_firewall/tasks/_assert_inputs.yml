@@ -48,7 +48,7 @@
           {{
             _routeros_firewall_flat | default([])
             + (
-                (routeros_firewall[item] | default([], true))
+                (routeros_firewall_rules[item] | default([], true))
                 | map('combine', {'_path': item})
                 | list
               )
@@ -89,7 +89,7 @@
           {{
             _routeros_firewall_dup_report | default({}) | combine({
               item: (
-                routeros_firewall[item] | default([])
+                routeros_firewall_rules[item] | default([])
                 | selectattr('comment', 'defined')
                 | map(attribute='comment')
                 | community.general.counter

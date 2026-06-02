@@ -25,7 +25,7 @@
     tls: "{{ routeros_firewall_api_tls }}"
     validate_certs: "{{ routeros_firewall_api_validate_certs }}"
     path: "ip firewall {{ _routeros_firewall_path }}"
-    data: "{{ routeros_firewall[_routeros_firewall_path] | default([], true) }}"
+    data: "{{ routeros_firewall_rules[_routeros_firewall_path] | default([], true) }}"
     handle_absent_entries: remove
     ensure_order: "{{ routeros_firewall_ordered[_routeros_firewall_path] | default(true) }}"
   register: _routeros_firewall_audit_results_v4
@@ -46,7 +46,7 @@
     tls: "{{ routeros_firewall_api_tls }}"
     validate_certs: "{{ routeros_firewall_api_validate_certs }}"
     path: "ipv6 firewall {{ _routeros_firewall_path }}"
-    data: "{{ routeros_firewall['ipv6-' ~ _routeros_firewall_path] | default([], true) }}"
+    data: "{{ routeros_firewall_rules['ipv6-' ~ _routeros_firewall_path] | default([], true) }}"
     handle_absent_entries: remove
     ensure_order: "{{ routeros_firewall_ordered[_routeros_firewall_path] | default(true) }}"
   register: _routeros_firewall_audit_results_v6

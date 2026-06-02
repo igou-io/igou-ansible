@@ -4,7 +4,7 @@
 # Review the auto-applied '{{ routeros_firewall_comment_prefix }}' prefixes
 # before committing. Hand-rename auto-imported comments to something
 # meaningful; the role enforces uniqueness per path.
-routeros_firewall:
+routeros_firewall_rules:
 {% for path, rules in _routeros_firewall_export_payload.items() %}
 {%   set _rules = rules | default([], true) %}
   {{ path }}:{% if _rules | length == 0 %} []
