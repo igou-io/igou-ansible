@@ -1,0 +1,21 @@
+---
+# Audit RouterOS firewall state against the desired YAML in
+# igou-inventory/host_vars/<inventory_hostname>/firewall.yml. Read-only.
+#
+# This playbook never modifies the device. It runs
+# community.routeros.api_modify with check_mode: true (set inside the
+# role) and emits a structured drift report.
+#
+# Run with --diff to see per-field before/after:
+#   ansible-navigator run playbooks/routeros/firewall-audit.yaml \
+#     -i igou-inventory/inventory.yaml --diff
+#
+# Default target: routeros_router (rb5009). Override with -e host=<name>.
+- name: Audit RouterOS firewall against desired state
+  hosts: "{{ host | default('routeros_router') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Run routeros_firewall audit
+      ansible.builtin.import_role:
+        name: routeros_firewall

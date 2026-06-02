@@ -1,0 +1,60 @@
+---
+# routeros_firewall — Phase 1 (audit + export). Consumer contract.
+#
+# Every variable below is consumer-tunable. Secrets are unset (~) and
+# MUST be supplied by the inventory (group_vars / host_vars) or via
+# extra_vars. tasks/_assert_inputs.yml fails the play with a clear
+# message if a required secret is missing.
+
+# --- Connection ---
+# Default api_host = inventory target's ansible_host (or inventory_hostname
+# if unset). Goes through hostvars[inventory_hostname] so delegate_to in
+# the role's tasks doesn't redirect ansible_host to the delegate's value
+# (which would point api_info/api_modify at the wrong machine).
+routeros_firewall_api_host: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
+routeros_firewall_api_port: 8729
+routeros_firewall_api_tls: true
+routeros_firewall_api_validate_certs: true
+routeros_firewall_api_username: ~
+routeros_firewall_api_password: ~
+
+# --- Behavior ---
+# RouterOS /ip/firewall sub-paths the role will audit/export. Drop entries
+# to scope down; add to routeros_firewall_ipv6_paths to manage IPv6.
+# NOTE: community.routeros uses SPACE-separated path syntax internally
+# (e.g. 'ip firewall filter'). These bare names get composed into that
+# form inside tasks/main.yml and tasks/export.yml.
+routeros_firewall_paths:
+  - filter
+  - nat
+  - mangle
+  - raw
+  - address-list
+
+routeros_firewall_ipv6_paths: []
+
+# Per-path order-sensitivity. filter/nat/mangle/raw are order-sensitive
+# (drop rules at the bottom, etc.); address-list is set-semantic. Maps
+# directly to api_modify's `ensure_order` parameter, which requires
+# handle_absent_entries=remove.
+routeros_firewall_ordered:
+  filter: true
+  nat: true
+  mangle: true
+  raw: true
+  address-list: false
+
+# Every managed rule's `comment` must start with this prefix. The audit
+# entrypoint asserts. The export entrypoint auto-prepends if missing.
+routeros_firewall_comment_prefix: "ansible:"
+
+# --- Export target ---
+# Path where firewall-export.yaml writes the captured state. Default puts
+# it next to the inventory it came from; override for non-standard layouts.
+routeros_firewall_export_path: "{{ inventory_dir }}/host_vars/{{ inventory_hostname }}/firewall.yml"
+
+# --- Desired state (caller supplies per host) ---
+# Shape: { filter: [...], nat: [...], mangle: [...], raw: [...],
+#         address-list: [...], ipv6-filter: [...], ... }
+# See docs/superpowers/specs/2026-06-02-routeros-declarative-firewall-design.md §6.
+routeros_firewall_rules: {}
