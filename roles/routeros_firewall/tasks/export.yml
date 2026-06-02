@@ -24,6 +24,7 @@
     path: "{{ _routeros_firewall_full_path }}"
     hide_defaults: true
     unfiltered: false
+    handle_disabled: omit
   register: _routeros_firewall_info_results
   loop: >-
     {{
@@ -52,6 +53,40 @@
             )
         )
       }}
+
+# api_info returns each rule's stable-API fields plus a few device-only
+# attributes that don't belong in version-controlled desired-state:
+#   .id        ephemeral row identifier (reshuffles on reboot)
+#   dynamic    runtime-managed flag
+#   invalid    runtime-managed flag
+#   bytes      counter
+#   packets    counter
+# Strip these before render so the resulting YAML diffs cleanly across runs.
+- name: Strip device-only fields from each captured rule
+  ansible.builtin.set_fact:
+    _routeros_firewall_export_payload: >-
+      {{
+        _routeros_firewall_export_payload | combine({
+          item.key:
+            item.value
+            | map('dict2items')
+            | map('rejectattr', 'key', 'in', _strip_keys)
+            | map('items2dict')
+            | list
+        })
+      }}
+  vars:
+    _strip_keys: ['.id', 'dynamic', 'invalid', 'bytes', 'packets']
+  loop: "{{ _routeros_firewall_export_payload | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Ensure the export target's parent directory exists
+  ansible.builtin.file:
+    path: "{{ routeros_firewall_export_path | dirname }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
 
 - name: Render the host_vars firewall.yml
   ansible.builtin.template:
