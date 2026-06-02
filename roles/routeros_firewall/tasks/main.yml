@@ -27,6 +27,11 @@
     path: "ip firewall {{ _routeros_firewall_path }}"
     data: "{{ routeros_firewall_rules[_routeros_firewall_path] | default([], true) }}"
     handle_absent_entries: remove
+    # community.routeros forbids handle_absent_entries=remove combined with
+    # the default handle_entries_content=ignore on filter/nat/mangle/raw.
+    # remove_as_much_as_possible resets only fields with a known default,
+    # matching the upstream example.
+    handle_entries_content: remove_as_much_as_possible
     ensure_order: "{{ routeros_firewall_ordered[_routeros_firewall_path] | default(true) }}"
   register: _routeros_firewall_audit_results_v4
   check_mode: true
@@ -48,6 +53,7 @@
     path: "ipv6 firewall {{ _routeros_firewall_path }}"
     data: "{{ routeros_firewall_rules['ipv6-' ~ _routeros_firewall_path] | default([], true) }}"
     handle_absent_entries: remove
+    handle_entries_content: remove_as_much_as_possible
     ensure_order: "{{ routeros_firewall_ordered[_routeros_firewall_path] | default(true) }}"
   register: _routeros_firewall_audit_results_v6
   check_mode: true

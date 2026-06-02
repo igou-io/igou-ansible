@@ -83,7 +83,13 @@
           {% endfor %}
         quiet: true
 
-    - name: Find duplicate comments per path
+    # Only enforce comment uniqueness on order-sensitive paths
+    # (filter/nat/mangle/raw), where `comment` is the de-facto rule
+    # identifier. Set-semantic paths like address-list have
+    # `(list, address)` as their natural identity, so multiple rows
+    # sharing one descriptive comment (e.g. 13× 'ansible: RFC6890',
+    # one per subnet in a named list) is correct, not a collision.
+    - name: Find duplicate comments per ordered path
       ansible.builtin.set_fact:
         _routeros_firewall_dup_report: >-
           {{
@@ -103,6 +109,7 @@
       loop: "{{ _routeros_firewall_managed_keys }}"
       loop_control:
         label: "{{ item }}"
+      when: routeros_firewall_ordered[item | regex_replace('^ipv6-', '')] | default(false) | bool
 
     - name: Fail if duplicate comments exist within any path
       ansible.builtin.assert:
