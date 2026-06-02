@@ -60,6 +60,7 @@ dependencies:
       - name: infra.ah_configuration
       - name: redhat.rhel_system_roles
       - name: ansible.platform
+        version: "<2.7.0"
       - name: ansible.hub
       - name: ansible.eda
       - name: ansible.controller
