@@ -1,22 +1,27 @@
 ---
-# routeros_firewall — audit (drift report) entrypoint. Default tasks_from
-# for this role.
+# routeros_firewall — audit-or-enforce entrypoint. Default tasks_from for
+# this role.
 #
-# Validates inputs, then calls community.routeros.api_modify in check_mode
-# against each managed sub-path, passing the desired-state list from
-# routeros_firewall[<path>]. Module computes adds/removes/modifies
-# internally. Aggregated diff is emitted to stdout.
+# Validates inputs, then (in enforce mode) takes a pre-write backup
+# snapshot, then calls community.routeros.api_modify against each managed
+# sub-path with the desired-state list from routeros_firewall_rules[<path>].
+# Audit and enforce share this entrypoint; routeros_firewall_enforce (default
+# false) flips check_mode and gates the backup task.
 #
-# The play MUST be invoked with `--diff` (or `diff: true` on the tasks)
-# for the per-field before/after to appear. Without --diff the module
-# still reports changed=true|false but no actionable detail.
+# The play MUST be invoked with `--diff` (or `diff: true` on the tasks) for
+# the per-field before/after to appear. Without --diff the module still
+# reports changed=true|false but no actionable detail.
 
 - name: Validate inputs (credentials + desired state)
   ansible.builtin.import_tasks: _assert_inputs.yml
   vars:
     _assert_check_desired: true
 
-- name: Audit IPv4 firewall sub-paths
+- name: Take pre-enforce backup snapshot
+  ansible.builtin.import_tasks: _backup_before_enforce.yml
+  when: routeros_firewall_enforce | bool
+
+- name: Audit or enforce IPv4 firewall sub-paths
   community.routeros.api_modify:
     hostname: "{{ routeros_firewall_api_host }}"
     port: "{{ routeros_firewall_api_port }}"
@@ -34,7 +39,7 @@
     handle_entries_content: remove_as_much_as_possible
     ensure_order: "{{ routeros_firewall_ordered[_routeros_firewall_path] | default(true) }}"
   register: _routeros_firewall_audit_results_v4
-  check_mode: true
+  check_mode: "{{ not (routeros_firewall_enforce | bool) }}"
   diff: true
   loop: "{{ routeros_firewall_paths }}"
   loop_control:
@@ -42,7 +47,7 @@
     label: "ip firewall {{ _routeros_firewall_path }}"
   delegate_to: localhost
 
-- name: Audit IPv6 firewall sub-paths
+- name: Audit or enforce IPv6 firewall sub-paths
   community.routeros.api_modify:
     hostname: "{{ routeros_firewall_api_host }}"
     port: "{{ routeros_firewall_api_port }}"
@@ -56,7 +61,7 @@
     handle_entries_content: remove_as_much_as_possible
     ensure_order: "{{ routeros_firewall_ordered[_routeros_firewall_path] | default(true) }}"
   register: _routeros_firewall_audit_results_v6
-  check_mode: true
+  check_mode: "{{ not (routeros_firewall_enforce | bool) }}"
   diff: true
   loop: "{{ routeros_firewall_ipv6_paths }}"
   loop_control:
@@ -65,12 +70,18 @@
   delegate_to: localhost
   when: routeros_firewall_ipv6_paths | length > 0
 
-- name: Summarize drift per path
+- name: Summarize per path
   ansible.builtin.debug:
     msg: |-
-      Drift summary for {{ inventory_hostname }}:
+      {{ 'Enforce' if (routeros_firewall_enforce | bool) else 'Drift' }}
+      summary for {{ inventory_hostname }}
+      ({{ 'changes applied' if (routeros_firewall_enforce | bool) else 'no writes' }}):
       {% for r in (_routeros_firewall_audit_results_v4.results | default([])) +
                   (_routeros_firewall_audit_results_v6.results | default([])) %}
         {{ r._routeros_firewall_path }}: changed={{ r.changed }}
       {% endfor %}
+      {%- if routeros_firewall_enforce | bool %}
+      Pre-enforce backup: /flash/{{ _routeros_firewall_backup_stem }}.{backup,rsc}
+      {%- else %}
       (Drift exists where changed=true. Run with --diff for per-field before/after.)
+      {%- endif %}

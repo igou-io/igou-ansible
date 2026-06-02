@@ -1,21 +1,25 @@
 ---
-# Audit RouterOS firewall state against the desired YAML in
-# igou-inventory/host_vars/<inventory_hostname>/firewall.yml. Read-only.
+# Audit or enforce RouterOS firewall state against the desired YAML in
+# igou-inventory/host_vars/<inventory_hostname>/firewall.yml.
 #
-# This playbook never modifies the device. It runs
-# community.routeros.api_modify with check_mode: true (set inside the
-# role) and emits a structured drift report.
+# Default mode is audit (read-only): the role runs community.routeros.api_modify
+# with check_mode: true and emits a structured drift report. Pass
+# `-e routeros_firewall_enforce=true` to flip it to enforce mode — the role
+# takes an on-device backup snapshot first, then applies the desired YAML
+# for real. AAP uses two job templates pointing at this same playbook:
+# routeros_firewall_audit (default) and routeros_firewall_enforce (with the
+# override).
 #
 # Run with --diff to see per-field before/after:
 #   ansible-navigator run playbooks/routeros/firewall-audit.yaml \
 #     -i igou-inventory/inventory.yaml --diff
 #
 # Default target: routeros_router (rb5009). Override with -e host=<name>.
-- name: Audit RouterOS firewall against desired state
+- name: Audit or enforce RouterOS firewall against desired state
   hosts: "{{ host | default('routeros_router') }}"
   gather_facts: false
 
   tasks:
-    - name: Run routeros_firewall audit
+    - name: Run routeros_firewall (audit or enforce per routeros_firewall_enforce)
       ansible.builtin.import_role:
         name: routeros_firewall

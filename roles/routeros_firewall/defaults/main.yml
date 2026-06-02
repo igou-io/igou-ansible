@@ -48,6 +48,14 @@ routeros_firewall_ordered:
 # entrypoint asserts. The export entrypoint auto-prepends if missing.
 routeros_firewall_comment_prefix: "ansible:"
 
+# Phase 2 enforce switch. When false (default), the role runs audit-only —
+# api_modify in check_mode, no writes. When true, the role takes an
+# on-device backup snapshot and then applies the desired YAML for real.
+# Audit and enforce share the same playbook entrypoint; the AAP _enforce
+# template flips this to true via extra_vars.
+# See docs/superpowers/specs/2026-06-03-routeros-firewall-enforce-design.md.
+routeros_firewall_enforce: false
+
 # --- Export target ---
 # Path where firewall-export.yaml writes the captured state. Default puts
 # it next to the inventory it came from; override for non-standard layouts.

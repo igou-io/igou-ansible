@@ -1,0 +1,40 @@
+---
+# Pre-enforce backup snapshot. Drops two artifacts to /flash/ on the device:
+#   firewall-pre-enforce-<ts>.backup  — RouterOS-version-pinned binary backup
+#   firewall-pre-enforce-<ts>.rsc     — portable text export
+#
+# When recovery is needed, the operator can either:
+#   /system/backup/load name=firewall-pre-enforce-<ts>
+# or, if the .backup is RouterOS-version-incompatible (e.g. post-upgrade):
+#   /import file=firewall-pre-enforce-<ts>.rsc
+#
+# Imported from tasks/main.yml ONLY when routeros_firewall_enforce is true.
+# Failure here aborts the play before any api_modify runs — without a known
+# backup, the role refuses to write.
+
+- name: Compute backup filename stem from UTC clock
+  ansible.builtin.set_fact:
+    # Timestamp comes from `date` on the control node (EE container), not
+    # the device, so it's stable even when the device's clock isn't.
+    _routeros_firewall_backup_stem: "firewall-pre-enforce-{{ lookup('ansible.builtin.pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+
+- name: Take RouterOS backup snapshot
+  community.routeros.command:
+    commands:
+      - "/system/backup/save name={{ _routeros_firewall_backup_stem }} dont-encrypt=yes"
+
+- name: Export firewall config to .rsc
+  community.routeros.command:
+    commands:
+      - "/export compact file={{ _routeros_firewall_backup_stem }}"
+
+- name: Confirm backup artifacts landed on flash
+  ansible.builtin.debug:
+    msg: |-
+      Pre-enforce backup taken on {{ inventory_hostname }}:
+        /flash/{{ _routeros_firewall_backup_stem }}.backup
+        /flash/{{ _routeros_firewall_backup_stem }}.rsc
+      Recover via:
+        /system/backup/load name={{ _routeros_firewall_backup_stem }}
+      or, if the .backup is RouterOS-version-incompatible:
+        /import file={{ _routeros_firewall_backup_stem }}.rsc
