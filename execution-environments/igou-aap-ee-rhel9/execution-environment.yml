@@ -56,6 +56,14 @@ dependencies:
       - name: infra.ah_configuration
       - name: redhat.rhel_system_roles
       - name: ansible.platform
+        # <2.7: ansible.platform 2.7 ships action plugins for every gateway
+        # module (organization, application, authenticator, role_*, route,
+        # service, settings, team, user, ...), which do not support `async`.
+        # infra.aap_configuration's gateway_* roles wrap every call in
+        # `async: 1000, poll: 0` unconditionally, so 2.7 hard-fails with
+        # "async is not supported for this task." 2.6.x (used by the
+        # deployed AAP 2.6 gateway) has plain modules and works.
+        version: "<2.7"
       - name: ansible.hub
       - name: ansible.eda
       - name: ansible.controller
