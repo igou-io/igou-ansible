@@ -23,13 +23,17 @@
 #
 # Common invocations:
 #   ansible-playbook playbooks/netboot/deploy_assets.yml \
-#     -i 'localhost ansible_connection=local,' \
 #     -i igou-inventory/inventory.yaml
 #   # menu touch-up, skip slow stages:
 #   ansible-playbook playbooks/netboot/deploy_assets.yml \
-#     -i 'localhost ansible_connection=local,' \
 #     -i igou-inventory/inventory.yaml \
 #     --tags render,push,verify
+#
+# The delegate_to: localhost tasks rely on Ansible's implicit localhost
+# (auto-provisioned with ansible_connection=local), so no explicit
+# 'localhost ansible_connection=local,' inventory entry is needed. Add
+# one only if you hit interpreter-discovery warnings or need to force a
+# specific local Python.
 
 - name: Deploy netboot menu and assets
   hosts: "{{ netboot_public_host | default('truenas') }}"
