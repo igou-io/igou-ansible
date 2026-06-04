@@ -1,8 +1,10 @@
 ---
 {# Renders nodes-config.yaml for `oc adm node-image create --pxe`.
-   Iterates the per-cluster worker group and emits one hosts[] entry
-   per worker. Optional dict fields are inline JSON for safety. #}
-{% set _workers = groups['openshift_workers_' + target_cluster] %}
+   Iterates the workers pending addition (computed in the playbook as
+   _pending_workers: group members not already joined to the cluster)
+   and emits one hosts[] entry per worker. Optional dict fields are
+   inline JSON for safety. #}
+{% set _workers = _pending_workers %}
 hosts:
 {% for w in _workers %}
 {%   set h = hostvars[w] %}

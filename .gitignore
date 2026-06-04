@@ -15,3 +15,6 @@ testvars.yml
 
 # Local render cache for playbooks/netboot/deploy_assets.yml
 .cache/netboot-menus/
+
+# Superpowers brainstorming/plan scratch docs
+docs/superpowers/

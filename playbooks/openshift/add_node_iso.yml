@@ -1,17 +1,20 @@
 ---
 # Add worker nodes to an existing OpenShift cluster by generating PXE
 # boot artifacts via `oc adm node-image create --pxe` and copying them
-# into the TrueNAS netbootxyz container's /assets/ tree.
+# into the TrueNAS public nginx docroot (served at
+# https://public.igou.systems/boot-files/). Post-2026-05-11: the
+# netbootxyz container is retired; public nginx owns assets and rb5009
+# flash owns per-host pins.
 #
 # Source procedure:
 #   https://github.com/openshift/openshift-docs/blob/main/nodes/nodes/nodes-nodes-adding-node-iso.adoc
 #
 # What this playbook owns:
-#   /mnt/ssd/containers/netbootxyz/assets/<cluster>-add-node/
+#   /mnt/ssd/public/boot-files/<cluster>-add-node/
 #     node.<arch>-vmlinuz, node.<arch>-initrd.img, node.<arch>-rootfs.img
 #
 # What this playbook does NOT own (deploy_assets.yml owns it):
-#   /mnt/ssd/containers/netbootxyz/config/menus/host/MAC-<hex>.ipxe
+#   the per-host iPXE pin (MAC-<hex>.ipxe) on rb5009 flash
 #
 # The per-host iPXE script that points iPXE at the boot artifacts is
 # rendered by playbooks/netboot/deploy_assets.yml from inventory's
@@ -26,11 +29,11 @@
 #      `openshift_add_node_network_config` (nmstate) for static IPs.
 #   2. Add a netboot_host_pins entry for the worker MAC in
 #      igou-inventory/group_vars/all/netboot.yml. The pin's iPXE script
-#      should reference http://<netboot-host>/<cluster>-add-node/{vmlinuz,
+#      should reference {{ netboot_public_url }}/<cluster>-add-node/{vmlinuz,
 #      initrd.img,rootfs.img} (e.g. as a menu option, or directly).
 #   3. Set on the cluster host (e.g., host_vars/ocp.yml):
 #        openshift_add_node_arch: x86_64
-#        openshift_add_node_boot_artifacts_base_url: http://<netboot-host>/<cluster>-add-node/
+#        openshift_add_node_boot_artifacts_base_url: {{ netboot_public_url }}/<cluster>-add-node/
 #   4. Deploy the pin once:
 #        ansible-playbook playbooks/netboot/deploy_assets.yml \
 #          -i igou-inventory/inventory.yaml --tags render,push,verify
@@ -49,14 +52,18 @@
 #   artifacts behind the URL.
 
 - name: Generate OpenShift add-node PXE assets
-  # default('all') keeps ansible-lint happy at parse time; target_cluster must
-  # be provided via -e at runtime. The pre_tasks fail fast if it's undefined
-  # (the work-dir var dereference) or if the resulting worker group is empty.
-  hosts: "{{ target_cluster | default('all') }}"
+  # target_cluster selects the cluster + its worker group; it defaults to
+  # ocp when not passed via -e. _cluster materializes that default as a
+  # real variable so every reference below resolves (a bare
+  # `target_cluster | default(...)` on the hosts line alone does NOT define
+  # the variable for the rest of the play). The pre_tasks still fail fast
+  # if the resulting worker group is empty or a worker is missing its MAC.
+  hosts: "{{ target_cluster | default('ocp') }}"
   connection: local
   gather_facts: true
   vars:
-    openshift_add_node_work_dir: "{{ ansible_env.HOME }}/openshift-add-node/{{ target_cluster }}"
+    _cluster: "{{ target_cluster | default('ocp') }}"
+    openshift_add_node_work_dir: "{{ ansible_env.HOME }}/openshift-add-node/{{ _cluster }}"
   pre_tasks:
     - name: Preflight — KUBECONFIG must be set in the environment
       ansible.builtin.assert:
@@ -68,7 +75,7 @@
 
     - name: Preflight — worker group must exist and be non-empty
       vars:
-        _workers_group: "openshift_workers_{{ target_cluster }}"
+        _workers_group: "openshift_workers_{{ _cluster }}"
         _workers: "{{ groups[_workers_group] | default([]) }}"
       ansible.builtin.assert:
         that:
@@ -86,9 +93,38 @@
         fail_msg: >-
           Worker `{{ item }}` is missing or has an invalid
           `openshift_add_node_mac`. Expected format aa:bb:cc:dd:ee:ff.
-      loop: "{{ groups['openshift_workers_' + target_cluster] }}"
+      loop: "{{ groups['openshift_workers_' + _cluster] }}"
       loop_control:
         label: "{{ item }}"
+
+    - name: Preflight — discover nodes already joined to the cluster
+      ansible.builtin.command:
+        cmd: oc get nodes -o jsonpath={.items[*].metadata.name}
+      register: _existing_nodes
+      changed_when: false
+
+    - name: Preflight — compute pending workers (in group, not yet joined)
+      # oc adm node-image create rejects any host already present as a
+      # cluster node ("hostname conflict"). Render only the workers that
+      # haven't joined yet, matching on both FQDN and short name.
+      vars:
+        _joined: "{{ _existing_nodes.stdout.split() }}"
+        _joined_short: "{{ _existing_nodes.stdout.split() | map('regex_replace', '[.].*$', '') | list }}"
+      ansible.builtin.set_fact:
+        _pending_workers: >-
+          {{ groups['openshift_workers_' + _cluster]
+             | reject('in', _joined + _joined_short)
+             | list }}
+
+    - name: Preflight — at least one worker must be pending
+      ansible.builtin.assert:
+        that:
+          - _pending_workers | length > 0
+        success_msg: "Pending worker(s) to add: {{ _pending_workers | join(', ') }}"
+        fail_msg: >-
+          Every host in openshift_workers_{{ _cluster }} is already a node in
+          the cluster ({{ _existing_nodes.stdout.split() | join(', ') }}).
+          Nothing to add — add a new worker to the group first.
 
   tasks:
     - name: Wipe stale work dir
@@ -174,7 +210,7 @@
       tags: [monitor, never]
       vars:
         _worker_ips: >-
-          {{ groups['openshift_workers_' + target_cluster]
+          {{ groups['openshift_workers_' + _cluster]
              | map('extract', hostvars)
              | map(attribute='openshift_add_node_network_config', default={})
              | map(attribute='interfaces', default=[])
@@ -207,7 +243,8 @@
   become: true
   gather_facts: false
   vars:
-    cluster_host: "{{ target_cluster }}"
+    _cluster: "{{ target_cluster | default('ocp') }}"
+    cluster_host: "{{ _cluster }}"
     # Read via the fact set by Play 1's set_fact task; play-level vars are
     # not promoted into hostvars across plays, but set_fact values are.
     work_dir: "{{ hostvars[cluster_host]['openshift_add_node_pxe_assets']['work_dir'] }}"
