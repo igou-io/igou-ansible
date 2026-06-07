@@ -28,7 +28,7 @@ roles:
     version: 1.4.1
 collections:
   - name: community.general
-    version: 13.0.0
+    version: 13.0.1
   - name: ansible.posix
     version: 2.2.0
   - name: kubernetes.core
@@ -51,7 +51,7 @@ collections:
     type: git
     version: fix-user-update
   - name: community.docker
-    version: 5.2.0
+    version: 5.2.1
   - name: vkhitrin.libguestfs
     version: 1.1.5
   - name: ansible.netcommon
