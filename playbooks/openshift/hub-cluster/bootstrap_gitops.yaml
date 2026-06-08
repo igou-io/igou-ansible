@@ -7,6 +7,10 @@
     K8S_AUTH_KUBECONFIG: "{{ kubeconfig | default(omit) }}"
   vars:
     gitops_repo: "https://github.com/igou-io/igou-openshift.git"
+  vars_prompt:
+    - name: op_bootstrap_sa_token
+      prompt: "1Password ocp-bootstrap service-account token (ops_...)"
+      private: true
   tasks:
     - name: Create 1P Connect secrets, deploy and cluster-config application
       tags: create-objects
@@ -59,21 +63,49 @@
               metadata:
                 name: external-secrets-operator
 
-        - name: Create 1password-token secrets
+        # Connect bootstrap seed (chicken-egg): read the Connect server's own
+        # credentials + access token from the dedicated ocp-connect-bootstrap
+        # vault, authenticating as the read-only ocp-bootstrap SA via the
+        # prompted token. Seeds the two Secrets that Connect + ESO need to start.
+        - name: Create onepassword-connect namespace
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: onepassword-connect
+
+        - name: Seed the Connect server credentials Secret
           kubernetes.core.k8s:
             state: present
             definition:
               apiVersion: v1
               kind: Secret
               metadata:
-                name: "{{ item.name }}"
+                name: op-credentials
+                namespace: onepassword-connect
+                annotations:
+                  managed-by: ansible
+              type: Opaque
+              stringData:
+                1password-credentials.json: "{{ lookup('community.general.onepassword_doc', 'ocp-connect-credentials', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) }}"
+          no_log: true
+
+        - name: Seed the Connect access token Secret (for ESO)
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: onepassword-connect-token
                 namespace: external-secrets-operator
                 annotations:
                   managed-by: ansible
               type: Opaque
               stringData:
-                token: "{{ item.contents }}"
-          loop: "{{ onepassword_tokens }}"
+                token: "{{ lookup('community.general.onepassword', 'ocp-connect-token', field='token', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) }}"
           no_log: true
 
         - name: Create Gitops ClusterRoleBinding
