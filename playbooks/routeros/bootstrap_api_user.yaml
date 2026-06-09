@@ -1,0 +1,139 @@
+---
+# Bootstrap the API user used by david_igou.routeros_configuration's
+# api_info/api_modify against a RouterOS device, over SSH/network_cli.
+#
+# Why over SSH: this playbook is the chicken-and-egg breaker — the API user
+# may not exist yet, so we can't use api_modify to create it. The existing
+# routeros group_vars already wire SSH (network_cli on port 3480, key auth
+# via the agent-forwarded igou+cet1024w user); we lean on that.
+#
+# 1Password layout: one item per device named `<short-host>-api` in vault
+# `awx`, with `username` + `password` fields. Pre-create these before running
+# (matches the existing rb5009-api convention). The item's username field
+# determines the RouterOS user this playbook upserts on the device.
+#
+# Idempotency model: always upsert. If the user exists, we re-set the
+# password to match 1P (RouterOS doesn't expose stored passwords, so we
+# can't compare-then-decide; rewriting the password to the 1P value is the
+# safe convergence). Group + policy are also re-set, so drift in group
+# assignment is corrected on every run.
+#
+# Run (single device for first-time bootstrap):
+#   ansible-playbook playbooks/routeros/bootstrap_api_user.yaml \
+#     -i ../igou-inventory/inventory.yaml -e host=crs328.igou.systems
+# Run (whole switch group, after each crsXXX-api item exists in 1P):
+#   ansible-playbook playbooks/routeros/bootstrap_api_user.yaml \
+#     -i ../igou-inventory/inventory.yaml -e host=routeros_switch
+- name: Bootstrap RouterOS API user via SSH/network_cli
+  hosts: "{{ host | default('routeros_switch') }}"
+  gather_facts: false
+
+  vars:
+    # 1P item naming convention: <short-host>-api in the awx vault.
+    # short-host = inventory_hostname's first DNS label (crs328.igou.systems -> crs328).
+    routeros_bootstrap_op_item: "{{ inventory_hostname | split('.') | first }}-api"
+
+    # Group assigned to the bootstrapped user. `full` matches the existing
+    # rb5009-api convention; override per-host/group in inventory if you
+    # want a tighter group with just api+read+write+ssh policies.
+    routeros_bootstrap_user_group: full
+
+  pre_tasks:
+    # Resolve the target user/password ONCE. no_log so the creds never hit
+    # stdout or the controller log.
+    - name: Resolve target API credentials from 1Password (once)
+      delegate_to: localhost
+      connection: local
+      ansible.builtin.set_fact:
+        _bootstrap_api_username: "{{ lookup('community.general.onepassword', routeros_bootstrap_op_item, field='username', vault='awx') }}"
+        _bootstrap_api_password: "{{ lookup('community.general.onepassword', routeros_bootstrap_op_item, field='password', vault='awx') }}"
+      no_log: true
+
+    - name: Refuse to continue if 1P item produced empty creds
+      ansible.builtin.assert:
+        that:
+          - _bootstrap_api_username | length > 0
+          - _bootstrap_api_password | length > 0
+        fail_msg: >-
+          1Password item op://awx/{{ routeros_bootstrap_op_item }} resolved
+          empty username or password. Create the item with both fields before
+          running this playbook.
+
+  tasks:
+    # Detect whether the user already exists. `:put [:len [...]]` returns
+    # "0" or "1" — a clean idempotency probe.
+    - name: Check whether the API user already exists on the device
+      community.routeros.command:
+        commands:
+          - ":put [:len [/user find name={{ _bootstrap_api_username }}]]"
+      register: _user_probe
+      changed_when: false
+      no_log: true
+
+    - name: Create the API user (when absent)
+      community.routeros.command:
+        commands:
+          - "/user add name={{ _bootstrap_api_username }} password={{ _bootstrap_api_password }} group={{ routeros_bootstrap_user_group }} comment=\"managed by playbooks/routeros/bootstrap_api_user.yaml\""
+      when: (_user_probe.stdout[0] | trim | int) == 0
+      no_log: true
+
+    # Re-set the password + group unconditionally when the user already
+    # existed. RouterOS doesn't expose stored passwords, so we cannot detect
+    # drift — rewriting to the 1P value is the safe convergence. Group is
+    # rewritten too so a manual demotion gets reverted to the declared group.
+    - name: Re-set password + group on the API user (when already present)
+      community.routeros.command:
+        commands:
+          - "/user set [find name={{ _bootstrap_api_username }}] password={{ _bootstrap_api_password }} group={{ routeros_bootstrap_user_group }}"
+      when: (_user_probe.stdout[0] | trim | int) == 1
+      no_log: true
+      changed_when: false  # cannot tell whether password actually changed
+
+    # Verify the user is now present and in the declared group. The
+    # `print without-paging` output is safe to log (no password leaked).
+    - name: Verify the API user is present in the declared group
+      community.routeros.command:
+        commands:
+          - "/user print without-paging where name={{ _bootstrap_api_username }}"
+      register: _user_verify
+      changed_when: false
+
+    - name: Assert verification output references the declared group
+      ansible.builtin.assert:
+        that:
+          - routeros_bootstrap_user_group in (_user_verify.stdout[0] | default(''))
+        fail_msg: >-
+          User present but not in declared group
+          ({{ routeros_bootstrap_user_group }}). Verify output:
+          {{ _user_verify.stdout_lines | default([]) }}
+
+    # Final sanity: actually log in over api-ssl with the new creds. Proves
+    # end-to-end that the rest of the workflow (api_info/api_modify) will work.
+    - name: Smoke-test api-ssl login with the new credentials
+      delegate_to: localhost
+      connection: local
+      community.routeros.api_info:
+        hostname: "{{ inventory_hostname }}"
+        username: "{{ _bootstrap_api_username }}"
+        password: "{{ _bootstrap_api_password }}"
+        tls: true
+        validate_certs: false
+        port: 8729
+        path: system identity
+        hide_defaults: true
+        include_dynamic: false
+        include_read_only: false
+      register: _api_smoke
+      changed_when: false
+      no_log: true
+
+    - name: Confirm the api-ssl smoke test returned an identity
+      ansible.builtin.assert:
+        that:
+          - _api_smoke.result is defined
+          - _api_smoke.result | length == 1
+          - _api_smoke.result[0].name is defined
+        fail_msg: api-ssl smoke test did not return a /system/identity result.
+        success_msg: >-
+          API user {{ _bootstrap_api_username }} on {{ inventory_hostname }}
+          is live (identity={{ _api_smoke.result[0].name | default('?') }}).

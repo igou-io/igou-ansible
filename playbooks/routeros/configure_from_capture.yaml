@@ -1,0 +1,66 @@
+---
+# Apply the david_igou.routeros_configuration.configure role against a device
+# using a CAPTURE FILE (.cache/routeros-vars/<host>.yml from export_config.yaml)
+# instead of the committed host_vars baseline. This is the graduation harness
+# for onboarding a new device or new paths:
+#
+#   1. Capture:   ansible-playbook playbooks/routeros/export_config.yaml \
+#                   -i ../igou-inventory/inventory.yaml -e host=<host> \
+#                   -e routeros_export_all=true
+#   2. Dry-run:   ansible-playbook playbooks/routeros/configure_from_capture.yaml \
+#                   -i ../igou-inventory/inventory.yaml -e host=<host> --check
+#                 (expect changed=0 — the capture mirrors the device)
+#   3. Apply:     same command without --check; then run AGAIN and expect
+#                 changed=0 (idempotency proof).
+#   4. Graduate:  copy the proven path blocks into
+#                 igou-inventory/host_vars/<host>.yml and use configure.yaml
+#                 (the host_vars-driven apply) from then on.
+#
+# Scope down to specific paths for focused testing:
+#   -e '{"routeros_config_paths":["/system/identity","/ip/service"]}'
+# Skip known-troublesome paths without re-listing everything:
+#   -e '{"routeros_config_skip_paths":["/ip/ipsec/policy"]}'
+- name: Configure RouterOS device from a capture file
+  hosts: "{{ host | default('routeros_router') }}"
+  gather_facts: false
+
+  vars:
+    routeros_api_tls: true
+    routeros_api_validate_certs: false
+    routeros_api_port: 8729
+
+    captured_vars_file: "{{ playbook_dir }}/../../.cache/routeros-vars/{{ inventory_hostname }}.yml"
+
+    # Default scope: every captured path minus the skip list.
+    routeros_config_skip_paths: []
+    routeros_config_paths: >-
+      {{ _captured.routeros_config.keys()
+         | reject('in', routeros_config_skip_paths) | list }}
+
+  pre_tasks:
+    - name: Resolve api-ssl credentials once
+      ansible.builtin.set_fact:
+        routeros_api_username: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='username', vault='awx') }}"
+        routeros_api_password: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='password', vault='awx') }}"
+      vars:
+        _routeros_api_op_item: "{{ inventory_hostname | split('.') | first }}-api"
+      no_log: true
+
+    - name: Load the captured baseline
+      ansible.builtin.include_vars:
+        file: "{{ captured_vars_file }}"
+        name: _captured
+
+    - name: Slice the captured config to the requested paths
+      ansible.builtin.set_fact:
+        routeros_config: >-
+          {{ dict(routeros_config_paths
+                  | zip(routeros_config_paths
+                        | map('extract', _captured.routeros_config))) }}
+
+    - name: Show what is about to be applied
+      ansible.builtin.debug:
+        var: routeros_config
+
+  roles:
+    - role: david_igou.routeros_configuration.configure

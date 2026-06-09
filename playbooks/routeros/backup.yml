@@ -1,49 +1,74 @@
 ---
-# Pull a fresh binary backup + plaintext config (with sensitive values)
-# off every RouterOS device. Files land in
-# {{ routeros_backup_dir }}/<inventory_hostname>/ at mode 0600
-# (directory mode 0700). Both files contain secrets — do not commit
-# them. /backups/ is in .gitignore.
+# Back up RouterOS devices via david_igou.routeros_configuration.backup.
+#
+# Two artifacts per host:
+#   - <routeros_backup_dir>/<inventory_hostname>.rsc — text export, written by
+#     the collection role. IDEMPOTENT: content-stable (volatile timestamp
+#     header stripped), rewritten only when device config actually changed.
+#     One canonical file per host, no retention needed.
+#   - <routeros_backup_dir>/<inventory_hostname>/<inventory_hostname>-<ts>.backup
+#     — full-fidelity binary backup (preserves /user passwords, certificates —
+#     everything /export cannot). Taken on the device by the role, fetched
+#     off-box + removed from flash here, pruned to routeros_backup_retain.
+#
+# NOTE: unlike the pre-collection version of this playbook (which passed
+# dont-encrypt=yes), the binary backup is now encrypted by RouterOS with the
+# invoking user's password (the SSH user). Restore with
+#   /system backup load name=<file> password=<that password>
+#
+# The role runs over the routeros group's network_cli connection (/export is
+# console-only, not reachable over the binary API) — no API credentials needed.
+#
+# Both artifacts contain secrets — do not commit. /backups/ is gitignored.
 #
 # Default scope: the routeros group (1 router + 3 switches).
 # Override target with: -e host=<inventory_hostname>
 - name: Back up RouterOS devices
   hosts: "{{ host | default('routeros') }}"
   gather_facts: false
-  connection: local   # localhost-delegated file tasks; routeros hosts override via group_vars/routeros.yml
 
-  tasks:
+  vars:
+    routeros_backup_show_sensitive: true
+    routeros_backup_binary: true
+    routeros_backup_name: "{{ inventory_hostname }}-{{ backup_ts }}"
+
+  pre_tasks:
     - name: Compute per-host backup timestamp
       ansible.builtin.set_fact:
         backup_ts: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
 
-    - name: Ensure local backup directory exists
+    - name: Ensure per-host binary backup directory exists
       ansible.builtin.file:
         path: "{{ routeros_backup_dir }}/{{ inventory_hostname }}"
         state: directory
         mode: '0700'
       delegate_to: localhost
+      connection: local
 
-    - name: Save binary backup on device
-      community.routeros.command:
-        commands:
-          - "/system backup save name={{ inventory_hostname }}-{{ backup_ts }} dont-encrypt=yes"
+  roles:
+    - role: david_igou.routeros_configuration.backup
 
-    - name: Export plaintext config with sensitive values
-      community.routeros.command:
-        commands:
-          - "/export show-sensitive file={{ inventory_hostname }}-{{ backup_ts }}"
+  post_tasks:
+    # WORKAROUND (remove at collection >= 0.0.8): the backup role's
+    # join('\n') emits literal backslash-n under ansible-core >= 2.19, so its
+    # .rsc lands as one corrupted line. Rebuild the file from the role's raw
+    # export register (still in host scope) using a YAML-double-quoted real
+    # newline. Idempotent: content is stable, copy only reports changed when
+    # the device config changed. See /tmp/issue-routeros-backup-rsc-literal-newlines.md.
+    - name: Rewrite the .rsc from the raw export (collection join('\n') workaround)
+      ansible.builtin.copy:
+        content: "{{ (_routeros_export.stdout_lines[0] | reject('search', 'by RouterOS') | join(_nl)) ~ _nl }}"
+        dest: "{{ routeros_backup_dir }}/{{ inventory_hostname }}.rsc"
+        mode: "0600"
+      vars:
+        _nl: "\n"
+      delegate_to: localhost
+      connection: local
 
-    - name: Fetch binary backup
+    - name: Fetch binary backup off-box (and remove it from device flash)
       ansible.builtin.include_tasks: tasks/fetch_artifact.yml
       vars:
-        remote_filename: "{{ inventory_hostname }}-{{ backup_ts }}.backup"
-        local_dir: "{{ routeros_backup_dir }}/{{ inventory_hostname }}"
-
-    - name: Fetch plaintext export
-      ansible.builtin.include_tasks: tasks/fetch_artifact.yml
-      vars:
-        remote_filename: "{{ inventory_hostname }}-{{ backup_ts }}.rsc"
+        remote_filename: "{{ routeros_backup_name }}.backup"
         local_dir: "{{ routeros_backup_dir }}/{{ inventory_hostname }}"
 
     - name: List local .backup files for pruning
@@ -53,6 +78,7 @@
         file_type: file
       register: existing_binary_backups
       delegate_to: localhost
+      connection: local
       changed_when: false
 
     - name: Prune .backup files beyond retention
@@ -60,24 +86,7 @@
         path: "{{ item.path }}"
         state: absent
       delegate_to: localhost
+      connection: local
       loop: "{{ (existing_binary_backups.files | sort(attribute='mtime', reverse=true))[routeros_backup_retain | int :] }}"
-      loop_control:
-        label: "{{ item.path }}"
-
-    - name: List local .rsc files for pruning
-      ansible.builtin.find:
-        paths: "{{ routeros_backup_dir }}/{{ inventory_hostname }}"
-        patterns: "{{ inventory_hostname }}-*.rsc"
-        file_type: file
-      register: existing_rsc_backups
-      delegate_to: localhost
-      changed_when: false
-
-    - name: Prune .rsc files beyond retention
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      delegate_to: localhost
-      loop: "{{ (existing_rsc_backups.files | sort(attribute='mtime', reverse=true))[routeros_backup_retain | int :] }}"
       loop_control:
         label: "{{ item.path }}"

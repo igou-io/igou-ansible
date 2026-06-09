@@ -1,0 +1,124 @@
+---
+# Export the current RouterOS running config into a routeros_config vars file
+# on the control node, via david_igou.routeros_configuration.export_vars over
+# api-ssl. First step toward a declarative baseline applied by the collection's
+# configure role.
+#
+# The export_vars role delegates its API reads to localhost (connection: local)
+# internally, so the routeros group's network_cli/SSH connection is never opened
+# here — gather_facts is off and no task runs on the device itself.
+#
+# Connection: api-ssl (8729, TLS) using the rb5009-api 1Password item — the same
+# creds resolved from the <short-host>-api 1P item. Those creds are applied to EVERY
+# host in scope, so the default `routeros` group (which also includes the CRS
+# switches) only succeeds against rb5009. Scope to one device as needed:
+#   ansible-navigator run playbooks/routeros/export_config.yaml \
+#     -i igou-inventory/inventory.yaml -e host=routeros_router
+#
+# Output: one <inventory_hostname>.yml per host under
+# <repo-root>/.cache/routeros-vars/ (gitignored), keyed by slash path so it
+# round-trips straight into the configure role.
+#
+# Scope: by default the export is limited to a baseline path subset (set in
+# pre_tasks). Pass -e routeros_export_all=true to capture the full canonical
+# path set instead — a full export contains secrets, so pair it with
+# -e routeros_export_vars_redact=true (structure only) or vault the output.
+- name: Export RouterOS baseline config to a routeros_config vars file
+  hosts: "{{ host | default('routeros') }}"
+  gather_facts: false
+
+  vars:
+    # api-ssl connection consumed by the export_vars role. rb5009's api-ssl
+    # certificate is self-signed, so certificate validation is disabled. The
+    # username/password are resolved once in pre_tasks (see below) — not here.
+    routeros_api_tls: true
+    routeros_api_validate_certs: false
+    routeros_api_port: 8729
+
+    # Scratch output directory on the control node (gitignored). Curate the
+    # captured baseline into igou-inventory host_vars from here.
+    routeros_export_vars_dir: "{{ playbook_dir }}/../../.cache/routeros-vars"
+
+    # Per-path runtime/spurious fields stripped from the capture. Replaces
+    # the role default (the role provides no _extra companion), so we mirror
+    # the collection's default entries — /system/clock and /ip/ipsec/policy
+    # (added upstream in 0.0.7-alpha) — and add our own per-device fixes:
+    #   /interface/ethernet [poe-out, poe-priority] — on crs328, the captured
+    #     values match api_modify's notion of the field defaults, so dry-run
+    #     reports a (likely false-positive but ambiguous) `changed=true` that
+    #     could put PoE in jeopardy on the netboot switch. Same class of bug
+    #     as /ip/ipsec/policy `group: default`; same volatile-fields fix.
+    routeros_export_vars_volatile_fields:
+      /system/clock:
+        - date
+        - time
+      /ip/ipsec/policy:
+        - group
+      /interface/ethernet:
+        - poe-out
+        - poe-priority
+
+    # Extra exclusions merged onto the role's curated default list (which
+    # already drops /file, /certificate, /system/script/environment, etc.):
+    #   /system/script — RouterOS scripts are managed elsewhere (not here).
+    #   /ip/tftp       — TFTP server config is part of the netboot stack
+    #                    (rb5009-owned per netboot architecture redesign), not
+    #                    part of this declarative baseline.
+    #   /ip/ipsec/*    — IPsec is not used on rb5009; the captured paths are
+    #                    only RouterOS's auto-created template defaults
+    #                    (/ip/ipsec/policy carries the default IPv6 template
+    #                    whose identity field `protocol=all` is dropped by
+    #                    handle_disabled=omit, producing a would-add duplicate
+    #                    on apply). Drop the whole subsystem until IPsec is
+    #                    actually configured.
+    routeros_export_vars_exclude_paths_extra:
+      - /system/script
+      - /ip/tftp
+      - /ip/ipsec/settings
+      - /ip/ipsec/proposal
+      - /ip/ipsec/profile
+      - /ip/ipsec/key/psk
+      - /ip/ipsec/key/rsa
+      - /ip/ipsec/key/qkd
+      - /ip/ipsec/mode-config
+      - /ip/ipsec/peer
+      - /ip/ipsec/identity
+      - /ip/ipsec/policy/group
+      - /ip/ipsec/policy
+      # /interface/ethernet/switch/qos/map/ip segfaults community.routeros.api_info
+      # on CRS310 (rc -11). Looks like an upstream module bug triggered by
+      # something in the QoS map representation on switches. Excluded until
+      # diagnosed; rb5009 doesn't implement it so this is a no-op for the router.
+      - /interface/ethernet/switch/qos/map/ip
+
+  pre_tasks:
+    # Resolve the api-ssl creds ONCE. If routeros_api_username/password held the
+    # 1Password lookup expression directly, the export_vars role's module_defaults
+    # would re-evaluate it on every path in the loop (~500 for a full export),
+    # firing ~1000 `op` reads and blowing the 1Password service-account rate
+    # limit. set_fact evaluates each lookup a single time and caches the literal.
+    - name: Resolve api-ssl credentials once (avoid per-loop 1Password lookups)
+      ansible.builtin.set_fact:
+        routeros_api_username: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='username', vault='awx') }}"
+        routeros_api_password: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='password', vault='awx') }}"
+      vars:
+        # 1P item naming convention: <short-host>-api in vault `awx`
+        # (crs310.igou.systems -> crs310-api; rb5009.igou.systems -> rb5009-api).
+        _routeros_api_op_item: "{{ inventory_hostname | split('.') | first }}-api"
+      no_log: true
+
+    # Default scope: a small baseline path subset (clock / ntp
+    # client / ip service — plus system identity). Set via set_fact rather than a
+    # play var so that -e routeros_export_all=true leaves routeros_export_vars_paths
+    # undefined, which makes the role fall back to its full canonical path order.
+    - name: Scope export to the baseline path subset (unless routeros_export_all)
+      ansible.builtin.set_fact:
+        routeros_export_vars_paths:
+          - /system/identity
+          - /system/clock
+          - /system/ntp/client
+          - /ip/service
+      when: not (routeros_export_all | default(false) | bool)
+
+  roles:
+    - role: david_igou.routeros_configuration.export_vars

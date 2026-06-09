@@ -1,18 +1,47 @@
 ---
 # Keep SSH authorized keys for managed RouterOS users in sync.
-# Idempotent: only imports keys whose comment field is not already
-# present in /user ssh-keys for that user.
 #
-# Each public key in routeros_users[].ssh_keys MUST include a comment
-# (the third whitespace-separated field — e.g. "user@host"). The
-# playbook uses that comment string as the dedup key, since RouterOS
-# does not surface a stable fingerprint via /user ssh-keys print.
+# Why this is not declarative (configure role + host_vars): RouterOS treats
+# SSH key material as write-only — api_info returns neither `key` nor
+# `key-owner` for /user/ssh-keys (only `user`, `.id`, and `comment`), so the
+# configure role's reconcile can never match a captured key against the
+# device and would re-add on every run. The only stable dedup signal is the
+# key-owner / comment string, which `print detail` exposes on the console.
 #
-# Set routeros_prune_ssh_keys=true to enable a placeholder prune-debug
-# message; real prune logic is intentionally deferred to a follow-up.
+# Mechanics:
+#   - dedup READ over the console (network_cli): /user ssh-keys print detail
+#     surfaces key-owner=… (set by RouterOS from the public key's comment) and
+#     comment=… (set by us on add).
+#   - ADD over the binary API: /user/ssh-keys add key="<full pubkey line>"
+#     (RouterOS >= 7.15) — no temp-file SCP + /user ssh-keys import dance.
+#     RouterOS derives key-owner from the pubkey's comment on add, which is
+#     what the next run's dedup reads. (An explicit comment= on the API add
+#     is silently ignored by RouterOS — don't bother.)
+#
+# Migration note: keys imported manually (WinBox/console) without a comment
+# carry key-owner="" and are invisible to the dedup — the playbook will add a
+# labeled duplicate. Clean such devices once, SCOPED TO THE MANAGED USER
+# (other users' unlabeled keys — admin, ansible-netboot — must survive):
+#   /user ssh-keys remove [find where key-owner="" and user="igou"]
+# only after confirming the labeled replacements exist (same fingerprints).
+# Migrated: crs310 + crs317 + crs328 + rb5009 on 2026-06-09.
+#
+# Each public key in routeros_users[].ssh_keys MUST include a comment (the
+# third whitespace-separated field — e.g. "user@host"); it is the dedup key.
+#
+# Idempotent: second run reports changed=0.
 - name: Manage RouterOS user SSH keys
   hosts: "{{ host | default('routeros') }}"
   gather_facts: false
+
+  pre_tasks:
+    - name: Resolve api-ssl credentials once
+      ansible.builtin.set_fact:
+        routeros_api_username: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='username', vault='awx') }}"
+        routeros_api_password: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='password', vault='awx') }}"
+      vars:
+        _routeros_api_op_item: "{{ inventory_hostname | split('.') | first }}-api"
+      no_log: true
 
   tasks:
     - name: Read user list
@@ -47,21 +76,29 @@
       loop_control:
         label: "{{ item.0.name }}"
 
-    - name: Import any missing SSH keys
-      ansible.builtin.include_tasks:
-        file: tasks/import_ssh_key.yml
-      vars:
-        key_comment: "{{ item.1.split(' ')[2] }}"
-        key_user: "{{ item.0.name }}"
-        local_tmp: "/tmp/routeros_{{ inventory_hostname }}_{{ item.0.name }}_{{ ansible_loop.index }}.pub"
-        remote_tmp: "tmp_{{ item.0.name }}_{{ ansible_loop.index }}.pub"
+    - name: Add any missing SSH keys over the API
+      community.routeros.api:  # noqa: args[module]
+        hostname: "{{ inventory_hostname }}"
+        username: "{{ routeros_api_username }}"
+        password: "{{ routeros_api_password }}"
+        tls: true
+        validate_certs: false
+        port: 8729
+        path: user ssh-keys
+        add: 'user={{ item.0.name }} key="{{ item.1 }}"'
+      delegate_to: localhost
+      connection: local
+      changed_when: true
       loop: "{{ routeros_users | subelements('ssh_keys') }}"
       loop_control:
-        extended: true
         label: "{{ item.0.name }}: {{ item.1.split(' ')[2] }}"
+      vars:
+        key_comment: "{{ item.1.split(' ')[2] }}"
       when:
-        - ('key-owner=' ~ '\"' ~ item.1.split(' ')[2] ~ '\"') not in sshkey_print.stdout[0]
-        - ('key-owner=' ~ item.1.split(' ')[2]) not in sshkey_print.stdout[0]
+        # key-owner is the only signal RouterOS exposes (set from the pubkey
+        # comment on both console import and API add).
+        - ('key-owner=' ~ '\"' ~ key_comment ~ '\"') not in sshkey_print.stdout[0]
+        - ('key-owner=' ~ key_comment) not in sshkey_print.stdout[0]
 
     - name: Optional prune branch (placeholder)
       ansible.builtin.debug:
@@ -69,6 +106,5 @@
           routeros_prune_ssh_keys is true. Manual review needed — the
           current implementation does not yet auto-prune. Inspect
           /user ssh-keys print detail output above, then run
-          /user ssh-keys remove <id> manually. Auto-prune is left for a
-          follow-up change once the import path has been validated.
+          /user ssh-keys remove <id> manually.
       when: routeros_prune_ssh_keys | default(false) | bool

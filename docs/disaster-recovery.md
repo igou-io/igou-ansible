@@ -34,17 +34,24 @@ rebuild from elsewhere — protect those first.
 
 ### Backup
 
-`playbooks/routeros/backup.yml` exports a configuration backup to
-`flash:/backup-<timestamp>.backup` and pulls it down to the control node:
+`playbooks/routeros/backup.yml` (david_igou.routeros_configuration.backup)
+produces two artifacts per host:
 
 ```bash
 ansible-playbook playbooks/routeros/backup.yml \
   -i igou-inventory/inventory.yaml
 ```
 
-Backups land under `~/routeros-backups/<host>-<timestamp>.backup` on the
-control node. **Move these off the homelab regularly** — to 1Password,
-external git, USB, etc. The backup is the lifeline.
+- `backups/routeros/<host>.rsc` — idempotent text export (restorable with
+  `/import`, diffable, content-stable across runs).
+- `backups/routeros/<host>/<host>-<timestamp>.backup` — full-fidelity binary
+  (preserves `/user` passwords + certs). Encrypted by RouterOS with the
+  invoking SSH user's password; restore with
+  `/system backup load name=<file> password=<that password>`.
+
+`playbooks/routeros/backup_s3.yaml` ships both artifacts to the rustfs cold
+S3 bucket on AAP schedules (daily/weekly/monthly tiers) — that is the
+off-homelab copy. The local artifacts are the convenience copy.
 
 ### Restore
 
@@ -56,7 +63,9 @@ A clean RouterOS install + the backup file:
 3. Upload the backup via Winbox / FTP / SCP.
 4. `/system backup load <name>=backup-<timestamp>.backup`.
 5. Reboot.
-6. Re-run `playbooks/routeros/baseline.yml` to confirm baseline drift is zero.
+6. Re-run `playbooks/routeros/configure.yaml --check` (the declarative
+   baseline from `igou-inventory/host_vars/<host>.yml`) to confirm drift is
+   zero — `changed=0` means the restored device matches the committed state.
 
 After restore: re-run `deploy_netboot_binaries.yml` if the binaries on
 rb5009's flash got wiped (they live under `flash:/netboot/` and survive

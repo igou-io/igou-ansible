@@ -1,16 +1,22 @@
 ---
-# Take a fresh RouterOS backup (binary + plaintext export) on every
-# device in scope and upload both artifacts to the rustfs cold S3
-# bucket. Files are staged into a per-host tempdir on the control
-# node, uploaded to
+# Back up RouterOS devices (via david_igou.routeros_configuration.backup) and
+# upload both artifacts to the rustfs cold S3 bucket:
 #   s3://routeros-backups/routeros/<inventory_hostname>/<inventory_hostname>-<ts>.{backup,rsc}
-# then the staging dir is removed. fetch_artifact.yml also removes
-# the artifact from the device after the fetch, so nothing lingers
-# on the router.
 #
-# Uploaded objects are tagged with tier={{ routeros_s3_tier }}
-# (default: daily). The rustfs bucket's lifecycle policy keys off
-# this tag.
+# The collection role stages the text export (.rsc) into a per-host tempdir on
+# the control node and takes a binary backup on the device; the binary is then
+# fetched off-box (and removed from flash) before both files upload. The
+# staging dir is removed afterwards — nothing lingers on the router or the
+# controller.
+#
+# NOTE: unlike the pre-collection version of this playbook (which passed
+# dont-encrypt=yes), the binary backup is now encrypted by RouterOS with the
+# invoking user's password (the SSH user). Restore with
+#   /system backup load name=<file> password=<that password>
+#
+# Uploaded objects are tagged with tier={{ routeros_s3_tier }} (default:
+# daily). The rustfs bucket's lifecycle policy keys off this tag. AAP
+# schedules routeros_backup_s3_{daily,weekly,monthly} set the tier.
 #
 # S3 credentials are resolved at runtime from 1Password
 # (vault: awx, item: routeros-backups-rustfs-cold,
@@ -23,7 +29,6 @@
 - name: Back up RouterOS devices to S3
   hosts: "{{ host | default('routeros') }}"
   gather_facts: false
-  connection: local   # localhost-delegated tempfile/file tasks; routeros hosts override via group_vars/routeros.yml
 
   vars:
     routeros_s3_bucket: routeros-backups
@@ -34,7 +39,14 @@
     routeros_s3_access_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='username', vault='awx') }}"
     routeros_s3_secret_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='password', vault='awx') }}"
 
-  tasks:
+    routeros_backup_show_sensitive: true
+    routeros_backup_binary: true
+    routeros_backup_name: "{{ inventory_hostname }}-{{ backup_ts }}"
+    # The collection role writes <inventory_hostname>.rsc into this dir; set
+    # per-host in pre_tasks to the staging tempdir.
+    routeros_backup_dir: "{{ routeros_stage.path }}"
+
+  pre_tasks:
     - name: Compute per-host backup timestamp
       ansible.builtin.set_fact:
         backup_ts: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
@@ -45,72 +57,70 @@
         prefix: "routeros-backup-{{ inventory_hostname }}-"
       register: routeros_stage
       delegate_to: localhost
+      connection: local
       changed_when: false
 
     - name: Tighten staging directory to mode 0700
       ansible.builtin.file:
         path: "{{ routeros_stage.path }}"
-        state: directory
         mode: '0700'
       delegate_to: localhost
+      connection: local
       changed_when: false
 
-    - name: Back up device and ship artifacts to S3
-      block:
-        - name: Save binary backup on device
-          community.routeros.command:
-            commands:
-              - "/system backup save name={{ inventory_hostname }}-{{ backup_ts }} dont-encrypt=yes"
+  roles:
+    - role: david_igou.routeros_configuration.backup
 
-        - name: Export plaintext config with sensitive values
-          community.routeros.command:
-            commands:
-              - "/export show-sensitive file={{ inventory_hostname }}-{{ backup_ts }}"
+  post_tasks:
+    # WORKAROUND (remove at collection >= 0.0.8): the backup role's
+    # join('\n') emits literal backslash-n under ansible-core >= 2.19, so its
+    # .rsc lands as one corrupted line. Rebuild the file from the role's raw
+    # export register before uploading. See
+    # /tmp/issue-routeros-backup-rsc-literal-newlines.md.
+    - name: Rewrite the .rsc from the raw export (collection join('\n') workaround)
+      ansible.builtin.copy:
+        content: "{{ (_routeros_export.stdout_lines[0] | reject('search', 'by RouterOS') | join(_nl)) ~ _nl }}"
+        dest: "{{ routeros_stage.path }}/{{ inventory_hostname }}.rsc"
+        mode: "0600"
+      vars:
+        _nl: "\n"
+      delegate_to: localhost
+      connection: local
 
-        - name: Fetch binary backup
-          ansible.builtin.include_tasks: tasks/fetch_artifact.yml
-          vars:
-            remote_filename: "{{ inventory_hostname }}-{{ backup_ts }}.backup"
-            local_dir: "{{ routeros_stage.path }}"
+    - name: Fetch binary backup off-box (and remove it from device flash)
+      ansible.builtin.include_tasks: tasks/fetch_artifact.yml
+      vars:
+        remote_filename: "{{ routeros_backup_name }}.backup"
+        local_dir: "{{ routeros_stage.path }}"
 
-        - name: Fetch plaintext export
-          ansible.builtin.include_tasks: tasks/fetch_artifact.yml
-          vars:
-            remote_filename: "{{ inventory_hostname }}-{{ backup_ts }}.rsc"
-            local_dir: "{{ routeros_stage.path }}"
+    - name: Upload artifacts to S3 with tier tag
+      amazon.aws.s3_object:
+        endpoint_url: "{{ routeros_s3_endpoint }}"
+        access_key: "{{ routeros_s3_access_key }}"
+        secret_key: "{{ routeros_s3_secret_key }}"
+        region: "{{ routeros_s3_region }}"
+        bucket: "{{ routeros_s3_bucket }}"
+        object: "{{ routeros_s3_prefix }}/{{ inventory_hostname }}/{{ item.key }}"
+        src: "{{ item.src }}"
+        mode: put
+        tags:
+          tier: "{{ routeros_s3_tier }}"
+      delegate_to: localhost
+      connection: local
+      loop:
+        - key: "{{ routeros_backup_name }}.backup"
+          src: "{{ routeros_stage.path }}/{{ routeros_backup_name }}.backup"
+        # The staged .rsc is the role's idempotent <host>.rsc; upload it under
+        # the timestamped key so S3 keeps point-in-time history per tier.
+        - key: "{{ routeros_backup_name }}.rsc"
+          src: "{{ routeros_stage.path }}/{{ inventory_hostname }}.rsc"
+      loop_control:
+        label: "{{ item.key }}"
 
-        - name: Upload binary backup to S3
-          amazon.aws.s3_object:
-            bucket: "{{ routeros_s3_bucket }}"
-            object: "{{ routeros_s3_prefix }}/{{ inventory_hostname }}/{{ inventory_hostname }}-{{ backup_ts }}.backup"
-            src: "{{ routeros_stage.path }}/{{ inventory_hostname }}-{{ backup_ts }}.backup"
-            mode: put
-            tags:
-              tier: "{{ routeros_s3_tier }}"
-            endpoint_url: "{{ routeros_s3_endpoint }}"
-            access_key: "{{ routeros_s3_access_key }}"
-            secret_key: "{{ routeros_s3_secret_key }}"
-            region: "{{ routeros_s3_region }}"
-          delegate_to: localhost
-
-        - name: Upload plaintext export to S3
-          amazon.aws.s3_object:
-            bucket: "{{ routeros_s3_bucket }}"
-            object: "{{ routeros_s3_prefix }}/{{ inventory_hostname }}/{{ inventory_hostname }}-{{ backup_ts }}.rsc"
-            src: "{{ routeros_stage.path }}/{{ inventory_hostname }}-{{ backup_ts }}.rsc"
-            mode: put
-            tags:
-              tier: "{{ routeros_s3_tier }}"
-            endpoint_url: "{{ routeros_s3_endpoint }}"
-            access_key: "{{ routeros_s3_access_key }}"
-            secret_key: "{{ routeros_s3_secret_key }}"
-            region: "{{ routeros_s3_region }}"
-          delegate_to: localhost
-      always:
-        - name: Remove staging directory on the control node
-          ansible.builtin.file:
-            path: "{{ routeros_stage.path }}"
-            state: absent
-          delegate_to: localhost
-          when: routeros_stage.path is defined
-          changed_when: false
+    - name: Remove staging directory
+      ansible.builtin.file:
+        path: "{{ routeros_stage.path }}"
+        state: absent
+      delegate_to: localhost
+      connection: local
+      changed_when: false

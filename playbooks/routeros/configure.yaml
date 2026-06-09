@@ -1,0 +1,64 @@
+---
+# Apply the david_igou.routeros_configuration.configure role to a routeros
+# device using its host_vars/group_vars declarative baseline (the curated
+# routeros_config dict). This is the canonical apply playbook — paths flow
+# in through Ansible's normal var precedence, NOT sliced from a capture file.
+#
+# To preview without applying:
+#   ansible-playbook playbooks/routeros/configure.yaml \
+#     -i ../igou-inventory/inventory.yaml -e host=routeros_router --check
+# To apply:
+#   same command without --check.
+# To ship a fresh S3 backup snapshot before the apply touches anything
+# (the AAP routeros_configure template sets this):
+#   ... -e routeros_pre_apply_backup=true
+#
+# Graduating new paths / onboarding a new device: see
+# playbooks/routeros/configure_from_capture.yaml (capture-file harness),
+# then append proven path blocks to igou-inventory/host_vars/<host>.yml and
+# re-run this playbook in --check to confirm idempotency.
+
+# Opt-in pre-apply backup: chains backup_s3.yaml so a fresh snapshot pair
+# (.rsc + binary) lands in S3 before configure writes. Recovery from a bad
+# apply is the normal restore path (fetch from S3, /import or
+# /system backup load). Tier stays 'daily' so the snapshot ages out under
+# the same lifecycle rule as scheduled backups.
+- name: Pre-apply S3 backup (opt-in via routeros_pre_apply_backup)
+  ansible.builtin.import_playbook: backup_s3.yaml
+  vars:
+    # Align backup_s3.yaml's default host (routeros, whole group) with this
+    # playbook's default (routeros_router). `-e host=<x>` on the CLI
+    # overrides this literal — extra-vars beat play vars.
+    host: routeros_router
+  when: routeros_pre_apply_backup | default(false) | bool
+
+- name: Configure RouterOS device from declarative host_vars baseline
+  hosts: "{{ host | default('routeros_router') }}"
+  gather_facts: false
+
+  vars:
+    routeros_api_tls: true
+    routeros_api_validate_certs: false
+    routeros_api_port: 8729
+
+  pre_tasks:
+    - name: Resolve api-ssl credentials once
+      ansible.builtin.set_fact:
+        routeros_api_username: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='username', vault='awx') }}"
+        routeros_api_password: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='password', vault='awx') }}"
+      vars:
+        _routeros_api_op_item: "{{ inventory_hostname | split('.') | first }}-api"
+      no_log: true
+
+    - name: Assert routeros_config is defined for this host
+      ansible.builtin.assert:
+        that:
+          - routeros_config is defined
+          - routeros_config | length > 0
+        fail_msg: >-
+          No routeros_config baseline found for {{ inventory_hostname }}. Add
+          host_vars/{{ inventory_hostname }}.yml (or
+          equivalent) before running configure.
+
+  roles:
+    - role: david_igou.routeros_configuration.configure

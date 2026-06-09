@@ -1,45 +1,66 @@
 ---
 # Phase A — stage a RouterOS package update without rebooting.
 # Safe to run any time. Run upgrade_apply.yml later (during a maintenance
-# window) to actually reboot into the new version.
+# window) to actually install + reboot into the new version.
+#
+# The channel + update check run through david_igou.routeros_configuration's
+# upgrade role (over the binary API, install gated OFF here). The role has no
+# download-only stage — staging the package so the maintenance window is
+# short is one extra API call below.
 - name: Stage RouterOS package upgrade
   hosts: "{{ host | default('routeros') }}"
   gather_facts: false
 
-  tasks:
-    - name: Read current update status
-      community.routeros.command:
-        commands:
-          - "/system package update print without-paging"
-      register: pkg_pre
-      changed_when: false
+  vars:
+    routeros_api_tls: true
+    routeros_api_validate_certs: false
+    routeros_api_port: 8729
+    # Group var (igou-inventory group_vars/routeros.yml) → role var.
+    routeros_update_channel: "{{ routeros_upgrade_channel }}"
+    routeros_upgrade_install: false
 
-    - name: Set update channel if it differs
-      community.routeros.command:
-        commands:
-          - "/system package update set channel={{ routeros_upgrade_channel }}"
-      when: "('channel: ' ~ routeros_upgrade_channel) not in pkg_pre.stdout[0]"
+  pre_tasks:
+    - name: Resolve api-ssl credentials once
+      ansible.builtin.set_fact:
+        routeros_api_username: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='username', vault='awx') }}"
+        routeros_api_password: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='password', vault='awx') }}"
+      vars:
+        _routeros_api_op_item: "{{ inventory_hostname | split('.') | first }}-api"
+      no_log: true
 
-    - name: Check for updates
-      community.routeros.command:
-        commands:
-          - "/system package update check-for-updates once"
-      register: check_result
-      changed_when: false
+  roles:
+    - role: david_igou.routeros_configuration.upgrade
 
-    - name: Re-read update status after check
-      community.routeros.command:
-        commands:
-          - "/system package update print without-paging"
-      register: pkg_status
+  post_tasks:
+    - name: Re-read update status after the role's check
+      community.routeros.api:  # noqa: args[module]
+        hostname: "{{ inventory_hostname }}"
+        username: "{{ routeros_api_username }}"
+        password: "{{ routeros_api_password }}"
+        tls: true
+        validate_certs: false
+        port: 8729
+        path: system package update
+      register: _pkg_status
+      delegate_to: localhost
+      connection: local
       changed_when: false
 
     - name: Show update status
       ansible.builtin.debug:
-        var: pkg_status.stdout_lines
+        msg: "{{ _pkg_status.msg | first }}"
 
-    - name: Download update if newer version is available
-      community.routeros.command:
-        commands:
-          - "/system package update download"
-      when: "pkg_status.stdout[0] is search('status: New version is available')"
+    - name: Download the update (staged on flash, no reboot)
+      community.routeros.api:  # noqa: args[module]
+        hostname: "{{ inventory_hostname }}"
+        username: "{{ routeros_api_username }}"
+        password: "{{ routeros_api_password }}"
+        tls: true
+        validate_certs: false
+        port: 8729
+        path: system package update
+        cmd: download
+      delegate_to: localhost
+      connection: local
+      changed_when: true
+      when: ((_pkg_status.msg | first).status | default('')) is search('New version')
