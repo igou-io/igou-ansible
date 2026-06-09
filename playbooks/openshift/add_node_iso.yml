@@ -270,3 +270,9 @@
           - "--exclude=auth.json"
           - "--exclude=nodes-config.yaml"
           - "--chown=950:950"
+          # Force world-readable files + world-traversable dirs so the public
+          # nginx worker can serve them regardless of its runtime UID. Mirrors
+          # playbooks/netboot/tasks/push_text.yml; without this the synced tree
+          # kept perms the nginx worker could not read -> HTTP 403 -> the iPXE
+          # pin's initrd fetch failed and the boot menu silently exited.
+          - "--chmod=F0644,D0755"
