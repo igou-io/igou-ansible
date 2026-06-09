@@ -16,6 +16,8 @@ ansible-navigator:
     environment-variables:
       pass:
         - OP_SERVICE_ACCOUNT_TOKEN
+        - OP_CONNECT_HOST
+        - OP_CONNECT_TOKEN
     image: quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:latest
     pull:
       policy: missing
