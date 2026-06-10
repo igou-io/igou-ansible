@@ -100,6 +100,75 @@
       # something in the QoS map representation on switches. Excluded until
       # diagnosed; rb5009 doesn't implement it so this is a no-op for the router.
       - /interface/ethernet/switch/qos/map/ip
+      # ---- Factory-default / hardware-echo noise (classified 2026-06-10) ----
+      # Every path below was present in a full 4-device export but carries no
+      # operator intent: either byte-identical RouterOS defaults across the
+      # fleet, per-model/version key-set echoes, or name-only entry lists
+      # (port-isolation, poe). Excluding them makes the "captured but
+      # unmanaged" diff pure signal. If a subsystem below is ever deliberately
+      # configured (e.g. SNMP), remove its line and re-export.
+      - /caps-man/manager/interface
+      - /certificate/settings
+      - /console/settings
+      - /disk/settings
+      - /interface/bridge/mlag
+      - /interface/ethernet/poe
+      - /interface/ethernet/switch/l3hw-settings
+      - /interface/ethernet/switch/l3hw-settings/advanced
+      - /interface/ethernet/switch/port-isolation
+      - /interface/ethernet/switch/qos/map
+      - /interface/ethernet/switch/qos/profile
+      - /interface/ethernet/switch/qos/settings
+      - /interface/ethernet/switch/qos/tx-manager
+      - /interface/l2tp-server/server
+      - /interface/lte/apn
+      - /interface/lte/settings
+      - /interface/macsec/profile
+      - /interface/ovpn-server/server
+      - /interface/sstp-server/server
+      - /interface/wireless/security-profiles
+      - /ip/dhcp-client/option
+      - /ip/dhcp-server/config
+      - /ip/hotspot/profile
+      - /ip/hotspot/service-port
+      - /ip/hotspot/user
+      - /ip/hotspot/user/profile
+      - /ip/media/settings
+      - /ip/nat-pmp
+      - /ip/proxy
+      - /ip/settings
+      - /ip/smb/shares
+      - /ip/smb/users
+      - /ip/socks
+      - /ip/traffic-flow
+      - /mpls/settings
+      - /ppp/aaa
+      - /ppp/profile
+      - /queue/type
+      - /radius/incoming
+      - /routing/igmp-proxy
+      - /routing/settings
+      - /snmp/community
+      - /system/clock/manual
+      - /system/console
+      - /system/package/local-update/mirror
+      - /system/resource/hardware/usb-settings
+      - /system/resource/usb/settings
+      - /system/routerboard/mode-button
+      - /system/routerboard/reset-button
+      - /system/routerboard/settings
+      - /tool/e-mail
+      - /tool/mac-server
+      - /tool/mac-server/mac-winbox
+      - /tool/mac-server/ping
+      - /tool/romon/port
+      - /tool/sms
+      - /tool/sniffer
+      - /tool/traffic-generator
+      - /user/settings
+      # Owned by manage_users.yml (key material is write-only over the API,
+      # so captures of this path can never round-trip through configure).
+      - /user/ssh-keys
 
   pre_tasks:
     # Resolve the api-ssl creds ONCE. If routeros_api_username/password held the
