@@ -1,16 +1,22 @@
 ---
 # Headless full-lifecycle reprovision to local-disk boot.
-#   1. Converge to NFS (safe state for wiping local disks).
+#   1. Pin NFS on the router + cycle into it (safe state for wiping
+#      local disks).
 #   2. Assert / is NFS-rooted; cross-binding validate armbian_local_disks.
 #   3. disk_provision each disk.
-#   4. Converge to local; on failure converge back to NFS and fail loudly.
+#   4. Pin local on the router + cycle into it.
 #
 # Requires per host: armbian_local_disks (list of disk_binding dicts).
 # Usage:
 #   ansible-playbook playbooks/armbian/reprovision_to_local.yaml \
 #     -i igou-inventory/inventory.yaml -e target_hosts=orange-pi-5-max-01
-- name: 1. Converge board into NFS before wiping local disks
+- name: 1a. Pin NFS boot mode on the router
   ansible.builtin.import_playbook: converge_boot_mode.yaml
+  vars:
+    armbian_boot_mode: nfs
+
+- name: 1b. Cycle board into NFS before wiping local disks
+  ansible.builtin.import_playbook: cycle_board.yaml
   vars:
     armbian_boot_mode: nfs
 
@@ -57,7 +63,12 @@
       loop_control:
         label: "{{ item.device }}"
 
-- name: 4. Converge to local boot mode
+- name: 4a. Pin local boot mode on the router
   ansible.builtin.import_playbook: converge_boot_mode.yaml
+  vars:
+    armbian_boot_mode: local
+
+- name: 4b. Cycle board into local boot
+  ansible.builtin.import_playbook: cycle_board.yaml
   vars:
     armbian_boot_mode: local

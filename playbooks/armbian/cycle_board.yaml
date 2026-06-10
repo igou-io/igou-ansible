@@ -1,0 +1,35 @@
+---
+# Cold-cycle board(s) and verify the booted rootfs matches the declared
+# boot mode. Split out of converge_boot_mode.yaml, which is now router
+# state only — run converge first so the router's pxelinux pin matches
+# armbian_boot_mode before cycling into it.
+#
+# Requires per host: armbian_poe_switch + armbian_poe_port (or point
+# armbian_poe_cycle_tasks_file at an alternate power-cycle transport
+# for boards without PoE).
+#
+# Usage:
+#   ansible-playbook playbooks/armbian/cycle_board.yaml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=orange-pi-5-pro-01
+- name: Cold-cycle board and verify boot mode
+  hosts: "{{ target_hosts | default('boards') }}"
+  gather_facts: false
+  tasks:
+    - name: PoE cycle + cold-boot retry
+      ansible.builtin.include_tasks: tasks/cold_boot_with_retry.yml
+      vars:
+        _phase_label: "cycle[{{ armbian_boot_mode }}]"
+        _boot_max_attempts: "{{ armbian_boot_retry_attempts | default(0) | int + 1 }}"
+
+    - name: Wait for SSH after cold boot
+      ansible.builtin.include_tasks: tasks/wait_for_ssh.yml
+      vars:
+        _phase_label: "cycle[{{ armbian_boot_mode }}]"
+        _wait_timeout: "{{ armbian_post_boot_wait_timeout | default(300) }}"
+
+    - name: Verify rootfs matches declared mode
+      ansible.builtin.include_role:
+        name: david_igou.armbian.board_boot_verify
+      vars:
+        boot_mode: "{{ armbian_boot_mode }}"
+      when: armbian_verify_state | default(true) | bool
