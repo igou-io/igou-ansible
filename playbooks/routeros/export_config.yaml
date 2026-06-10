@@ -57,6 +57,16 @@
       /interface/ethernet:
         - poe-out
         - poe-priority
+        # Hardware echoes, not operator intent: writable in api_modify's
+        # schema but schema-default-less, so api_info always captures them
+        # even with hide_defaults (autoneg advertisement, MTU ceiling,
+        # admin/factory MAC). Stripped so captures stay portable across
+        # hardware swaps; default-name (the primary key) still identifies
+        # each port.
+        - advertise
+        - l2mtu
+        - mac-address
+        - orig-mac-address
 
     # Extra exclusions merged onto the role's curated default list (which
     # already drops /file, /certificate, /system/script/environment, etc.):
