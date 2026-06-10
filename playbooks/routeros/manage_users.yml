@@ -29,6 +29,10 @@
 # Each public key in routeros_users[].ssh_keys MUST include a comment (the
 # third whitespace-separated field — e.g. "user@host"); it is the dedup key.
 #
+# Prune (routeros_prune_ssh_keys=true): removes keys on MANAGED users whose
+# key-owner is not declared in routeros_users[].ssh_keys. Strictly scoped to
+# the managed user names — unmanaged users' keys are never touched.
+#
 # Idempotent: second run reports changed=0.
 - name: Manage RouterOS user SSH keys
   hosts: "{{ host | default('routeros') }}"
@@ -100,11 +104,45 @@
         - ('key-owner=' ~ '\"' ~ key_comment ~ '\"') not in sshkey_print.stdout[0]
         - ('key-owner=' ~ key_comment) not in sshkey_print.stdout[0]
 
-    - name: Optional prune branch (placeholder)
-      ansible.builtin.debug:
-        msg: >-
-          routeros_prune_ssh_keys is true. Manual review needed — the
-          current implementation does not yet auto-prune. Inspect
-          /user ssh-keys print detail output above, then run
-          /user ssh-keys remove <id> manually.
+    # Prune: for each MANAGED user, remove on-device keys whose key-owner is
+    # not in that user's declared ssh_keys comments. Scoped strictly to
+    # routeros_users[].name — other users' keys (ansible-netboot, owned by the
+    # armbian_netboot collection) are never touched. Find first (read-only)
+    # so the remove only runs — and only reports changed — when candidates
+    # actually exist.
+    - name: Find prune candidates (managed users' keys not in routeros_users)
+      community.routeros.command:
+        commands:
+          - >-
+            :put [/user/ssh-keys/find where user="{{ item.name }}"
+            and !({{ _keep_expr }})]
+      register: _prune_candidates
+      changed_when: false
+      loop: "{{ routeros_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        _keep_expr: >-
+          {%- for k in item.ssh_keys -%}
+          key-owner="{{ k.split(' ')[2] }}"{{ " or " if not loop.last }}
+          {%- endfor -%}
       when: routeros_prune_ssh_keys | default(false) | bool
+
+    - name: Prune unmanaged SSH keys from managed users
+      community.routeros.command:
+        commands:
+          - >-
+            /user/ssh-keys/remove [find where user="{{ item.item.name }}"
+            and !({{ _keep_expr }})]
+      changed_when: true
+      loop: "{{ _prune_candidates.results }}"
+      loop_control:
+        label: "{{ item.item.name }}: {{ item.stdout[0] | default('') | trim }}"
+      vars:
+        _keep_expr: >-
+          {%- for k in item.item.ssh_keys -%}
+          key-owner="{{ k.split(' ')[2] }}"{{ " or " if not loop.last }}
+          {%- endfor -%}
+      when:
+        - routeros_prune_ssh_keys | default(false) | bool
+        - item.stdout[0] | default('') | trim | length > 0
