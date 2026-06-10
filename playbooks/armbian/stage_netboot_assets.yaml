@@ -1,7 +1,18 @@
 ---
-# Per-host rootfs provisioning on the netboot server.
+# Per-host netboot staging: netboot server first, then the router.
 #   1. boards group: resolve board_config + rootfs_src per host.
 #   2. netboot_server group: rootfs_provision role per board host.
+#   3. netboot_server group: fetch per-host TFTP artifacts to the
+#      controller cache (armbian_tftp_cache_dir).
+#   4. boards group (serial): upload kernel/initrd/dtb to the router's
+#      flash + register /ip tftp rows, then plumbing-check.
+#
+# Plays 3-4 replace the collection's stage_router.yml — router staging
+# is homelab transport, owned here alongside the rest of transport/.
+#
+# Scope with -e armbian_boards_group=<group> — not --limit. The plays
+# mix boards with netboot_server, and plays 2-3 loop over the boards
+# group from the netboot_server host, so --limit silently empties them.
 - name: Resolve effective board configs and rootfs sources per board host
   hosts: "{{ armbian_boards_group | default('boards') }}"
   gather_facts: false
@@ -27,3 +38,100 @@
       loop: "{{ groups[armbian_boards_group | default('boards')] }}"
       loop_control:
         loop_var: _board
+
+- name: Fetch per-host TFTP artifacts from netboot server to controller cache
+  hosts: "{{ armbian_netboot_server_group | default('netboot_server') }}"
+  become: true
+  gather_facts: false
+  vars:
+    _assets: [vmlinuz, initrd.img, board.dtb]
+  tasks:
+    - name: Ensure controller cache dir exists per host
+      ansible.builtin.file:
+        path: "{{ armbian_tftp_cache_dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      # Force a real local connection: inventory `localhost` defaults to
+      # SSH (it is an SSH-able build host), and this devcontainer's sshd
+      # has PrivateTmp, so an SSH-delegated mkdir creates a private /tmp
+      # the fetch below (controller-side write) cannot see.
+      vars:
+        ansible_connection: local
+      become: false
+      loop: "{{ groups[armbian_boards_group | default('boards')] }}"
+
+    - name: Fetch each (host, asset) pair from netboot server
+      ansible.builtin.fetch:
+        src: "{{ armbian_image_cache }}/sbc-tftp/{{ item.0 }}/{{ item.1 }}"
+        dest: "{{ armbian_tftp_cache_dir }}/{{ item.0 }}/{{ item.1 }}"
+        flat: true
+      loop: "{{ groups[armbian_boards_group | default('boards')] | product(_assets) | list }}"
+      loop_control:
+        label: "{{ item.0 }}/{{ item.1 }}"
+
+- name: Upload per-host TFTP assets to router and verify plumbing
+  hosts: "{{ armbian_boards_group | default('boards') }}"
+  gather_facts: false
+  # One board at a time: every host's uploads delegate to the same
+  # router, and parallel net_put bursts flake RouterOS's SSH server.
+  serial: 1
+  vars:
+    _assets: [vmlinuz, initrd.img, board.dtb]
+  tasks:
+    - name: Upload TFTP assets to router
+      delegate_to: "{{ armbian_router }}"
+      block:
+        - name: Ensure base armbian dir exists on router flash
+          community.routeros.command:
+            commands:
+              - >-
+                :if ([/file find name="{{ armbian_tftp_flash_dir }}/armbian" type=directory] = "")
+                do={/file add name="{{ armbian_tftp_flash_dir }}/armbian" type=directory}
+          register: _basedir
+          retries: 3
+          delay: 5
+          until: _basedir is succeeded
+          changed_when: false
+
+        - name: Ensure per-host dir exists on router flash
+          community.routeros.command:
+            commands:
+              - >-
+                :if ([/file find name="{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}" type=directory] = "")
+                do={/file add name="{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}" type=directory}
+          register: _hostdir
+          retries: 3
+          delay: 5
+          until: _hostdir is succeeded
+          changed_when: false
+
+        # Force-remove router-side files so net_put always pushes fresh
+        # content — the shared primitive is size-gated, and silently
+        # skipping by size has caused stale vmlinuz/rootfs-modules
+        # mismatches (router served old kernel; initramfs modprobe
+        # failed inside the new rootfs).
+        - name: Force-remove router-side assets (stale-content guard)
+          community.routeros.command:
+            commands:
+              - >-
+                /file remove
+                [find name="{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}/{{ item }}"]
+          register: _preremove
+          retries: 3
+          delay: 5
+          until: _preremove is succeeded
+          changed_when: false
+          loop: "{{ _assets }}"
+
+        - name: Upload each asset via shared primitive
+          ansible.builtin.include_tasks: transport/upload_file.yml
+          vars:
+            _upload_local_src: "{{ armbian_tftp_cache_dir }}/{{ inventory_hostname }}/{{ item }}"
+            _upload_remote_path: "{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}/{{ item }}"
+            _upload_req_filename: "armbian/{{ inventory_hostname }}/{{ item }}"
+            _upload_req_filename_is_regex: false
+          loop: "{{ _assets }}"
+
+        - name: Verify /ip tftp rows landed (plumbing check)
+          ansible.builtin.include_tasks: transport/plumbing_check.yml

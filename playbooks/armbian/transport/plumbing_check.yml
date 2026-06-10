@@ -38,8 +38,8 @@
     fail_msg: >-
       Router has no /ip tftp row for
       armbian/{{ inventory_hostname }}/{{ item.item }}.
-      Run playbooks/stage_router.yml to populate TFTP assets
-      before invoking converge_boot_mode.
+      Run playbooks/armbian/stage_netboot_assets.yaml to populate
+      TFTP assets before invoking converge_boot_mode.
   loop: "{{ _plumbing_check_one_row_count.results }}"
   loop_control:
     label: "armbian/{{ inventory_hostname }}/{{ item.item }}"
