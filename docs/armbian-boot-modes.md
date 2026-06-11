@@ -34,15 +34,30 @@ overlayfs). See igou-io/igou-ansible#220.
 ## How local_kernel works
 
 The pin's `local_kernel` label is `localboot 0`, which makes u-boot run
-its `localcmd` env var: `nvme scan; ext4load nvme 0:1 ... /boot/Image
-... booti`. `localcmd` is provisioned per board via
+its `localcmd` env var: scan a storage device, `ext4load` Image/uInitrd/
+dtb from its `/boot`, `booti`. `localcmd` is provisioned per board via
 `armbian_local_kernel.persist_via` (host var):
 
 - `hook` — baked into the image's u-boot default environment at build
   time (`__999_local_kernel_bake` userpatch, edge branch only).
+  Changing the chain means rebuilding the image and re-flashing the
+  board's u-boot carrier.
 - `spi` — written to SPI-flash u-boot env (`fw_setenv`) by the
   collection's `persist_uboot_env.yml`; requires
   `uboot_env.fw_env_config` in the model layer (rock-5b).
+
+The storage target is configurable per board in the
+`armbian_board_config` layers (family → model → host): either a single
+`local_kernel.{storage,storage_scan}` pair (family default
+`nvme 0:1`), or an **ordered fallback list**
+`local_kernel.storage_candidates` — one `if ext4load …; booti …; fi`
+block per candidate; `booti` never returns on success, so a later
+candidate runs only when an earlier one fails. cm3588-nas uses
+`[nvme 0:1, mmc 0:1]`: it prefers NVMe but falls back to its eMMC
+(where root lives while the dead NVMe batch awaits replacement —
+once NVMe is provisioned, the same u-boot prefers it automatically).
+Boards with non-NVMe fallbacks also set `local_kernel.verify_match`
+(e.g. `^/dev/(nvme|mmcblk0)`) for `board_boot_verify`.
 
 Because the kernel/initrd/dtb come from `/boot` on the rootfs, kernel
 updates are just `apt upgrade` + reboot. The per-host TFTP kernel
@@ -66,14 +81,18 @@ All armbian templates take `target_hosts=<inventory hostname>` —
 `ansible_limit` — not `host`). Mismatched targeting vars silently
 match no hosts.
 
-## Per-board exceptions
+## Per-board notes
 
-- **cm3588-nas-01** stays in `local` mode for now: its first NVMe
-  batch was dead, root lives on eMMC, and both its baked `localcmd`
-  and the family-layer `local_kernel.storage` point at `nvme 0:1`.
-  When replacement NVMe arrives: provision root to NVMe
-  (`armbian_provision_local_disk`), set
-  `armbian_boot_mode: local_kernel` in inventory, converge + cycle.
+- **cm3588-nas-01** is on `local_kernel` with the NVMe→eMMC fallback
+  chain (see above). Its u-boot lives on the SD carrier (eMMC has no
+  room for the 8MiB ITB offset); re-baking the chain means dd'ing
+  fresh `idbloader.img`/`u-boot.itb` to `/dev/mmcblk1` sectors
+  64/16384. **It is NOT PoE-powered** (crs328 ether13 reports
+  `short-circuit`, board runs from its DC supply), so
+  `armbian_cycle_board` cannot actually power-cycle it — the playbook
+  reports success while the board never reboots. Use a warm reboot
+  (the rtl8125 WoL udev rule keeps the PHY up so u-boot can fetch the
+  pin) or pull power physically.
 - **rock-5b-01** runs the Armbian *vendor* kernel
   (`linux-image-vendor-rk35xx`) for the rk-llama NPU workload
   (igou-kubernetes `apps/rk-llama/`). In `local_kernel` mode this is
