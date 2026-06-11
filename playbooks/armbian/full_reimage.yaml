@@ -1,0 +1,111 @@
+---
+# Full reimage of one ARM SBC board, end to end. The only required
+# input is the board's inventory hostname:
+#
+#   ansible-playbook playbooks/armbian/full_reimage.yaml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=rock-5b-01.igou.systems
+#
+# Chain (each step is an existing playbook in this directory):
+#   1. stage_netboot_assets — force-refresh the per-host NFS rootfs from
+#      the published image + restage TFTP kernel/initrd/dtb.
+#   2. converge_boot_mode(nfs) — pin the router to the NFS label.
+#   3. inline cold-cycle — PoE cycle + TCP/22 wait only. cycle_board.yaml
+#      is NOT used here on purpose: its wait_for_connection logs in as
+#      the automation user, which does not exist on a fresh rootfs yet.
+#   4. bootstrap — provision the automation user (root:1234 firstboot).
+#   5. reprovision_to_local — NFS-asserted NVMe wipe + provision, then
+#      converge to the transitional `local` mode and cycle into it.
+#   6. converge_boot_mode + cycle_board with no mode override — lands on
+#      the board's DECLARED armbian_boot_mode (fleet default
+#      local_kernel) and verifies the booted rootfs matches.
+#
+# Requires a PoE-cycleable board (armbian_poe_switch + armbian_poe_port)
+# — asserted up front. Boards without PoE (cm3588-nas-01) cannot be
+# power-cycled by automation and must be reimaged manually.
+- name: Validate target and build ad-hoc staging group
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Assert exactly one valid PoE-capable board was given
+      ansible.builtin.assert:
+        that:
+          - target_hosts is defined
+          - target_hosts is string
+          - "',' not in target_hosts"
+          - target_hosts in groups['boards']
+          - hostvars[target_hosts].armbian_poe_switch is defined
+          - hostvars[target_hosts].armbian_poe_port is defined
+        fail_msg: >-
+          target_hosts must be a single inventory hostname from the
+          'boards' group with armbian_poe_switch/armbian_poe_port set
+          (got: {{ target_hosts | default('UNDEFINED') }}).
+
+    - name: Add the board to the ad-hoc staging group
+      ansible.builtin.add_host:
+        name: "{{ target_hosts }}"
+        groups: _reimage_board
+      changed_when: false
+
+- name: Stage fresh NFS rootfs + TFTP assets
+  ansible.builtin.import_playbook: stage_netboot_assets.yaml
+  vars:
+    armbian_boards_group: _reimage_board
+    armbian_force_refresh: true
+
+- name: Pin NFS boot mode on the router
+  ansible.builtin.import_playbook: converge_boot_mode.yaml
+  vars:
+    armbian_boot_mode: nfs
+
+- name: Cold-cycle into the fresh NFS rootfs (port check only — no automation user yet)
+  hosts: _reimage_board
+  gather_facts: false
+  tasks:
+    - name: PoE cycle the board
+      ansible.builtin.include_tasks: transport/poe_cycle.yml
+
+    - name: Wait for TCP/22 on the fresh rootfs
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: 22
+        delay: 30
+        timeout: 420
+      delegate_to: localhost
+
+    - name: Settle before password bootstrap
+      ansible.builtin.pause:
+        seconds: 15
+
+- name: Bootstrap automation user on the fresh rootfs
+  ansible.builtin.import_playbook: bootstrap.yaml
+
+- name: Wipe + provision local disks, converge to local boot
+  ansible.builtin.import_playbook: reprovision_to_local.yaml
+
+- name: Converge the board's declared boot mode on the router
+  ansible.builtin.import_playbook: converge_boot_mode.yaml
+
+- name: Cycle into the declared boot mode and verify
+  ansible.builtin.import_playbook: cycle_board.yaml
+
+- name: Clean stale k3s node identity so a reinstall re-registers cleanly
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Resolve the k3s control node when the board is a cluster member
+      ansible.builtin.set_fact:
+        _k3s_master: "{{ groups['rk8s_control_plane'] | default([]) | first | default('') }}"
+      when:
+        - full_reimage_k3s_cleanup | default(true) | bool
+        - target_hosts in (groups['rk8s'] | default([]))
+
+    - name: Delete the stale node object and node-password secret on the master
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - "k3s kubectl delete node {{ target_hosts }} --ignore-not-found"
+        - "k3s kubectl --namespace kube-system delete secret {{ target_hosts }}.node-password.k3s --ignore-not-found"
+      delegate_to: "{{ _k3s_master }}"
+      become: true
+      changed_when: true
+      when: _k3s_master | default('') | length > 0
