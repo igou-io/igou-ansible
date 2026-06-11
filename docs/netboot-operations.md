@@ -3,6 +3,10 @@
 How to add, change, remove, and troubleshoot netboot menu entries, host pins,
 ISOs, kickstart/cloud-init seeds, OpenShift PXE assets, and rb5009 iPXE binaries.
 
+This covers the x86/iPXE netboot path (OpenShift nodes, rescue ISOs,
+kickstart). The ARM SBC fleet uses a separate per-MAC **pxelinux** pin
+mechanism with declarative boot modes — see `docs/armbian-boot-modes.md`.
+
 This is operations-focused. For architecture see the design specs:
 - `docs/superpowers/specs/2026-05-08-netboot-asset-management-design.md` (initial design — *superseded*)
 - `docs/superpowers/specs/2026-05-08-netboot-binaries-build-design.md` (initial design — *binary build still current; chainload target updated*)

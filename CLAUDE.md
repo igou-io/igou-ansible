@@ -74,9 +74,20 @@ Playbooks are organized by infrastructure domain under `playbooks/`:
 - `terraform/` - plan/apply workflows
 - `linux/`, `rhel/` - system-level operations
 - `aap/`, `awx/` - automation platform configuration
+- `armbian/` - ARM SBC fleet lifecycle (image build, provisioning, boot modes)
 - Root-level playbooks for common ops (system-update, system-harden, system-reboot)
 
-Many playbooks use `ansible_limit` variable for dynamic host targeting.
+Many playbooks use `ansible_limit` variable for dynamic host targeting;
+`playbooks/armbian/` uses `target_hosts` instead. AAP template extra_vars
+must match the playbook's hosts var or the play silently matches no hosts.
+
+### ARM SBC boot modes
+
+The `boards` fleet boots via per-MAC pxelinux pins on rb5009 with four
+modes: `local_kernel` (fleet default — kernel from local disk, updated
+via apt), `nfs` (reimaging), `sd` (bring-up), `local` (transitional).
+**Read `docs/armbian-boot-modes.md` before touching board kernels, boot
+modes, or netboot TFTP assets.**
 
 ### Execution environments
 
