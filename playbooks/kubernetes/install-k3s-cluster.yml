@@ -6,11 +6,15 @@
   roles:
     - role: xanmanning.k3s
   pre_tasks:
+    - name: Collect service facts
+      ansible.builtin.service_facts:
+
     - name: Disable firewalld
       ansible.builtin.systemd:
         name: firewalld
         enabled: false
         state: stopped
+      when: "'firewalld.service' in ansible_facts.services"
 
 # - hosts: "{{ ansible_limit | default('none') }}"
 #   name: Create secret store kubeconfig entry
