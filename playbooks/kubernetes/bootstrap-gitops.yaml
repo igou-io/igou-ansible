@@ -114,7 +114,11 @@
           ansible.builtin.shell:
             cmd: |
               set -o pipefail
-              kustomize build --enable-helm clusters/{{ gitops_cluster }} | kubectl apply -f -
+              # -n argocd: the cluster root's Application/AppProject CRs carry
+              # no metadata.namespace (argo's own sync places them via the
+              # app-of-apps destination); without it they land in `default`
+              # where argocd never sees them.
+              kustomize build --enable-helm clusters/{{ gitops_cluster }} | kubectl apply -n argocd -f -
             chdir: "{{ _ws.path }}/igou-kubernetes"
             executable: /bin/bash
           environment:
