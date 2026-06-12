@@ -16,7 +16,7 @@ managed by hand.
 | TLS cert (LE wildcard+apex) | `playbooks/linux/acme_certificate_podman_secret.yaml` | `acme_certificate_podman_secret` | weekly via `letsencrypt_renew_weekly` (no-op until <15 days remain) |
 | Workload state (quadlets, secrets, nginx config) | `playbooks/linux/podman_quadlets.yaml` | `podman_quadlets` | on demand / after host_vars changes |
 | Workload images | `playbooks/linux/podman_auto_update.yaml` | `podman_auto_update` | on demand (deliberate image rolls, auto-rollback) |
-| Website content | `playbooks/linux/deploy_static_site.yaml` | `deploy_static_site` | on demand (publish after pushing to igou.io master) |
+| Website content | `playbooks/linux/deploy_static_site.yaml` | `deploy_static_site` | nightly 20:00 via `deploy_static_site_nightly` (builds only on new commits) |
 
 The `vps-converge-e2e` workflow chains baseline → packages → cert → quadlets →
 website in dependency order; every node is idempotent, so it is both the
