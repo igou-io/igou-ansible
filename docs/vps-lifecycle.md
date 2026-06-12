@@ -17,10 +17,13 @@ managed by hand.
 | Workload state (quadlets, secrets, nginx config) | `playbooks/linux/podman_quadlets.yaml` | `podman_quadlets` | on demand / after host_vars changes |
 | Workload images | `playbooks/linux/podman_auto_update.yaml` | `podman_auto_update` | on demand (deliberate image rolls, auto-rollback) |
 | Website content | `playbooks/linux/deploy_static_site.yaml` | `deploy_static_site` | nightly 20:00 via `deploy_static_site_nightly` (builds only on new commits) |
+| Metrics (node_exporter) | `playbooks/linux/node_exporter.yaml` | `node_exporter` | in the converge workflow (localhost-bound, scraped over Tailscale) |
+| Tailnet membership | `playbooks/tailscale/tailscale.yml` | `tailscale_join` | on demand (OAuth secret from 1Password; designated tags via `tailscale_tags` host var) |
 
 The `vps-converge-e2e` workflow chains baseline → packages → cert → quadlets →
-website in dependency order; every node is idempotent, so it is both the
-fresh-host rebuild runbook and a one-button drift fix.
+website in dependency order (node_exporter fans out after packages); every
+node is idempotent, so it is both the fresh-host rebuild runbook and a
+one-button drift fix.
 
 ## Website model
 
