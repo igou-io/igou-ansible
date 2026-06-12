@@ -63,23 +63,27 @@ playbook handles both via `geerlingguy.containerd` and an
 
 ## Bootstrap (either distro)
 
-`bootstrap-cluster.yml` is distro-agnostic. It needs a working
-kubeconfig and a 1Password service-account token, then it deploys:
-
-1. `external-secrets` operator
-2. `argocd` (overlay from `igou-io/igou-kubernetes`)
-3. A `ClusterSecretStore` wired to the `awx` 1Password vault
+`bootstrap-gitops.yaml` bootstraps a cluster from igou-kubernetes'
+app-of-apps layout (see `docs/bootstrap.md` there). It pulls the
+kubeconfig from `op://claude/<cluster>-kubeconfig` (published by the
+install playbook above), installs argocd, seeds the 1Password Connect
+token secret backing the `onepassword` ClusterSecretStore, and applies
+`clusters/<cluster>` — after which argocd self-manages the cluster.
+Needs `OP_CONNECT_HOST`/`OP_CONNECT_TOKEN` in the env (AAP injects
+them via the "Onepassword Connect" credential).
 
 ```bash
-ansible-navigator run playbooks/kubernetes/bootstrap-cluster.yml \
-  -e overlay=internal \
-  -e vault_name=awx \
-  -e onepassword_token="$(op read 'op://awx/onepassword-token/credential')" \
-  -e kubeconfig=/path/to/rk8s-kubeconfig.yaml
+ansible-playbook playbooks/kubernetes/bootstrap-gitops.yaml \
+  -e gitops_cluster=internal \
+  -e kubeconfig_op_item=rk8s-kubeconfig
 ```
 
-`overlay` selects the overlay directory under
-`https://github.com/igou-io/igou-kubernetes/config/<overlay>/`.
+Application CRs track `targetRevision: HEAD` — only bootstrap from a
+ref whose content matches the repo's default branch.
+
+`bootstrap-cluster.yml` is the legacy version targeting the old
+`config/<overlay>` layout; it is retained until the
+`kubernetes_bootstrap_gitops` AAP template repoints, then it goes.
 
 ## Notes
 
