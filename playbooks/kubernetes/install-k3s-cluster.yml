@@ -14,7 +14,9 @@
         name: firewalld
         enabled: false
         state: stopped
-      when: "'firewalld.service' in ansible_facts.services"
+      when:
+        - "'firewalld.service' in ansible_facts.services"
+        - ansible_facts.services['firewalld.service'].status != 'not-found'
 
 # - hosts: "{{ ansible_limit | default('none') }}"
 #   name: Create secret store kubeconfig entry
