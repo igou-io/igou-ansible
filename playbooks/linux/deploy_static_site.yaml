@@ -1,0 +1,90 @@
+---
+# Build-and-publish for a static site served by a quadlet-managed nginx (the
+# igou.io website): clone/refresh the site repo on the host as the rootless run
+# user, build it with a one-shot Hugo container, and write the output into the
+# directory the site's nginx container bind-mounts read-only. nginx serves
+# files live from that directory, so the rebuild IS the deploy - no unit
+# restart needed. The build only runs when the checkout picked up new commits
+# (override with site_force_build=true).
+#
+# Variables:
+#   Inventory inputs (per-host, see host_vars/igou.io.yml):
+#     linux_static_site_repo          - git URL of the site source (public https)
+#     linux_static_site_version       - branch/tag to deploy
+#     linux_static_site_src           - checkout dir on the host
+#     linux_static_site_dest          - built-output dir (bind-mounted by the
+#                                       site quadlet, e.g. igou-io)
+#     linux_static_site_builder_image - Hugo image for the one-shot build
+#     linux_podman_run_as_user        - rootless user that owns it all
+#   Optional launch-time inputs:
+#     site_force_build - rebuild even when the checkout is unchanged
+- name: Deploy a static website (git pull + Hugo container build)
+  hosts: "{{ ansible_limit | default('vps') }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    _run_user: "{{ linux_podman_run_as_user | default('igou') }}"
+    _src: "{{ linux_static_site_src }}"
+    _dest: "{{ linux_static_site_dest }}"
+    _builder: "{{ linux_static_site_builder_image | default('docker.io/hugomods/hugo:latest') }}"
+    _rootless_env:
+      XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[_run_user][1] }}"
+      HOME: "/home/{{ _run_user }}"
+
+  tasks:
+    - name: Resolve the run user's uid (for the rootless podman runtime dir)
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ _run_user }}"
+
+    - name: Ensure the source and output directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ _run_user }}"
+        group: "{{ _run_user }}"
+        mode: "0755"
+      loop:
+        - "{{ _src }}"
+        - "{{ _dest }}"
+
+    # force discards any local drift in the checkout - it is build input only,
+    # never edited on the host.
+    - name: Clone or update the site source
+      ansible.builtin.git:
+        repo: "{{ linux_static_site_repo }}"
+        dest: "{{ _src }}"
+        version: "{{ linux_static_site_version | default('master') }}"
+        force: true
+      become: true
+      become_user: "{{ _run_user }}"
+      environment: "{{ _rootless_env }}"
+      register: _checkout
+
+    # Same one-shot build deploy/build.sh in the site repo performs by hand:
+    # the repo mounts read-only, Hugo writes the minified site over the served
+    # dir (--cleanDestinationDir prunes files deleted from the source).
+    - name: Build the site with a one-shot Hugo container
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --volume
+          - "{{ _src }}:/src:ro,Z"
+          - --volume
+          - "{{ _dest }}:/out:Z"
+          - "{{ _builder }}"
+          - hugo
+          - --minify
+          - --source
+          - /src
+          - --destination
+          - /out
+          - --cleanDestinationDir
+      become: true
+      become_user: "{{ _run_user }}"
+      environment: "{{ _rootless_env }}"
+      when: _checkout is changed or (site_force_build | default(false) | bool)
+      changed_when: true

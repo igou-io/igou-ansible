@@ -21,13 +21,18 @@ http {
   # the proxy network; override via linux_proxy_resolver if the subnet differs.
   resolver {{ linux_proxy_resolver | default('10.89.0.1') }} valid=10s ipv6=off;
 
-  # Placeholder for the apex and any unmatched SNI. The *.igou.io wildcard does
-  # not cover the bare apex, so the apex is served over HTTP and the HTTPS
-  # default server presents the wildcard cert (browsers warn on the apex name).
-  # Override linux_placeholder_html to customise (single line, no double quotes).
+  # When linux_proxied_services contains an entry for the bare apex (the cert
+  # carries the apex as a SAN alongside the wildcard), the apex is a real
+  # proxied site: HTTP redirects to HTTPS like every other name and the
+  # per-service loop below emits its server block. Without one, the apex falls
+  # back to a placeholder page. Override linux_placeholder_html to customise
+  # the placeholder (single line, no double quotes).
+{% set _apex_proxied = linux_proxied_services | default([])
+     | selectattr('server_name', 'equalto', inventory_hostname) | list | length > 0 %}
 {% set _placeholder = linux_placeholder_html | default('<!doctype html><meta charset=utf-8><title>' ~ inventory_hostname ~ '</title><body style=font-family:sans-serif;text-align:center;margin-top:4rem><h1>' ~ inventory_hostname ~ '</h1><p>Coming soon.</p></body>') %}
+{% if not _apex_proxied %}
 
-  # Apex over HTTP -> placeholder (not redirected; the apex has no valid cert).
+  # Apex over HTTP -> placeholder (no apex service is configured).
   server {
     listen 80;
     listen [::]:80;
@@ -37,8 +42,9 @@ http {
       return 200 "{{ _placeholder }}";
     }
   }
+{% endif %}
 
-  # Other plaintext (subdomains) is redirected to HTTPS. 443 is the entrypoint.
+  # Other plaintext is redirected to HTTPS. 443 is the entrypoint.
   server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -46,13 +52,15 @@ http {
     return 301 https://$host$request_uri;
   }
 
-  # Default HTTPS server: apex + unmatched SNI get the placeholder (wildcard
-  # cert; warns on the bare apex). Also stops unknown SNI from leaking a backend.
+  # Default HTTPS server: unmatched SNI gets the placeholder, which also stops
+  # unknown SNI from leaking a backend. When the apex is not a proxied service
+  # it lands here too; when it is, its server block comes from the loop and
+  # this default must not duplicate the name.
   server {
     listen 443 ssl default_server;
     listen [::]:443 ssl default_server;
     http2 on;
-    server_name {{ inventory_hostname }};
+    server_name {{ '_' if _apex_proxied else inventory_hostname }};
     ssl_certificate     /etc/nginx/ssl/fullchain.pem;
     ssl_certificate_key /etc/nginx/ssl/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
