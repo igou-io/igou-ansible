@@ -37,10 +37,15 @@ ansible-navigator run playbooks/kubernetes/install-k3s-cluster.yml \
   -e ansible_limit=rk8s
 ```
 
-After install, grab the kubeconfig from the control-plane node
-(`/etc/rancher/k3s/k3s.yaml`), rewrite the server URL to point at
-`rock-5b-01.igou.systems:6443`, and stash it where the bootstrap step
-expects it (see below).
+After install, the imported `publish-kubeconfig-1password.yaml` play
+slurps the kubeconfig from the control-plane node
+(`/etc/rancher/k3s/k3s.yaml`), rewrites the server URL to the control
+node's FQDN, and upserts it to `op://awx/<cluster>-kubeconfig` (the
+`kubeconfig` field is base64 — decode on use). Needs `OP_CONNECT_HOST`
+and `OP_CONNECT_TOKEN` in the env (AAP injects them via the
+"Onepassword Connect" credential); without them the publish step skips
+with a warning. Re-publish on demand via the `k3s_publish_kubeconfig`
+AAP template or by running the publish playbook directly.
 
 ## Install — kubernetes (alternative)
 

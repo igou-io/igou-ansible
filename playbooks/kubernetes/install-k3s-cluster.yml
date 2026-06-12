@@ -18,51 +18,7 @@
         - "'firewalld.service' in ansible_facts.services"
         - ansible_facts.services['firewalld.service'].status != 'not-found'
 
-# - hosts: "{{ ansible_limit | default('none') }}"
-#   name: Create secret store kubeconfig entry
-#   no_log: false
-#   gather_facts: false
-#   tasks:
-
-#   # Copy /etc/rancher/k3s/k3s.yaml from a single master node determined by k3s_control_node=true
-
-#     - name: Get Kubeconfig from master
-#       tags: get_kubeconfig
-#       become: true
-#       when: k3s_control_node | default(false) | bool
-#       block:
-#       - name: Slurp kubeconfig
-#         ansible.builtin.slurp:
-#           src: '/etc/rancher/k3s/k3s.yaml'
-#         register: kubeconfig
-
-#       - name: Set fact to hostname of first control node in group
-#         ansible.builtin.set_fact:
-#           first_k3s_control_node: >-
-#             {{ (groups[ansible_limit] | map('extract', hostvars) |
-#                 selectattr('k3s_control_node', 'defined') |
-#                 selectattr('k3s_control_node') |
-#                 map(attribute='inventory_hostname') |
-#                 list).0 }}
-#         delegate_to: localhost
-
-#       - name: Save secrets to 1password
-#         delegate_to: localhost
-#         tags: op_save
-#         block:
-#         - name: Create kubeconfig facts
-#           ansible.builtin.set_fact:
-#             kubeconfig_contents: "{{ kubeconfig.content | b64decode | regex_replace('https://127.0.0.1:6443', 'https://' + first_k3s_control_node + ':6443') }}"
-#             kubeconfig_dict: "{{ kubeconfig.content | b64decode | from_yaml }}"
-
-#       - name: Set facts for password
-#         ansible.builtin.set_fact:
-#           op_item_name: "{{ ansible_limit + '-kubeconfig-' + now(utc=true,fmt='%Y%m%d%H%M') }}"
-#           client_certificate_data: "{{ kubeconfig_dict.users[0].user['client-certificate-data'] }}"
-#           client_key_data: "{{ kubeconfig_dict.users[0].user['client-key-data'] }}"
-#           api_url: "{{ 'https://' + ansible_host + ':6443' }}"
-
-#       - name: Save auth info to 1password
-#         ansible.builtin.shell:
-#           cmd: op item create --category=login --title {{ op_item_name }} --vault=awx kubeconfig[password]={{ kubeconfig_contents | b64encode }} client_certificate_data[password]={{ client_certificate_data }} client_key_data[password]={{ client_key_data }} api_url[password]={{ api_url }}</dev/null
-#         delegate_to: localhost
+# Refresh op://awx/<cluster>-kubeconfig after every install/update. Skips
+# with a warning when OP_CONNECT_* env is absent (local runs w/o Connect).
+- name: Publish kubeconfig to 1Password
+  ansible.builtin.import_playbook: publish-kubeconfig-1password.yaml
