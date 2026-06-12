@@ -62,9 +62,12 @@
       environment: "{{ _rootless_env }}"
       register: _checkout
 
-    # Same one-shot build deploy/build.sh in the site repo performs by hand:
-    # the repo mounts read-only, Hugo writes the minified site over the served
-    # dir (--cleanDestinationDir prunes files deleted from the source).
+    # Same one-shot build deploy/build.sh in the site repo performs by hand.
+    # The source mounts read-write: Hugo's image processing writes its
+    # resources/_gen cache into the project tree (so it persists between runs),
+    # and the git task's force:true keeps tracked files canonical anyway. Hugo
+    # writes the minified site over the served dir (--cleanDestinationDir
+    # prunes files deleted from the source).
     - name: Build the site with a one-shot Hugo container
       ansible.builtin.command:
         argv:
@@ -72,15 +75,12 @@
           - run
           - --rm
           - --volume
-          - "{{ _src }}:/src:ro,Z"
+          - "{{ _src }}:/src:Z"
           - --volume
           - "{{ _dest }}:/out:Z"
           - "{{ _builder }}"
           - hugo
           - --minify
-          # The source mounts read-only, so hugo must not write its
-          # .hugo_build.lock there.
-          - --noBuildLock
           - --source
           - /src
           - --destination
