@@ -1,0 +1,60 @@
+---
+# Roll rootless podman workloads to fresh images. `podman auto-update` pulls a
+# newer image for every container whose quadlet sets AutoUpdate=registry and
+# restarts that unit (rolling back if the restarted unit fails to come up, the
+# podman default). Containers without the label are left untouched, so opting a
+# workload in/out is a one-line change in its linux_podman_quadlet_specs entry.
+#
+# Variables:
+#   linux_podman_run_as_user - rootless user that owns the workloads (host_vars)
+#   podman_auto_update_prune - also prune dangling images afterwards so the
+#                              VPS disk doesn't fill with stale layers
+#                              (default true)
+- name: Update rootless podman workload images (podman auto-update)
+  hosts: "{{ ansible_limit | default('vps') }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    _run_user: "{{ linux_podman_run_as_user | default('igou') }}"
+    _rootless_env:
+      XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[_run_user][1] }}"
+      HOME: "/home/{{ _run_user }}"
+
+  tasks:
+    - name: Resolve the run user's uid (for the rootless podman runtime dir)
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ _run_user }}"
+
+    - name: Run podman auto-update (pull newer images, restart updated units)
+      ansible.builtin.command:
+        cmd: podman auto-update --format json
+      become: true
+      become_user: "{{ _run_user }}"
+      environment: "{{ _rootless_env }}"
+      register: _auto_update
+      # podman prints `null` (or nothing) when no container carries the
+      # autoupdate label; a real run yields a list whose Updated field is
+      # "true" for units that were rolled to a new image.
+      changed_when: >-
+        'true' in (((_auto_update.stdout or 'null') | from_json or [])
+                   | map(attribute='Updated') | list)
+
+    - name: Report what was updated
+      ansible.builtin.debug:
+        msg: >-
+          {{ _results if _results | length > 0
+             else 'No containers opted in (AutoUpdate=registry) or no updates available.' }}
+      vars:
+        _results: "{{ (_auto_update.stdout or 'null') | from_json or [] }}"
+
+    - name: Prune dangling images left behind by the update
+      ansible.builtin.command:
+        cmd: podman image prune --force
+      become: true
+      become_user: "{{ _run_user }}"
+      environment: "{{ _rootless_env }}"
+      register: _prune
+      changed_when: _prune.stdout | length > 0
+      when: podman_auto_update_prune | default(true) | bool

@@ -14,6 +14,8 @@ StartLimitIntervalSec=0
 [Container]
 Image={{ linux_nginx_image | default('docker.io/library/nginx:stable-alpine') }}
 ContainerName=nginx
+# Opt in to image rolls via playbooks/linux/podman_auto_update.yaml.
+AutoUpdate=registry
 # 80 stays up only for the HTTP->HTTPS redirect; 443 is the secure entrypoint.
 PublishPort=80:80
 PublishPort=443:443
