@@ -78,6 +78,9 @@
           - "{{ _builder }}"
           - hugo
           - --minify
+          # The source mounts read-only, so hugo must not write its
+          # .hugo_build.lock there.
+          - --noBuildLock
           - --source
           - /src
           - --destination
