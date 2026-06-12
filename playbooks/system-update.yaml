@@ -1,9 +1,24 @@
 ---
+# Update OS packages via robertdebock.update.
+#
+# Targeting: pass ansible_limit=<host-or-group> (AAP template: system_update,
+# nightly schedule: update_all_linux). Defaults to 'none' — never 'all'.
+#
+# Variables:
+#   update_serial   - rolling batch size (default '100%': all hosts at once;
+#                     set 1 with update_reboot=true for a rolling patch cycle)
+#   update_reboot   - reboot when the update requires it (default false; the
+#                     role's upstream default is true, pinned off here so the
+#                     nightly schedule never mass-reboots — use the
+#                     system_patch_cycle template for update+reboot windows)
+#   update_autoremove - apt autoremove after update (default false)
 - name: Update all systems
-  hosts: "{{ ansible_limit | default('all') }}"
+  hosts: "{{ ansible_limit | default('none') }}"
   become: "{{ become | default(true) }}"
   gather_facts: true
+  serial: "{{ update_serial | default('100%') }}"
+  vars:
+    update_reboot: false
+    update_autoremove: false
   roles:
     - role: robertdebock.update
-      vars:
-        update_autoremove: false

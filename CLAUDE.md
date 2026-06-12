@@ -37,8 +37,8 @@ pre-commit run --all-files
 # Run a specific scenario
 molecule test -s <scenario-name>
 
-# Run with custom distro image
-MOLECULE_DISTRO_IMAGE="ubuntu:20.04" molecule test -s system-update
+# Run with custom distro image (molecule >= 25 resolves -s by directory name)
+MOLECULE_DISTRO_IMAGE="ubuntu:20.04" molecule test -s system-update-matrix
 
 # Step-by-step debugging
 molecule create -s <scenario-name>
@@ -75,7 +75,7 @@ Playbooks are organized by infrastructure domain under `playbooks/`:
 - `linux/`, `rhel/` - system-level operations
 - `aap/`, `awx/` - automation platform configuration
 - `armbian/` - ARM SBC fleet lifecycle (image build, provisioning, boot modes)
-- Root-level playbooks for common ops (system-update, system-harden, system-reboot)
+- Root-level playbooks for common ops (system-update, system-reboot)
 
 Many playbooks use `ansible_limit` variable for dynamic host targeting;
 `playbooks/armbian/` uses `target_hosts` instead. AAP template extra_vars

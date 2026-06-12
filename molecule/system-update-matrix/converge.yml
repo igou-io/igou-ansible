@@ -1,10 +1,10 @@
 ---
-# Purpose: bring the instance to the desired state by running the role under test.
-# Molecule calls this playbook with `molecule converge`.
+# Run the real system-update playbook against the molecule containers.
+# ansible_limit must come in as a play-parse-time var (group_vars are too
+# late to template `hosts:`), and update_reboot stays off — containers
+# can't reboot.
 - name: Converge
-  hosts: all
-  gather_facts: true  # Disable if your role does not rely on facts
-  tasks:
-    - name: Print Hello World
-      ansible.builtin.debug:
-        msg: "Hello World"
+  ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
+  vars:
+    ansible_limit: all  # noqa: var-naming[read-only] — repo-wide AAP targeting convention
+    update_reboot: false
