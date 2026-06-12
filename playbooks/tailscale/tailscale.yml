@@ -1,29 +1,31 @@
 ---
 # Join a host to the tailnet via the artis3n.tailscale collection. The authkey
-# is a Tailscale OAuth client secret (tskey-client-...) read from 1Password on
-# the EE side (vault=awx, item=tailscale-oauthkey-ansible, field=client-secret)
-# so it never reaches the host. OAuth joins REQUIRE designated tags: set
+# is read from 1Password on the EE side (vault=awx, item
+# tailscale-ansible-vps-token, field=token) so it never reaches the host. It
+# works with either a plain auth key (tskey-auth-...) or an OAuth client
+# secret (tskey-client-...). Joins advertise designated tags: set
 # tailscale_tags in the host's inventory vars (no tag: prefix - the role
-# prepends it) and declare each tag in the tailnet ACL with the ansible OAuth
-# client as an owner.
+# prepends it); the tailnet ACL must let the key's creator own each tag.
 #
 # Variables:
 #   Inventory inputs (per host/group, see host_vars/igou.io.yml):
-#     tailscale_tags - designated tags to advertise (REQUIRED with OAuth)
+#     tailscale_tags - designated tags to advertise (required; with an OAuth
+#                      secret the role itself also enforces this)
 #   Optional launch-time/inventory inputs:
 #     tailscale_state         - latest (default) | present | absent (leaves the
 #                               tailnet and uninstalls)
-#     tailscale_ephemeral     - register as an ephemeral node (default false:
-#                               these are long-lived hosts; the role's own
-#                               OAuth default would be true)
-#     tailscale_preauthorized - skip manual device approval (default true)
+#     tailscale_ephemeral     - OAuth secrets only: register as an ephemeral
+#                               node (default false: these are long-lived
+#                               hosts; the role's own OAuth default is true)
+#     tailscale_preauthorized - OAuth secrets only: skip manual device
+#                               approval (default true)
 - name: Join the tailnet
   hosts: "{{ ansible_limit | default('none') }}"
   become: true
   gather_facts: true
 
   vars:
-    tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-oauthkey-ansible', field='client-secret', vault='awx') }}"
+    tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-ansible-vps-token', field='token', vault='awx') }}"
 
   tasks:
     - name: Ensure designated tags are set in inventory
@@ -31,7 +33,7 @@
         that:
           - tailscale_tags | default([]) | length > 0
         fail_msg: >-
-          OAuth-based joins require designated tags; define tailscale_tags
+          Joins advertise designated tags; define tailscale_tags
           for {{ inventory_hostname }} in inventory (no tag: prefix).
       when: (tailscale_state | default('latest')) != 'absent'
 
