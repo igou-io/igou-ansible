@@ -59,6 +59,10 @@ provisioner:
     defaults:
       host_key_checking: false
       verbosity: 1
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
   playbooks:
     create: ../shared/playbooks/podman-create.yml
     destroy: ../shared/playbooks/podman-destroy.yml
@@ -68,6 +72,7 @@ provisioner:
     group_vars:
       all:
         ansible_connection: containers.podman.podman
+        ansible_user: root  # repo ansible.cfg's remote_user=igou doesn't exist in the images
         update_cache: true
         ansible_become: false
         reboot_required_check: true

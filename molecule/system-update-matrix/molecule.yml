@@ -8,8 +8,11 @@ dependency:
   options:
     ignore_errors: true
 
+# The legacy molecule-podman driver plugin is gone in molecule >= 25; the
+# shared create/destroy playbooks manage the containers, so 'default' is
+# correct (same as the system-update-podman scenario).
 driver:
-  name: podman
+  name: default
 
 platforms:
   - name: "rockylinux9"
@@ -59,6 +62,10 @@ provisioner:
     defaults:
       host_key_checking: false
       verbosity: 0
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
   playbooks:
     create: ../shared/playbooks/podman-create.yml
     destroy: ../shared/playbooks/podman-destroy.yml
@@ -67,6 +74,9 @@ provisioner:
   inventory:
     group_vars:
       all:
+        ansible_connection: containers.podman.podman
+        ansible_user: root  # repo ansible.cfg's remote_user=igou doesn't exist in the images
+        ansible_become: false
         update_cache: true
         reboot_required_check: true
 

@@ -1,8 +1,64 @@
 ---
-- name: Reboot all hosts
-  hosts: all
+# Reboot hosts and verify they come back.
+#
+# Targeting: pass ansible_limit=<host-or-group> (AAP template: system_reboot).
+# Defaults to 'none' so a launch without a target reboots nothing — never 'all'.
+#
+# Variables:
+#   reboot_serial        - rolling batch size (default 1: one host at a time,
+#                          safe for rk8s cluster nodes; use '100%' for parallel)
+#   reboot_required_only - only reboot hosts that actually need it
+#                          (default false: always reboot). Debian family checks
+#                          /var/run/reboot-required; RedHat family uses
+#                          needs-restarting -r (dnf-utils/yum-utils) and skips
+#                          the host if the tool is missing.
+#   reboot_timeout       - seconds to wait for the host to return (default 600)
+- name: Reboot hosts and verify they return
+  hosts: "{{ ansible_limit | default('none') }}"
   become: true
-  gather_facts: false
+  gather_facts: true
+  serial: "{{ reboot_serial | default(1) }}"
+  vars:
+    reboot_required_only: false
+    reboot_timeout: 600
   tasks:
-    - name: Unconditionally reboot the machine with all defaults
+
+    - name: Check if a reboot is required (Debian family)
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: debian_reboot_required
+      when:
+        - reboot_required_only | bool
+        - ansible_facts.os_family == 'Debian'
+
+    - name: Check if a reboot is required (RedHat family)
+      ansible.builtin.command: needs-restarting -r
+      register: rhel_reboot_required
+      changed_when: false
+      failed_when: false  # rc 1 = reboot needed; missing tool must not abort the play
+      when:
+        - reboot_required_only | bool
+        - ansible_facts.os_family == 'RedHat'
+
+    - name: Decide whether this host reboots
+      ansible.builtin.set_fact:
+        host_needs_reboot: >-
+          {{ not (reboot_required_only | bool)
+             or (debian_reboot_required.stat.exists | default(false))
+             or (rhel_reboot_required.rc | default(0)) == 1 }}
+
+    - name: Reboot the host
       ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+      when: host_needs_reboot
+
+    - name: Report post-reboot state
+      ansible.builtin.command: uptime
+      register: post_reboot_uptime
+      changed_when: false
+      when: host_needs_reboot
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: >-
+          {{ post_reboot_uptime.stdout | default('no reboot required — skipped') }}
