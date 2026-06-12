@@ -1,6 +1,7 @@
 ---
 # Set a board's boot mode via -e override (highest precedence), then
 # converge. Thin wrapper over converge_boot_mode.yaml.
+# Boot modes are documented in docs/armbian-boot-modes.md.
 #
 # Usage:
 #   ansible-playbook playbooks/armbian/set_boot_mode.yaml \
@@ -14,7 +15,7 @@
     - name: Assert armbian_boot_mode is set via -e
       ansible.builtin.assert:
         that: armbian_boot_mode is defined
-        fail_msg: "set_boot_mode requires -e armbian_boot_mode=nfs|sd|local"
+        fail_msg: "set_boot_mode requires -e armbian_boot_mode=nfs|sd|local|local_kernel"
 
 - name: Converge to the requested boot mode
   ansible.builtin.import_playbook: converge_boot_mode.yaml
