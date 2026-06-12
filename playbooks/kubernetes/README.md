@@ -40,12 +40,14 @@ ansible-navigator run playbooks/kubernetes/install-k3s-cluster.yml \
 After install, the imported `publish-kubeconfig-1password.yaml` play
 slurps the kubeconfig from the control-plane node
 (`/etc/rancher/k3s/k3s.yaml`), rewrites the server URL to the control
-node's FQDN, and upserts it to `op://awx/<cluster>-kubeconfig` (the
-`kubeconfig` field is base64 — decode on use). Needs `OP_CONNECT_HOST`
-and `OP_CONNECT_TOKEN` in the env (AAP injects them via the
-"Onepassword Connect" credential); without them the publish step skips
-with a warning. Re-publish on demand via the `k3s_publish_kubeconfig`
-AAP template or by running the publish playbook directly.
+node's FQDN, and upserts it to `op://claude/<cluster>-kubeconfig` (the
+`kubeconfig` field is base64 — decode on use). The devcontainer loads
+it with `use rk8s` (igou-devenv `envs/rk8s.env`). Needs
+`OP_CONNECT_HOST` and `OP_CONNECT_TOKEN` in the env (AAP injects them
+via the "Onepassword Connect" credential) and a token with write access
+to the claude vault; without the env the publish step skips with a
+warning. Re-publish on demand via the `k3s_publish_kubeconfig` AAP
+template or by running the publish playbook directly.
 
 ## Install — kubernetes (alternative)
 
