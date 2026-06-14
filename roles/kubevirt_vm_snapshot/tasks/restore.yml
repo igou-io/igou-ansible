@@ -18,7 +18,7 @@
 
 - name: Stop the VM (restore requires it stopped)
   kubernetes.core.k8s:
-    state: present
+    state: patched
     definition:
       apiVersion: kubevirt.io/v1
       kind: VirtualMachine
@@ -69,7 +69,7 @@
 
 - name: Restore the VM's prior runStrategy
   kubernetes.core.k8s:
-    state: present
+    state: patched
     definition:
       apiVersion: kubevirt.io/v1
       kind: VirtualMachine
