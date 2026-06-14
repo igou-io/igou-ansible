@@ -1,0 +1,12 @@
+---
+hermes_user: hermes
+hermes_home: /home/hermes
+hermes_state_device: /dev/vdb
+hermes_state_mount: "{{ hermes_home }}/.hermes"
+# LLM (custom OpenAI-compatible endpoint)
+hermes_llm_base_url: "http://qwen35-2b.llmkube-system.svc.cluster.local:8080/v1"
+hermes_llm_model: "qwen35-2b"
+hermes_llm_api_key: "sk-no-key"   # qwen35-2b accepts any/none; placeholder
+# in-guest nftables coarse egress backstop (OVN EgressFirewall is the real control)
+hermes_cluster_service_cidr: "172.30.0.0/16"
+hermes_install_url: "https://hermes-agent.nousresearch.com/install.sh"
