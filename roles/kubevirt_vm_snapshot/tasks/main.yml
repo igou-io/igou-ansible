@@ -1,0 +1,13 @@
+---
+- name: Validate inputs
+  ansible.builtin.assert:
+    that:
+      - vm_name | length > 0
+      - vm_namespace | length > 0
+      - snapshot_action in ['create', 'restore', 'list', 'prune']
+    fail_msg: >-
+      vm_name and vm_namespace are required; snapshot_action must be one of
+      create|restore|list|prune (got '{{ snapshot_action }}').
+
+- name: "Dispatch snapshot action: {{ snapshot_action }}"
+  ansible.builtin.include_tasks: "{{ snapshot_action }}.yml"

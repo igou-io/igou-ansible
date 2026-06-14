@@ -1,0 +1,40 @@
+---
+- name: Default snapshot name from VM + UTC timestamp
+  ansible.builtin.set_fact:
+    snapshot_name: "{{ vm_name }}-{{ lookup('pipe', 'date -u +%Y%m%d-%H%M%S') }}"
+  when: snapshot_name | length == 0
+
+- name: "Create VirtualMachineSnapshot {{ snapshot_name }}"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: snapshot.kubevirt.io/v1beta1
+      kind: VirtualMachineSnapshot
+      metadata:
+        name: "{{ snapshot_name }}"
+        namespace: "{{ vm_namespace }}"
+        labels: "{{ snapshot_labels | combine({'kubevirt.io/vm': vm_name}) }}"
+      spec:
+        source:
+          apiGroup: kubevirt.io
+          kind: VirtualMachine
+          name: "{{ vm_name }}"
+
+- name: Wait for snapshot to be readyToUse
+  kubernetes.core.k8s_info:
+    api_version: snapshot.kubevirt.io/v1beta1
+    kind: VirtualMachineSnapshot
+    name: "{{ snapshot_name }}"
+    namespace: "{{ vm_namespace }}"
+  register: _snap
+  until: _snap.resources[0].status.readyToUse | default(false) | bool
+  retries: "{{ ((snapshot_wait_timeout | int) // 10) }}"
+  delay: 10
+
+- name: Report snapshot ready
+  ansible.builtin.debug:
+    msg: "VirtualMachineSnapshot {{ snapshot_name }} is readyToUse."
+
+- name: Prune to retention after create
+  ansible.builtin.include_tasks: prune.yml
+  when: snapshot_prune_after_create | bool
