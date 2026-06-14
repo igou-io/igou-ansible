@@ -1,0 +1,38 @@
+---
+# Purpose: prove the role's input validation rejects bad input BEFORE any
+# cluster call. We include the real role (tasks/main.yml) with vm_name="" and
+# snapshot_action=list; the very first task is an assert that must fail, so the
+# include never reaches the k8s dispatch. block/rescue catches the failure and
+# we assert the play saw exactly that.
+- name: Converge — input validation rejects empty vm_name
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Set invalid input (empty vm_name) for the role under test
+      ansible.builtin.set_fact:
+        vm_name: ""
+        vm_namespace: hermes
+        snapshot_action: list
+
+    - name: Include kubevirt_vm_snapshot with invalid input (expect assert to fail)
+      block:
+        - name: Apply role under test with empty vm_name
+          ansible.builtin.include_role:
+            name: kubevirt_vm_snapshot
+        - name: This must never run — validation should have failed first
+          ansible.builtin.set_fact:
+            _validation_caught: false
+      rescue:
+        - name: Record that the expected validation failure was caught
+          ansible.builtin.set_fact:
+            _validation_caught: true
+
+    - name: Assert the input-validation assertion fired
+      ansible.builtin.assert:
+        that:
+          - _validation_caught | bool
+        fail_msg: >-
+          kubevirt_vm_snapshot did NOT reject empty vm_name — the input
+          validation in tasks/main.yml is not guarding as expected.
+        success_msg: Input validation correctly rejected empty vm_name.
