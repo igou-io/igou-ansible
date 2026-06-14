@@ -10,8 +10,12 @@ snapshot_action: list
 snapshot_name: ""
 
 # create options
-snapshot_online: true            # online (guest-agent quiesce) vs offline
-snapshot_prune_after_create: true  # prune to retention after a successful create
+# CNV auto-decides online (guest-agent quiesce) vs offline from VM
+# running-state + guest agent; VirtualMachineSnapshot has no such flag.
+# Default false so a manual one-off `create` never silently deletes older
+# snapshots; the nightly AAP schedule sets snapshot_prune_after_create: true
+# to enforce retention.
+snapshot_prune_after_create: false  # prune to retention after a successful create
 
 # prune retention
 snapshot_retention_count: 7      # keep N newest snapshots for this VM

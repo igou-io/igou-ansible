@@ -28,6 +28,13 @@
     namespace: "{{ vm_namespace }}"
   register: _snap
   until: _snap.resources[0].status.readyToUse | default(false) | bool
+  # Fail fast on a TERMINAL snapshot error instead of spinning the full
+  # snapshot_wait_timeout. CNV stamps status.error.message on the failure
+  # path (oc explain virtualmachinesnapshot.status.error -> message/time);
+  # an in-progress poll has no status.error, so this is neither failed nor
+  # done mid-flight and the existing `until` still governs success.
+  failed_when: >-
+    _snap.resources[0].status.error.message | default('') | length > 0
   retries: "{{ ((snapshot_wait_timeout | int) // 10) }}"
   delay: 10
 

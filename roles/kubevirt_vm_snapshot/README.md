@@ -15,8 +15,10 @@ the same snapshot/restore/retention logic is reused everywhere.
   KubeVirt CRDs (`snapshot.kubevirt.io`) present on the target cluster.
 - Cluster credentials supplied the usual way (`KUBECONFIG`, or the
   `K8S_AUTH_HOST` / `K8S_AUTH_API_KEY` environment variables).
-- For `snapshot_online: true` (the default), the guest agent must be running
-  inside the VM so the filesystem can be quiesced.
+- For an online (guest-agent-quiesced) snapshot, the guest agent must be
+  running inside the VM. CNV decides online vs offline automatically from the
+  VM's running-state and guest-agent presence — `VirtualMachineSnapshot` has no
+  online/offline flag, so the role does not expose one.
 
 ## Role variables
 
@@ -28,8 +30,7 @@ Every variable below is defined in `defaults/main.yml`.
 | `vm_namespace` | `""` | Namespace of the target VM. Required for every action. |
 | `snapshot_action` | `list` | Operation to run: `create`, `restore`, `list`, or `prune`. |
 | `snapshot_name` | `""` | For `create`, optional — defaults to `<vm_name>-<UTC ts>`. For `restore`, required — selects which snapshot to restore. |
-| `snapshot_online` | `true` | When creating, take an online snapshot (guest-agent quiesce) instead of an offline one. |
-| `snapshot_prune_after_create` | `true` | After a successful `create`, prune the VM's snapshots down to `snapshot_retention_count`. |
+| `snapshot_prune_after_create` | `false` | After a successful `create`, prune the VM's snapshots down to `snapshot_retention_count`. Off by default so a manual one-off `create` never silently deletes older snapshots; the nightly AAP schedule sets this to `true` to enforce retention. |
 | `snapshot_retention_count` | `7` | Number of newest snapshots to keep for this VM when pruning. |
 | `snapshot_restore_confirm` | `false` | Safety guard — must be `true` for a `restore` to proceed. |
 | `snapshot_restore_restart` | `true` | After a restore, restore the VM's prior `runStrategy`. |
@@ -40,7 +41,7 @@ Every variable below is defined in `defaults/main.yml`.
 
 | Action | Required vars | Effect |
 | --- | --- | --- |
-| `create` | `vm_name`, `vm_namespace` | Creates a `VirtualMachineSnapshot` (named `snapshot_name`, or `<vm_name>-<UTC ts>` if unset). Online unless `snapshot_online: false`. When `snapshot_prune_after_create` is `true`, prunes to `snapshot_retention_count` afterward. |
+| `create` | `vm_name`, `vm_namespace` | Creates a `VirtualMachineSnapshot` (named `snapshot_name`, or `<vm_name>-<UTC ts>` if unset). CNV auto-selects online vs offline. When `snapshot_prune_after_create` is `true` (off by default), prunes to `snapshot_retention_count` afterward. |
 | `restore` | `vm_name`, `vm_namespace`, `snapshot_name`, `snapshot_restore_confirm: true` | Creates a `VirtualMachineRestore` from `snapshot_name`. **Double-guarded:** both `snapshot_name` and `snapshot_restore_confirm: true` are required, or the action refuses to run. Restores the prior `runStrategy` when `snapshot_restore_restart` is `true`. |
 | `list` | `vm_name`, `vm_namespace` | Read-only. Lists the `VirtualMachineSnapshot` objects for the VM, newest first. Default action. |
 | `prune` | `vm_name`, `vm_namespace` | Deletes the oldest snapshots for the VM, keeping the newest `snapshot_retention_count`. |
@@ -49,15 +50,18 @@ Notes:
 
 - `restore` is intentionally hard to trigger by accident: it requires an
   explicit `snapshot_name` **and** `snapshot_restore_confirm: true`.
-- `create` auto-prunes when `snapshot_prune_after_create` is `true`, so a
-  scheduled "create" keeps retention bounded without a separate `prune` run.
+- `create` does **not** prune by default (`snapshot_prune_after_create: false`),
+  so a manual one-off `create` never silently deletes older snapshots. The
+  nightly AAP schedule sets `snapshot_prune_after_create: true` so a scheduled
+  "create" keeps retention bounded without a separate `prune` run.
 
 ## Example invocations
 
 Both examples assume a playbook `playbooks/kubevirt/snapshot.yml` that includes
 this role and that cluster credentials are present in the environment.
 
-Create an online snapshot (and auto-prune to retention):
+Create a snapshot (CNV picks online vs offline; pass
+`snapshot_prune_after_create=true` to also prune to retention):
 
 ```yaml
 ---

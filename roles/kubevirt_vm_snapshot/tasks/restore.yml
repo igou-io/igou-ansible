@@ -64,6 +64,18 @@
     namespace: "{{ vm_namespace }}"
   register: _restore_info
   until: _restore_info.resources[0].status.complete | default(false) | bool
+  # Fail fast on a TERMINAL restore failure instead of spinning the full
+  # snapshot_wait_timeout. VirtualMachineRestore has NO status.error field;
+  # the controller signals terminal failure with a condition type "Failure"
+  # set status "True" (KubeVirt release-1.5 doUpdateErrorWithFailure ->
+  # newFailureCondition(ConditionTrue, errMsg)). An in-progress poll only
+  # carries Progressing/Ready conditions, so this neither fails nor satisfies
+  # `until` mid-flight; the existing `until` still governs success.
+  failed_when: >-
+    _restore_info.resources[0].status.conditions | default([])
+    | selectattr('type', 'equalto', 'Failure')
+    | selectattr('status', 'equalto', 'True')
+    | list | length > 0
   retries: "{{ ((snapshot_wait_timeout | int) // 10) }}"
   delay: 10
 
