@@ -1,0 +1,27 @@
+---
+vm_name: hermes
+vm_namespace: hermes
+vm_run_strategy: Always
+
+# image clone (match golden size — NO resize)
+vm_os_datasource: centos-stream10
+vm_storage_class: freenas-nvmeof-ssd-csi
+vm_root_size: 30Gi
+
+# burstable compute (no resources block -> Burstable QoS; cluster has no CPU-Manager static policy)
+vm_cpu_cores: 4
+vm_memory: 8Gi
+
+# the Argo-owned blank state DV/PVC (NOT in dataVolumeTemplates, so VM delete keeps it)
+vm_state_pvc: hermes-state
+
+vm_labels:
+  app: hermes
+  app.kubernetes.io/managed-by: ansible
+
+# SSH public key seeded for Phase 2b convergence (non-secret). Override via
+# extra_vars at launch; the matching private key lives in 1Password (Phase 2b).
+vm_ssh_authorized_key: ""
+
+vm_wait: true
+vm_wait_timeout: 600

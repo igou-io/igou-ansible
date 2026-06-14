@@ -1,0 +1,94 @@
+---
+- name: Provision the Hermes KubeVirt VM
+  hosts: "{{ host | default('localhost') }}"
+  connection: local
+  gather_facts: false
+  vars_files:
+    - vars/hermes-vm.yml
+  tasks:
+    - name: "Rebuild: delete existing VM first"
+      kubevirt.core.kubevirt_vm:
+        state: absent
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+        wait: true
+      when: rebuild | default(false) | bool
+
+    - name: Converge the Hermes VM (idempotent)
+      kubevirt.core.kubevirt_vm:
+        state: present
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+        labels: "{{ vm_labels }}"
+        run_strategy: "{{ vm_run_strategy }}"
+        data_volume_templates:
+          - metadata:
+              name: "{{ vm_name }}-root"
+            spec:
+              sourceRef:
+                kind: DataSource
+                name: "{{ vm_os_datasource }}"
+                namespace: openshift-virtualization-os-images
+              storage:
+                storageClassName: "{{ vm_storage_class }}"
+                resources:
+                  requests:
+                    storage: "{{ vm_root_size }}"
+        spec:
+          domain:
+            cpu:
+              cores: "{{ vm_cpu_cores | int }}"
+              sockets: 1
+              threads: 1
+            memory:
+              guest: "{{ vm_memory }}"
+            firmware:
+              bootloader:
+                bios: {}
+            machine:
+              type: q35
+            devices:
+              disks:
+                - name: root
+                  disk:
+                    bus: virtio
+                - name: state
+                  disk:
+                    bus: virtio
+                - name: cloudinit
+                  disk:
+                    bus: virtio
+              interfaces:
+                - name: default
+                  masquerade: {}
+              rng: {}
+              logSerialConsole: true
+          networks:
+            - name: default
+              pod: {}
+          volumes:
+            - name: root
+              dataVolume:
+                name: "{{ vm_name }}-root"
+            - name: state
+              persistentVolumeClaim:
+                claimName: "{{ vm_state_pvc }}"
+            - name: cloudinit
+              cloudInitNoCloud:
+                userData: "{{ lookup('template', 'templates/hermes-cloudinit.yaml.j2') }}"
+        wait: "{{ vm_wait | bool }}"
+        wait_timeout: "{{ vm_wait_timeout | int }}"
+      when: vm_state | default('present') == 'present'
+
+    - name: Deprovision the Hermes VM
+      kubevirt.core.kubevirt_vm:
+        state: absent
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+        wait: true
+      when: vm_state | default('present') == 'absent'
+
+    - name: Register VM identity for downstream workflow nodes
+      ansible.builtin.set_stats:
+        data:
+          hermes_vm: "{{ vm_namespace }}/{{ vm_name }}"

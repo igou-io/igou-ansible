@@ -1,0 +1,11 @@
+---
+- name: Hermes VM snapshot lifecycle
+  hosts: "{{ host | default('localhost') }}"
+  connection: local
+  gather_facts: false
+  vars:
+    vm_name: hermes
+    vm_namespace: hermes
+    snapshot_action: list
+  roles:
+    - role: kubevirt_vm_snapshot
