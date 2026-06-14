@@ -6,7 +6,7 @@ lifecycle; **guest convergence (Phase 2b) is out of scope** — the VM boots
 SSH-ready via cloud-init and nothing more.
 
 - Playbooks: `playbooks/hermes/provision-vm.yml`, `playbooks/hermes/snapshot-vm.yml`
-- VM spec vars: `playbooks/hermes/vars/hermes-vm.yml`
+- VM spec vars: inline `vars:` block in `playbooks/hermes/provision-vm.yml`
 - Snapshot/restore logic: `roles/kubevirt_vm_snapshot/` (see its `README.md` for
   the full variable contract)
 - All commands assume CWD `/workspace/igou-ansible` with `KUBECONFIG` (or
@@ -26,8 +26,8 @@ SSH-ready via cloud-init and nothing more.
 
 ## Provision / converge
 
-Idempotent. Re-running reconciles the live `VirtualMachine` to
-`vars/hermes-vm.yml`. Seed the operator SSH key at launch (non-secret public
+Idempotent. Re-running reconciles the live `VirtualMachine` to the
+playbook's inline `vars:`. Seed the operator SSH key at launch (non-secret public
 key; the matching private key lives in 1Password for Phase 2b):
 
 ```bash
@@ -169,7 +169,7 @@ The Hermes job templates and schedule live in `igou-inventory`
 the `virtualmachine-deployer-token` credential and the `igou-awx-ee` EE. The
 simple per-VM values (`vm_name: hermes`, `vm_namespace: hermes`, SSH pubkey,
 retention) are job-template `extra_vars`; the complex VM spec stays in this repo
-(`vars/hermes-vm.yml`).
+(inline `vars:` in `provision-vm.yml`).
 
 | AAP object | Purpose |
 |---|---|
