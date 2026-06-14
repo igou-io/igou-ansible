@@ -4,6 +4,7 @@
   connection: local
   gather_facts: false
   vars:
+    # --- Hermes VM shape, consumed by the reusable kubevirt_vm_provision role ---
     vm_name: hermes
     vm_namespace: hermes
     vm_run_strategy: Always
@@ -14,100 +15,25 @@
     # burstable compute (no resources block -> Burstable QoS; cluster has no CPU-Manager static policy)
     vm_cpu_cores: 4
     vm_memory: 8Gi
-    # the Argo-owned blank state DV/PVC (NOT in dataVolumeTemplates, so VM delete keeps it)
-    vm_state_pvc: hermes-state
+    vm_firmware: bios
+    # the Argo-owned blank state PVC, attached as a plain PVC -> survives VM delete/rebuild
+    vm_extra_pvcs:
+      - name: state
+        claim: hermes-state
     vm_labels:
       app: hermes
       app.kubernetes.io/managed-by: ansible
-    # SSH public key seeded for Phase 2b convergence (non-secret). Override via
-    # extra_vars at launch; the matching private key lives in 1Password (Phase 2b).
+    # SSH public key seeded for Phase 2b convergence (non-secret); rendered into cloud-init below.
+    # Override via extra_vars at launch; the matching private key lives in 1Password (Phase 2b).
     vm_ssh_authorized_key: ""
-    vm_wait: true
     vm_wait_timeout: 600
-  tasks:
-    - name: "Rebuild: delete existing VM first"
-      kubevirt.core.kubevirt_vm:
-        state: absent
-        name: "{{ vm_name }}"
-        namespace: "{{ vm_namespace }}"
-        wait: true
-      when: rebuild | default(false) | bool
-
-    - name: Converge the Hermes VM (idempotent)
-      kubevirt.core.kubevirt_vm:
-        state: present
-        name: "{{ vm_name }}"
-        namespace: "{{ vm_namespace }}"
-        labels: "{{ vm_labels }}"
-        run_strategy: "{{ vm_run_strategy }}"
-        data_volume_templates:
-          - metadata:
-              name: "{{ vm_name }}-root"
-            spec:
-              sourceRef:
-                kind: DataSource
-                name: "{{ vm_os_datasource }}"
-                namespace: openshift-virtualization-os-images
-              storage:
-                storageClassName: "{{ vm_storage_class }}"
-                resources:
-                  requests:
-                    storage: "{{ vm_root_size }}"
-        spec:
-          domain:
-            cpu:
-              cores: "{{ vm_cpu_cores | int }}"
-              sockets: 1
-              threads: 1
-            memory:
-              guest: "{{ vm_memory }}"
-            firmware:
-              bootloader:
-                bios: {}
-            machine:
-              type: q35
-            devices:
-              disks:
-                - name: root
-                  disk:
-                    bus: virtio
-                - name: state
-                  disk:
-                    bus: virtio
-                - name: cloudinit
-                  disk:
-                    bus: virtio
-              interfaces:
-                - name: default
-                  masquerade: {}
-              rng: {}
-              logSerialConsole: true
-          networks:
-            - name: default
-              pod: {}
-          volumes:
-            - name: root
-              dataVolume:
-                name: "{{ vm_name }}-root"
-            - name: state
-              persistentVolumeClaim:
-                claimName: "{{ vm_state_pvc }}"
-            - name: cloudinit
-              cloudInitNoCloud:
-                userData: "{{ lookup('template', 'templates/hermes-cloudinit.yaml.j2') }}"
-        wait: "{{ vm_wait | bool }}"
-        wait_timeout: "{{ vm_wait_timeout | int }}"
-      when: vm_state | default('present') == 'present'
-
-    - name: Deprovision the Hermes VM
-      kubevirt.core.kubevirt_vm:
-        state: absent
-        name: "{{ vm_name }}"
-        namespace: "{{ vm_namespace }}"
-        wait: true
-      when: vm_state | default('present') == 'absent'
-
-    - name: Register VM identity for downstream workflow nodes
-      ansible.builtin.set_stats:
-        data:
-          hermes_vm: "{{ vm_namespace }}/{{ vm_name }}"
+    # map the legacy AAP/CLI 'rebuild' extra_var onto the role's vm_rebuild
+    vm_rebuild: "{{ rebuild | default(false) | bool }}"
+  pre_tasks:
+    # Render in the playbook context so 'templates/' resolves to playbooks/hermes/templates/
+    # (not the role's templates/), then hand the string to the role as vm_cloud_init.
+    - name: Render the Hermes cloud-init
+      ansible.builtin.set_fact:
+        vm_cloud_init: "{{ lookup('template', 'templates/hermes-cloudinit.yaml.j2') }}"
+  roles:
+    - role: kubevirt_vm_provision

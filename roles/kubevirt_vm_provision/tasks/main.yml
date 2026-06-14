@@ -1,0 +1,111 @@
+---
+- name: Validate inputs
+  ansible.builtin.assert:
+    that:
+      - vm_name | length > 0
+      - vm_namespace | length > 0
+      - vm_state in ['present', 'absent']
+      - vm_firmware in ['bios', 'efi']
+      - vm_state == 'absent' or (vm_os_datasource | length > 0)
+    fail_msg: >-
+      vm_name and vm_namespace are required; vm_state must be present|absent;
+      vm_firmware must be bios|efi; vm_os_datasource is required when provisioning.
+
+- name: Deprovision the VM
+  kubevirt.core.kubevirt_vm:
+    state: absent
+    name: "{{ vm_name }}"
+    namespace: "{{ vm_namespace }}"
+    wait: true
+  when: vm_state == 'absent'
+
+- name: Provision / converge the VM
+  when: vm_state == 'present'
+  block:
+    - name: "Rebuild: delete the existing VM first"
+      kubevirt.core.kubevirt_vm:
+        state: absent
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+        wait: true
+      when: vm_rebuild | bool
+
+    # Reset accumulators so the role is re-entrant (safe to call in a loop).
+    - name: Reset device/volume accumulators
+      ansible.builtin.set_fact:
+        _kvp_pvc_disks: []
+        _kvp_pvc_volumes: []
+
+    - name: "Build extra-PVC disks + volumes"
+      ansible.builtin.set_fact:
+        _kvp_pvc_disks: "{{ _kvp_pvc_disks + [{'name': item.name, 'disk': {'bus': 'virtio'}}] }}"
+        _kvp_pvc_volumes: "{{ _kvp_pvc_volumes + [{'name': item.name, 'persistentVolumeClaim': {'claimName': item.claim}}] }}"
+      loop: "{{ vm_extra_pvcs }}"
+      loop_control:
+        label: "{{ item.name }} -> {{ item.claim }}"
+
+    - name: Assemble disks + volumes
+      ansible.builtin.set_fact:
+        _kvp_disks: >-
+          {{ [{'name': 'root', 'disk': {'bus': 'virtio'}}]
+             + _kvp_pvc_disks
+             + ([{'name': 'cloudinit', 'disk': {'bus': 'virtio'}}] if (vm_cloud_init | length > 0) else []) }}
+        _kvp_volumes: >-
+          {{ [{'name': 'root', 'dataVolume': {'name': vm_name ~ '-root'}}]
+             + _kvp_pvc_volumes
+             + ([{'name': 'cloudinit', 'cloudInitNoCloud': {'userData': vm_cloud_init}}] if (vm_cloud_init | length > 0) else []) }}
+
+    - name: Assemble devices + firmware + root storage
+      ansible.builtin.set_fact:
+        _kvp_devices: >-
+          {{ {'disks': _kvp_disks,
+              'interfaces': [{'name': 'default', 'masquerade': {}}],
+              'logSerialConsole': (vm_log_serial_console | bool)}
+             | combine({'rng': {}} if (vm_rng | bool) else {}) }}
+        _kvp_firmware: >-
+          {{ {'bootloader': {'bios': {}}}
+             if vm_firmware == 'bios'
+             else {'bootloader': {'efi': {'secureBoot': false}}} }}
+        _kvp_root_storage: >-
+          {{ {'resources': {'requests': {'storage': vm_root_size}}}
+             | combine({'storageClassName': vm_storage_class} if (vm_storage_class | length > 0) else {}) }}
+
+    - name: Converge the VM (idempotent)
+      kubevirt.core.kubevirt_vm:
+        state: present
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+        labels: "{{ vm_labels }}"
+        run_strategy: "{{ vm_run_strategy }}"
+        data_volume_templates:
+          - metadata:
+              name: "{{ vm_name }}-root"
+            spec:
+              sourceRef:
+                kind: DataSource
+                name: "{{ vm_os_datasource }}"
+                namespace: "{{ vm_os_datasource_namespace }}"
+              storage: "{{ _kvp_root_storage }}"
+        spec:
+          domain:
+            cpu:
+              cores: "{{ vm_cpu_cores | int }}"
+              sockets: "{{ vm_cpu_sockets | int }}"
+              threads: "{{ vm_cpu_threads | int }}"
+            memory:
+              guest: "{{ vm_memory }}"
+            firmware: "{{ _kvp_firmware }}"
+            machine:
+              type: "{{ vm_machine_type }}"
+            devices: "{{ _kvp_devices }}"
+          networks:
+            - name: default
+              pod: {}
+          volumes: "{{ _kvp_volumes }}"
+        wait: "{{ vm_wait | bool }}"
+        wait_timeout: "{{ vm_wait_timeout | int }}"
+
+    - name: Register VM identity for downstream workflow nodes
+      ansible.builtin.set_stats:
+        data:
+          provisioned_vm: "{{ vm_namespace }}/{{ vm_name }}"

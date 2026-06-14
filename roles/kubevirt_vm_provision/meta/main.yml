@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: kubevirt_vm_provision
+  author: david-igou
+  description: >-
+    Idempotently provision a KubeVirt VirtualMachine from a cloud-image
+    DataSource clone (burstable, masquerade pod networking, cloud-init), with
+    rebuild and deprovision support. Generic + reusable across VM deployments.
+  license: MIT
+  min_ansible_version: "2.15"
+  galaxy_tags:
+    - kubevirt
+    - openshift
+    - virtualization
+dependencies: []

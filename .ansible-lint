@@ -14,3 +14,4 @@ exclude_paths:
   - playbooks/zfs/  # ansible-zfs
   - roles/kubevirt_provision_survey/  # infra.controller_configuration.job_templates
   - roles/kubevirt_vm_snapshot/  # short interface + internal register/set_fact vars intentionally unprefixed for ergonomic CLI/extra_vars; lint logic via `ansible-lint -x var-naming`
+  - roles/kubevirt_vm_provision/  # same: short vm_* interface + internal _kvp_* accumulators; lint logic via `ansible-lint -x var-naming`

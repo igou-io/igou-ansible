@@ -6,7 +6,8 @@ lifecycle; **guest convergence (Phase 2b) is out of scope** — the VM boots
 SSH-ready via cloud-init and nothing more.
 
 - Playbooks: `playbooks/hermes/provision-vm.yml`, `playbooks/hermes/snapshot-vm.yml`
-- VM spec vars: inline `vars:` block in `playbooks/hermes/provision-vm.yml`
+- Provisioning logic: `roles/kubevirt_vm_provision/` (generic + reusable; the
+  playbook just passes Hermes values). VM-spec knobs are the playbook's `vars:`.
 - Snapshot/restore logic: `roles/kubevirt_vm_snapshot/` (see its `README.md` for
   the full variable contract)
 - All commands assume CWD `/workspace/igou-ansible` with `KUBECONFIG` (or
