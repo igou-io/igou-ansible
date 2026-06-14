@@ -35,6 +35,9 @@
     executable: /bin/bash
   become: true
   become_user: "{{ hermes_user }}"
+  # hermes is a service user that may have a nologin shell; -i forces a login
+  # shell so the install script gets a sane $HOME/$PATH environment.
+  become_flags: '-i'
   changed_when: true   # only runs when 'creates' target is absent
 
 - name: Confirm the Hermes CLI and capture its version
@@ -42,5 +45,6 @@
     cmd: "{{ hermes_home }}/.local/bin/hermes --version"
   become: true
   become_user: "{{ hermes_user }}"
+  become_flags: '-i'
   register: hermes_version
   changed_when: false

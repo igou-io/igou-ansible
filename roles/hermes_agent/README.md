@@ -6,11 +6,18 @@ does only two things, split into two separately-invoked phases:
 1. **install** — format/mount the persistent state disk and run the Hermes
    installer.
 2. **configure** — render the CLI config, an in-guest nftables egress backstop,
-   the read-only skills dir, and a hardened systemd user unit.
+   and a hardened systemd user unit.
 
 Baseline OS hardening, the `igou`/`hermes` users, and OS package installation
 are **out of scope** for this role. They come from the reused `linux_baseline`
 and `install_packages` playbooks and run separately.
+
+> **Prerequisite:** `group_vars/hermes` must list `hermes` as a baseline service
+> user so `linux_baseline` creates it and enables systemd **linger** for it.
+> Linger is what materializes `/run/user/<uid>` (and the per-user D-Bus socket),
+> which the rootless `systemctl --user` daemon-reload in the configure phase
+> needs. The role also defensively enables linger itself, so it is self-sufficient
+> if baseline ordering ever slips, but the user must still exist.
 
 ## Two-phase model
 
@@ -21,7 +28,7 @@ no tag/`never` dispatch; each phase is a separate task file invoked with
 | Phase       | Task file                | Network         | What it does                                                        |
 | ----------- | ------------------------ | --------------- | ------------------------------------------------------------------- |
 | `install`   | `tasks/install.yml`      | **egress open** | xfs-format `/dev/vdb`, mount at `~/.hermes` (fstab), chown, run installer |
-| `configure` | `tasks/configure.yml`    | **egress locked** | render `cli-config.yaml` + `.env`, load nftables backstop, install (not start) the systemd unit, persistent journald |
+| `configure` | `tasks/configure.yml`    | **egress locked** | render `cli-config.yaml` + `.env`, validate+load nftables backstop, install (not start) the systemd unit, persistent journald |
 
 Run order: `install` (during the egress window) → lock egress → `configure`.
 
@@ -81,7 +88,14 @@ Secrets live in `~/.hermes/.env` (mode `0600`): `OPENAI_API_KEY`,
   output allowing loopback, established/related, DNS, the LLM service CIDR on
   8080, and external HTTPS. This is defense-in-depth only — the precise control
   is the OVN-Kubernetes EgressFirewall (pins external reach to api.telegram.org).
-- **skills** dir is `0555` (read-only).
+  The ruleset is declare-then-delete at the top so each `nft -f` atomically
+  replaces the table (idempotent re-runs, no duplicate-rule accumulation), and is
+  dry-run validated (`nft -c -f`) before the live load.
+- **skills** dir (`~/.hermes/skills`) is owned by the installer and left
+  writable: Hermes's autonomous skill creation is a core feature, so it is **not**
+  clamped read-only. A `0555` chmod would break that learning loop and is not real
+  immutability anyway. **Proper immutable, Git-gated skills are deferred §5.5
+  work** — do not approximate it with chmod.
 - **journald** is set to persistent storage.
 
 ## Go-live (messaging deferred)
@@ -96,5 +110,5 @@ live:
    ```bash
    systemctl --user enable --now hermes.service
    ```
-   (Enable lingering — `loginctl enable-linger hermes` — so the user manager
-   runs without an active login.)
+   (Lingering is already enabled by the configure phase — and expected from
+   `linux_baseline` — so the user manager runs without an active login.)

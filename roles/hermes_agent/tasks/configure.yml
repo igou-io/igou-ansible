@@ -1,8 +1,8 @@
 ---
 # Configure phase — runs with egress LOCKED (no network needed). Renders the
-# CLI config + secrets, the in-guest nftables egress backstop, the read-only
-# skills dir, and a hardened systemd USER unit. The unit is installed but NOT
-# enabled/started: messaging (Telegram) is deferred to go-live.
+# CLI config + secrets, the in-guest nftables egress backstop, and a hardened
+# systemd USER unit. The unit is installed but NOT enabled/started: messaging
+# (Telegram) is deferred to go-live.
 
 - name: Render the Hermes CLI config
   ansible.builtin.template:
@@ -51,11 +51,18 @@
     mode: "0644"
   become: true
 
-- name: Enable the nftables service for boot-time persistence
+- name: Enable and start the nftables service for boot-time persistence
   ansible.builtin.systemd:
     name: nftables
     enabled: true
+    state: started
   become: true
+
+- name: Validate the Hermes egress ruleset (dry-run) before loading
+  ansible.builtin.command:
+    cmd: nft -c -f /etc/nftables.d/hermes-egress.nft
+  become: true
+  changed_when: false
 
 - name: Load the Hermes egress ruleset now
   ansible.builtin.command:
@@ -64,14 +71,10 @@
   when: hermes_nft_ruleset is changed
   changed_when: true
 
-- name: Ensure the read-only skills directory exists
-  ansible.builtin.file:
-    path: "{{ hermes_state_mount }}/skills"
-    state: directory
-    owner: "{{ hermes_user }}"
-    group: "{{ hermes_user }}"
-    mode: "0555"
-  become: true
+# NOTE: ~/.hermes/skills is intentionally left to the installer. Do NOT chmod it
+# read-only — Hermes's autonomous skill creation is a core feature and a 0555
+# clamp would break it (and is not real immutability anyway). Proper immutable,
+# Git-gated skills are deferred §5.5 work; see the role README.
 
 - name: Ensure the hermes user systemd unit directory exists
   ansible.builtin.file:
@@ -91,14 +94,38 @@
     mode: "0644"
   become: true
 
+# The per-user systemd manager (and its /run/user/<uid> runtime dir + D-Bus
+# socket) only exists when the hermes user has linger enabled. linux_baseline is
+# expected to linger hermes as a baseline service user, but enable it here too so
+# this role is self-sufficient. (creates: guard keeps it idempotent.)
+- name: Ensure the hermes user has systemd linger enabled
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ hermes_user }}"
+  args:
+    creates: "/var/lib/systemd/linger/{{ hermes_user }}"
+  become: true
+
+# Resolve the hermes uid so the --user systemctl call below can reach that user's
+# systemd bus via XDG_RUNTIME_DIR (mirrors the rootless idiom in
+# igou-ansible/playbooks/linux/podman_quadlets.yaml).
+- name: Resolve the hermes uid (for the per-user systemd runtime dir)
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ hermes_user }}"
+  become: true
+
 # Reload the per-user systemd manager so the new unit is visible. The unit is
 # deliberately NOT enabled or started — messaging is deferred to go-live.
+# XDG_RUNTIME_DIR is required or `systemctl --user` can't find the bus
+# ("Failed to connect to bus").
 - name: Reload the hermes user systemd manager
   ansible.builtin.systemd:
     daemon_reload: true
     scope: user
   become: true
   become_user: "{{ hermes_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
 
 - name: Make journald storage persistent
   ansible.builtin.lineinfile:
