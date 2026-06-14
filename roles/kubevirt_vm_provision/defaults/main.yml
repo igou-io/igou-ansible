@@ -3,7 +3,13 @@
 vm_name: ""
 vm_namespace: ""
 vm_state: present            # present | absent
-vm_rebuild: false            # delete-then-recreate before converge (when present)
+# Destructive reprovision: if the VM exists, delete it (and its root DataVolume)
+# and rebuild. Attached vm_extra_pvcs data disks are PRESERVED.
+vm_rebuild: false
+# FULLY destructive: also wipe the attached vm_extra_pvcs data disks (delete +
+# recreate blank) for a clean slate. Implies a rebuild. Do NOT use on
+# externally-owned PVCs (e.g. an Argo/CDI DataVolume claim like hermes-state).
+vm_destroy_data: false
 vm_run_strategy: Always      # Always | RerunOnFailure | Manual | Halted | Once
 vm_labels: {}
 
@@ -25,8 +31,7 @@ vm_memory: 4Gi
 vm_firmware: bios
 vm_machine_type: q35
 
-# Devices
-vm_rng: true
+# Devices (a virtio-rng device is always attached)
 vm_log_serial_console: true
 
 # Attach EXISTING PVCs as extra data disks. Plain persistentVolumeClaim volumes

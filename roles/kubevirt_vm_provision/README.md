@@ -14,7 +14,12 @@ module reads `K8S_AUTH_*` (AAP/EE) or your kubeconfig.
 
 - `vm_state: present` → converges the VM in place (patch-on-diff, idempotent;
   re-runs report `changed: false`).
-- `vm_rebuild: true` → deletes the VM first, then converges a fresh one.
+- `vm_rebuild: true` → **destructive reprovision**: deletes the VM (+ root
+  DataVolume) first, then converges a fresh one. Attached data PVCs are kept.
+- `vm_destroy_data: true` → **fully destructive reprovision**: as `vm_rebuild`,
+  but also deletes and recreates-blank the attached `vm_extra_pvcs` data disks
+  for a clean slate. (Implies a rebuild. Don't point it at externally-owned
+  PVCs — manage their destruction at that layer.)
 - `vm_state: absent` → deletes the VM. Root DataVolume (a `dataVolumeTemplate`)
   is removed with it; **PVCs attached via `vm_extra_pvcs` survive** (they are
   plain `persistentVolumeClaim` volumes, not templates).
@@ -26,7 +31,8 @@ module reads `K8S_AUTH_*` (AAP/EE) or your kubeconfig.
 | `vm_name` | `""` (required) | VirtualMachine name |
 | `vm_namespace` | `""` (required) | Target namespace |
 | `vm_state` | `present` | `present` \| `absent` |
-| `vm_rebuild` | `false` | Delete-then-recreate before converge |
+| `vm_rebuild` | `false` | **Destructive reprovision**: if the VM exists, delete it (+ root DataVolume) and rebuild. Attached data PVCs are preserved |
+| `vm_destroy_data` | `false` | **Fully destructive**: also wipe the attached `vm_extra_pvcs` data disks (delete + recreate blank) for a clean slate. Implies a rebuild. Not for externally-owned (Argo/CDI) PVCs |
 | `vm_run_strategy` | `Always` | KubeVirt runStrategy |
 | `vm_labels` | `{}` | Labels on the VM metadata |
 | `vm_os_datasource` | `""` (required to provision) | DataSource to clone for the root disk |
@@ -37,8 +43,7 @@ module reads `K8S_AUTH_*` (AAP/EE) or your kubeconfig.
 | `vm_memory` | `4Gi` | Guest memory (`domain.memory.guest`; Burstable QoS) |
 | `vm_firmware` | `bios` | `bios` \| `efi` |
 | `vm_machine_type` | `q35` | Machine type |
-| `vm_rng` | `true` | Attach a virtio-rng device |
-| `vm_log_serial_console` | `true` | Enable serial-console logging |
+| `vm_log_serial_console` | `true` | Enable serial-console logging (a virtio-rng device is always attached) |
 | `vm_extra_pvcs` | `[]` | Existing PVCs to attach as data disks: `[{name, claim}]` |
 | `vm_cloud_init` | `""` | cloud-init NoCloud userData string (empty → no cloud-init disk) |
 | `vm_wait` / `vm_wait_timeout` | `true` / `600` | Wait for the VM to be Ready |

@@ -4,6 +4,13 @@
     snapshot_name: "{{ vm_name }}-{{ lookup('pipe', 'date -u +%Y%m%d-%H%M%S') }}"
   when: snapshot_name | length == 0
 
+- name: Compose snapshot labels (track the source VM)
+  ansible.builtin.set_fact:
+    _snap_labels: "{{ snapshot_labels | combine(_snap_vm_label) }}"
+  vars:
+    _snap_vm_label:
+      kubevirt.io/vm: "{{ vm_name }}"
+
 - name: "Create VirtualMachineSnapshot {{ snapshot_name }}"
   kubernetes.core.k8s:
     state: present
@@ -13,7 +20,7 @@
       metadata:
         name: "{{ snapshot_name }}"
         namespace: "{{ vm_namespace }}"
-        labels: "{{ snapshot_labels | combine({'kubevirt.io/vm': vm_name}) }}"
+        labels: "{{ _snap_labels }}"
       spec:
         source:
           apiGroup: kubevirt.io

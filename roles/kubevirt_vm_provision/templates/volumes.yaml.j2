@@ -1,0 +1,12 @@
+---
+# spec.volumes — root DataVolume + attached existing PVCs. The cloud-init
+# volume (which carries multi-line userData) is appended in tasks/main.yml from
+# the _kvp_volume_cloudinit block, to keep this template indentation-safe.
+- name: root
+  dataVolume:
+    name: {{ vm_name }}-root
+{% for pvc in vm_extra_pvcs %}
+- name: {{ pvc.name }}
+  persistentVolumeClaim:
+    claimName: {{ pvc.claim }}
+{% endfor %}

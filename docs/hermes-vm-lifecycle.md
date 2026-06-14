@@ -37,11 +37,12 @@ ansible-navigator run playbooks/hermes/provision-vm.yml \
   -e vm_ssh_authorized_key='ssh-ed25519 AAAA... operator@host'
 ```
 
-### Rebuild (delete + recreate)
+### Rebuild — destructive reprovision (delete + recreate)
 
-`rebuild: true` deletes the existing VM first (waits for removal), then
-converges a fresh one. Use this when the VM spec changed in a way that is not
-reconcilable in place (e.g. firmware/bus changes).
+`rebuild: true` is a **destructive reprovision**: it deletes the existing VM
+first (waits for removal), then converges a fresh one. Use this when the VM
+spec changed in a way that is not reconcilable in place (e.g. firmware/bus
+changes), or to force a clean machine.
 
 ```bash
 ansible-navigator run playbooks/hermes/provision-vm.yml \
@@ -53,6 +54,13 @@ ansible-navigator run playbooks/hermes/provision-vm.yml \
 > **`hermes-root` is destroyed on rebuild** — it is a `dataVolumeTemplate`. The
 > **`hermes-state` PVC survives**, because it is attached as a plain
 > `persistentVolumeClaim` (Argo-owned, *not* in `dataVolumeTemplates`).
+
+> **Fully destructive (`vm_destroy_data: true`)** — the `kubevirt_vm_provision`
+> role can also wipe the attached data disks (delete + recreate blank) for a
+> total clean slate. **Do NOT use it on the Hermes VM**: `hermes-state` is an
+> Argo/CDI-owned DataVolume, so the role must not delete/recreate it (it would
+> fight Argo). Wiping Hermes state belongs to the Phase-2b ownership decision.
+> The flag exists for other VMs whose data PVCs are plain (role-owned).
 
 ### Deprovision
 

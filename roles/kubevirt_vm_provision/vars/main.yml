@@ -1,0 +1,28 @@
+---
+# Static VM-spec building blocks (block YAML; Jinja only for templated scalars).
+# Assembled into the VirtualMachine spec in tasks/main.yml — kept here so the
+# task file stays readable (no inline flow-style dict/list literals).
+
+_kvp_interface_masquerade:
+  name: default
+  masquerade: {}
+
+_kvp_network_pod:
+  name: default
+  pod: {}
+
+# cloud-init volume — appended only when vm_cloud_init is non-empty.
+_kvp_volume_cloudinit:
+  name: cloudinit
+  cloudInitNoCloud:
+    userData: "{{ vm_cloud_init }}"
+
+# Firmware variants, selected by vm_firmware (bios | efi).
+_kvp_firmware:
+  bios:
+    bootloader:
+      bios: {}
+  efi:
+    bootloader:
+      efi:
+        secureBoot: false
