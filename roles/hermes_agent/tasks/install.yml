@@ -1,0 +1,46 @@
+---
+# Install phase — runs DURING the egress window (installer needs the network).
+# Formats/mounts the persistent state disk, chowns it to the hermes user, then
+# runs the Hermes Agent installer as that user. Idempotent throughout.
+
+- name: Create xfs filesystem on the Hermes state device
+  community.general.filesystem:
+    fstype: xfs
+    dev: "{{ hermes_state_device }}"
+    force: false   # format only when the device is unformatted
+  become: true
+
+- name: Mount the Hermes state device and persist it in fstab
+  ansible.posix.mount:
+    path: "{{ hermes_state_mount }}"
+    src: "{{ hermes_state_device }}"
+    fstype: xfs
+    opts: defaults
+    state: mounted
+  become: true
+
+- name: Own the Hermes state mount to the hermes user
+  ansible.builtin.file:
+    path: "{{ hermes_state_mount }}"
+    state: directory
+    owner: "{{ hermes_user }}"
+    group: "{{ hermes_user }}"
+    recurse: true
+  become: true
+
+- name: Install Hermes Agent as the hermes user
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && curl -fsSL {{ hermes_install_url }} | bash"
+    creates: "{{ hermes_home }}/.local/bin/hermes"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ hermes_user }}"
+  changed_when: true   # only runs when 'creates' target is absent
+
+- name: Confirm the Hermes CLI and capture its version
+  ansible.builtin.command:
+    cmd: "{{ hermes_home }}/.local/bin/hermes --version"
+  become: true
+  become_user: "{{ hermes_user }}"
+  register: hermes_version
+  changed_when: false

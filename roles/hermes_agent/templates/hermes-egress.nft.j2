@@ -1,0 +1,24 @@
+{{ ansible_managed | comment }}
+# Coarse in-guest egress backstop (defense-in-depth). The PRECISE control is the
+# OVN-Kubernetes EgressFirewall on the VM's masquerade network, which restricts
+# external reach to api.telegram.org. This ruleset is only a guest-side backstop:
+# default-drop output, allowing loopback, established/related, DNS, the in-cluster
+# LLM service CIDR on 8080, and external HTTPS (443).
+table inet hermes_egress {
+  chain output {
+    type filter hook output priority 0; policy drop;
+
+    oif "lo" accept
+    ct state established,related accept
+
+    # DNS resolution
+    udp dport 53 accept
+    tcp dport 53 accept
+
+    # In-cluster LLM (qwen35-2b OpenAI-compatible endpoint)
+    ip daddr {{ hermes_cluster_service_cidr }} tcp dport 8080 accept
+
+    # External HTTPS (OVN EgressFirewall already pins this to api.telegram.org)
+    tcp dport 443 accept
+  }
+}
