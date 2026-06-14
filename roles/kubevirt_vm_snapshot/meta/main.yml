@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  role_name: kubevirt_vm_snapshot
+  author: david-igou
+  description: >-
+    Manage KubeVirt VirtualMachineSnapshot / VirtualMachineRestore lifecycle
+    (create, restore, list, prune) for any VM via the OpenShift API.
+  license: MIT
+  min_ansible_version: "2.15"
+  galaxy_tags:
+    - kubevirt
+    - openshift
+    - snapshot
+dependencies: []

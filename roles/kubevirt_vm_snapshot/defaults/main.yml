@@ -1,0 +1,26 @@
+---
+# Target VM
+vm_name: ""
+vm_namespace: ""
+
+# Action: create | restore | list | prune
+snapshot_action: list
+
+# create: defaults to "<vm_name>-<UTC ts>"; restore: REQUIRED (which snapshot)
+snapshot_name: ""
+
+# create options
+snapshot_online: true            # online (guest-agent quiesce) vs offline
+snapshot_prune_after_create: true  # prune to retention after a successful create
+
+# prune retention
+snapshot_retention_count: 7      # keep N newest snapshots for this VM
+
+# restore guards
+snapshot_restore_confirm: false  # MUST be true for restore to proceed
+snapshot_restore_restart: true   # restore prior runStrategy after restore
+
+# waits + labels
+snapshot_wait_timeout: 600
+snapshot_labels:
+  app.kubernetes.io/managed-by: ansible
