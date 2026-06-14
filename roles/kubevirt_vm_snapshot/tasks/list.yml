@@ -1,0 +1,15 @@
+---
+- name: "Gather VirtualMachineSnapshots in {{ vm_namespace }}"
+  kubernetes.core.k8s_info:
+    api_version: snapshot.kubevirt.io/v1beta1
+    kind: VirtualMachineSnapshot
+    namespace: "{{ vm_namespace }}"
+  register: _all_snaps
+
+- name: "Snapshots for {{ vm_name }} (newest first)"
+  ansible.builtin.debug:
+    msg: >-
+      {{ _all_snaps.resources
+         | selectattr('spec.source.name', 'equalto', vm_name)
+         | sort(attribute='metadata.creationTimestamp') | reverse
+         | map(attribute='metadata.name') | list }}

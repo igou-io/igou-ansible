@@ -1,0 +1,16 @@
+---
+# domain.devices.disks — root + attached data PVCs (+ cloud-init disk).
+# Rendered by kubevirt_vm_provision and parsed back with from_yaml.
+- name: root
+  disk:
+    bus: virtio
+{% for pvc in vm_extra_pvcs %}
+- name: {{ pvc.name }}
+  disk:
+    bus: virtio
+{% endfor %}
+{% if vm_cloud_init | length > 0 %}
+- name: cloudinit
+  disk:
+    bus: virtio
+{% endif %}

@@ -1,0 +1,93 @@
+---
+- name: Restore guard — require explicit snapshot + confirmation
+  ansible.builtin.assert:
+    that:
+      - snapshot_name | length > 0
+      - snapshot_restore_confirm | bool
+    fail_msg: >-
+      restore requires snapshot_name=<name> AND snapshot_restore_confirm=true
+      (refusing to restore without explicit confirmation).
+
+- name: Read VM current runStrategy
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachine
+    name: "{{ vm_name }}"
+    namespace: "{{ vm_namespace }}"
+  register: _vm_before
+
+- name: Stop the VM (restore requires it stopped)
+  kubernetes.core.k8s:
+    state: patched
+    definition:
+      apiVersion: kubevirt.io/v1
+      kind: VirtualMachine
+      metadata:
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+      spec:
+        runStrategy: Halted
+
+- name: Wait for the VMI to be gone
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    name: "{{ vm_name }}"
+    namespace: "{{ vm_namespace }}"
+  register: _vmi
+  until: _vmi.resources | length == 0
+  retries: 30
+  delay: 10
+
+- name: "Create VirtualMachineRestore from {{ snapshot_name }}"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: snapshot.kubevirt.io/v1beta1
+      kind: VirtualMachineRestore
+      metadata:
+        name: "{{ vm_name }}-restore-{{ lookup('pipe', 'date -u +%Y%m%d-%H%M%S') }}"
+        namespace: "{{ vm_namespace }}"
+      spec:
+        target:
+          apiGroup: kubevirt.io
+          kind: VirtualMachine
+          name: "{{ vm_name }}"
+        virtualMachineSnapshotName: "{{ snapshot_name }}"
+  register: _restore
+
+- name: Wait for restore to complete
+  kubernetes.core.k8s_info:
+    api_version: snapshot.kubevirt.io/v1beta1
+    kind: VirtualMachineRestore
+    name: "{{ _restore.result.metadata.name }}"
+    namespace: "{{ vm_namespace }}"
+  register: _restore_info
+  until: _restore_info.resources[0].status.complete | default(false) | bool
+  # Fail fast on a TERMINAL restore failure instead of spinning the full
+  # snapshot_wait_timeout. VirtualMachineRestore has NO status.error field;
+  # the controller signals terminal failure with a condition type "Failure"
+  # set status "True" (KubeVirt release-1.5 doUpdateErrorWithFailure ->
+  # newFailureCondition(ConditionTrue, errMsg)). An in-progress poll only
+  # carries Progressing/Ready conditions, so this neither fails nor satisfies
+  # `until` mid-flight; the existing `until` still governs success.
+  failed_when: >-
+    _restore_info.resources[0].status.conditions | default([])
+    | selectattr('type', 'equalto', 'Failure')
+    | selectattr('status', 'equalto', 'True')
+    | list | length > 0
+  retries: "{{ ((snapshot_wait_timeout | int) // 10) }}"
+  delay: 10
+
+- name: Restore the VM's prior runStrategy
+  kubernetes.core.k8s:
+    state: patched
+    definition:
+      apiVersion: kubevirt.io/v1
+      kind: VirtualMachine
+      metadata:
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+      spec:
+        runStrategy: "{{ _vm_before.resources[0].spec.runStrategy | default('Always') }}"
+  when: snapshot_restore_restart | bool

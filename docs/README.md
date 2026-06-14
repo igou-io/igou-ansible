@@ -10,6 +10,7 @@ how X worked" two weeks from now.
 | [`netboot-operations.md`](netboot-operations.md) | netboot.xyz menu, host pins, ISOs, kickstart/cloud-init, OpenShift PXE assets, rb5009 iPXE binaries, smoke testing, troubleshooting |
 | [`openshift-operations.md`](openshift-operations.md) | Initial cluster (agent-install), GitOps bootstrap, secret sync to 1Password, SNO ISO, add-node (link), CSR approval, common breaks |
 | [`truenas-operations.md`](truenas-operations.md) | Docker containers, users, NFS netboot, API smoke test, deprecated playbooks |
+| [`hermes-vm-lifecycle.md`](hermes-vm-lifecycle.md) | Hermes KubeVirt VM: provision/rebuild/deprovision (`hermes-state` survives), snapshot create/list/prune/restore (double-guarded), AAP templates + nightly schedule |
 | [`execution-environments.md`](execution-environments.md) | What each EE is for, when to rebuild, manual rebuild + push |
 | [`disaster-recovery.md`](disaster-recovery.md) | "X is dead, what do I run?" per component (rb5009, truenas, netbootxyz container, OCP cluster, OCP worker, homelab pets) |
 | [`troubleshooting.md`](troubleshooting.md) | Symptom-keyed cross-cutting issues (PXE, DHCP, container, secrets, lint, CI) |

@@ -1,0 +1,54 @@
+---
+# DESTRUCTIVE: wipe the attached data PVCs (vm_extra_pvcs) for a clean-slate
+# reprovision. Each PVC is read, deleted, then recreated BLANK with the same
+# storageClass / size / accessModes / volumeMode. The VM must already be
+# deleted (the caller deletes it first) so the PVCs are not in use.
+#
+# NB: this manages PLAIN PVCs. Do NOT point it at externally-owned PVCs
+# (e.g. an Argo/CDI DataVolume-backed claim like hermes-state) — manage data
+# destruction at that layer instead.
+
+- name: "Read the attached data PVCs (to recreate blank with the same spec)"
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: PersistentVolumeClaim
+    name: "{{ item.claim }}"
+    namespace: "{{ vm_namespace }}"
+  loop: "{{ vm_extra_pvcs }}"
+  loop_control:
+    label: "{{ item.claim }}"
+  register: _kvp_data_pvcs
+
+- name: "DESTRUCTIVE: delete the attached data PVCs"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: PersistentVolumeClaim
+    name: "{{ item.claim }}"
+    namespace: "{{ vm_namespace }}"
+    wait: true
+  loop: "{{ vm_extra_pvcs }}"
+  loop_control:
+    label: "{{ item.claim }}"
+
+- name: "Recreate the data PVCs blank (same storageClass / size / accessModes)"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ item.resources[0].metadata.name }}"
+        namespace: "{{ vm_namespace }}"
+      spec:
+        accessModes: "{{ item.resources[0].spec.accessModes }}"
+        storageClassName: "{{ item.resources[0].spec.storageClassName }}"
+        volumeMode: "{{ item.resources[0].spec.volumeMode }}"
+        resources:
+          requests:
+            storage: "{{ item.resources[0].spec.resources.requests.storage }}"
+    wait: true
+  loop: "{{ _kvp_data_pvcs.results }}"
+  loop_control:
+    label: "{{ item.item.claim }}"
+  when: item.resources | length > 0

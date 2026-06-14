@@ -1,0 +1,108 @@
+---
+# Cluster-independent regression assertions for kubevirt_vm_snapshot.
+#
+# Runnable two ways and green both:
+#   molecule verify -s kubevirt-vm-snapshot
+#   ansible-playbook molecule/kubevirt-vm-snapshot/verify.yml
+#
+# Asserts:
+#   1. Validation: including the role with vm_name="" + snapshot_action=list
+#      fails the input assertion (no cluster call — the assert fires before the
+#      k8s dispatch). Caught with block/rescue and asserted.
+#   2. Prune selection: given 9 snapshot-shaped dicts for this VM and
+#      snapshot_retention_count=7, the SAME selectattr|sort|reverse|slice
+#      expression as tasks/prune.yml yields exactly the 2 OLDEST names.
+- name: Verify — kubevirt_vm_snapshot validation + prune selection
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    vm_name: hermes
+    vm_namespace: hermes
+    snapshot_retention_count: 7
+    # 9 snapshots for "hermes" with strictly increasing timestamps, plus one
+    # snapshot for a DIFFERENT VM that must be filtered out by the selectattr.
+    _snapshot_fixture:
+      - metadata: {name: snap-1, creationTimestamp: "2026-06-01T00:00:00Z"}
+        spec: {source: {name: hermes}}
+      - metadata: {name: snap-2, creationTimestamp: "2026-06-02T00:00:00Z"}
+        spec: {source: {name: hermes}}
+      - metadata: {name: snap-3, creationTimestamp: "2026-06-03T00:00:00Z"}
+        spec: {source: {name: hermes}}
+      - metadata: {name: snap-4, creationTimestamp: "2026-06-04T00:00:00Z"}
+        spec: {source: {name: hermes}}
+      - metadata: {name: snap-5, creationTimestamp: "2026-06-05T00:00:00Z"}
+        spec: {source: {name: hermes}}
+      - metadata: {name: snap-6, creationTimestamp: "2026-06-06T00:00:00Z"}
+        spec: {source: {name: hermes}}
+      - metadata: {name: snap-7, creationTimestamp: "2026-06-07T00:00:00Z"}
+        spec: {source: {name: hermes}}
+      - metadata: {name: snap-8, creationTimestamp: "2026-06-08T00:00:00Z"}
+        spec: {source: {name: hermes}}
+      - metadata: {name: snap-9, creationTimestamp: "2026-06-09T00:00:00Z"}
+        spec: {source: {name: hermes}}
+      # Decoy: newer timestamp, different source VM — must NOT be selected.
+      - metadata: {name: other-vm-snap, creationTimestamp: "2026-06-10T00:00:00Z"}
+        spec: {source: {name: someothervm}}
+  tasks:
+    # ---- Behavior 2 (run first; uses play-level vm_name=hermes): prune math ----
+    # Replicate the EXACT selection+slice from tasks/prune.yml. This is the
+    # risky logic, so the test recomputes it independently of a cluster.
+    - name: Select this VM's snapshots, newest first (mirror of prune.yml)
+      ansible.builtin.set_fact:
+        _vm_snaps: >-
+          {{ _snapshot_fixture
+             | selectattr('spec.source.name', 'equalto', vm_name)
+             | sort(attribute='metadata.creationTimestamp') | reverse
+             | list }}
+
+    - name: Compute the slice prune would delete (beyond retention)
+      ansible.builtin.set_fact:
+        _to_delete_names: >-
+          {{ (_vm_snaps[(snapshot_retention_count | int):])
+             | map(attribute='metadata.name') | list }}
+
+    - name: Assert exactly the 2 OLDEST hermes snapshots are selected for delete
+      ansible.builtin.assert:
+        that:
+          # 9 hermes snapshots - retention 7 = 2 deletions.
+          - (_to_delete_names | length) == 2
+          # Newest-first list reversed, so the tail (the slice) is the oldest.
+          - (_to_delete_names | sort) == ['snap-1', 'snap-2']
+          # The decoy snapshot for a different VM must never be touched.
+          - "'other-vm-snap' not in _to_delete_names"
+        fail_msg: >-
+          Prune selection is wrong: expected exactly ['snap-1', 'snap-2'],
+          got {{ _to_delete_names }}.
+        success_msg: >-
+          Prune selection correct — keeps 7 newest, deletes the 2 oldest
+          ({{ _to_delete_names }}), and ignores other VMs' snapshots.
+
+    # ---- Behavior 1 (run last; overrides vm_name=""): validation rejects bad input ----
+    - name: Set invalid input (empty vm_name) for the role under test
+      ansible.builtin.set_fact:
+        vm_name: ""
+        vm_namespace: hermes
+        snapshot_action: list
+
+    - name: Include role with invalid input (expect the input assert to fail)
+      block:
+        - name: Apply role under test with empty vm_name
+          ansible.builtin.include_role:
+            name: kubevirt_vm_snapshot
+        - name: Unreachable — validation should have failed first
+          ansible.builtin.set_fact:
+            _validation_caught: false
+      rescue:
+        - name: Record the expected validation failure
+          ansible.builtin.set_fact:
+            _validation_caught: true
+
+    - name: Assert the input-validation assertion fired (no cluster call made)
+      ansible.builtin.assert:
+        that:
+          - _validation_caught | bool
+        fail_msg: >-
+          kubevirt_vm_snapshot did NOT reject empty vm_name — input validation
+          in tasks/main.yml is not guarding as expected.
+        success_msg: Input validation correctly rejected empty vm_name.

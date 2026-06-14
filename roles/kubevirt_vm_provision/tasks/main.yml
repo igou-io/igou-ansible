@@ -1,0 +1,97 @@
+---
+- name: Validate inputs
+  ansible.builtin.assert:
+    that:
+      - vm_name | length > 0
+      - vm_namespace | length > 0
+      - vm_state in ['present', 'absent']
+      - vm_firmware in ['bios', 'efi']
+      - vm_state == 'absent' or (vm_os_datasource | length > 0)
+    fail_msg: >-
+      vm_name and vm_namespace are required; vm_state must be present|absent;
+      vm_firmware must be bios|efi; vm_os_datasource is required when provisioning.
+
+- name: Deprovision the VM
+  kubevirt.core.kubevirt_vm:
+    state: absent
+    name: "{{ vm_name }}"
+    namespace: "{{ vm_namespace }}"
+    wait: true
+  when: vm_state == 'absent'
+
+- name: Provision / converge the VM
+  when: vm_state == 'present'
+  block:
+    # Destructive reprovision: if the VM exists, delete it (and its root
+    # DataVolume) before rebuilding. Triggered by vm_rebuild OR vm_destroy_data.
+    - name: "Reprovision: delete the existing VM first"
+      kubevirt.core.kubevirt_vm:
+        state: absent
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+        wait: true
+      when: vm_rebuild | bool or vm_destroy_data | bool
+
+    - name: "DESTRUCTIVE: wipe the attached data disks (clean slate)"
+      ansible.builtin.include_tasks: _destroy_data.yml
+      when:
+        - vm_destroy_data | bool
+        - vm_extra_pvcs | length > 0
+
+    # disks/volumes are rendered from block-YAML templates (no inline flow
+    # dicts); the cloud-init volume is appended from the _kvp_volume_cloudinit
+    # block to keep multi-line userData indentation-safe.
+    - name: Assemble disks and volumes
+      ansible.builtin.set_fact:
+        _kvp_disks: "{{ lookup('template', 'disks.yaml.j2') | from_yaml }}"
+        _kvp_volumes: >-
+          {{ (lookup('template', 'volumes.yaml.j2') | from_yaml)
+             + ([_kvp_volume_cloudinit] if (vm_cloud_init | length > 0) else []) }}
+
+    - name: Converge the VM (idempotent)
+      kubevirt.core.kubevirt_vm:
+        state: present
+        name: "{{ vm_name }}"
+        namespace: "{{ vm_namespace }}"
+        labels: "{{ vm_labels }}"
+        run_strategy: "{{ vm_run_strategy }}"
+        data_volume_templates:
+          - metadata:
+              name: "{{ vm_name }}-root"
+            spec:
+              sourceRef:
+                kind: DataSource
+                name: "{{ vm_os_datasource }}"
+                namespace: "{{ vm_os_datasource_namespace }}"
+              storage:
+                storageClassName: "{{ vm_storage_class if (vm_storage_class | length > 0) else omit }}"
+                resources:
+                  requests:
+                    storage: "{{ vm_root_size }}"
+        spec:
+          domain:
+            cpu:
+              cores: "{{ vm_cpu_cores | int }}"
+              sockets: "{{ vm_cpu_sockets | int }}"
+              threads: "{{ vm_cpu_threads | int }}"
+            memory:
+              guest: "{{ vm_memory }}"
+            firmware: "{{ _kvp_firmware[vm_firmware] }}"
+            machine:
+              type: "{{ vm_machine_type }}"
+            devices:
+              disks: "{{ _kvp_disks }}"
+              interfaces:
+                - "{{ _kvp_interface_masquerade }}"
+              rng: {}
+              logSerialConsole: "{{ vm_log_serial_console | bool }}"
+          networks:
+            - "{{ _kvp_network_pod }}"
+          volumes: "{{ _kvp_volumes }}"
+        wait: "{{ vm_wait | bool }}"
+        wait_timeout: "{{ vm_wait_timeout | int }}"
+
+    - name: Register VM identity for downstream workflow nodes
+      ansible.builtin.set_stats:
+        data:
+          provisioned_vm: "{{ vm_namespace }}/{{ vm_name }}"

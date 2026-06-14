@@ -1,0 +1,26 @@
+---
+- name: "Gather VirtualMachineSnapshots in {{ vm_namespace }}"
+  kubernetes.core.k8s_info:
+    api_version: snapshot.kubevirt.io/v1beta1
+    kind: VirtualMachineSnapshot
+    namespace: "{{ vm_namespace }}"
+  register: _all_snaps
+
+- name: "Select {{ vm_name }} snapshots, newest first"
+  ansible.builtin.set_fact:
+    _vm_snaps: >-
+      {{ _all_snaps.resources
+         | selectattr('spec.source.name', 'equalto', vm_name)
+         | sort(attribute='metadata.creationTimestamp') | reverse
+         | list }}
+
+- name: "Delete snapshots beyond retention (keeping {{ snapshot_retention_count }} newest)"
+  kubernetes.core.k8s:
+    state: absent
+    api_version: snapshot.kubevirt.io/v1beta1
+    kind: VirtualMachineSnapshot
+    name: "{{ item.metadata.name }}"
+    namespace: "{{ vm_namespace }}"
+  loop: "{{ _vm_snaps[(snapshot_retention_count | int):] }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"

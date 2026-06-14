@@ -1,0 +1,39 @@
+---
+- name: Provision the Hermes KubeVirt VM
+  hosts: "{{ host | default('localhost') }}"
+  connection: local
+  gather_facts: false
+  vars:
+    # --- Hermes VM shape, consumed by the reusable kubevirt_vm_provision role ---
+    vm_name: hermes
+    vm_namespace: hermes
+    vm_run_strategy: Always
+    # image clone (match golden size — NO resize)
+    vm_os_datasource: centos-stream10
+    vm_storage_class: freenas-nvmeof-ssd-csi
+    vm_root_size: 30Gi
+    # burstable compute (no resources block -> Burstable QoS; cluster has no CPU-Manager static policy)
+    vm_cpu_cores: 4
+    vm_memory: 8Gi
+    vm_firmware: bios
+    # the Argo-owned blank state PVC, attached as a plain PVC -> survives VM delete/rebuild
+    vm_extra_pvcs:
+      - name: state
+        claim: hermes-state
+    vm_labels:
+      app: hermes
+      app.kubernetes.io/managed-by: ansible
+    # SSH public key seeded for Phase 2b convergence (non-secret); rendered into cloud-init below.
+    # Override via extra_vars at launch; the matching private key lives in 1Password (Phase 2b).
+    vm_ssh_authorized_key: ""
+    vm_wait_timeout: 600
+    # map the legacy AAP/CLI 'rebuild' extra_var onto the role's vm_rebuild
+    vm_rebuild: "{{ rebuild | default(false) | bool }}"
+  pre_tasks:
+    # Render in the playbook context so 'templates/' resolves to playbooks/hermes/templates/
+    # (not the role's templates/), then hand the string to the role as vm_cloud_init.
+    - name: Render the Hermes cloud-init
+      ansible.builtin.set_fact:
+        vm_cloud_init: "{{ lookup('template', 'templates/hermes-cloudinit.yaml.j2') }}"
+  roles:
+    - role: kubevirt_vm_provision

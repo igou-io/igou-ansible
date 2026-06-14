@@ -1,0 +1,11 @@
+#cloud-config
+hostname: {{ vm_name }}
+ssh_pwauth: false
+{% if vm_ssh_authorized_key | length > 0 %}
+ssh_authorized_keys:
+  - {{ vm_ssh_authorized_key }}
+{% endif %}
+# Phase 2a seeds an SSH-ready guest only. No secrets, no convergence.
+# The qemu-guest-agent ships in the centos-stream10 cloud image; ensure it runs.
+runcmd:
+  - systemctl enable --now qemu-guest-agent
