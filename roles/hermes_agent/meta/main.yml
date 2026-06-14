@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  role_name: hermes_agent
+  author: david-igou
+  description: >-
+    Hermes-specific half of a guest convergence: format/mount the state disk
+    and run the Hermes Agent installer (install phase), then render the CLI
+    config, an in-guest nftables egress backstop, and a hardened systemd user
+    unit (configure phase). Baseline hardening, users, and OS packages come
+    from reused playbooks and are out of scope for this role.
+  license: MIT
+  min_ansible_version: "2.15"
+  galaxy_tags:
+    - hermes
+    - kubevirt
+dependencies: []

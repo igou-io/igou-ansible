@@ -1,0 +1,16 @@
+{{ ansible_managed | comment }}
+# Hermes Agent CLI config — rendered by the hermes_agent role.
+# Keys verified against cli-config.yaml.example (NousResearch/hermes-agent).
+model:
+  provider: custom
+  base_url: "{{ hermes_llm_base_url }}"
+  model: "{{ hermes_llm_model }}"
+
+# Terminal tool backend: local execution in the agent's working directory.
+terminal:
+  backend: local
+  cwd: "."
+
+# Subagent delegation: never auto-approve dangerous-command prompts (auto-deny).
+delegation:
+  subagent_auto_approve: false
