@@ -85,7 +85,7 @@ ansible-navigator run playbooks/hermes/snapshot-vm.yml \
 
 Prints the VM's `VirtualMachineSnapshot` names, newest first.
 
-### `create` (auto-prunes)
+### `create`
 
 ```bash
 ansible-navigator run playbooks/hermes/snapshot-vm.yml \
@@ -93,10 +93,12 @@ ansible-navigator run playbooks/hermes/snapshot-vm.yml \
   -e snapshot_action=create
 ```
 
-Creates `hermes-<UTC ts>` (override with `-e snapshot_name=<name>`), waits for
-it to become `readyToUse`, then **auto-prunes to `snapshot_retention_count`**
-(default 7) because `snapshot_prune_after_create: true`. One `create` therefore
-both snapshots and bounds retention — no separate prune run is needed.
+Creates `hermes-<UTC ts>` (override with `-e snapshot_name=<name>`) and waits
+for it to become `readyToUse` (failing fast if the snapshot reports a terminal
+`status.error`). By default it does **not** prune — `snapshot_prune_after_create`
+is `false`, so a manual one-off `create` never silently deletes older snapshots.
+Pass `-e snapshot_prune_after_create=true` to also prune to
+`snapshot_retention_count` (default 7); the nightly schedule does exactly that.
 
 ### `prune`
 
@@ -126,10 +128,39 @@ ansible-navigator run playbooks/hermes/snapshot-vm.yml \
 
 The restore flow: reads the current `runStrategy` → **stops the VM**
 (`runStrategy: Halted`, waits for the VMI to disappear) → creates a
-`VirtualMachineRestore` from `snapshot_name` and waits for `status.complete` →
+`VirtualMachineRestore` from `snapshot_name` and waits for `status.complete`
+(failing fast if the restore reports a terminal `Failure` condition) →
 **restarts the VM** to its prior `runStrategy` (unless
 `-e snapshot_restore_restart=false`). Run `list` first to get the exact
 snapshot name.
+
+> ## Restore caveat — data volume & Argo ownership
+>
+> **Read this before running `restore` against anything you care about.**
+>
+> A `VirtualMachineSnapshot` captures **every** volume the VM has at snapshot
+> time — the `hermes-root` disk **and** the attached `hermes-state` data disk.
+> A `VirtualMachineRestore` therefore restores **all** captured volumes into
+> **brand-new PVCs** (named `restore-<uid>-…`) and **rewrites the VM's
+> `spec.template.spec.volumes[].persistentVolumeClaim.claimName`** to point at
+> those new PVCs. The restore is whole-VM, not root-only.
+>
+> Consequences:
+>
+> - **Intended use is a full pre-compromise restore** — root **and** agent
+>   state are rolled back **together** to the snapshot point. That is exactly
+>   what the security design wants for a compromised agent.
+> - **The Argo-owned `hermes-state` PVC is left orphaned.** `hermes-state` is
+>   declared and owned by Argo CD in `igou-openshift`. After a real restore the
+>   VM no longer references it (it now points at `restore-<uid>-…`), so Argo
+>   sees drift and the original `hermes-state` PVC is left dangling /
+>   unreferenced. Reconciling that ownership — Argo-owned seed PVC vs an
+>   Ansible-owned `dataVolume` — is a **Phase-2b decision and is NOT resolved
+>   here.**
+> - **Therefore: exercise `restore` ONLY on a throwaway VM with a throwaway
+>   state PVC** until that ownership decision is made. **Do not restore the
+>   production `hermes` VM yet.** `create` / `list` / `prune` are safe; `restore`
+>   is the one to hold.
 
 ## AAP wiring (igou-inventory, config-as-code)
 
@@ -144,10 +175,11 @@ retention) are job-template `extra_vars`; the complex VM spec stays in this repo
 |---|---|
 | `hermes_vm_provision` (job template) | Runs `provision-vm.yml`. Survey exposes `rebuild` / `vm_state`. |
 | `hermes_vm_snapshot` (job template) | Runs `snapshot-vm.yml`. Survey exposes `snapshot_action` / `snapshot_name`. |
-| `hermes_vm_snapshot_nightly` (schedule) | Nightly `snapshot_action=create` on `hermes_vm_snapshot` (01:30 America/New_York), auto-pruned to 7 newest. Provides the pre-compromise restore points the security design calls for. |
+| `hermes_vm_snapshot_nightly` (schedule) | Nightly `snapshot_action=create` on `hermes_vm_snapshot` (01:30 America/New_York), with `snapshot_prune_after_create: true` so it prunes to 7 newest. Provides the pre-compromise restore points the security design calls for. |
 
-Because `create` auto-prunes, the one nightly job both snapshots and enforces
-7-deep retention.
+The nightly schedule sets `snapshot_prune_after_create: true`, so that one job
+both snapshots and enforces 7-deep retention. (Manual `create` runs do **not**
+prune unless you pass the flag.)
 
 ## Notes / guardrails
 
