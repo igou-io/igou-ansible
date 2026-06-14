@@ -1,0 +1,9 @@
+---
+- name: Hermes guest convergence — install phase (state disk + installer)
+  hosts: all
+  become: true
+  tasks:
+    - name: Run hermes_agent install
+      ansible.builtin.import_role:
+        name: hermes_agent
+        tasks_from: install

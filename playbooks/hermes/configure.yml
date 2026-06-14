@@ -1,0 +1,9 @@
+---
+- name: Hermes guest convergence — configure phase (config + nftables + unit)
+  hosts: all
+  become: true
+  tasks:
+    - name: Run hermes_agent configure
+      ansible.builtin.import_role:
+        name: hermes_agent
+        tasks_from: configure
