@@ -1,6 +1,11 @@
 #cloud-config
 hostname: {{ vm_name }}
 ssh_pwauth: false
+# Create the admin/connection user the AAP convergence logs in as. This MUST
+# match the username on the AAP machine credential (op://awx/ansible-ssh-ed25519
+# -> 'igou'); otherwise the first baseline task fails SSH auth because only the
+# image's default cloud-user would carry the seeded key. Mirrors rhel-server-e2e.
+user: {{ vm_admin_user | default('igou') }}
 {% if vm_ssh_authorized_key | length > 0 %}
 ssh_authorized_keys:
   - {{ vm_ssh_authorized_key }}
