@@ -79,20 +79,48 @@
   register: hermes_version
   changed_when: false
 
-# tirith (pre-exec command scanner) is auto-downloaded from GitHub releases
-# (SHA-256 verified) into ~/.hermes/bin. It MUST be fetched here in the egress
-# window: at runtime (egress locked) the on-demand auto-install would fail, and
-# with security.tirith_fail_open:false that would block every command. We call
-# the synchronous _install_tirith — ensure_installed() downloads in a thread
-# that dies when python exits, so it does not work for a one-shot invocation.
-- name: Install the tirith pre-exec command scanner
-  ansible.builtin.shell:
-    cmd: >-
-      ./venv/bin/python -c "import sys; from tools.tirith_security import _install_tirith;
-      sys.exit(0 if _install_tirith(log_failures=True)[0] else 1)"
-    chdir: "{{ hermes_home }}/.hermes/hermes-agent"
-    creates: "{{ hermes_home }}/.hermes/bin/tirith"
-    executable: /bin/bash
+# tirith (pre-exec command scanner) is a GitHub-released binary that Hermes
+# normally auto-downloads on demand — but that needs the network, so it MUST be
+# fetched here in the egress window: at runtime (egress locked) the on-demand
+# fetch fails, and with security.tirith_fail_open:false that would block every
+# command. Pull the same release artifact Hermes uses, with standard modules
+# (no private Hermes API / venv coupling). Pin a tag instead of 'latest' for a
+# reproducible, supply-chain-stable binary if desired.
+- name: Check whether the tirith scanner is already installed
+  ansible.builtin.stat:
+    path: "{{ hermes_state_mount }}/bin/tirith"
+  register: hermes_tirith_bin
+  become: true
+
+- name: Install the tirith pre-exec command scanner from its GitHub release
+  when: not hermes_tirith_bin.stat.exists
   become: true
   become_user: "{{ hermes_user }}"
-  become_flags: '-i'
+  vars:
+    # arch → release triple (from tirith_security.py:_detect_target)
+    _tirith_target: >-
+      {{ {'x86_64': 'x86_64-unknown-linux-gnu',
+          'aarch64': 'aarch64-unknown-linux-gnu'}[ansible_architecture] }}
+    _tirith_base: "https://github.com/sheeki03/tirith/releases/latest/download"
+  block:
+    - name: Ensure the Hermes bin directory exists
+      ansible.builtin.file:
+        path: "{{ hermes_state_mount }}/bin"
+        state: directory
+        mode: "0755"
+
+    - name: Download + SHA-256-verify the tirith release tarball
+      ansible.builtin.get_url:
+        url: "{{ _tirith_base }}/tirith-{{ _tirith_target }}.tar.gz"
+        dest: "{{ hermes_state_mount }}/tirith-{{ _tirith_target }}.tar.gz"
+        checksum: "sha256:{{ _tirith_base }}/checksums.txt"
+        mode: "0644"
+
+    - name: Extract the tirith binary into the Hermes bin directory
+      ansible.builtin.unarchive:
+        src: "{{ hermes_state_mount }}/tirith-{{ _tirith_target }}.tar.gz"
+        dest: "{{ hermes_state_mount }}/bin"
+        remote_src: true
+        include:
+          - tirith
+        mode: "0755"
