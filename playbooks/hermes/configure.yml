@@ -1,11 +1,211 @@
 ---
 - name: Hermes guest convergence — configure phase (config + nftables + unit)
+  # Hermes guest convergence — CONFIGURE phase. Runs with egress LOCKED (needs no
+  # network). Renders the CLI config + secrets (~/.hermes/config.yaml + .env), the
+  # in-guest nftables egress backstop, persistent journald, and a hardened systemd
+  # USER unit — installed but NOT enabled/started (messaging is deferred to go-live).
+  # Run order: install (egress open) → lock egress → configure.
+  # (Formerly the hermes_agent role's tasks/configure.yml, inlined here.)
+  #
   # Target only the host AAP passes via ansible_limit (matches linux_baseline);
   # `hosts: all` would run the Hermes config across the whole fleet.
   hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
+  vars:
+    hermes_user: hermes
+    hermes_home: /home/hermes
+    hermes_state_mount: "{{ hermes_home }}/.hermes"
+    # LLM (custom OpenAI-compatible endpoint)
+    hermes_llm_base_url: "http://qwen35-2b.llmkube-system.svc.cluster.local:8080/v1"
+    hermes_llm_model: "qwen35-2b"
+    hermes_llm_api_key: "sk-no-key"   # qwen35-2b accepts any/none; placeholder
+    # In-guest nftables coarse egress backstop CIDR (OVN EgressFirewall is the real
+    # control); allowed on tcp/8080 for the in-cluster LLM service.
+    hermes_cluster_service_cidr: "172.30.0.0/16"
+    # Dashboard hardening: native BasicAuthProvider (scrypt password gate, no OAuth
+    # IDP / Nous Portal) + file-browser confinement. Opt in by setting the username
+    # + a scrypt password_hash (compute with plugins.dashboard_auth.basic.hash_password)
+    # + a random secret — the hash/secret belong in 1Password/vault, NOT git, so
+    # pass them as extra-vars. Empty username = the auth provider is a no-op.
+    hermes_dashboard_auth_username: ""
+    hermes_dashboard_auth_password_hash: ""
+    hermes_dashboard_auth_secret: ""
+    hermes_dashboard_files_root: "{{ hermes_state_mount }}/dashboard-files"
   tasks:
-    - name: Run hermes_agent configure
-      ansible.builtin.import_role:
-        name: hermes_agent
-        tasks_from: configure
+    # Hermes loads ~/.hermes/config.yaml (what `hermes config path` returns) — NOT
+    # cli-config.yaml. Rendering to the wrong name meant the whole config (model,
+    # terminal, delegation, hardening) was silently ignored and the agent ran on
+    # stock defaults (a hosted openrouter model). Render to config.yaml, 0600.
+    - name: Render the Hermes config
+      ansible.builtin.template:
+        src: cli-config.yaml.j2
+        dest: "{{ hermes_state_mount }}/config.yaml"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0600"
+      become: true
+
+    - name: Remove the stale, never-loaded cli-config.yaml
+      ansible.builtin.file:
+        path: "{{ hermes_state_mount }}/cli-config.yaml"
+        state: absent
+      become: true
+
+    - name: Render the Hermes environment file
+      ansible.builtin.template:
+        src: hermes.env.j2
+        dest: "{{ hermes_state_mount }}/.env"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0600"
+      become: true
+
+    # Confined root for the dashboard file browser (HERMES_DASHBOARD_FILES_ROOT) —
+    # locks /api/files to this dir instead of allowing arbitrary host file read.
+    - name: Ensure the dashboard file-browser root exists
+      ansible.builtin.file:
+        path: "{{ hermes_dashboard_files_root }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0700"
+      become: true
+
+    - name: Ensure the nftables drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/nftables.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      become: true
+
+    - name: Render the Hermes egress nftables ruleset
+      ansible.builtin.template:
+        src: hermes-egress.nft.j2
+        dest: /etc/nftables.d/hermes-egress.nft
+        owner: root
+        group: root
+        mode: "0644"
+      become: true
+      register: hermes_nft_ruleset
+
+    - name: Ensure /etc/sysconfig/nftables.conf includes the drop-in
+      ansible.builtin.lineinfile:
+        path: /etc/sysconfig/nftables.conf
+        line: 'include "/etc/nftables.d/hermes-egress.nft"'
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      become: true
+
+    - name: Enable and start the nftables service for boot-time persistence
+      ansible.builtin.systemd:
+        name: nftables
+        enabled: true
+        state: started
+      become: true
+
+    - name: Validate the Hermes egress ruleset (dry-run) before loading
+      ansible.builtin.command:
+        cmd: nft -c -f /etc/nftables.d/hermes-egress.nft
+      become: true
+      changed_when: false
+
+    # Deliberately a task (not a handler): the load is an explicit, in-order step
+    # — render → dry-run validate → load — so the preceding `nft -c` catches an
+    # invalid ruleset before this ever applies it. noqa silences the no-handler
+    # idiom (the role formerly sat in .ansible-lint exclude_paths; inlined here it
+    # is linted, and converting to a handler would defer the load to play-end).
+    - name: Load the Hermes egress ruleset now  # noqa: no-handler
+      ansible.builtin.command:
+        cmd: nft -f /etc/nftables.d/hermes-egress.nft
+      become: true
+      when: hermes_nft_ruleset is changed
+      changed_when: true
+
+    # NOTE: ~/.hermes/skills is intentionally left to the installer. Do NOT chmod it
+    # read-only — Hermes's autonomous skill creation is a core feature and a 0555
+    # clamp would break it (and is not real immutability anyway). Proper immutable,
+    # Git-gated skills are deferred §5.5 work.
+
+    - name: Ensure the hermes user systemd unit directory exists
+      ansible.builtin.file:
+        path: "{{ hermes_home }}/.config/systemd/user"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0755"
+      become: true
+
+    - name: Render the hardened Hermes systemd user unit
+      ansible.builtin.template:
+        src: hermes.service.j2
+        dest: "{{ hermes_home }}/.config/systemd/user/hermes.service"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+      become: true
+
+    # The per-user systemd manager (and its /run/user/<uid> runtime dir + D-Bus
+    # socket) only exists when the hermes user has linger enabled. linux_baseline is
+    # expected to linger hermes as a baseline service user, but enable it here too so
+    # this role is self-sufficient. (creates: guard keeps it idempotent.)
+    - name: Ensure the hermes user has systemd linger enabled
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ hermes_user }}"
+      args:
+        creates: "/var/lib/systemd/linger/{{ hermes_user }}"
+      become: true
+
+    # Resolve the hermes uid so the --user systemctl call below can reach that user's
+    # systemd bus via XDG_RUNTIME_DIR (mirrors the rootless idiom in
+    # igou-ansible/playbooks/linux/podman_quadlets.yaml).
+    - name: Resolve the hermes uid (for the per-user systemd runtime dir)
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ hermes_user }}"
+      become: true
+
+    # Reload the per-user systemd manager so the new unit is visible. The unit is
+    # deliberately NOT enabled or started — messaging is deferred to go-live.
+    # XDG_RUNTIME_DIR is required or `systemctl --user` can't find the bus
+    # ("Failed to connect to bus").
+    - name: Reload the hermes user systemd manager
+      ansible.builtin.systemd:
+        daemon_reload: true
+        scope: user
+      become: true
+      become_user: "{{ hermes_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+
+    - name: Ensure the journald drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      become: true
+
+    # CentOS Stream 10 ships no /etc/systemd/journald.conf (the vendor default lives
+    # in /usr/lib/systemd); use a drop-in so persistent storage applies regardless.
+    - name: Make journald storage persistent (drop-in)
+      ansible.builtin.copy:
+        dest: /etc/systemd/journald.conf.d/10-hermes-persistent.conf
+        content: |
+          [Journal]
+          Storage=persistent
+        owner: root
+        group: root
+        mode: "0644"
+      become: true
+      notify: Restart journald
+  handlers:
+    - name: Restart journald
+      ansible.builtin.systemd:
+        name: systemd-journald
+        state: restarted
+      become: true

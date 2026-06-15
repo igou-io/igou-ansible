@@ -1,12 +1,148 @@
 ---
 - name: Hermes guest convergence — install phase (state disk + installer)
-  # Target only the host AAP passes via ansible_limit (e.g. hermes-hermes from
-  # the kubevirt dynamic inventory). `hosts: all` would fan the state-disk mkfs
-  # out across the whole fleet — match the linux_baseline convention instead.
+  # Hermes guest convergence — INSTALL phase. Runs DURING the egress window (the
+  # installer + tirith download need the network). Formats/mounts the persistent
+  # state disk (/dev/vdb → ~/.hermes), installs host packages, then runs the Hermes
+  # installer as the hermes user. Idempotent throughout.
+  # Run order: install (egress open) → lock egress → configure.
+  # (Formerly the hermes_agent role's tasks/install.yml, inlined here.)
+  #
+  # Target only the host AAP passes via ansible_limit (e.g. hermes-hermes from the
+  # kubevirt dynamic inventory). `hosts: all` would fan the state-disk mkfs out
+  # across the whole fleet — match the linux_baseline convention instead.
   hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
+  vars:
+    hermes_user: hermes
+    hermes_home: /home/hermes
+    hermes_state_device: /dev/vdb
+    hermes_state_mount: "{{ hermes_home }}/.hermes"
+    hermes_install_url: "https://hermes-agent.nousresearch.com/install.sh"
+    # Non-sudo / service-user install: skip browser automation. A working browser
+    # needs system Chromium libs from `sudo npx playwright install-deps chromium`
+    # (a sudo/admin step that doesn't fit the non-sudo service-user model), so the
+    # installer would otherwise leave a non-functional Chromium in ~/.cache. Flip
+    # to false only after running that admin step out of band.
+    hermes_install_skip_browser: true
   tasks:
-    - name: Run hermes_agent install
-      ansible.builtin.import_role:
-        name: hermes_agent
-        tasks_from: install
+    - name: Create xfs filesystem on the Hermes state device
+      community.general.filesystem:
+        fstype: xfs
+        dev: "{{ hermes_state_device }}"
+        force: false   # format only when the device is unformatted
+      become: true
+
+    - name: Mount the Hermes state device and persist it in fstab
+      ansible.posix.mount:
+        path: "{{ hermes_state_mount }}"
+        src: "{{ hermes_state_device }}"
+        fstype: xfs
+        opts: defaults
+        state: mounted
+      become: true
+
+    - name: Own the Hermes state mount to the hermes user
+      ansible.builtin.file:
+        path: "{{ hermes_state_mount }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        recurse: true
+      become: true
+
+    # Install the host packages the convergence needs, here in the install phase
+    # because it runs during the egress window (dnf needs the mirrors). configure.yml
+    # runs with egress LOCKED, so it can only enable nftables, not install it.
+    #   - acl: Ansible hands become->unprivileged-hermes temp files via POSIX ACLs
+    #     (setfacl); without it, the broken NFSv4 `chmod A+user:...` fallback fails.
+    #   - nftables: the centos-stream10 cloud image ships neither the nft binary nor
+    #     nftables.service, which configure.yml enables for the egress ruleset.
+    - name: Install host packages the convergence needs (acl, nftables)
+      ansible.builtin.package:
+        name:
+          - acl
+          - nftables
+        state: present
+      become: true
+
+    # baseline creates hermes as a service user with /sbin/nologin, but the installer
+    # (and the agent, which executes shell/Python) needs a real login shell — without
+    # it `become_user: hermes -i` exits "This account is currently not available."
+    - name: Ensure the hermes user has a usable login shell
+      ansible.builtin.user:
+        name: "{{ hermes_user }}"
+        shell: /bin/bash
+      become: true
+
+    - name: Install Hermes Agent as the hermes user
+      ansible.builtin.shell:
+        # The installer prompts interactively (setup wizard + "install gateway as a
+        # service?") and falls back to /dev/tty even with no TTY, hanging under Ansible.
+        # --non-interactive --skip-setup runs it unattended (configure.yml writes the
+        # cli-config/.env); --skip-browser keeps it non-sudo (hermes_install_skip_browser).
+        cmd: >-
+          set -o pipefail && curl -fsSL {{ hermes_install_url }}
+          | bash -s -- --non-interactive --skip-setup{{ ' --skip-browser' if hermes_install_skip_browser else '' }}
+        creates: "{{ hermes_home }}/.local/bin/hermes"
+        executable: /bin/bash
+      become: true
+      become_user: "{{ hermes_user }}"
+      # hermes is a service user that may have a nologin shell; -i forces a login
+      # shell so the install script gets a sane $HOME/$PATH environment.
+      become_flags: '-i'
+      changed_when: true   # only runs when 'creates' target is absent
+
+    - name: Confirm the Hermes CLI and capture its version
+      ansible.builtin.command:
+        cmd: "{{ hermes_home }}/.local/bin/hermes --version"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      register: hermes_version
+      changed_when: false
+
+    # tirith (pre-exec command scanner) is a GitHub-released binary that Hermes
+    # normally auto-downloads on demand — but that needs the network, so it MUST be
+    # fetched here in the egress window: at runtime (egress locked) the on-demand
+    # fetch fails, and with security.tirith_fail_open:false that would block every
+    # command. Pull the same release artifact Hermes uses, with standard modules
+    # (no private Hermes API / venv coupling). Pin a tag instead of 'latest' for a
+    # reproducible, supply-chain-stable binary if desired.
+    - name: Check whether the tirith scanner is already installed
+      ansible.builtin.stat:
+        path: "{{ hermes_state_mount }}/bin/tirith"
+      register: hermes_tirith_bin
+      become: true
+
+    - name: Install the tirith pre-exec command scanner from its GitHub release
+      when: not hermes_tirith_bin.stat.exists
+      become: true
+      become_user: "{{ hermes_user }}"
+      vars:
+        # arch → release triple (from tirith_security.py:_detect_target)
+        _tirith_target: >-
+          {{ {'x86_64': 'x86_64-unknown-linux-gnu',
+              'aarch64': 'aarch64-unknown-linux-gnu'}[ansible_architecture] }}
+        _tirith_base: "https://github.com/sheeki03/tirith/releases/latest/download"
+      block:
+        - name: Ensure the Hermes bin directory exists
+          ansible.builtin.file:
+            path: "{{ hermes_state_mount }}/bin"
+            state: directory
+            mode: "0755"
+
+        - name: Download + SHA-256-verify the tirith release tarball
+          ansible.builtin.get_url:
+            url: "{{ _tirith_base }}/tirith-{{ _tirith_target }}.tar.gz"
+            dest: "{{ hermes_state_mount }}/tirith-{{ _tirith_target }}.tar.gz"
+            checksum: "sha256:{{ _tirith_base }}/checksums.txt"
+            mode: "0644"
+
+        - name: Extract the tirith binary into the Hermes bin directory
+          ansible.builtin.unarchive:
+            src: "{{ hermes_state_mount }}/tirith-{{ _tirith_target }}.tar.gz"
+            dest: "{{ hermes_state_mount }}/bin"
+            remote_src: true
+            include:
+              - tirith
+            mode: "0755"
