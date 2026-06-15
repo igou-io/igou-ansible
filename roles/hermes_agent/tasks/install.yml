@@ -28,6 +28,15 @@
     recurse: true
   become: true
 
+# Ansible become->unprivileged-user hands its temp files to the target user via
+# POSIX ACLs (setfacl). Without the acl package it falls back to a broken
+# NFSv4-style `chmod A+user:...` and every become_user: hermes task below fails.
+- name: Install acl (required to become the unprivileged hermes user)
+  ansible.builtin.package:
+    name: acl
+    state: present
+  become: true
+
 - name: Install Hermes Agent as the hermes user
   ansible.builtin.shell:
     cmd: "set -o pipefail && curl -fsSL {{ hermes_install_url }} | bash"
