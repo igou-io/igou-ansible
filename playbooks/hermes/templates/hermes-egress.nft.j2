@@ -18,6 +18,17 @@ table inet hermes_egress {
     oif "lo" accept
     ct state established,related accept
 
+    # SSH server replies (sport 22) — keep the management / Ansible-convergence
+    # connection alive across this ruleset's first load. configure.yml applies
+    # this default-drop policy mid-run, but conntrack has not tracked the in-flight
+    # SSH connection (it predates the first ct rule, so it is not seen as
+    # `established`); without this rule sshd's replies hit `policy drop` and the
+    # control connection hangs forever (observed: AAP EE convergence wedged on the
+    # nftables task with the reply send-q stuck). sshd is root-owned and the
+    # unprivileged Hermes agent cannot bind sport 22, so this does not widen the
+    # agent's egress.
+    tcp sport 22 accept
+
     # DNS resolution
     udp dport 53 accept
     tcp dport 53 accept
