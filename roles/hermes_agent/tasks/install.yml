@@ -48,7 +48,13 @@
 
 - name: Install Hermes Agent as the hermes user
   ansible.builtin.shell:
-    cmd: "set -o pipefail && curl -fsSL {{ hermes_install_url }} | bash {{ '-s -- --skip-browser' if hermes_install_skip_browser else '' }}"
+    # The installer prompts interactively (setup wizard + "install gateway as a
+    # service?") and falls back to /dev/tty even with no TTY, hanging under Ansible.
+    # --non-interactive --skip-setup runs it unattended (configure.yml writes the
+    # cli-config/.env); --skip-browser keeps it non-sudo (hermes_install_skip_browser).
+    cmd: >-
+      set -o pipefail && curl -fsSL {{ hermes_install_url }}
+      | bash -s -- --non-interactive --skip-setup{{ ' --skip-browser' if hermes_install_skip_browser else '' }}
     creates: "{{ hermes_home }}/.local/bin/hermes"
     executable: /bin/bash
   become: true
