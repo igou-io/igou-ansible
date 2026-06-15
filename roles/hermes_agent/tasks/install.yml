@@ -78,3 +78,21 @@
   become_flags: '-i'
   register: hermes_version
   changed_when: false
+
+# tirith (pre-exec command scanner) is auto-downloaded from GitHub releases
+# (SHA-256 verified) into ~/.hermes/bin. It MUST be fetched here in the egress
+# window: at runtime (egress locked) the on-demand auto-install would fail, and
+# with security.tirith_fail_open:false that would block every command. We call
+# the synchronous _install_tirith — ensure_installed() downloads in a thread
+# that dies when python exits, so it does not work for a one-shot invocation.
+- name: Install the tirith pre-exec command scanner
+  ansible.builtin.shell:
+    cmd: >-
+      ./venv/bin/python -c "import sys; from tools.tirith_security import _install_tirith;
+      sys.exit(0 if _install_tirith(log_failures=True)[0] else 1)"
+    chdir: "{{ hermes_home }}/.hermes/hermes-agent"
+    creates: "{{ hermes_home }}/.hermes/bin/tirith"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ hermes_user }}"
+  become_flags: '-i'

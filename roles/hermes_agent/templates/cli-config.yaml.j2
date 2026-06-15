@@ -41,10 +41,12 @@ skills:
 memory:
   write_approval: true
 
-# Pre-exec command scanning (homograph URLs, pipe-to-shell, terminal injection,
-# env manipulation). NOTE: the `tirith` binary is NOT installed yet, so this is
-# inert until it is; fail_open stays true until then so commands aren't all
-# blocked. Install tirith, then set fail_open:false to enforce (fail-closed).
+# Pre-exec command scanning (homograph URLs, pipe-to-shell/curl|bash, terminal
+# injection, env manipulation — MITRE T1059.x). The tirith binary is installed
+# during the install phase (egress window). fail_open:false = fail CLOSED: a
+# command is blocked if tirith flags it OR is unavailable. (tirith targets
+# network/supply-chain patterns, not destructive local cmds — the manual
+# approval gate above covers those; the two are complementary.)
 security:
   tirith_enabled: true
-  tirith_fail_open: true
+  tirith_fail_open: false
