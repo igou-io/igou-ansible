@@ -127,11 +127,23 @@
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
 
-- name: Make journald storage persistent
-  ansible.builtin.lineinfile:
-    path: /etc/systemd/journald.conf
-    regexp: '^#?\s*Storage='
-    line: Storage=persistent
+- name: Ensure the journald drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+# CentOS Stream 10 ships no /etc/systemd/journald.conf (the vendor default lives
+# in /usr/lib/systemd); use a drop-in so persistent storage applies regardless.
+- name: Make journald storage persistent (drop-in)
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/10-hermes-persistent.conf
+    content: |
+      [Journal]
+      Storage=persistent
     owner: root
     group: root
     mode: "0644"
