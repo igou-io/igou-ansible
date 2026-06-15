@@ -16,3 +16,12 @@ hermes_install_url: "https://hermes-agent.nousresearch.com/install.sh"
 # installer would otherwise leave a non-functional Chromium in ~/.cache. Flip to
 # false only after running that admin step out of band.
 hermes_install_skip_browser: true
+# Dashboard hardening: native BasicAuthProvider (scrypt password gate, no OAuth
+# IDP / Nous Portal) + file-browser confinement. Opt in by setting the username
+# + a scrypt password_hash (compute with plugins.dashboard_auth.basic.hash_password)
+# + a random secret — the hash/secret belong in 1Password/vault, NOT git, so pass
+# them as extra-vars or a lookup. Empty username = the auth provider is a no-op.
+hermes_dashboard_auth_username: ""
+hermes_dashboard_auth_password_hash: ""
+hermes_dashboard_auth_secret: ""
+hermes_dashboard_files_root: "{{ hermes_state_mount }}/dashboard-files"

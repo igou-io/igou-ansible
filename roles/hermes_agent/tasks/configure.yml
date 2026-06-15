@@ -32,6 +32,17 @@
     mode: "0600"
   become: true
 
+# Confined root for the dashboard file browser (HERMES_DASHBOARD_FILES_ROOT) —
+# locks /api/files to this dir instead of allowing arbitrary host file read.
+- name: Ensure the dashboard file-browser root exists
+  ansible.builtin.file:
+    path: "{{ hermes_dashboard_files_root }}"
+    state: directory
+    owner: "{{ hermes_user }}"
+    group: "{{ hermes_user }}"
+    mode: "0700"
+  become: true
+
 - name: Ensure the nftables drop-in directory exists
   ansible.builtin.file:
     path: /etc/nftables.d
