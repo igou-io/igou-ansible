@@ -1,6 +1,8 @@
 ---
 - name: Hermes guest convergence — configure phase (config + nftables + unit)
-  hosts: all
+  # Target only the host AAP passes via ansible_limit (matches linux_baseline);
+  # `hosts: all` would run the Hermes config across the whole fleet.
+  hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
   tasks:
     - name: Run hermes_agent configure

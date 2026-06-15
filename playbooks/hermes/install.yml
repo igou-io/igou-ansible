@@ -1,6 +1,9 @@
 ---
 - name: Hermes guest convergence — install phase (state disk + installer)
-  hosts: all
+  # Target only the host AAP passes via ansible_limit (e.g. hermes-hermes from
+  # the kubevirt dynamic inventory). `hosts: all` would fan the state-disk mkfs
+  # out across the whole fleet — match the linux_baseline convention instead.
+  hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
   tasks:
     - name: Run hermes_agent install
