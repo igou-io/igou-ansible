@@ -4,13 +4,23 @@
 # systemd USER unit. The unit is installed but NOT enabled/started: messaging
 # (Telegram) is deferred to go-live.
 
-- name: Render the Hermes CLI config
+# Hermes loads ~/.hermes/config.yaml (what `hermes config path` returns) — NOT
+# cli-config.yaml. Rendering to the wrong name meant the whole config (model,
+# terminal, delegation, hardening) was silently ignored and the agent ran on
+# stock defaults (a hosted openrouter model). Render to config.yaml, 0600.
+- name: Render the Hermes config
   ansible.builtin.template:
     src: cli-config.yaml.j2
-    dest: "{{ hermes_state_mount }}/cli-config.yaml"
+    dest: "{{ hermes_state_mount }}/config.yaml"
     owner: "{{ hermes_user }}"
     group: "{{ hermes_user }}"
-    mode: "0644"
+    mode: "0600"
+  become: true
+
+- name: Remove the stale, never-loaded cli-config.yaml
+  ansible.builtin.file:
+    path: "{{ hermes_state_mount }}/cli-config.yaml"
+    state: absent
   become: true
 
 - name: Render the Hermes environment file

@@ -14,3 +14,37 @@ terminal:
 # Subagent delegation: never auto-approve dangerous-command prompts (auto-deny).
 delegation:
   subagent_auto_approve: false
+
+# === Native safety hardening ===
+# These pin Hermes's own controls as code so they survive re-converge and are
+# explicit rather than relying on upstream defaults. (Defense-in-depth lives at
+# the OpenShift/OS layer; this is the app-layer first line.)
+
+# Human-in-the-loop. Every tool/command runs through a manual approval gate;
+# cron jobs can never self-approve.
+approvals:
+  mode: manual
+  cron_mode: deny
+
+# Stop runaway tool loops (repeated failures / no forward progress) instead of
+# only warning — caps a wedged or hostile agent.
+tool_loop_guardrails:
+  hard_stop_enabled: true
+
+# The agent writes and runs its own "skills" (persisted code that survives
+# restarts). Require approval before one is written, so a poisoned self-authored
+# skill can't silently persist.
+skills:
+  write_approval: true
+
+# Treat the persistent memory store as attacker-influenceable; gate writes to it.
+memory:
+  write_approval: true
+
+# Pre-exec command scanning (homograph URLs, pipe-to-shell, terminal injection,
+# env manipulation). NOTE: the `tirith` binary is NOT installed yet, so this is
+# inert until it is; fail_open stays true until then so commands aren't all
+# blocked. Install tirith, then set fail_open:false to enforce (fail-closed).
+security:
+  tirith_enabled: true
+  tirith_fail_open: true
