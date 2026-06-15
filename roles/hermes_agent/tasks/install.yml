@@ -37,6 +37,15 @@
     state: present
   become: true
 
+# baseline creates hermes as a service user with /sbin/nologin, but the installer
+# (and the agent, which executes shell/Python) needs a real login shell — without
+# it `become_user: hermes -i` exits "This account is currently not available."
+- name: Ensure the hermes user has a usable login shell
+  ansible.builtin.user:
+    name: "{{ hermes_user }}"
+    shell: /bin/bash
+  become: true
+
 - name: Install Hermes Agent as the hermes user
   ansible.builtin.shell:
     cmd: "set -o pipefail && curl -fsSL {{ hermes_install_url }} | bash"
