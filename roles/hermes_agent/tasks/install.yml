@@ -28,12 +28,18 @@
     recurse: true
   become: true
 
-# Ansible become->unprivileged-user hands its temp files to the target user via
-# POSIX ACLs (setfacl). Without the acl package it falls back to a broken
-# NFSv4-style `chmod A+user:...` and every become_user: hermes task below fails.
-- name: Install acl (required to become the unprivileged hermes user)
+# Install the host packages the convergence needs, here in the install phase
+# because it runs during the egress window (dnf needs the mirrors). configure.yml
+# runs with egress LOCKED, so it can only enable nftables, not install it.
+#   - acl: Ansible hands become->unprivileged-hermes temp files via POSIX ACLs
+#     (setfacl); without it, the broken NFSv4 `chmod A+user:...` fallback fails.
+#   - nftables: the centos-stream10 cloud image ships neither the nft binary nor
+#     nftables.service, which configure.yml enables for the egress ruleset.
+- name: Install host packages the convergence needs (acl, nftables)
   ansible.builtin.package:
-    name: acl
+    name:
+      - acl
+      - nftables
     state: present
   become: true
 
