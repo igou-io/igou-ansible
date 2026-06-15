@@ -48,7 +48,7 @@
 
 - name: Install Hermes Agent as the hermes user
   ansible.builtin.shell:
-    cmd: "set -o pipefail && curl -fsSL {{ hermes_install_url }} | bash"
+    cmd: "set -o pipefail && curl -fsSL {{ hermes_install_url }} | bash {{ '-s -- --skip-browser' if hermes_install_skip_browser else '' }}"
     creates: "{{ hermes_home }}/.local/bin/hermes"
     executable: /bin/bash
   become: true

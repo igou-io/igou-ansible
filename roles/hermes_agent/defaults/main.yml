@@ -10,3 +10,9 @@ hermes_llm_api_key: "sk-no-key"   # qwen35-2b accepts any/none; placeholder
 # in-guest nftables coarse egress backstop (OVN EgressFirewall is the real control)
 hermes_cluster_service_cidr: "172.30.0.0/16"
 hermes_install_url: "https://hermes-agent.nousresearch.com/install.sh"
+# Non-sudo / service-user install: skip browser automation. A working browser
+# needs system Chromium libs from `sudo npx playwright install-deps chromium`
+# (a sudo/admin step that doesn't fit the non-sudo service-user model), so the
+# installer would otherwise leave a non-functional Chromium in ~/.cache. Flip to
+# false only after running that admin step out of band.
+hermes_install_skip_browser: true
