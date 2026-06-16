@@ -1,0 +1,29 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Hermes Agent dashboard (web UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Serve the prebuilt UI dist (built during the install phase) with --skip-build so
+# the unit never reruns tsc+vite at start. Bind non-loopback WITHOUT --insecure so
+# the native scrypt BasicAuthProvider gate (HERMES_DASHBOARD_BASIC_AUTH_* in
+# ~/.hermes/.env) is enforced — Hermes refuses to bind a public host unless an auth
+# provider is registered, which is why this unit is only enabled when auth is set.
+ExecStart=%h/.local/bin/hermes dashboard --host {{ hermes_dashboard_host }} --port {{ hermes_dashboard_port }} --skip-build --no-open
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.hermes
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+LockPersonality=true
+
+[Install]
+WantedBy=default.target
