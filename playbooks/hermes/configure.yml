@@ -96,6 +96,15 @@
     # NOT cli-config.yaml. The dashboard also writes this file via `save_config`
     # (the UI model picker, skills/MCP toggles, etc.), so re-rendering here would
     # overwrite those edits — gated on `hermes_render_config_yaml` to opt out.
+    - name: Surface that config.yaml render is opted out (UI changes will persist)
+      ansible.builtin.debug:
+        msg: >-
+          hermes_render_config_yaml is false — keeping the on-disk
+          ~/.hermes/config.yaml so dashboard UI edits (model picker, skills/MCP
+          toggles, …) persist. The playbook's pinned model + hardening are NOT
+          enforced this run.
+      when: not (hermes_render_config_yaml | bool)
+
     - name: Render the Hermes config (whole-file render of hermes_config dict)
       ansible.builtin.template:
         src: cli-config.yaml.j2
@@ -105,6 +114,7 @@
         mode: "0600"
       become: true
       when: hermes_render_config_yaml | bool
+      notify: Restart the Hermes dashboard user unit
 
     - name: Remove the stale, never-loaded cli-config.yaml
       ansible.builtin.file:
@@ -120,6 +130,7 @@
         group: "{{ hermes_user }}"
         mode: "0600"
       become: true
+      notify: Restart the Hermes dashboard user unit
 
     # Confined root for the dashboard file browser (HERMES_DASHBOARD_FILES_ROOT) —
     # locks /api/files to this dir instead of allowing arbitrary host file read.
@@ -298,3 +309,21 @@
         name: systemd-journald
         state: restarted
       become: true
+
+    # Pick up the new config.yaml / .env in the running dashboard. The unit's
+    # `state: started` task is idempotent and does NOT restart on its own, so a
+    # rendered change (e.g. model swap, basic-auth rotation) otherwise sits on
+    # disk until something restarts the unit. Gated on the same auth username
+    # that gates the unit's start: no auth = no running dashboard = nothing to
+    # restart. (Empty username also means the render-task notifies a no-op
+    # handler, which is fine.)
+    - name: Restart the Hermes dashboard user unit
+      ansible.builtin.systemd:
+        name: hermes-dashboard.service
+        state: restarted
+        scope: user
+      become: true
+      become_user: "{{ hermes_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+      when: hermes_dashboard_auth_username | length > 0
