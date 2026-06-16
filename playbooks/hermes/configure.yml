@@ -2,8 +2,10 @@
 - name: Hermes guest convergence — configure phase (config + nftables + unit)
   # Hermes guest convergence — CONFIGURE phase. Runs with egress LOCKED (needs no
   # network). Renders the CLI config + secrets (~/.hermes/config.yaml + .env), the
-  # in-guest nftables egress backstop, persistent journald, and a hardened systemd
-  # USER unit — installed but NOT enabled/started (messaging is deferred to go-live).
+  # in-guest nftables egress backstop, persistent journald, and two hardened systemd
+  # USER units: the agent gateway (hermes.service, installed but NOT started — going
+  # live is deferred) and the dashboard web UI (hermes-dashboard.service, started
+  # when dashboard auth is configured, so it survives reboot/reprovision).
   # Run order: install (egress open) → lock egress → configure.
   # (Formerly the hermes_agent role's tasks/configure.yml, inlined here.)
   #
@@ -31,6 +33,13 @@
     hermes_dashboard_auth_password_hash: ""
     hermes_dashboard_auth_secret: ""
     hermes_dashboard_files_root: "{{ hermes_state_mount }}/dashboard-files"
+    # The dashboard web UI runs as a managed systemd --user unit
+    # (hermes-dashboard.service) so it survives reboot/reprovision and self-restarts
+    # — replacing the prior out-of-band `nohup hermes dashboard`, which a rebuild
+    # silently wiped. It binds non-loopback behind the BasicAuthProvider and is only
+    # enabled when an auth username is set (fail closed — see the start task below).
+    hermes_dashboard_host: "0.0.0.0"
+    hermes_dashboard_port: 9119
   tasks:
     # Hermes loads ~/.hermes/config.yaml (what `hermes config path` returns) — NOT
     # cli-config.yaml. Rendering to the wrong name meant the whole config (model,
@@ -148,6 +157,15 @@
         mode: "0644"
       become: true
 
+    - name: Render the hardened Hermes dashboard systemd user unit
+      ansible.builtin.template:
+        src: hermes-dashboard.service.j2
+        dest: "{{ hermes_home }}/.config/systemd/user/hermes-dashboard.service"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+      become: true
+
     # The per-user systemd manager (and its /run/user/<uid> runtime dir + D-Bus
     # socket) only exists when the hermes user has linger enabled. linux_baseline is
     # expected to linger hermes as a baseline service user, but enable it here too so
@@ -168,8 +186,9 @@
         key: "{{ hermes_user }}"
       become: true
 
-    # Reload the per-user systemd manager so the new unit is visible. The unit is
-    # deliberately NOT enabled or started — messaging is deferred to go-live.
+    # Reload the per-user systemd manager so the new units are visible. The agent
+    # gateway unit (hermes.service) is deliberately NOT enabled or started — going
+    # live with messaging is deferred. The dashboard unit IS started below.
     # XDG_RUNTIME_DIR is required or `systemctl --user` can't find the bus
     # ("Failed to connect to bus").
     - name: Reload the hermes user systemd manager
@@ -180,6 +199,24 @@
       become_user: "{{ hermes_user }}"
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+
+    # Unlike the agent gateway unit, the dashboard unit IS enabled + started — it is
+    # the managed replacement for the old out-of-band nohup, so it must come up on
+    # its own after a reboot/reprovision. Guard on the auth username: with --host
+    # 0.0.0.0 and no --insecure, Hermes refuses to bind unless the BasicAuthProvider
+    # is registered, so starting it without creds would crash-loop. No username =
+    # the dashboard stays down (fail closed) — pass the auth extra-vars to activate.
+    - name: Enable and start the Hermes dashboard user unit
+      ansible.builtin.systemd:
+        name: hermes-dashboard.service
+        enabled: true
+        state: started
+        scope: user
+      become: true
+      become_user: "{{ hermes_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+      when: hermes_dashboard_auth_username | length > 0
 
     - name: Ensure the journald drop-in directory exists
       ansible.builtin.file:
