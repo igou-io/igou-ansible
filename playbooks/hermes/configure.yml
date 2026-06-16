@@ -17,10 +17,12 @@
     hermes_user: hermes
     hermes_home: /home/hermes
     hermes_state_mount: "{{ hermes_home }}/.hermes"
-    # LLM (custom OpenAI-compatible endpoint)
-    hermes_llm_base_url: "http://qwen35-2b.llmkube-system.svc.cluster.local:8080/v1"
-    hermes_llm_model: "qwen35-2b"
-    hermes_llm_api_key: "sk-no-key"   # qwen35-2b accepts any/none; placeholder
+    # LLM (custom OpenAI-compatible endpoint). Primary backend is the larger
+    # in-cluster reasoning model qwen3-35b-a3b (Qwen3.6-35B-A3B, ~70 tok/s on the
+    # 2x RTX 4060 Ti burst node); qwen35-2b remains available as a smaller fallback.
+    hermes_llm_base_url: "http://qwen3-35b-a3b.llmkube-system.svc.cluster.local:8080/v1"
+    hermes_llm_model: "qwen3-35b-a3b"
+    hermes_llm_api_key: "sk-no-key"   # llama.cpp server accepts any/none; placeholder
     # In-guest nftables coarse egress backstop CIDR (OVN EgressFirewall is the real
     # control); allowed on tcp/8080 for the in-cluster LLM service.
     hermes_cluster_service_cidr: "172.30.0.0/16"
