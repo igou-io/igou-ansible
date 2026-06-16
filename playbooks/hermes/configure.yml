@@ -21,7 +21,15 @@
     # in-cluster reasoning model qwen3-35b-a3b (Qwen3.6-35B-A3B, ~70 tok/s on the
     # 2x RTX 4060 Ti burst node); qwen35-2b remains available as a smaller fallback.
     hermes_llm_base_url: "http://qwen3-35b-a3b.llmkube-system.svc.cluster.local:8080/v1"
-    hermes_llm_model: "qwen3-35b-a3b"
+    # The model NAME must match what the server's /v1/models advertises, or the
+    # Hermes agent's auto-detect at session start "fixes" the config — switching
+    # provider:custom -> openai-api, clearing base_url, and persisting via the
+    # dashboard's `save_config(cfg)`. The llmkube InferenceService passes
+    # `--alias qwen3.6-35b-a3b` to llama.cpp, so the server reports that alias
+    # (not the Service-name `qwen3-35b-a3b`). The Service DNS in base_url above
+    # stays the InferenceService name — that's the network identity, separate
+    # from the model alias the server returns.
+    hermes_llm_model: "qwen3.6-35b-a3b"
     hermes_llm_api_key: "sk-no-key"   # llama.cpp server accepts any/none; placeholder
     # In-guest nftables coarse egress backstop CIDR (OVN EgressFirewall is the real
     # control); allowed on tcp/8080 for the in-cluster LLM service.
