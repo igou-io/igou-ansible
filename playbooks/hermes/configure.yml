@@ -27,13 +27,14 @@
     # control); allowed on tcp/8080 for the in-cluster LLM service.
     hermes_cluster_service_cidr: "172.30.0.0/16"
     # Dashboard hardening: native BasicAuthProvider (scrypt password gate, no OAuth
-    # IDP / Nous Portal) + file-browser confinement. Opt in by setting the username
-    # + a scrypt password_hash (compute with plugins.dashboard_auth.basic.hash_password)
-    # + a random secret — the hash/secret belong in 1Password/vault, NOT git, so
-    # pass them as extra-vars. Empty username = the auth provider is a no-op.
-    hermes_dashboard_auth_username: ""
-    hermes_dashboard_auth_password_hash: ""
-    hermes_dashboard_auth_secret: ""
+    # IDP / Nous Portal) + file-browser confinement. The three auth vars
+    # (hermes_dashboard_auth_{username,password_hash,secret}) are intentionally
+    # NOT defaulted here — empty defaults at play-vars precedence would clobber
+    # the inventory `group_vars/hermes.yml` lookups (play vars beat inventory
+    # group_vars in Ansible's variable precedence). Sourced from
+    # `op://awx/hermes-dashboard` via group_vars/hermes.yml; an unset value at
+    # template/condition time is handled with `| default('')`. Empty username =
+    # the auth provider is a no-op (dashboard unit stays down, fail closed).
     hermes_dashboard_files_root: "{{ hermes_state_mount }}/dashboard-files"
     # The dashboard web UI runs as a managed systemd --user unit
     # (hermes-dashboard.service) so it survives reboot/reprovision and self-restarts
@@ -92,23 +93,6 @@
         tirith_enabled: true
         tirith_fail_open: false
   tasks:
-    # Resolve the dashboard basic-auth from 1Password BEFORE rendering .env.
-    # Jinja2 lookups assigned in `group_vars/*.yml` don't reliably resolve in
-    # this AAP execution environment (silent empty return, no error in stdout
-    # — observed live and matches the workaround playbooks/aap/smoketest-
-    # onepassword.yml already uses for the same reason). Setting the fact at
-    # task time evaluates the lookup eagerly and stores the resolved value on
-    # the host. Gated on the var being empty so a launch-time `-e
-    # hermes_dashboard_auth_username=…` extra-var (operator override / smoke
-    # test) wins over the 1Password lookup.
-    - name: Resolve dashboard basic-auth from 1Password
-      ansible.builtin.set_fact:
-        hermes_dashboard_auth_username: "{{ lookup('community.general.onepassword', 'hermes-dashboard', field='username', vault='awx') }}"
-        hermes_dashboard_auth_password_hash: "{{ lookup('community.general.onepassword', 'hermes-dashboard', field='password_hash', vault='awx') }}"
-        hermes_dashboard_auth_secret: "{{ lookup('community.general.onepassword', 'hermes-dashboard', field='password_secret', vault='awx') }}"
-      no_log: true
-      when: hermes_dashboard_auth_username | length == 0
-
     # Hermes loads `~/.hermes/config.yaml` (what `hermes config path` returns) —
     # NOT cli-config.yaml. The dashboard also writes this file via `save_config`
     # (the UI model picker, skills/MCP toggles, etc.), so re-rendering here would
@@ -296,7 +280,7 @@
       become_user: "{{ hermes_user }}"
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
-      when: hermes_dashboard_auth_username | length > 0
+      when: (hermes_dashboard_auth_username | default('')) | length > 0
 
     - name: Ensure the journald drop-in directory exists
       ansible.builtin.file:
@@ -343,4 +327,4 @@
       become_user: "{{ hermes_user }}"
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
-      when: hermes_dashboard_auth_username | length > 0
+      when: (hermes_dashboard_auth_username | default('')) | length > 0
