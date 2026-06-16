@@ -42,12 +42,61 @@
     # enabled when an auth username is set (fail closed — see the start task below).
     hermes_dashboard_host: "0.0.0.0"
     hermes_dashboard_port: 9119
+    # Toggle whether the playbook (re-)renders `~/.hermes/config.yaml` on every
+    # converge. The Hermes dashboard PERSISTS UI changes (model picker, skills
+    # toggles, MCP servers, memory provider, theme, etc.) to that file via the
+    # server's `save_config(cfg)`; re-rendering silently reverts every such UI
+    # edit. Flip to `false` to preserve UI state (the playbook stops enforcing
+    # the pinned model + hardening); leave `true` for code-as-truth.
+    hermes_render_config_yaml: true
+    # The full Hermes CLI config, serialized by the render task with `to_nice_yaml`
+    # — comments below explain the WHY but are not preserved in the rendered file.
+    hermes_config:
+      # Hermes loads `~/.hermes/config.yaml` (what `hermes config path` returns);
+      # `provider: custom` points at an in-cluster OpenAI-compatible endpoint.
+      model:
+        provider: custom
+        base_url: "{{ hermes_llm_base_url }}"
+        model: "{{ hermes_llm_model }}"
+      # Terminal tool backend: local execution in the agent's working directory.
+      terminal:
+        backend: local
+        cwd: "."
+      # Subagent delegation: never auto-approve dangerous-command prompts.
+      delegation:
+        subagent_auto_approve: false
+      # === Native safety hardening ===
+      # Pin Hermes's own controls as code so they survive re-converge rather than
+      # relying on upstream defaults. (Defense-in-depth lives at the OpenShift/OS
+      # layer; this is the app-layer first line.)
+      # Human-in-the-loop: every tool/command runs through a manual approval gate;
+      # cron jobs can never self-approve.
+      approvals:
+        mode: manual
+        cron_mode: deny
+      # Stop runaway tool loops (repeated failures / no forward progress) instead
+      # of only warning — caps a wedged or hostile agent.
+      tool_loop_guardrails:
+        hard_stop_enabled: true
+      # The agent writes and runs its own "skills" (persisted code that survives
+      # restarts). Require approval before one is written so a poisoned
+      # self-authored skill can't silently persist.
+      skills:
+        write_approval: true
+      # Treat the persistent memory store as attacker-influenceable; gate writes.
+      memory:
+        write_approval: true
+      # Pre-exec command scanning (tirith). `fail_open: false` = fail CLOSED: a
+      # command is blocked if tirith flags it OR is unavailable.
+      security:
+        tirith_enabled: true
+        tirith_fail_open: false
   tasks:
-    # Hermes loads ~/.hermes/config.yaml (what `hermes config path` returns) — NOT
-    # cli-config.yaml. Rendering to the wrong name meant the whole config (model,
-    # terminal, delegation, hardening) was silently ignored and the agent ran on
-    # stock defaults (a hosted openrouter model). Render to config.yaml, 0600.
-    - name: Render the Hermes config
+    # Hermes loads `~/.hermes/config.yaml` (what `hermes config path` returns) —
+    # NOT cli-config.yaml. The dashboard also writes this file via `save_config`
+    # (the UI model picker, skills/MCP toggles, etc.), so re-rendering here would
+    # overwrite those edits — gated on `hermes_render_config_yaml` to opt out.
+    - name: Render the Hermes config (whole-file render of hermes_config dict)
       ansible.builtin.template:
         src: cli-config.yaml.j2
         dest: "{{ hermes_state_mount }}/config.yaml"
@@ -55,6 +104,7 @@
         group: "{{ hermes_user }}"
         mode: "0600"
       become: true
+      when: hermes_render_config_yaml | bool
 
     - name: Remove the stale, never-loaded cli-config.yaml
       ansible.builtin.file:
