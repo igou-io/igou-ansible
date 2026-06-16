@@ -92,6 +92,23 @@
         tirith_enabled: true
         tirith_fail_open: false
   tasks:
+    # Resolve the dashboard basic-auth from 1Password BEFORE rendering .env.
+    # Jinja2 lookups assigned in `group_vars/*.yml` don't reliably resolve in
+    # this AAP execution environment (silent empty return, no error in stdout
+    # — observed live and matches the workaround playbooks/aap/smoketest-
+    # onepassword.yml already uses for the same reason). Setting the fact at
+    # task time evaluates the lookup eagerly and stores the resolved value on
+    # the host. Gated on the var being empty so a launch-time `-e
+    # hermes_dashboard_auth_username=…` extra-var (operator override / smoke
+    # test) wins over the 1Password lookup.
+    - name: Resolve dashboard basic-auth from 1Password
+      ansible.builtin.set_fact:
+        hermes_dashboard_auth_username: "{{ lookup('community.general.onepassword', 'hermes-dashboard', field='username', vault='awx') }}"
+        hermes_dashboard_auth_password_hash: "{{ lookup('community.general.onepassword', 'hermes-dashboard', field='password_hash', vault='awx') }}"
+        hermes_dashboard_auth_secret: "{{ lookup('community.general.onepassword', 'hermes-dashboard', field='password_secret', vault='awx') }}"
+      no_log: true
+      when: hermes_dashboard_auth_username | length == 0
+
     # Hermes loads `~/.hermes/config.yaml` (what `hermes config path` returns) —
     # NOT cli-config.yaml. The dashboard also writes this file via `save_config`
     # (the UI model picker, skills/MCP toggles, etc.), so re-rendering here would
