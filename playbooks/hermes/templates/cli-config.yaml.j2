@@ -1,52 +1,5 @@
 {{ ansible_managed | comment }}
-# Hermes Agent CLI config — rendered by the Hermes configure playbook.
-# Keys verified against cli-config.yaml.example (NousResearch/hermes-agent).
-model:
-  provider: custom
-  base_url: "{{ hermes_llm_base_url }}"
-  model: "{{ hermes_llm_model }}"
-
-# Terminal tool backend: local execution in the agent's working directory.
-terminal:
-  backend: local
-  cwd: "."
-
-# Subagent delegation: never auto-approve dangerous-command prompts (auto-deny).
-delegation:
-  subagent_auto_approve: false
-
-# === Native safety hardening ===
-# These pin Hermes's own controls as code so they survive re-converge and are
-# explicit rather than relying on upstream defaults. (Defense-in-depth lives at
-# the OpenShift/OS layer; this is the app-layer first line.)
-
-# Human-in-the-loop. Every tool/command runs through a manual approval gate;
-# cron jobs can never self-approve.
-approvals:
-  mode: manual
-  cron_mode: deny
-
-# Stop runaway tool loops (repeated failures / no forward progress) instead of
-# only warning — caps a wedged or hostile agent.
-tool_loop_guardrails:
-  hard_stop_enabled: true
-
-# The agent writes and runs its own "skills" (persisted code that survives
-# restarts). Require approval before one is written, so a poisoned self-authored
-# skill can't silently persist.
-skills:
-  write_approval: true
-
-# Treat the persistent memory store as attacker-influenceable; gate writes to it.
-memory:
-  write_approval: true
-
-# Pre-exec command scanning (homograph URLs, pipe-to-shell/curl|bash, terminal
-# injection, env manipulation — MITRE T1059.x). The tirith binary is installed
-# during the install phase (egress window). fail_open:false = fail CLOSED: a
-# command is blocked if tirith flags it OR is unavailable. (tirith targets
-# network/supply-chain patterns, not destructive local cmds — the manual
-# approval gate above covers those; the two are complementary.)
-security:
-  tirith_enabled: true
-  tirith_fail_open: false
+# Hermes Agent CLI config — rendered from the configure playbook's hermes_config
+# dict. Comments live in that source dict; they are NOT preserved here (the
+# dashboard would clobber them on the first UI save anyway).
+{{ hermes_config | to_nice_yaml(indent=2) }}
