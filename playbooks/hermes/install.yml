@@ -57,12 +57,26 @@
     #     (setfacl); without it, the broken NFSv4 `chmod A+user:...` fallback fails.
     #   - nftables: the centos-stream10 cloud image ships neither the nft binary nor
     #     nftables.service, which configure.yml enables for the egress ruleset.
-    - name: Install host packages the convergence needs (acl, nftables)
+    #   - chrony: the centos-stream10 cloud image SHIPS it active by default, but
+    #     ensure-present is cheap insurance — a wrong VM clock breaks TLS validation
+    #     against the OpenShift router/api.telegram.org and skews journald correlation
+    #     (observed pre-rebuild: VM clock ran ~24h behind real time).
+    - name: Install host packages the convergence needs (acl, nftables, chrony)
       ansible.builtin.package:
         name:
           - acl
           - nftables
+          - chrony
         state: present
+      become: true
+
+    # Make chrony explicit even though the cloud image enables it — if a future
+    # image variant drops the default, we still get a syncing clock.
+    - name: Ensure chronyd is enabled and running (clock sync)
+      ansible.builtin.systemd:
+        name: chronyd
+        enabled: true
+        state: started
       become: true
 
     # baseline creates hermes as a service user with /sbin/nologin, but the installer
