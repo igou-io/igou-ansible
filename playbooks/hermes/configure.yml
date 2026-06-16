@@ -67,6 +67,20 @@
         provider: custom
         base_url: "{{ hermes_llm_base_url }}"
         model: "{{ hermes_llm_model }}"
+      # Ordered fallback chain — tried in sequence if the primary times out or
+      # errors. The other two in-cluster InferenceServices: the smaller
+      # qwen3.5-2b (always-on, 1 GPU on p330) and gemma-4-e2b. Model NAMES are
+      # the aliases each llama.cpp server actually advertises in /v1/models
+      # (per the InferenceService `--alias` flag) — see the comment block above
+      # `hermes_llm_model` for why this matters. base_urls stay the
+      # InferenceService Service DNS (network identity, distinct from alias).
+      fallback_model:
+        - provider: custom
+          base_url: http://qwen35-2b.llmkube-system.svc.cluster.local:8080/v1
+          model: qwen3.5-2b
+        - provider: custom
+          base_url: http://gemma-4-e2b.llmkube-system.svc.cluster.local:8080/v1
+          model: gemma-4-e2b
       # Terminal tool backend: local execution in the agent's working directory.
       terminal:
         backend: local
