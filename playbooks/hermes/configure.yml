@@ -96,14 +96,17 @@
         {{ hermes_llm_providers
             | map('combine', {'api_key': hermes_llm_api_key})
             | list }}
-      # Primary model: reference the chosen entry by name; the named
-      # `custom_providers:` row supplies base_url + api_key automatically.
+      # Primary model: use the generic `provider: custom` with inline base_url
+      # + model (NOT a `custom:<slug>` reference). Naming the primary by slug
+      # causes the dashboard's `/api/model/options` to dedupe the named entry
+      # out of the picker rows — so the user can't switch back to it from the
+      # UI. Inline form keeps all three `custom_providers:` entries visible
+      # as switchable rows AND lets the picker correctly mark the matching
+      # one as `is_current`.
       model:
-        provider: "custom:{{ hermes_llm_primary }}"
-        model: >-
-          {{ (hermes_llm_providers
-              | selectattr('name','equalto', hermes_llm_primary)
-              | first).model }}
+        provider: custom
+        base_url: "{{ (hermes_llm_providers | selectattr('name','equalto', hermes_llm_primary) | first).base_url }}"
+        model: "{{ (hermes_llm_providers | selectattr('name','equalto', hermes_llm_primary) | first).model }}"
       # Ordered fallback chain — references the same `custom_providers:` rows
       # by slug. Each entry already provides base_url/api_key; only provider +
       # model needed here.
