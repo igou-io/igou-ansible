@@ -17,20 +17,47 @@
     hermes_user: hermes
     hermes_home: /home/hermes
     hermes_state_mount: "{{ hermes_home }}/.hermes"
-    # LLM (custom OpenAI-compatible endpoint). Primary backend is the larger
-    # in-cluster reasoning model qwen3-35b-a3b (Qwen3.6-35B-A3B, ~70 tok/s on the
-    # 2x RTX 4060 Ti burst node); qwen35-2b remains available as a smaller fallback.
-    hermes_llm_base_url: "http://qwen3-35b-a3b.llmkube-system.svc.cluster.local:8080/v1"
-    # The model NAME must match what the server's /v1/models advertises, or the
-    # Hermes agent's auto-detect at session start "fixes" the config — switching
-    # provider:custom -> openai-api, clearing base_url, and persisting via the
-    # dashboard's `save_config(cfg)`. The llmkube InferenceService passes
-    # `--alias qwen3.6-35b-a3b` to llama.cpp, so the server reports that alias
-    # (not the Service-name `qwen3-35b-a3b`). The Service DNS in base_url above
-    # stays the InferenceService name — that's the network identity, separate
-    # from the model alias the server returns.
-    hermes_llm_model: "qwen3.6-35b-a3b"
-    hermes_llm_api_key: "sk-no-key"   # llama.cpp server accepts any/none; placeholder
+    # ---- LLM endpoints (in-cluster OpenAI-compatible InferenceServices) ----
+    # Each entry is rendered as a `custom_providers:` row in config.yaml; the
+    # dashboard's model picker (`GET /api/model/options`) lists each as a
+    # switchable item (slug = `custom:<name>`). The dashboard's `POST
+    # /api/model/set` writes the operator's picker selection back to `model:`
+    # in config.yaml, so a converge re-renders to the playbook's primary on
+    # next run unless `hermes_render_config_yaml: false`.
+    #
+    # The model NAMES below must match what each llama.cpp server actually
+    # advertises in /v1/models (per the InferenceService `--alias`) — if they
+    # don't, the agent auto-detects at session start, switches `provider:
+    # custom -> openai-api`, clears base_url, and persists via `save_config`.
+    # base_urls are the Service DNS (network identity, distinct from alias).
+    hermes_llm_api_key: "sk-no-key"   # llama.cpp accepts any/none; placeholder
+    hermes_llm_providers:
+      - name: qwen3-35b-a3b
+        base_url: http://qwen3-35b-a3b.llmkube-system.svc.cluster.local:8080/v1
+        model: qwen3.6-35b-a3b
+      - name: qwen35-2b
+        base_url: http://qwen35-2b.llmkube-system.svc.cluster.local:8080/v1
+        model: qwen3.5-2b
+      - name: gemma-4-e2b
+        base_url: http://gemma-4-e2b.llmkube-system.svc.cluster.local:8080/v1
+        model: gemma-4-e2b
+    # Which named provider above drives the primary `model:` block. Change to
+    # one of the `name:` values to swap the default the agent starts on.
+    hermes_llm_primary: "qwen3-35b-a3b"
+    # Ordered fallback chain — tried in sequence when the primary errors or
+    # times out. Each entry references a `custom_providers:` slug above
+    # (`custom:<name>`). Edit to reorder / drop entries.
+    hermes_llm_fallback_chain:
+      - provider: custom:qwen35-2b
+        model: qwen3.5-2b
+      - provider: custom:gemma-4-e2b
+        model: gemma-4-e2b
+    # OPENAI_BASE_URL in .env still needs a literal URL for the OpenAI Python
+    # client's default; derive from the primary so it tracks `hermes_llm_primary`.
+    hermes_llm_base_url: >-
+      {{ (hermes_llm_providers
+          | selectattr('name','equalto', hermes_llm_primary)
+          | first).base_url }}
     # In-guest nftables coarse egress backstop CIDR (OVN EgressFirewall is the real
     # control); allowed on tcp/8080 for the in-cluster LLM service.
     hermes_cluster_service_cidr: "172.30.0.0/16"
@@ -61,26 +88,26 @@
     # The full Hermes CLI config, serialized by the render task with `to_nice_yaml`
     # — comments below explain the WHY but are not preserved in the rendered file.
     hermes_config:
-      # Hermes loads `~/.hermes/config.yaml` (what `hermes config path` returns);
-      # `provider: custom` points at an in-cluster OpenAI-compatible endpoint.
+      # Three named custom OpenAI-compatible endpoints. Each becomes a
+      # switchable row in the dashboard model picker (slug = `custom:<name>`).
+      # api_key is the same placeholder for all (llama.cpp ignores it); merge
+      # it in here so `hermes_llm_providers` itself stays focused on routing.
+      custom_providers: >-
+        {{ hermes_llm_providers
+            | map('combine', {'api_key': hermes_llm_api_key})
+            | list }}
+      # Primary model: reference the chosen entry by name; the named
+      # `custom_providers:` row supplies base_url + api_key automatically.
       model:
-        provider: custom
-        base_url: "{{ hermes_llm_base_url }}"
-        model: "{{ hermes_llm_model }}"
-      # Ordered fallback chain — tried in sequence if the primary times out or
-      # errors. The other two in-cluster InferenceServices: the smaller
-      # qwen3.5-2b (always-on, 1 GPU on p330) and gemma-4-e2b. Model NAMES are
-      # the aliases each llama.cpp server actually advertises in /v1/models
-      # (per the InferenceService `--alias` flag) — see the comment block above
-      # `hermes_llm_model` for why this matters. base_urls stay the
-      # InferenceService Service DNS (network identity, distinct from alias).
-      fallback_model:
-        - provider: custom
-          base_url: http://qwen35-2b.llmkube-system.svc.cluster.local:8080/v1
-          model: qwen3.5-2b
-        - provider: custom
-          base_url: http://gemma-4-e2b.llmkube-system.svc.cluster.local:8080/v1
-          model: gemma-4-e2b
+        provider: "custom:{{ hermes_llm_primary }}"
+        model: >-
+          {{ (hermes_llm_providers
+              | selectattr('name','equalto', hermes_llm_primary)
+              | first).model }}
+      # Ordered fallback chain — references the same `custom_providers:` rows
+      # by slug. Each entry already provides base_url/api_key; only provider +
+      # model needed here.
+      fallback_model: "{{ hermes_llm_fallback_chain }}"
       # Terminal tool backend: local execution in the agent's working directory.
       terminal:
         backend: local
