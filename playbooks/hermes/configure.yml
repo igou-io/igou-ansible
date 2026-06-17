@@ -79,12 +79,14 @@
     hermes_dashboard_host: "0.0.0.0"
     hermes_dashboard_port: 9119
     # Toggle whether the playbook (re-)renders `~/.hermes/config.yaml` on every
-    # converge. The Hermes dashboard PERSISTS UI changes (model picker, skills
-    # toggles, MCP servers, memory provider, theme, etc.) to that file via the
-    # server's `save_config(cfg)`; re-rendering silently reverts every such UI
-    # edit. Flip to `false` to preserve UI state (the playbook stops enforcing
-    # the pinned model + hardening); leave `true` for code-as-truth.
-    hermes_render_config_yaml: true
+    # converge. **Default is FALSE per operator preference:** UI is the source
+    # of truth for the Hermes config (model picker, skills/MCP toggles, memory
+    # provider, custom_providers, theme, …) — the dashboard persists those
+    # changes via `save_config(cfg)`, and re-rendering here silently reverts
+    # them. Flip to `true` (`-e hermes_render_config_yaml=true`) for a one-off
+    # reset to the pinned `hermes_config` dict below; otherwise the file is
+    # left alone and the operator manages state from the UI.
+    hermes_render_config_yaml: false
     # The full Hermes CLI config, serialized by the render task with `to_nice_yaml`
     # — comments below explain the WHY but are not preserved in the rendered file.
     hermes_config:
