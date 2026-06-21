@@ -38,7 +38,7 @@ collections:
   - name: devsec.hardening
     version: 10.6.0
   - name: kubevirt.core
-    version: 2.2.4
+    version: 2.3.0
   - name: ansible.utils
     version: 6.0.2
   - name: felixfontein.acme
