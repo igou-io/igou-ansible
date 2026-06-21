@@ -2,7 +2,7 @@ awxkit==24.6.1
 ncclient==0.7.1
 paramiko==5.0.0
 pykerberos==1.2.4
-distlib==0.4.1
+distlib==0.4.2
 dnspython==2.8.0
 pyOpenSSL==26.2.0
 pypsrp[kerberos,credssp]==0.9.1
