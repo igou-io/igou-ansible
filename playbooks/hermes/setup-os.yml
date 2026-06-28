@@ -18,6 +18,15 @@
     hermes_home: /home/hermes
     hermes_state_device: /dev/vdb
     hermes_state_mount: "{{ hermes_home }}/.hermes"
+    # AAP extra_vars or inventory/group_vars must override this placeholder
+    # with a pinned tag before image pull; "latest" is rejected below.
+    hermes_devenv_image: ghcr.io/igou-io/igou-devenv
+    hermes_devenv_image_tag: "latest"
+    hermes_devenv_image_ref: "{{ hermes_devenv_image }}:{{ hermes_devenv_image_tag }}"
+    hermes_podman_subid_start: 100000
+    hermes_podman_subid_count: 65536
+    hermes_podman_subid_end: "{{ (hermes_podman_subid_start | int) + (hermes_podman_subid_count | int) - 1 }}"
+    hermes_podman_graphroot: "{{ hermes_state_mount }}/containers/storage"
     centos_stream_major: "10"
     centos_stream_repo_base: "https://mirror.stream.centos.org/{{ centos_stream_major }}-stream"
     centos_stream_repo_backup_suffix: ansible-pre-mirror-pin
@@ -68,6 +77,15 @@
         fstype: xfs
         opts: defaults
         state: mounted
+      become: true
+
+    - name: Ensure Hermes state mount is owned by hermes
+      ansible.builtin.file:
+        path: "{{ hermes_state_mount }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0700"
       become: true
 
     - name: Check existing CentOS repo files before pinning mirrors
@@ -215,12 +233,24 @@
     #     ensure-present is cheap insurance - a wrong VM clock breaks TLS validation
     #     against the OpenShift router/api.telegram.org and skews journald correlation
     #     (observed pre-rebuild: VM clock ran ~24h behind real time).
-    - name: Install host packages the convergence needs (acl, nftables, chrony)
+    #   - podman/rootless runtime packages: prepare the host for a later Hermes
+    #     Docker terminal backend pointed at /usr/bin/podman, without installing
+    #     Docker Engine or privileged container support on the VM host.
+    #   - policycoreutils-python-utils: semanage support for persistent SELinux
+    #     labels on the rootless Podman graphroot stored on the state disk.
+    - name: Install host packages the convergence needs
       ansible.builtin.package:
         name:
           - acl
           - nftables
           - chrony
+          - podman
+          - containers-common
+          - fuse-overlayfs
+          - slirp4netns
+          - passt
+          - shadow-utils
+          - policycoreutils-python-utils
         state: present
       become: true
 
@@ -240,6 +270,301 @@
       ansible.builtin.user:
         name: "{{ hermes_user }}"
         shell: /bin/bash
+      become: true
+
+    - name: Read hermes passwd entry
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ hermes_user }}"
+      become: true
+
+    - name: Set hermes UID fact
+      ansible.builtin.set_fact:
+        hermes_uid: "{{ ansible_facts.getent_passwd[hermes_user][1] }}"
+
+    - name: Set rootless Podman environment for hermes
+      ansible.builtin.set_fact:
+        hermes_podman_environment:
+          XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid }}"
+
+    - name: Ensure user namespaces are enabled for rootless containers
+      ansible.posix.sysctl:
+        name: user.max_user_namespaces
+        value: "28633"
+        state: present
+        reload: true
+      become: true
+
+    - name: Read subordinate UID mappings
+      ansible.builtin.slurp:
+        src: /etc/subuid
+      register: hermes_subuid_file
+      become: true
+
+    - name: Read subordinate GID mappings
+      ansible.builtin.slurp:
+        src: /etc/subgid
+      register: hermes_subgid_file
+      become: true
+
+    - name: Determine whether hermes already has subordinate UID/GID mappings
+      ansible.builtin.set_fact:
+        hermes_has_subuid: >-
+          {{
+            (hermes_subuid_file.content | b64decode).splitlines()
+            | select('match', '^' ~ hermes_user ~ ':')
+            | list
+            | length > 0
+          }}
+        hermes_has_subgid: >-
+          {{
+            (hermes_subgid_file.content | b64decode).splitlines()
+            | select('match', '^' ~ hermes_user ~ ':')
+            | list
+            | length > 0
+          }}
+
+    # ansible.builtin.user does not manage subordinate UID ranges. Use usermod
+    # only when slurp-based pre-checks show no mapping exists.
+    - name: Add subordinate UID range for hermes
+      ansible.builtin.command:
+        cmd: >-
+          usermod --add-subuids
+          {{ hermes_podman_subid_start }}-{{ hermes_podman_subid_end }}
+          {{ hermes_user }}
+      when: not hermes_has_subuid
+      register: hermes_subuid_added
+      changed_when: true
+      become: true
+
+    # ansible.builtin.user does not manage subordinate GID ranges. Use usermod
+    # only when slurp-based pre-checks show no mapping exists.
+    - name: Add subordinate GID range for hermes
+      ansible.builtin.command:
+        cmd: >-
+          usermod --add-subgids
+          {{ hermes_podman_subid_start }}-{{ hermes_podman_subid_end }}
+          {{ hermes_user }}
+      when: not hermes_has_subgid
+      register: hermes_subgid_added
+      changed_when: true
+      become: true
+
+    # systemd has no Ansible module for loginctl linger; creates keeps this
+    # idempotent and avoids restarting an already enabled user manager.
+    - name: Enable lingering for hermes user services
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ hermes_user }}"
+        creates: "/var/lib/systemd/linger/{{ hermes_user }}"
+      become: true
+
+    - name: Ensure hermes user manager is running
+      ansible.builtin.systemd:
+        name: "user@{{ hermes_uid }}.service"
+        state: started
+      become: true
+
+    - name: Create hermes rootless containers config and storage directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0700"
+      loop:
+        - "{{ hermes_home }}/.config"
+        - "{{ hermes_home }}/.config/containers"
+        - "{{ hermes_state_mount }}/containers"
+        - "{{ hermes_podman_graphroot }}"
+      become: true
+
+    - name: Configure rootless Podman storage on Hermes state disk
+      ansible.builtin.template:
+        src: hermes-containers-storage.conf.j2
+        dest: "{{ hermes_home }}/.config/containers/storage.conf"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0600"
+      become: true
+
+    # Rootless Podman graphroot is moved from the default per-user location to the
+    # persistent Hermes state disk. On SELinux systems, relocated Podman graphroot
+    # paths need persistent file-context rules and restorecon, otherwise Podman can
+    # fail later with SELinux denials when reading/writing image and container
+    # storage. Match the distro Podman policy shape: container_var_lib_t for the
+    # graphroot and more specific labels for image storage and named volumes.
+    - name: Persist SELinux context for Hermes rootless Podman graphroot
+      community.general.sefcontext:
+        target: "{{ hermes_podman_graphroot }}(/.*)?"
+        setype: container_var_lib_t
+        state: present
+      become: true
+      when: ansible_facts.selinux.status == "enabled"
+
+    - name: Persist SELinux context for Hermes rootless Podman image storage
+      community.general.sefcontext:
+        target: "{{ hermes_podman_graphroot }}/{{ item }}(/.*)?"
+        setype: container_ro_file_t
+        state: present
+      loop:
+        - artifacts
+        - overlay
+        - overlay-containers
+        - overlay-images
+        - overlay-layers
+        - overlay2
+        - overlay2-containers
+        - overlay2-images
+        - overlay2-layers
+      become: true
+      when: ansible_facts.selinux.status == "enabled"
+
+    - name: Persist SELinux context for Hermes rootless Podman named volumes
+      community.general.sefcontext:
+        target: "{{ hermes_podman_graphroot }}/volumes/[^/]*/.*"
+        setype: container_file_t
+        state: present
+      become: true
+      when: ansible_facts.selinux.status == "enabled"
+
+    - name: Apply SELinux context to Hermes rootless Podman graphroot
+      ansible.builtin.command:
+        cmd: "restorecon -RFv {{ hermes_podman_graphroot }}"
+      become: true
+      changed_when: false
+      when: ansible_facts.selinux.status == "enabled"
+
+    # Podman has no native module for applying changed subuid/subgid mappings to
+    # existing rootless storage; only run this after this play adds a mapping.
+    - name: Apply rootless Podman mapping changes
+      ansible.builtin.command:
+        cmd: podman system migrate
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment: "{{ hermes_podman_environment }}"
+      changed_when: false
+      when: hermes_subuid_added is changed or hermes_subgid_added is changed
+
+    - name: Gather rootless Podman system information as hermes
+      containers.podman.podman_system_info:
+        executable: /usr/bin/podman
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment: "{{ hermes_podman_environment }}"
+      register: hermes_podman_info
+
+    - name: Validate rootless Podman for hermes
+      ansible.builtin.assert:
+        that:
+          - hermes_podman_info.podman_system_info.host.security.rootless | bool
+          - hermes_podman_info.podman_system_info.store.graphRoot == hermes_podman_graphroot
+          - hermes_podman_info.podman_system_info.store.runRoot == "/run/user/" ~ hermes_uid ~ "/containers"
+        fail_msg: >-
+          Rootless Podman for {{ hermes_user }} must be active and use
+          {{ hermes_podman_graphroot }} for graphRoot.
+
+    # The setup phase pulls the runtime image while egress is open. Keep "latest"
+    # as a placeholder only; AAP or inventory must provide the pinned tag.
+    - name: Require pinned igou-devenv image tag
+      ansible.builtin.assert:
+        that:
+          - hermes_devenv_image_tag is defined
+          - hermes_devenv_image_tag | length > 0
+          - hermes_devenv_image_tag != "latest"
+        fail_msg: >-
+          hermes_devenv_image_tag must be pinned by inventory/group_vars before
+          setup-os.yml pulls the Hermes runtime image. Do not use latest for the
+          Hermes runtime image.
+
+    - name: Pull Hermes Podman backend image during egress-open setup phase
+      containers.podman.podman_image:
+        name: "{{ hermes_devenv_image_ref }}"
+        state: present
+        pull: true
+        executable: /usr/bin/podman
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment: "{{ hermes_podman_environment }}"
+      register: hermes_podman_pull
+
+    # containers.podman.podman_container does not expose one-shot command output
+    # clearly enough to assert the future runtime identity. Keep podman run here
+    # so the smoke test proves whoami=igou under the planned keep-id mapping.
+    # timeout keeps first-run ID-mapped layer preparation from hanging forever.
+    - name: Smoke test igou-devenv image with rootless Podman keep-id mapping
+      ansible.builtin.command:
+        cmd: >-
+          timeout --kill-after=30s 10m
+          podman run --rm
+          --entrypoint /usr/bin/bash
+          --userns=keep-id:uid=1000,gid=1000
+          --user=1000:1000
+          -e HOME=/home/igou
+          -e BASH_ENV=/home/igou/.bashrc
+          {{ hermes_devenv_image_ref }}
+          -lc 'whoami; id -u; id -g; command -v bash; command -v podman || true'
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment: "{{ hermes_podman_environment }}"
+      register: hermes_devenv_smoke_test
+      changed_when: false
+      failed_when: >-
+        hermes_devenv_smoke_test.rc != 0
+        or (hermes_devenv_smoke_test.stdout_lines | default([]) | length) < 3
+        or hermes_devenv_smoke_test.stdout_lines[0] != "igou"
+        or hermes_devenv_smoke_test.stdout_lines[1] != "1000"
+        or hermes_devenv_smoke_test.stdout_lines[2] != "1000"
+
+    # Future configure.yml phase handoff:
+    # - set HERMES_DOCKER_BINARY=/usr/bin/podman for the Hermes gateway process
+    # - manage Hermes config.yaml with terminal.backend: docker
+    # - set docker_image to {{ hermes_devenv_image_ref }}
+    # - set HOME=/home/igou
+    # - use docker_extra_args: --userns=keep-id:uid=1000,gid=1000 and --user=1000:1000
+    # - use explicit many-volume mappings from /home/hermes into /home/igou
+    # - do not mount all of /home/hermes or use privileged containers
+    - name: Create host-side directories for future igou-devenv Hermes runtime mounts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0700"
+      loop:
+        - "{{ hermes_home }}/agent-repos"
+        - "{{ hermes_state_mount }}/cache"
+        - "{{ hermes_state_mount }}/cache/documents"
+        - "{{ hermes_home }}/.ssh"
+        - "{{ hermes_home }}/.kube"
+        - "{{ hermes_home }}/.claude"
+        - "{{ hermes_home }}/.codex"
+        - "{{ hermes_home }}/.config"
+        - "{{ hermes_home }}/.config/opencode"
+        - "{{ hermes_home }}/.config/gh"
+        - "{{ hermes_home }}/.config/argocd"
+        - "{{ hermes_home }}/.local"
+        - "{{ hermes_home }}/.local/share"
+        - "{{ hermes_home }}/.local/share/opencode"
+        - "{{ hermes_home }}/.local/share/cursor-agent"
+        - "{{ hermes_home }}/.terraform.d"
+      become: true
+
+    - name: Create optional mounted user config files if absent
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: touch
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "{{ item.mode }}"
+        access_time: preserve
+        modification_time: preserve
+      loop:
+        - { path: "{{ hermes_home }}/.claude.json", mode: "0600" }
+        - { path: "{{ hermes_home }}/.gitconfig", mode: "0644" }
       become: true
   handlers:
     - name: Clean DNF metadata
