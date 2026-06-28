@@ -387,22 +387,52 @@
         mode: "0600"
       become: true
 
-    - name: Persist SELinux context for Hermes rootless Podman storage
+    # Rootless Podman graphroot is moved from the default per-user location to the
+    # persistent Hermes state disk. On SELinux systems, relocated Podman graphroot
+    # paths need persistent file-context rules and restorecon, otherwise Podman can
+    # fail later with SELinux denials when reading/writing image and container
+    # storage. Match the distro Podman policy shape: container_var_lib_t for the
+    # graphroot and more specific labels for image storage and named volumes.
+    - name: Persist SELinux context for Hermes rootless Podman graphroot
       community.general.sefcontext:
         target: "{{ hermes_podman_graphroot }}(/.*)?"
-        seuser: unconfined_u
+        setype: container_var_lib_t
+        state: present
+      become: true
+      when: ansible_facts.selinux.status == "enabled"
+
+    - name: Persist SELinux context for Hermes rootless Podman image storage
+      community.general.sefcontext:
+        target: "{{ hermes_podman_graphroot }}/{{ item }}(/.*)?"
+        setype: container_ro_file_t
+        state: present
+      loop:
+        - artifacts
+        - overlay
+        - overlay-containers
+        - overlay-images
+        - overlay-layers
+        - overlay2
+        - overlay2-containers
+        - overlay2-images
+        - overlay2-layers
+      become: true
+      when: ansible_facts.selinux.status == "enabled"
+
+    - name: Persist SELinux context for Hermes rootless Podman named volumes
+      community.general.sefcontext:
+        target: "{{ hermes_podman_graphroot }}/volumes/[^/]*/.*"
         setype: container_file_t
         state: present
       become: true
+      when: ansible_facts.selinux.status == "enabled"
 
-    # The state disk mounted at ~/.hermes can arrive unlabeled. Apply the
-    # persisted context before Podman starts containers from that graphroot.
-    - name: Apply SELinux context to Hermes rootless Podman storage
+    - name: Apply SELinux context to Hermes rootless Podman graphroot
       ansible.builtin.command:
         cmd: "restorecon -RFv {{ hermes_podman_graphroot }}"
-      register: hermes_podman_storage_restorecon
-      changed_when: hermes_podman_storage_restorecon.stdout | trim | length > 0
       become: true
+      changed_when: false
+      when: ansible_facts.selinux.status == "enabled"
 
     # Podman has no native module for applying changed subuid/subgid mappings to
     # existing rootless storage; only run this after this play adds a mapping.
