@@ -1,5 +1,0 @@
-{{ ansible_managed | comment }}
-# Hermes Agent CLI config — rendered from the configure playbook's hermes_config
-# dict. Comments live in that source dict; they are NOT preserved here (the
-# dashboard would clobber them on the first UI save anyway).
-{{ hermes_config | to_nice_yaml(indent=2) }}

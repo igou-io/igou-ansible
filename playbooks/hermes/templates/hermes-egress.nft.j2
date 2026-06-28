@@ -35,6 +35,8 @@ table inet hermes_egress {
 
     # In-cluster LLM (qwen35-2b OpenAI-compatible endpoint)
     ip daddr {{ hermes_cluster_service_cidr }} tcp dport 8080 accept
+    # In-cluster Firecrawl API (website extraction)
+    ip daddr {{ hermes_cluster_service_cidr }} tcp dport 3002 accept
 
     # External HTTPS (OVN EgressFirewall already pins this to api.telegram.org)
     tcp dport 443 accept
