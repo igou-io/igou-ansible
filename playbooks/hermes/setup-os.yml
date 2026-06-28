@@ -235,6 +235,8 @@
     #   - podman/rootless runtime packages: prepare the host for a later Hermes
     #     Docker terminal backend pointed at /usr/bin/podman, without installing
     #     Docker Engine or privileged container support on the VM host.
+    #   - policycoreutils-python-utils: semanage support for persistent SELinux
+    #     labels on the rootless Podman graphroot stored on the state disk.
     - name: Install host packages the convergence needs
       ansible.builtin.package:
         name:
@@ -247,6 +249,7 @@
           - slirp4netns
           - passt
           - shadow-utils
+          - policycoreutils-python-utils
         state: present
       become: true
 
@@ -276,7 +279,7 @@
 
     - name: Set hermes UID fact
       ansible.builtin.set_fact:
-        hermes_uid: "{{ getent_passwd[hermes_user][1] }}"
+        hermes_uid: "{{ ansible_facts.getent_passwd[hermes_user][1] }}"
 
     - name: Set rootless Podman environment for hermes
       ansible.builtin.set_fact:
@@ -383,6 +386,23 @@
         mode: "0600"
       become: true
 
+    - name: Persist SELinux context for Hermes rootless Podman storage
+      community.general.sefcontext:
+        target: "{{ hermes_podman_graphroot }}(/.*)?"
+        seuser: unconfined_u
+        setype: container_file_t
+        state: present
+      become: true
+
+    # The state disk mounted at ~/.hermes can arrive unlabeled. Apply the
+    # persisted context before Podman starts containers from that graphroot.
+    - name: Apply SELinux context to Hermes rootless Podman storage
+      ansible.builtin.command:
+        cmd: "restorecon -RFv {{ hermes_podman_graphroot }}"
+      register: hermes_podman_storage_restorecon
+      changed_when: hermes_podman_storage_restorecon.stdout | trim | length > 0
+      become: true
+
     # Podman has no native module for applying changed subuid/subgid mappings to
     # existing rootless storage; only run this after this play adds a mapping.
     - name: Apply rootless Podman mapping changes
@@ -440,16 +460,19 @@
     # containers.podman.podman_container does not expose one-shot command output
     # clearly enough to assert the future runtime identity. Keep podman run here
     # so the smoke test proves whoami=igou under the planned keep-id mapping.
+    # timeout keeps first-run ID-mapped layer preparation from hanging forever.
     - name: Smoke test igou-devenv image with rootless Podman keep-id mapping
       ansible.builtin.command:
         cmd: >-
+          timeout --kill-after=30s 10m
           podman run --rm
+          --entrypoint /usr/bin/bash
           --userns=keep-id:uid=1000,gid=1000
           --user=1000:1000
           -e HOME=/home/igou
           -e BASH_ENV=/home/igou/.bashrc
           {{ hermes_devenv_image_ref }}
-          bash -lc 'whoami && id && command -v bash && command -v podman || true'
+          -lc 'whoami && id && command -v bash && command -v podman || true'
       become: true
       become_user: "{{ hermes_user }}"
       become_flags: "-i"
