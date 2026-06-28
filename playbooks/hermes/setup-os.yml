@@ -197,6 +197,13 @@
     - name: Refresh DNF metadata after repo pinning changes
       ansible.builtin.meta: flush_handlers
 
+    - name: Update installed OS packages
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest  # noqa: package-latest - intentional OS update during the egress install window
+        update_only: true
+      become: true
+
     # Install the host packages the convergence needs, here in the setup phase
     # because it runs during the egress window (dnf needs the mirrors). configure.yml
     # runs with egress LOCKED, so it can only enable nftables, not install it.
