@@ -1,75 +1,28 @@
 ---
-- name: Hermes guest convergence — configure phase (config + nftables + unit)
+- name: Hermes guest convergence — configure phase (environment + nftables + unit)
   # Hermes guest convergence — CONFIGURE phase. Runs with egress LOCKED (needs no
-  # network). Renders the CLI config + secrets (~/.hermes/config.yaml + .env), the
-  # in-guest nftables egress backstop, persistent journald, and two hardened systemd
-  # USER units: the agent gateway (hermes.service, installed but NOT started — going
-  # live is deferred) and the dashboard web UI (hermes-dashboard.service, started
-  # when dashboard auth is configured, so it survives reboot/reprovision).
+  # network). Updates managed keys in the environment file, renders the in-guest
+  # nftables egress backstop, persistent journald, and two hardened systemd USER
+  # units: the agent gateway (hermes-gateway.service) and the dashboard web UI
+  # (hermes-dashboard.service), so both survive reboot/reprovision.
   # Run order: install (egress open) → lock egress → configure.
   # (Formerly the hermes_agent role's tasks/configure.yml, inlined here.)
   #
   # Target only the host AAP passes via ansible_limit (matches linux_baseline);
-  # `hosts: all` would run the Hermes config across the whole fleet.
+  # `hosts: all` would run the Hermes configure phase across the whole fleet.
   hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
   vars:
     hermes_user: hermes
     hermes_home: /home/hermes
     hermes_state_mount: "{{ hermes_home }}/.hermes"
-    # ---- LLM endpoints (in-cluster OpenAI-compatible InferenceServices) ----
-    # Each entry is rendered as a `custom_providers:` row in config.yaml; the
-    # dashboard's model picker (`GET /api/model/options`) lists each as a
-    # switchable item (slug = `custom:<name>`). The dashboard's `POST
-    # /api/model/set` writes the operator's picker selection back to `model:`
-    # in config.yaml, so a converge re-renders to the playbook's primary on
-    # next run unless `hermes_render_config_yaml: false`.
-    #
-    # The model NAMES below must match what each llama.cpp server actually
-    # advertises in /v1/models (per the InferenceService `--alias`) — if they
-    # don't, the agent auto-detects at session start, switches `provider:
-    # custom -> openai-api`, clears base_url, and persists via `save_config`.
-    # base_urls are the Service DNS (network identity, distinct from alias).
-    hermes_llm_api_key: "sk-no-key"   # llama.cpp accepts any/none; placeholder
-    hermes_llm_providers:
-      - name: qwen3-35b-a3b
-        base_url: http://qwen3-35b-a3b.llmkube-system.svc.cluster.local:8080/v1
-        model: qwen3.6-35b-a3b
-      - name: qwen35-2b
-        base_url: http://qwen35-2b.llmkube-system.svc.cluster.local:8080/v1
-        model: qwen3.5-2b
-      - name: gemma-4-e2b
-        base_url: http://gemma-4-e2b.llmkube-system.svc.cluster.local:8080/v1
-        model: gemma-4-e2b
-    # Which named provider above drives the primary `model:` block. Change to
-    # one of the `name:` values to swap the default the agent starts on.
-    hermes_llm_primary: "qwen3-35b-a3b"
-    # Ordered fallback chain — tried in sequence when the primary errors or
-    # times out. Each entry references a `custom_providers:` slug above
-    # (`custom:<name>`). Edit to reorder / drop entries.
-    hermes_llm_fallback_chain:
-      - provider: custom:qwen35-2b
-        model: qwen3.5-2b
-      - provider: custom:gemma-4-e2b
-        model: gemma-4-e2b
-    # OPENAI_BASE_URL in .env still needs a literal URL for the OpenAI Python
-    # client's default; derive from the primary so it tracks `hermes_llm_primary`.
-    hermes_llm_base_url: >-
-      {{ (hermes_llm_providers
-          | selectattr('name','equalto', hermes_llm_primary)
-          | first).base_url }}
     # In-guest nftables coarse egress backstop CIDR (OVN EgressFirewall is the real
     # control); allowed on tcp/8080 for the in-cluster LLM service.
     hermes_cluster_service_cidr: "172.30.0.0/16"
     # Dashboard hardening: native BasicAuthProvider (scrypt password gate, no OAuth
-    # IDP / Nous Portal) + file-browser confinement. The three auth vars
-    # (hermes_dashboard_auth_{username,password_hash,secret}) are intentionally
-    # NOT defaulted here — empty defaults at play-vars precedence would clobber
-    # the inventory `group_vars/hermes.yml` lookups (play vars beat inventory
-    # group_vars in Ansible's variable precedence). Sourced from
-    # `op://awx/hermes-dashboard` via group_vars/hermes.yml; an unset value at
-    # template/condition time is handled with `| default('')`. Empty username =
-    # the auth provider is a no-op (dashboard unit stays down, fail closed).
+    # IDP / Nous Portal) + file-browser confinement. Auth values are sourced from
+    # `hermes_env_values` in group_vars/hermes.yml. Empty username = the auth
+    # provider is a no-op (dashboard unit stays down, fail closed).
     hermes_dashboard_files_root: "{{ hermes_state_mount }}/dashboard-files"
     # The dashboard web UI runs as a managed systemd --user unit
     # (hermes-dashboard.service) so it survives reboot/reprovision and self-restarts
@@ -78,116 +31,22 @@
     # enabled when an auth username is set (fail closed — see the start task below).
     hermes_dashboard_host: "0.0.0.0"
     hermes_dashboard_port: 9119
-    # Toggle whether the playbook (re-)renders `~/.hermes/config.yaml` on every
-    # converge. **Default is FALSE per operator preference:** UI is the source
-    # of truth for the Hermes config (model picker, skills/MCP toggles, memory
-    # provider, custom_providers, theme, …) — the dashboard persists those
-    # changes via `save_config(cfg)`, and re-rendering here silently reverts
-    # them. Flip to `true` (`-e hermes_render_config_yaml=true`) for a one-off
-    # reset to the pinned `hermes_config` dict below; otherwise the file is
-    # left alone and the operator manages state from the UI.
-    hermes_render_config_yaml: false
-    # The full Hermes CLI config, serialized by the render task with `to_nice_yaml`
-    # — comments below explain the WHY but are not preserved in the rendered file.
-    hermes_config:
-      # Three named custom OpenAI-compatible endpoints. Each becomes a
-      # switchable row in the dashboard model picker (slug = `custom:<name>`).
-      # api_key is the same placeholder for all (llama.cpp ignores it); merge
-      # it in here so `hermes_llm_providers` itself stays focused on routing.
-      custom_providers: >-
-        {{ hermes_llm_providers
-            | map('combine', {'api_key': hermes_llm_api_key})
-            | list }}
-      # Primary model: generic `provider: custom` with inline base_url + model
-      # + api_key + default. Mirror EXACTLY the shape Hermes itself saves when
-      # the operator picks a custom endpoint in the UI — anything less (e.g.
-      # missing `api_key` and `default`) and the agent "completes" the config
-      # by switching `provider: custom -> openai-api`, clearing `base_url`,
-      # and moving `model` into `default`. With all five fields present, the
-      # save_config round-trip is a no-op and `provider:` stays `custom`.
-      model:
-        provider: custom
-        base_url: "{{ (hermes_llm_providers | selectattr('name','equalto', hermes_llm_primary) | first).base_url }}"
-        model: "{{ (hermes_llm_providers | selectattr('name','equalto', hermes_llm_primary) | first).model }}"
-        api_key: "{{ hermes_llm_api_key }}"
-        default: "{{ (hermes_llm_providers | selectattr('name','equalto', hermes_llm_primary) | first).model }}"
-      # Ordered fallback chain — references the same `custom_providers:` rows
-      # by slug. Each entry already provides base_url/api_key; only provider +
-      # model needed here.
-      fallback_model: "{{ hermes_llm_fallback_chain }}"
-      # Terminal tool backend: local execution in the agent's working directory.
-      terminal:
-        backend: local
-        cwd: "."
-      # Subagent delegation: never auto-approve dangerous-command prompts.
-      delegation:
-        subagent_auto_approve: false
-      # === Native safety hardening ===
-      # Pin Hermes's own controls as code so they survive re-converge rather than
-      # relying on upstream defaults. (Defense-in-depth lives at the OpenShift/OS
-      # layer; this is the app-layer first line.)
-      # Human-in-the-loop: every tool/command runs through a manual approval gate;
-      # cron jobs can never self-approve.
-      approvals:
-        mode: manual
-        cron_mode: deny
-      # Stop runaway tool loops (repeated failures / no forward progress) instead
-      # of only warning — caps a wedged or hostile agent.
-      tool_loop_guardrails:
-        hard_stop_enabled: true
-      # The agent writes and runs its own "skills" (persisted code that survives
-      # restarts). Require approval before one is written so a poisoned
-      # self-authored skill can't silently persist.
-      skills:
-        write_approval: true
-      # Treat the persistent memory store as attacker-influenceable; gate writes.
-      memory:
-        write_approval: true
-      # Pre-exec command scanning (tirith). `fail_open: false` = fail CLOSED: a
-      # command is blocked if tirith flags it OR is unavailable.
-      security:
-        tirith_enabled: true
-        tirith_fail_open: false
   tasks:
-    # Hermes loads `~/.hermes/config.yaml` (what `hermes config path` returns) —
-    # NOT cli-config.yaml. The dashboard also writes this file via `save_config`
-    # (the UI model picker, skills/MCP toggles, etc.), so re-rendering here would
-    # overwrite those edits — gated on `hermes_render_config_yaml` to opt out.
-    - name: Surface that config.yaml render is opted out (UI changes will persist)
-      ansible.builtin.debug:
-        msg: >-
-          hermes_render_config_yaml is false — keeping the on-disk
-          ~/.hermes/config.yaml so dashboard UI edits (model picker, skills/MCP
-          toggles, …) persist. The playbook's pinned model + hardening are NOT
-          enforced this run.
-      when: not (hermes_render_config_yaml | bool)
-
-    - name: Render the Hermes config (whole-file render of hermes_config dict)
-      ansible.builtin.template:
-        src: cli-config.yaml.j2
-        dest: "{{ hermes_state_mount }}/config.yaml"
-        owner: "{{ hermes_user }}"
-        group: "{{ hermes_user }}"
-        mode: "0600"
-      become: true
-      when: hermes_render_config_yaml | bool
-      notify: Restart the Hermes dashboard user unit
-
-    - name: Remove the stale, never-loaded cli-config.yaml
-      ansible.builtin.file:
-        path: "{{ hermes_state_mount }}/cli-config.yaml"
-        state: absent
-      become: true
-
-    - name: Render the Hermes environment file
-      ansible.builtin.template:
-        src: hermes.env.j2
+    - name: Update managed Hermes environment values
+      ansible.builtin.lineinfile:
         dest: "{{ hermes_state_mount }}/.env"
+        regexp: "^{{ item.key | regex_escape }}="
+        line: "{{ item.key }}={{ item.value }}"
+        create: true
         owner: "{{ hermes_user }}"
         group: "{{ hermes_user }}"
         mode: "0600"
       become: true
-      notify: Restart the Hermes dashboard user unit
+      loop: "{{ hermes_env_values | dict2items | rejectattr('value', 'equalto', '') | list }}"
+      no_log: true
+      notify:
+        - Restart the Hermes gateway user unit
+        - Restart the Hermes dashboard user unit
 
     # Confined root for the dashboard file browser (HERMES_DASHBOARD_FILES_ROOT) —
     # locks /api/files to this dir instead of allowing arbitrary host file read.
@@ -268,14 +127,22 @@
         mode: "0755"
       become: true
 
-    - name: Render the hardened Hermes systemd user unit
+    - name: Remove the legacy Hermes gateway user unit name
+      ansible.builtin.file:
+        path: "{{ hermes_home }}/.config/systemd/user/hermes.service"
+        state: absent
+      become: true
+      notify: Restart the Hermes gateway user unit
+
+    - name: Render the Hermes gateway systemd user unit
       ansible.builtin.template:
-        src: hermes.service.j2
-        dest: "{{ hermes_home }}/.config/systemd/user/hermes.service"
+        src: hermes-gateway.service.j2
+        dest: "{{ hermes_home }}/.config/systemd/user/hermes-gateway.service"
         owner: "{{ hermes_user }}"
         group: "{{ hermes_user }}"
         mode: "0644"
       become: true
+      notify: Restart the Hermes gateway user unit
 
     - name: Render the hardened Hermes dashboard systemd user unit
       ansible.builtin.template:
@@ -285,6 +152,7 @@
         group: "{{ hermes_user }}"
         mode: "0644"
       become: true
+      notify: Restart the Hermes dashboard user unit
 
     # The per-user systemd manager (and its /run/user/<uid> runtime dir + D-Bus
     # socket) only exists when the hermes user has linger enabled. linux_baseline is
@@ -306,9 +174,7 @@
         key: "{{ hermes_user }}"
       become: true
 
-    # Reload the per-user systemd manager so the new units are visible. The agent
-    # gateway unit (hermes.service) is deliberately NOT enabled or started — going
-    # live with messaging is deferred. The dashboard unit IS started below.
+    # Reload the per-user systemd manager so the new units are visible.
     # XDG_RUNTIME_DIR is required or `systemctl --user` can't find the bus
     # ("Failed to connect to bus").
     - name: Reload the hermes user systemd manager
@@ -320,12 +186,23 @@
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
 
-    # Unlike the agent gateway unit, the dashboard unit IS enabled + started — it is
-    # the managed replacement for the old out-of-band nohup, so it must come up on
-    # its own after a reboot/reprovision. Guard on the auth username: with --host
-    # 0.0.0.0 and no --insecure, Hermes refuses to bind unless the BasicAuthProvider
-    # is registered, so starting it without creds would crash-loop. No username =
-    # the dashboard stays down (fail closed) — pass the auth extra-vars to activate.
+    - name: Enable and start the Hermes gateway user unit
+      ansible.builtin.systemd:
+        name: hermes-gateway.service
+        enabled: true
+        state: started
+        scope: user
+      become: true
+      become_user: "{{ hermes_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+
+    # The dashboard unit is enabled + started as the managed replacement for the
+    # old out-of-band nohup, so it must come up on its own after a reboot/reprovision.
+    # Guard on the auth username: with --host 0.0.0.0 and no --insecure, Hermes
+    # refuses to bind unless the BasicAuthProvider is registered, so starting it
+    # without creds would crash-loop. No username = the dashboard stays down
+    # (fail closed) — pass the auth extra-vars to activate.
     - name: Enable and start the Hermes dashboard user unit
       ansible.builtin.systemd:
         name: hermes-dashboard.service
@@ -336,7 +213,7 @@
       become_user: "{{ hermes_user }}"
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
-      when: (hermes_dashboard_auth_username | default('')) | length > 0
+      when: (hermes_env_values.HERMES_DASHBOARD_BASIC_AUTH_USERNAME | default('')) | length > 0
 
     - name: Ensure the journald drop-in directory exists
       ansible.builtin.file:
@@ -367,13 +244,21 @@
         state: restarted
       become: true
 
-    # Pick up the new config.yaml / .env in the running dashboard. The unit's
-    # `state: started` task is idempotent and does NOT restart on its own, so a
-    # rendered change (e.g. model swap, basic-auth rotation) otherwise sits on
-    # disk until something restarts the unit. Gated on the same auth username
-    # that gates the unit's start: no auth = no running dashboard = nothing to
-    # restart. (Empty username also means the render-task notifies a no-op
-    # handler, which is fine.)
+    # Pick up .env/unit changes in the running services. The `state: started`
+    # tasks are idempotent and do NOT restart on their own, so a managed value
+    # change otherwise sits on disk until something restarts the unit.
+    - name: Restart the Hermes gateway user unit
+      ansible.builtin.systemd:
+        name: hermes-gateway.service
+        state: restarted
+        scope: user
+      become: true
+      become_user: "{{ hermes_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+
+    # Gated on the same auth username that gates the unit's start: no auth = no
+    # running dashboard = nothing to restart.
     - name: Restart the Hermes dashboard user unit
       ansible.builtin.systemd:
         name: hermes-dashboard.service
@@ -383,4 +268,4 @@
       become_user: "{{ hermes_user }}"
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
-      when: (hermes_dashboard_auth_username | default('')) | length > 0
+      when: (hermes_env_values.HERMES_DASHBOARD_BASIC_AUTH_USERNAME | default('')) | length > 0

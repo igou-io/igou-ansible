@@ -1,0 +1,26 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Hermes Agent Gateway - Messaging Platform Integration
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart={{ hermes_state_mount }}/hermes-agent/venv/bin/python -m hermes_cli.main gateway run
+WorkingDirectory={{ hermes_state_mount }}
+Environment="PATH={{ hermes_state_mount }}/hermes-agent/venv/bin:{{ hermes_state_mount }}/node/bin:{{ hermes_home }}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV={{ hermes_state_mount }}/hermes-agent/venv"
+Environment="HERMES_HOME={{ hermes_state_mount }}"
+Restart=always
+RestartSec=5
+RestartForceExitStatus=75
+KillMode=mixed
+KillSignal=SIGTERM
+ExecReload=/bin/kill -USR1 $MAINPID
+TimeoutStopSec=210
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
