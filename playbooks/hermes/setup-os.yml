@@ -18,8 +18,7 @@
     hermes_home: /home/hermes
     hermes_state_device: /dev/vdb
     hermes_state_mount: "{{ hermes_home }}/.hermes"
-    # Temporary default; pin this from inventory/group vars once the Hermes
-    # igou-devenv runtime image tag is chosen.
+    # Inventory/group_vars must override this placeholder before image pull.
     hermes_devenv_image: ghcr.io/igou-io/igou-devenv
     hermes_devenv_image_tag: "latest"
     hermes_devenv_image_ref: "{{ hermes_devenv_image }}:{{ hermes_devenv_image_tag }}"
@@ -269,12 +268,20 @@
         shell: /bin/bash
       become: true
 
-    - name: Read hermes UID
-      ansible.builtin.command:
-        cmd: "id -u {{ hermes_user }}"
-      register: hermes_uid
-      changed_when: false
+    - name: Read hermes passwd entry
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ hermes_user }}"
       become: true
+
+    - name: Set hermes UID fact
+      ansible.builtin.set_fact:
+        hermes_uid: "{{ getent_passwd[hermes_user][1] }}"
+
+    - name: Set rootless Podman environment for hermes
+      ansible.builtin.set_fact:
+        hermes_podman_environment:
+          XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid }}"
 
     - name: Ensure user namespaces are enabled for rootless containers
       ansible.posix.sysctl:
@@ -284,42 +291,63 @@
         reload: true
       become: true
 
-    - name: Check hermes subordinate UID mapping
-      ansible.builtin.command:
-        cmd: "grep -E '^{{ hermes_user }}:' /etc/subuid"
-      register: hermes_subuid_check
-      failed_when: false
-      changed_when: false
+    - name: Read subordinate UID mappings
+      ansible.builtin.slurp:
+        src: /etc/subuid
+      register: hermes_subuid_file
       become: true
 
-    - name: Check hermes subordinate GID mapping
-      ansible.builtin.command:
-        cmd: "grep -E '^{{ hermes_user }}:' /etc/subgid"
-      register: hermes_subgid_check
-      failed_when: false
-      changed_when: false
+    - name: Read subordinate GID mappings
+      ansible.builtin.slurp:
+        src: /etc/subgid
+      register: hermes_subgid_file
       become: true
 
+    - name: Determine whether hermes already has subordinate UID/GID mappings
+      ansible.builtin.set_fact:
+        hermes_has_subuid: >-
+          {{
+            (hermes_subuid_file.content | b64decode).splitlines()
+            | select('match', '^' ~ hermes_user ~ ':')
+            | list
+            | length > 0
+          }}
+        hermes_has_subgid: >-
+          {{
+            (hermes_subgid_file.content | b64decode).splitlines()
+            | select('match', '^' ~ hermes_user ~ ':')
+            | list
+            | length > 0
+          }}
+
+    # ansible.builtin.user does not manage subordinate UID ranges. Use usermod
+    # only when slurp-based pre-checks show no mapping exists.
     - name: Add subordinate UID range for hermes
       ansible.builtin.command:
         cmd: >-
           usermod --add-subuids
           {{ hermes_podman_subid_start }}-{{ hermes_podman_subid_end }}
           {{ hermes_user }}
-      when: hermes_subuid_check.rc != 0
+      when: not hermes_has_subuid
       register: hermes_subuid_added
+      changed_when: true
       become: true
 
+    # ansible.builtin.user does not manage subordinate GID ranges. Use usermod
+    # only when slurp-based pre-checks show no mapping exists.
     - name: Add subordinate GID range for hermes
       ansible.builtin.command:
         cmd: >-
           usermod --add-subgids
           {{ hermes_podman_subid_start }}-{{ hermes_podman_subid_end }}
           {{ hermes_user }}
-      when: hermes_subgid_check.rc != 0
+      when: not hermes_has_subgid
       register: hermes_subgid_added
+      changed_when: true
       become: true
 
+    # systemd has no Ansible module for loginctl linger; creates keeps this
+    # idempotent and avoids restarting an already enabled user manager.
     - name: Enable lingering for hermes user services
       ansible.builtin.command:
         cmd: "loginctl enable-linger {{ hermes_user }}"
@@ -328,7 +356,7 @@
 
     - name: Ensure hermes user manager is running
       ansible.builtin.systemd:
-        name: "user@{{ hermes_uid.stdout }}.service"
+        name: "user@{{ hermes_uid }}.service"
         state: started
       become: true
 
@@ -347,54 +375,71 @@
       become: true
 
     - name: Configure rootless Podman storage on Hermes state disk
-      ansible.builtin.copy:
+      ansible.builtin.template:
+        src: hermes-containers-storage.conf.j2
         dest: "{{ hermes_home }}/.config/containers/storage.conf"
         owner: "{{ hermes_user }}"
         group: "{{ hermes_user }}"
         mode: "0600"
-        content: |
-          [storage]
-          driver = "overlay"
-          graphroot = "{{ hermes_podman_graphroot }}"
-          runroot = "/run/user/{{ hermes_uid.stdout }}/containers"
       become: true
 
+    # Podman has no native module for applying changed subuid/subgid mappings to
+    # existing rootless storage; only run this after this play adds a mapping.
     - name: Apply rootless Podman mapping changes
       ansible.builtin.command:
         cmd: podman system migrate
       become: true
       become_user: "{{ hermes_user }}"
       become_flags: "-i"
-      environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid.stdout }}"
+      environment: "{{ hermes_podman_environment }}"
       changed_when: false
       when: hermes_subuid_added is changed or hermes_subgid_added is changed
 
-    - name: Validate rootless Podman for hermes
-      ansible.builtin.command:
-        cmd: podman info --format '{{ "{{" }} .Host.Security.Rootless {{ "}}" }}'
+    - name: Gather rootless Podman system information as hermes
+      containers.podman.podman_system_info:
+        executable: /usr/bin/podman
       become: true
       become_user: "{{ hermes_user }}"
       become_flags: "-i"
-      environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid.stdout }}"
-      register: hermes_podman_rootless_check
-      changed_when: false
-      failed_when: hermes_podman_rootless_check.stdout | trim != "true"
+      environment: "{{ hermes_podman_environment }}"
+      register: hermes_podman_info
+
+    - name: Validate rootless Podman for hermes
+      ansible.builtin.assert:
+        that:
+          - hermes_podman_info.podman_system_info.host.security.rootless | bool
+          - hermes_podman_info.podman_system_info.store.graphRoot == hermes_podman_graphroot
+          - hermes_podman_info.podman_system_info.store.runRoot == "/run/user/" ~ hermes_uid ~ "/containers"
+        fail_msg: >-
+          Rootless Podman for {{ hermes_user }} must be active and use
+          {{ hermes_podman_graphroot }} for graphRoot.
+
+    - name: Require pinned igou-devenv image tag
+      ansible.builtin.assert:
+        that:
+          - hermes_devenv_image_tag is defined
+          - hermes_devenv_image_tag | length > 0
+          - hermes_devenv_image_tag != "latest"
+        fail_msg: >-
+          hermes_devenv_image_tag must be pinned by inventory/group_vars before
+          setup-os.yml pulls the Hermes runtime image. Do not use latest for the
+          Hermes runtime image.
 
     - name: Pull Hermes Podman backend image during egress-open setup phase
-      ansible.builtin.command:
-        cmd: "podman pull {{ hermes_devenv_image_ref }}"
+      containers.podman.podman_image:
+        name: "{{ hermes_devenv_image_ref }}"
+        state: present
+        pull: true
+        executable: /usr/bin/podman
       become: true
       become_user: "{{ hermes_user }}"
       become_flags: "-i"
-      environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid.stdout }}"
+      environment: "{{ hermes_podman_environment }}"
       register: hermes_podman_pull
-      changed_when: >-
-        'Copying blob' in (hermes_podman_pull.stdout ~ hermes_podman_pull.stderr)
-        or 'Downloaded newer image' in (hermes_podman_pull.stdout ~ hermes_podman_pull.stderr)
 
+    # containers.podman.podman_container does not expose one-shot command output
+    # clearly enough to assert the future runtime identity. Keep podman run here
+    # so the smoke test proves whoami=igou under the planned keep-id mapping.
     - name: Smoke test igou-devenv image with rootless Podman keep-id mapping
       ansible.builtin.command:
         cmd: >-
@@ -408,18 +453,20 @@
       become: true
       become_user: "{{ hermes_user }}"
       become_flags: "-i"
-      environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid.stdout }}"
+      environment: "{{ hermes_podman_environment }}"
       register: hermes_devenv_smoke_test
       changed_when: false
+      failed_when: >-
+        hermes_devenv_smoke_test.rc != 0
+        or (hermes_devenv_smoke_test.stdout_lines | default([]) | first) != "igou"
 
     # Future configure.yml phase handoff:
-    # - point Hermes' existing Docker terminal backend at Podman with
-    #   HERMES_DOCKER_BINARY=/usr/bin/podman
+    # - set HERMES_DOCKER_BINARY=/usr/bin/podman for the Hermes gateway process
+    # - manage Hermes config.yaml with terminal.backend: docker
     # - set docker_image to {{ hermes_devenv_image }}:<pinned-tag>
-    # - use explicit bind mounts from these host-side /home/hermes paths into
-    #   /home/igou and /workspace in the igou-devenv container
-    # - keep the container rootless/unprivileged with keep-id UID/GID 1000
+    # - set HOME=/home/igou and use keep-id UID/GID 1000 docker_extra_args
+    # - use explicit many-volume mappings from /home/hermes into /home/igou
+    # - do not mount all of /home/hermes or use privileged containers
     - name: Create host-side directories for future igou-devenv Hermes runtime mounts
       ansible.builtin.file:
         path: "{{ item }}"
@@ -458,8 +505,6 @@
       loop:
         - { path: "{{ hermes_home }}/.claude.json", mode: "0600" }
         - { path: "{{ hermes_home }}/.gitconfig", mode: "0644" }
-        - { path: "{{ hermes_home }}/.bashrc", mode: "0644" }
-        - { path: "{{ hermes_home }}/.profile", mode: "0644" }
       become: true
   handlers:
     - name: Clean DNF metadata
