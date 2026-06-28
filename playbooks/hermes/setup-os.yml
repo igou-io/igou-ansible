@@ -18,7 +18,8 @@
     hermes_home: /home/hermes
     hermes_state_device: /dev/vdb
     hermes_state_mount: "{{ hermes_home }}/.hermes"
-    # Inventory/group_vars must override this placeholder before image pull.
+    # AAP extra_vars or inventory/group_vars must override this placeholder
+    # with a pinned tag before image pull; "latest" is rejected below.
     hermes_devenv_image: ghcr.io/igou-io/igou-devenv
     hermes_devenv_image_tag: "latest"
     hermes_devenv_image_ref: "{{ hermes_devenv_image }}:{{ hermes_devenv_image_tag }}"
@@ -434,6 +435,8 @@
           Rootless Podman for {{ hermes_user }} must be active and use
           {{ hermes_podman_graphroot }} for graphRoot.
 
+    # The setup phase pulls the runtime image while egress is open. Keep "latest"
+    # as a placeholder only; AAP or inventory must provide the pinned tag.
     - name: Require pinned igou-devenv image tag
       ansible.builtin.assert:
         that:
@@ -472,7 +475,7 @@
           -e HOME=/home/igou
           -e BASH_ENV=/home/igou/.bashrc
           {{ hermes_devenv_image_ref }}
-          -lc 'whoami && id && command -v bash && command -v podman || true'
+          -lc 'whoami; id -u; id -g; command -v bash; command -v podman || true'
       become: true
       become_user: "{{ hermes_user }}"
       become_flags: "-i"
@@ -481,13 +484,17 @@
       changed_when: false
       failed_when: >-
         hermes_devenv_smoke_test.rc != 0
-        or (hermes_devenv_smoke_test.stdout_lines | default([]) | first) != "igou"
+        or (hermes_devenv_smoke_test.stdout_lines | default([]) | length) < 3
+        or hermes_devenv_smoke_test.stdout_lines[0] != "igou"
+        or hermes_devenv_smoke_test.stdout_lines[1] != "1000"
+        or hermes_devenv_smoke_test.stdout_lines[2] != "1000"
 
     # Future configure.yml phase handoff:
     # - set HERMES_DOCKER_BINARY=/usr/bin/podman for the Hermes gateway process
     # - manage Hermes config.yaml with terminal.backend: docker
     # - set docker_image to {{ hermes_devenv_image }}:<pinned-tag>
-    # - set HOME=/home/igou and use keep-id UID/GID 1000 docker_extra_args
+    # - set HOME=/home/igou
+    # - use docker_extra_args: --userns=keep-id:uid=1000,gid=1000 and --user=1000:1000
     # - use explicit many-volume mappings from /home/hermes into /home/igou
     # - do not mount all of /home/hermes or use privileged containers
     - name: Create host-side directories for future igou-devenv Hermes runtime mounts
