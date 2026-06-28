@@ -492,7 +492,7 @@
     # Future configure.yml phase handoff:
     # - set HERMES_DOCKER_BINARY=/usr/bin/podman for the Hermes gateway process
     # - manage Hermes config.yaml with terminal.backend: docker
-    # - set docker_image to {{ hermes_devenv_image }}:<pinned-tag>
+    # - set docker_image to {{ hermes_devenv_image_ref }}
     # - set HOME=/home/igou
     # - use docker_extra_args: --userns=keep-id:uid=1000,gid=1000 and --user=1000:1000
     # - use explicit many-volume mappings from /home/hermes into /home/igou
