@@ -1,0 +1,248 @@
+---
+- name: Hermes guest convergence - base OS setup
+  # Hermes guest convergence - BASE OS phase. Runs during the egress install
+  # window because package installation needs repository access. Prepares the
+  # persistent state disk (/dev/vdb -> ~/.hermes), installs host packages, starts
+  # clock sync, and ensures the hermes service user can run shell-based tooling.
+  #
+  # Run order: setup-os (egress open) -> setup-hermes (egress open) -> lock egress
+  # -> configure.
+  #
+  # Target only the host AAP passes via ansible_limit (e.g. hermes-hermes from the
+  # kubevirt dynamic inventory). `hosts: all` would fan the state-disk mkfs out
+  # across the whole fleet - match the linux_baseline convention instead.
+  hosts: "{{ ansible_limit | default('hermes-hermes') }}"
+  become: true
+  vars:
+    hermes_user: hermes
+    hermes_home: /home/hermes
+    hermes_state_device: /dev/vdb
+    hermes_state_mount: "{{ hermes_home }}/.hermes"
+    centos_stream_major: "10"
+    centos_stream_repo_base: "https://mirror.stream.centos.org/{{ centos_stream_major }}-stream"
+    centos_stream_repo_backup_suffix: ansible-pre-mirror-pin
+    centos_stream_repos:
+      - name: baseos
+        description: "CentOS Stream {{ centos_stream_major }} - BaseOS"
+        file: centos
+        baseurl: "{{ centos_stream_repo_base }}/BaseOS/$basearch/os/"
+        enabled: true
+        gpgcheck: true
+      - name: appstream
+        description: "CentOS Stream {{ centos_stream_major }} - AppStream"
+        file: centos
+        baseurl: "{{ centos_stream_repo_base }}/AppStream/$basearch/os/"
+        enabled: true
+        gpgcheck: true
+      - name: extras-common
+        description: "CentOS Stream {{ centos_stream_major }} - Extras packages"
+        file: centos-addons
+        baseurl: "https://mirror.stream.centos.org/SIGs/{{ centos_stream_major }}-stream/extras/$basearch/extras-common/"
+        enabled: true
+        gpgcheck: true
+  tasks:
+    - name: Validate the target is CentOS Stream {{ centos_stream_major }}
+      ansible.builtin.assert:
+        that:
+          - ansible_facts["distribution"] == "CentOS"
+          - ansible_facts["distribution_major_version"] == centos_stream_major
+          - ansible_facts["distribution_release"] == "Stream"
+        fail_msg: >-
+          Hermes base OS setup supports only CentOS Stream {{ centos_stream_major }}.
+          Detected distribution={{ ansible_facts["distribution"] }},
+          major={{ ansible_facts["distribution_major_version"] }},
+          release={{ ansible_facts["distribution_release"] }}.
+      become: true
+
+    - name: Create xfs filesystem on the Hermes state device
+      community.general.filesystem:
+        fstype: xfs
+        dev: "{{ hermes_state_device }}"
+        force: false   # format only when the device is unformatted
+      become: true
+
+    - name: Mount the Hermes state device and persist it in fstab
+      ansible.posix.mount:
+        path: "{{ hermes_state_mount }}"
+        src: "{{ hermes_state_device }}"
+        fstype: xfs
+        opts: defaults
+        state: mounted
+      become: true
+
+    - name: Check existing CentOS repo files before pinning mirrors
+      ansible.builtin.stat:
+        path: "/etc/yum.repos.d/{{ item }}.repo"
+      become: true
+      loop: "{{ centos_stream_repos | map(attribute='file') | unique | list }}"
+      register: centos_stream_repo_file_stats
+
+    - name: Back up original CentOS repo files before pinning mirrors
+      ansible.builtin.copy:
+        src: "{{ item.stat.path }}"
+        dest: "{{ item.stat.path }}.{{ centos_stream_repo_backup_suffix }}"
+        remote_src: true
+        force: false
+        mode: preserve
+      become: true
+      loop: "{{ centos_stream_repo_file_stats.results }}"
+      loop_control:
+        label: "{{ item.stat.path }}"
+      when: item.stat.exists
+
+    # OVN-Kubernetes EgressFirewall DNS allow rules permit the queried hostname,
+    # not arbitrary hosts returned by CentOS metalinks, mirrorlists, or redirects.
+    # Pin these repos to mirror.stream.centos.org so OS updates need only that
+    # single external CentOS repo hostname. CRB is intentionally not configured.
+    - name: Pin CentOS Stream repo baseurls to mirror.stream.centos.org
+      community.general.ini_file:
+        path: "/etc/yum.repos.d/{{ item.file }}.repo"
+        section: "{{ item.name }}"
+        option: baseurl
+        value: "{{ item.baseurl }}"
+        no_extra_spaces: true
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      become: true
+      loop: "{{ centos_stream_repos }}"
+      notify:
+        - Clean DNF metadata
+        - Rebuild DNF metadata cache
+
+    - name: Set CentOS Stream repo descriptions
+      community.general.ini_file:
+        path: "/etc/yum.repos.d/{{ item.file }}.repo"
+        section: "{{ item.name }}"
+        option: name
+        value: "{{ item.description }}"
+        no_extra_spaces: true
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      become: true
+      loop: "{{ centos_stream_repos }}"
+      notify:
+        - Clean DNF metadata
+        - Rebuild DNF metadata cache
+
+    - name: Preserve GPG checking on managed CentOS Stream repos
+      community.general.ini_file:
+        path: "/etc/yum.repos.d/{{ item.file }}.repo"
+        section: "{{ item.name }}"
+        option: gpgcheck
+        value: "{{ item.gpgcheck | ternary('1', '0') }}"
+        no_extra_spaces: true
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      become: true
+      loop: "{{ centos_stream_repos }}"
+      notify:
+        - Clean DNF metadata
+        - Rebuild DNF metadata cache
+
+    - name: Set enabled state on managed CentOS Stream repos
+      community.general.ini_file:
+        path: "/etc/yum.repos.d/{{ item.file }}.repo"
+        section: "{{ item.name }}"
+        option: enabled
+        value: "{{ item.enabled | ternary('1', '0') }}"
+        no_extra_spaces: true
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      become: true
+      loop: "{{ centos_stream_repos }}"
+      notify:
+        - Clean DNF metadata
+        - Rebuild DNF metadata cache
+
+    - name: Disable CentOS Stream repo metalinks
+      community.general.ini_file:
+        path: "/etc/yum.repos.d/{{ item.file }}.repo"
+        section: "{{ item.name }}"
+        option: metalink
+        state: absent
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      become: true
+      loop: "{{ centos_stream_repos }}"
+      notify:
+        - Clean DNF metadata
+        - Rebuild DNF metadata cache
+
+    - name: Disable CentOS Stream repo mirrorlists
+      community.general.ini_file:
+        path: "/etc/yum.repos.d/{{ item.file }}.repo"
+        section: "{{ item.name }}"
+        option: mirrorlist
+        state: absent
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      become: true
+      loop: "{{ centos_stream_repos }}"
+      notify:
+        - Clean DNF metadata
+        - Rebuild DNF metadata cache
+
+    - name: Refresh DNF metadata after repo pinning changes
+      ansible.builtin.meta: flush_handlers
+
+    # Install the host packages the convergence needs, here in the setup phase
+    # because it runs during the egress window (dnf needs the mirrors). configure.yml
+    # runs with egress LOCKED, so it can only enable nftables, not install it.
+    #   - acl: Ansible hands become->unprivileged-hermes temp files via POSIX ACLs
+    #     (setfacl); without it, the broken NFSv4 `chmod A+user:...` fallback fails.
+    #   - nftables: the centos-stream10 cloud image ships neither the nft binary nor
+    #     nftables.service, which configure.yml enables for the egress ruleset.
+    #   - chrony: the centos-stream10 cloud image SHIPS it active by default, but
+    #     ensure-present is cheap insurance - a wrong VM clock breaks TLS validation
+    #     against the OpenShift router/api.telegram.org and skews journald correlation
+    #     (observed pre-rebuild: VM clock ran ~24h behind real time).
+    - name: Install host packages the convergence needs (acl, nftables, chrony)
+      ansible.builtin.package:
+        name:
+          - acl
+          - nftables
+          - chrony
+        state: present
+      become: true
+
+    # Make chrony explicit even though the cloud image enables it - if a future
+    # image variant drops the default, we still get a syncing clock.
+    - name: Ensure chronyd is enabled and running (clock sync)
+      ansible.builtin.systemd:
+        name: chronyd
+        enabled: true
+        state: started
+      become: true
+
+    # baseline creates hermes as a service user with /sbin/nologin, but the installer
+    # (and the agent, which executes shell/Python) needs a real login shell - without
+    # it `become_user: hermes -i` exits "This account is currently not available."
+    - name: Ensure the hermes user has a usable login shell
+      ansible.builtin.user:
+        name: "{{ hermes_user }}"
+        shell: /bin/bash
+      become: true
+  handlers:
+    - name: Clean DNF metadata
+      ansible.builtin.command:
+        cmd: dnf clean metadata
+      become: true
+      changed_when: true
+
+    - name: Rebuild DNF metadata cache
+      ansible.builtin.command:
+        cmd: dnf makecache
+      become: true
+      changed_when: false
