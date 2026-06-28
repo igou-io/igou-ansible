@@ -1,21 +1,21 @@
 ---
-- name: Hermes guest convergence — install phase (state disk + installer)
-  # Hermes guest convergence — INSTALL phase. Runs DURING the egress window (the
-  # installer + tirith download need the network). Formats/mounts the persistent
-  # state disk (/dev/vdb → ~/.hermes), installs host packages, then runs the Hermes
-  # installer as the hermes user. Idempotent throughout.
-  # Run order: install (egress open) → lock egress → configure.
-  # (Formerly the hermes_agent role's tasks/install.yml, inlined here.)
+- name: Hermes guest convergence - Hermes setup
+  # Hermes guest convergence - HERMES SETUP phase. Runs during the egress install
+  # window because the installer and tirith download need network access. Assumes
+  # setup-os.yml has mounted and owned the persistent Hermes state directory and
+  # prepared the service user's shell.
+  #
+  # Run order: setup-os (egress open) -> setup-hermes (egress open) -> lock egress
+  # -> configure.
   #
   # Target only the host AAP passes via ansible_limit (e.g. hermes-hermes from the
-  # kubevirt dynamic inventory). `hosts: all` would fan the state-disk mkfs out
-  # across the whole fleet — match the linux_baseline convention instead.
+  # kubevirt dynamic inventory). `hosts: all` would run the installer across the
+  # whole fleet - match the linux_baseline convention instead.
   hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
   vars:
     hermes_user: hermes
     hermes_home: /home/hermes
-    hermes_state_device: /dev/vdb
     hermes_state_mount: "{{ hermes_home }}/.hermes"
     hermes_install_url: "https://hermes-agent.nousresearch.com/install.sh"
     # Non-sudo / service-user install: skip browser automation. A working browser
@@ -25,22 +25,6 @@
     # to false only after running that admin step out of band.
     hermes_install_skip_browser: true
   tasks:
-    - name: Create xfs filesystem on the Hermes state device
-      community.general.filesystem:
-        fstype: xfs
-        dev: "{{ hermes_state_device }}"
-        force: false   # format only when the device is unformatted
-      become: true
-
-    - name: Mount the Hermes state device and persist it in fstab
-      ansible.posix.mount:
-        path: "{{ hermes_state_mount }}"
-        src: "{{ hermes_state_device }}"
-        fstype: xfs
-        opts: defaults
-        state: mounted
-      become: true
-
     - name: Own the Hermes state mount to the hermes user
       ansible.builtin.file:
         path: "{{ hermes_state_mount }}"
@@ -50,50 +34,12 @@
         recurse: true
       become: true
 
-    # Install the host packages the convergence needs, here in the install phase
-    # because it runs during the egress window (dnf needs the mirrors). configure.yml
-    # runs with egress LOCKED, so it can only enable nftables, not install it.
-    #   - acl: Ansible hands become->unprivileged-hermes temp files via POSIX ACLs
-    #     (setfacl); without it, the broken NFSv4 `chmod A+user:...` fallback fails.
-    #   - nftables: the centos-stream10 cloud image ships neither the nft binary nor
-    #     nftables.service, which configure.yml enables for the egress ruleset.
-    #   - chrony: the centos-stream10 cloud image SHIPS it active by default, but
-    #     ensure-present is cheap insurance — a wrong VM clock breaks TLS validation
-    #     against the OpenShift router/api.telegram.org and skews journald correlation
-    #     (observed pre-rebuild: VM clock ran ~24h behind real time).
-    - name: Install host packages the convergence needs (acl, nftables, chrony)
-      ansible.builtin.package:
-        name:
-          - acl
-          - nftables
-          - chrony
-        state: present
-      become: true
-
-    # Make chrony explicit even though the cloud image enables it — if a future
-    # image variant drops the default, we still get a syncing clock.
-    - name: Ensure chronyd is enabled and running (clock sync)
-      ansible.builtin.systemd:
-        name: chronyd
-        enabled: true
-        state: started
-      become: true
-
-    # baseline creates hermes as a service user with /sbin/nologin, but the installer
-    # (and the agent, which executes shell/Python) needs a real login shell — without
-    # it `become_user: hermes -i` exits "This account is currently not available."
-    - name: Ensure the hermes user has a usable login shell
-      ansible.builtin.user:
-        name: "{{ hermes_user }}"
-        shell: /bin/bash
-      become: true
-
     - name: Install Hermes Agent as the hermes user
       ansible.builtin.shell:
         # The installer prompts interactively (setup wizard + "install gateway as a
         # service?") and falls back to /dev/tty even with no TTY, hanging under Ansible.
-        # --non-interactive --skip-setup runs it unattended (configure.yml writes the
-        # cli-config/.env); --skip-browser keeps it non-sudo (hermes_install_skip_browser).
+        # --non-interactive --skip-setup runs it unattended; --skip-browser keeps it
+        # non-sudo (hermes_install_skip_browser).
         cmd: >-
           set -o pipefail && curl -fsSL {{ hermes_install_url }}
           | bash -s -- --non-interactive --skip-setup{{ ' --skip-browser' if hermes_install_skip_browser else '' }}
@@ -116,7 +62,7 @@
       changed_when: false
 
     # tirith (pre-exec command scanner) is a GitHub-released binary that Hermes
-    # normally auto-downloads on demand — but that needs the network, so it MUST be
+    # normally auto-downloads on demand - but that needs the network, so it MUST be
     # fetched here in the egress window: at runtime (egress locked) the on-demand
     # fetch fails, and with security.tirith_fail_open:false that would block every
     # command. Pull the same release artifact Hermes uses, with standard modules
@@ -133,7 +79,7 @@
       become: true
       become_user: "{{ hermes_user }}"
       vars:
-        # arch → release triple (from tirith_security.py:_detect_target)
+        # arch -> release triple (from tirith_security.py:_detect_target)
         _tirith_target: >-
           {{ {'x86_64': 'x86_64-unknown-linux-gnu',
               'aarch64': 'aarch64-unknown-linux-gnu'}[ansible_architecture] }}

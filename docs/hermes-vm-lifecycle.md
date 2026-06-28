@@ -77,6 +77,42 @@ ansible-navigator run playbooks/hermes/provision-vm.yml \
 > not delete it. The `hermes-root` DataVolume is removed with the VM. To
 > reclaim state storage you must delete the `hermes-state` PVC by hand.
 
+## Guest OS setup
+
+Base OS convergence starts with `playbooks/hermes/setup-os.yml`. It prepares the
+state disk, pins CentOS Stream repositories, installs host packages, enables
+clock sync, and ensures the `hermes` service user has a shell for the installer:
+
+```bash
+ansible-navigator run playbooks/hermes/setup-os.yml \
+  -i igou-inventory/inventory.yaml \
+  -e ansible_limit=hermes-hermes
+```
+
+The CentOS Stream 10 repos managed by this playbook are pinned to explicit
+`baseurl=` values under `https://mirror.stream.centos.org` for BaseOS,
+AppStream, and Extras Common. `metalink=` and `mirrorlist=` are removed for
+those repos because OVN-Kubernetes `EgressFirewall` DNS allow rules do not
+automatically permit arbitrary mirror hosts returned by metalinks, mirrorlists,
+or redirects. CRB is intentionally not configured.
+
+The required external CentOS repository hostname in the install-window
+`EgressFirewall` is:
+
+```text
+mirror.stream.centos.org
+```
+
+Verify repo access from the guest with:
+
+```bash
+ansible hermes-hermes -i igou-inventory/inventory.yaml -b \
+  -m ansible.builtin.command -a "dnf makecache"
+
+ansible hermes-hermes -i igou-inventory/inventory.yaml -b \
+  -m ansible.builtin.command -a "dnf repolist"
+```
+
 ## Snapshot lifecycle
 
 All snapshot operations go through `playbooks/hermes/snapshot-vm.yml`, which
