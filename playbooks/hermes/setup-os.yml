@@ -18,6 +18,15 @@
     hermes_home: /home/hermes
     hermes_state_device: /dev/vdb
     hermes_state_mount: "{{ hermes_home }}/.hermes"
+    # Temporary default; pin this from inventory/group vars once the Hermes
+    # igou-devenv runtime image tag is chosen.
+    hermes_devenv_image: ghcr.io/igou-io/igou-devenv
+    hermes_devenv_image_tag: "latest"
+    hermes_devenv_image_ref: "{{ hermes_devenv_image }}:{{ hermes_devenv_image_tag }}"
+    hermes_podman_subid_start: 100000
+    hermes_podman_subid_count: 65536
+    hermes_podman_subid_end: "{{ (hermes_podman_subid_start | int) + (hermes_podman_subid_count | int) - 1 }}"
+    hermes_podman_graphroot: "{{ hermes_state_mount }}/containers/storage"
     centos_stream_major: "10"
     centos_stream_repo_base: "https://mirror.stream.centos.org/{{ centos_stream_major }}-stream"
     centos_stream_repo_backup_suffix: ansible-pre-mirror-pin
@@ -68,6 +77,15 @@
         fstype: xfs
         opts: defaults
         state: mounted
+      become: true
+
+    - name: Ensure Hermes state mount is owned by hermes
+      ansible.builtin.file:
+        path: "{{ hermes_state_mount }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0700"
       become: true
 
     - name: Check existing CentOS repo files before pinning mirrors
@@ -215,12 +233,21 @@
     #     ensure-present is cheap insurance - a wrong VM clock breaks TLS validation
     #     against the OpenShift router/api.telegram.org and skews journald correlation
     #     (observed pre-rebuild: VM clock ran ~24h behind real time).
-    - name: Install host packages the convergence needs (acl, nftables, chrony)
+    #   - podman/rootless runtime packages: prepare the host for a later Hermes
+    #     Docker terminal backend pointed at /usr/bin/podman, without installing
+    #     Docker Engine or privileged container support on the VM host.
+    - name: Install host packages the convergence needs
       ansible.builtin.package:
         name:
           - acl
           - nftables
           - chrony
+          - podman
+          - containers-common
+          - fuse-overlayfs
+          - slirp4netns
+          - passt
+          - shadow-utils
         state: present
       become: true
 
@@ -240,6 +267,199 @@
       ansible.builtin.user:
         name: "{{ hermes_user }}"
         shell: /bin/bash
+      become: true
+
+    - name: Read hermes UID
+      ansible.builtin.command:
+        cmd: "id -u {{ hermes_user }}"
+      register: hermes_uid
+      changed_when: false
+      become: true
+
+    - name: Ensure user namespaces are enabled for rootless containers
+      ansible.posix.sysctl:
+        name: user.max_user_namespaces
+        value: "28633"
+        state: present
+        reload: true
+      become: true
+
+    - name: Check hermes subordinate UID mapping
+      ansible.builtin.command:
+        cmd: "grep -E '^{{ hermes_user }}:' /etc/subuid"
+      register: hermes_subuid_check
+      failed_when: false
+      changed_when: false
+      become: true
+
+    - name: Check hermes subordinate GID mapping
+      ansible.builtin.command:
+        cmd: "grep -E '^{{ hermes_user }}:' /etc/subgid"
+      register: hermes_subgid_check
+      failed_when: false
+      changed_when: false
+      become: true
+
+    - name: Add subordinate UID range for hermes
+      ansible.builtin.command:
+        cmd: >-
+          usermod --add-subuids
+          {{ hermes_podman_subid_start }}-{{ hermes_podman_subid_end }}
+          {{ hermes_user }}
+      when: hermes_subuid_check.rc != 0
+      register: hermes_subuid_added
+      become: true
+
+    - name: Add subordinate GID range for hermes
+      ansible.builtin.command:
+        cmd: >-
+          usermod --add-subgids
+          {{ hermes_podman_subid_start }}-{{ hermes_podman_subid_end }}
+          {{ hermes_user }}
+      when: hermes_subgid_check.rc != 0
+      register: hermes_subgid_added
+      become: true
+
+    - name: Enable lingering for hermes user services
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ hermes_user }}"
+        creates: "/var/lib/systemd/linger/{{ hermes_user }}"
+      become: true
+
+    - name: Ensure hermes user manager is running
+      ansible.builtin.systemd:
+        name: "user@{{ hermes_uid.stdout }}.service"
+        state: started
+      become: true
+
+    - name: Create hermes rootless containers config and storage directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0700"
+      loop:
+        - "{{ hermes_home }}/.config"
+        - "{{ hermes_home }}/.config/containers"
+        - "{{ hermes_state_mount }}/containers"
+        - "{{ hermes_podman_graphroot }}"
+      become: true
+
+    - name: Configure rootless Podman storage on Hermes state disk
+      ansible.builtin.copy:
+        dest: "{{ hermes_home }}/.config/containers/storage.conf"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0600"
+        content: |
+          [storage]
+          driver = "overlay"
+          graphroot = "{{ hermes_podman_graphroot }}"
+          runroot = "/run/user/{{ hermes_uid.stdout }}/containers"
+      become: true
+
+    - name: Apply rootless Podman mapping changes
+      ansible.builtin.command:
+        cmd: podman system migrate
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid.stdout }}"
+      changed_when: false
+      when: hermes_subuid_added is changed or hermes_subgid_added is changed
+
+    - name: Validate rootless Podman for hermes
+      ansible.builtin.command:
+        cmd: podman info --format '{{ "{{" }} .Host.Security.Rootless {{ "}}" }}'
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid.stdout }}"
+      register: hermes_podman_rootless_check
+      changed_when: false
+      failed_when: hermes_podman_rootless_check.stdout | trim != "true"
+
+    - name: Pull Hermes Podman backend image during egress-open setup phase
+      ansible.builtin.command:
+        cmd: "podman pull {{ hermes_devenv_image_ref }}"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid.stdout }}"
+      register: hermes_podman_pull
+      changed_when: >-
+        'Copying blob' in (hermes_podman_pull.stdout ~ hermes_podman_pull.stderr)
+        or 'Downloaded newer image' in (hermes_podman_pull.stdout ~ hermes_podman_pull.stderr)
+
+    - name: Smoke test igou-devenv image with rootless Podman keep-id mapping
+      ansible.builtin.command:
+        cmd: >-
+          podman run --rm
+          --userns=keep-id:uid=1000,gid=1000
+          --user=1000:1000
+          -e HOME=/home/igou
+          -e BASH_ENV=/home/igou/.bashrc
+          {{ hermes_devenv_image_ref }}
+          bash -lc 'whoami && id && command -v bash && command -v podman || true'
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid.stdout }}"
+      register: hermes_devenv_smoke_test
+      changed_when: false
+
+    # Future configure.yml phase handoff:
+    # - point Hermes' existing Docker terminal backend at Podman with
+    #   HERMES_DOCKER_BINARY=/usr/bin/podman
+    # - set docker_image to {{ hermes_devenv_image }}:<pinned-tag>
+    # - use explicit bind mounts from these host-side /home/hermes paths into
+    #   /home/igou and /workspace in the igou-devenv container
+    # - keep the container rootless/unprivileged with keep-id UID/GID 1000
+    - name: Create host-side directories for future igou-devenv Hermes runtime mounts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0700"
+      loop:
+        - "{{ hermes_home }}/agent-repos"
+        - "{{ hermes_state_mount }}/cache"
+        - "{{ hermes_state_mount }}/cache/documents"
+        - "{{ hermes_home }}/.ssh"
+        - "{{ hermes_home }}/.kube"
+        - "{{ hermes_home }}/.claude"
+        - "{{ hermes_home }}/.codex"
+        - "{{ hermes_home }}/.config"
+        - "{{ hermes_home }}/.config/opencode"
+        - "{{ hermes_home }}/.config/gh"
+        - "{{ hermes_home }}/.config/argocd"
+        - "{{ hermes_home }}/.local"
+        - "{{ hermes_home }}/.local/share"
+        - "{{ hermes_home }}/.local/share/opencode"
+        - "{{ hermes_home }}/.local/share/cursor-agent"
+        - "{{ hermes_home }}/.terraform.d"
+      become: true
+
+    - name: Create optional mounted user config files if absent
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: touch
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "{{ item.mode }}"
+        access_time: preserve
+        modification_time: preserve
+      loop:
+        - { path: "{{ hermes_home }}/.claude.json", mode: "0600" }
+        - { path: "{{ hermes_home }}/.gitconfig", mode: "0644" }
+        - { path: "{{ hermes_home }}/.bashrc", mode: "0644" }
+        - { path: "{{ hermes_home }}/.profile", mode: "0644" }
       become: true
   handlers:
     - name: Clean DNF metadata
