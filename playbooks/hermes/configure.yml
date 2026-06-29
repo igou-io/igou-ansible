@@ -1,7 +1,8 @@
 ---
 - name: Hermes guest convergence — configure phase (environment + nftables + unit)
-  # Hermes guest convergence — CONFIGURE phase. Runs with egress LOCKED (needs no
-  # network). Updates managed keys in the environment file, renders the in-guest
+  # Hermes guest convergence — CONFIGURE phase. Normally runs with egress LOCKED;
+  # enable hermes_terminal_backend_image_pre_pull only when egress is available.
+  # Updates managed keys in the environment file, renders the in-guest
   # nftables egress backstop, persistent journald, and two hardened systemd USER
   # units: the agent gateway (hermes-gateway.service) and the dashboard web UI
   # (hermes-dashboard.service), so both survive reboot/reprovision.
@@ -16,8 +17,8 @@
     hermes_user: hermes
     hermes_home: /home/hermes
     hermes_state_mount: "{{ hermes_home }}/.hermes"
-    hermes_devenv_image: ghcr.io/igou-io/igou-devenv
-    hermes_devenv_image_ref: "{{ hermes_devenv_image }}:{{ hermes_devenv_image_tag }}"
+    hermes_terminal_backend_image: ghcr.io/igou-io/igou-devenv
+    hermes_terminal_backend_image_ref: "{{ hermes_terminal_backend_image }}:{{ hermes_terminal_backend_image_tag }}"
     # In-guest nftables coarse egress backstop CIDR (OVN EgressFirewall is the real
     # control); allowed on tcp/8080 for the in-cluster LLM service.
     hermes_cluster_service_cidr: "172.30.0.0/16"
@@ -33,10 +34,6 @@
     # enabled when an auth username is set (fail closed — see the start task below).
     hermes_dashboard_host: "0.0.0.0"
     hermes_dashboard_port: 9119
-    # Opt-in only: dashboard Chat is spawned by hermes-dashboard.service, so
-    # enabling Podman Chat relaxes that web UI unit's sandbox enough for rootless
-    # Podman. The default keeps the hardened dashboard behavior.
-    hermes_dashboard_enable_podman_chat: false
     hermes_dashboard_podman_readwrite_paths:
       - "%t"
       - "%h/.hermes"
@@ -52,11 +49,11 @@
       - "%h/.local/share/cursor-agent"
     hermes_terminal_config:
       backend: docker
-      docker_image: "{{ hermes_devenv_image_ref }}"
+      docker_image: "{{ hermes_terminal_backend_image_ref }}"
       cwd: /workspace
       timeout: 300
       docker_mount_cwd_to_workspace: false
-      docker_persist_across_processes: true
+      docker_persist_across_processes: false
       docker_orphan_reaper: true
       lifetime_seconds: 1800
       container_cpu: 4
@@ -108,18 +105,120 @@
         - Restart the Hermes gateway user unit
         - Restart the Hermes dashboard user unit
 
-    # The runtime image is pulled during setup-os.yml while egress is open. Configure
-    # only writes the pinned image reference into Hermes's local terminal config.
-    - name: Require pinned igou-devenv image tag for Hermes runtime config
+    - name: Map legacy Hermes devenv image tag to terminal backend image tag
+      ansible.builtin.set_fact:
+        hermes_terminal_backend_image_tag: "{{ hermes_devenv_image_tag }}"
+      when:
+        - hermes_terminal_backend_image_tag is not defined
+        - hermes_devenv_image_tag is defined
+
+    - name: Require pinned Hermes terminal backend image tag
       ansible.builtin.assert:
         that:
-          - hermes_devenv_image_tag is defined
-          - hermes_devenv_image_tag | length > 0
-          - hermes_devenv_image_tag != "latest"
+          - hermes_terminal_backend_image_tag is defined
+          - hermes_terminal_backend_image_tag | length > 0
+          - hermes_terminal_backend_image_tag != "latest"
         fail_msg: >-
-          hermes_devenv_image_tag must be pinned by inventory/group_vars before
+          hermes_terminal_backend_image_tag must be pinned by inventory/group_vars before
           configure.yml writes the Hermes terminal runtime config.
           Do not use latest for the Hermes runtime image.
+
+    - name: Resolve the hermes uid
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ hermes_user }}"
+      become: true
+
+    - name: Set Hermes rootless Podman environment
+      ansible.builtin.set_fact:
+        hermes_uid: "{{ ansible_facts.getent_passwd[hermes_user][1] }}"
+        hermes_podman_environment:
+          XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
+
+    - name: Pre-pull Hermes terminal backend image
+      containers.podman.podman_image:
+        name: "{{ hermes_terminal_backend_image_ref }}"
+        state: present
+        pull: true
+        executable: /usr/bin/podman
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment: "{{ hermes_podman_environment }}"
+      when: hermes_terminal_backend_image_pre_pull | default(false) | bool
+
+    - name: Pre-warm Hermes terminal backend image with rootless Podman keep-id mapping
+      ansible.builtin.command:
+        cmd: >-
+          timeout --kill-after=30s 10m
+          podman run --rm
+          --entrypoint /usr/bin/bash
+          --userns=keep-id:uid=1000,gid=1000
+          --user=1000:1000
+          -e HOME=/home/igou
+          -e BASH_ENV=/home/igou/.bashrc
+          {{ hermes_terminal_backend_image_ref }}
+          -lc 'whoami; id -u; id -g; pwd'
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment: "{{ hermes_podman_environment }}"
+      register: hermes_terminal_backend_image_prewarm
+      changed_when: false
+      failed_when: >-
+        hermes_terminal_backend_image_prewarm.rc != 0
+        or (hermes_terminal_backend_image_prewarm.stdout_lines | default([]) | length) < 3
+        or hermes_terminal_backend_image_prewarm.stdout_lines[0] != "igou"
+        or hermes_terminal_backend_image_prewarm.stdout_lines[1] != "1000"
+        or hermes_terminal_backend_image_prewarm.stdout_lines[2] != "1000"
+      when: hermes_terminal_backend_image_pre_pull | default(false) | bool
+
+    - name: Gather local Hermes terminal backend image tags
+      containers.podman.podman_image_info:
+        executable: /usr/bin/podman
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment: "{{ hermes_podman_environment }}"
+      register: hermes_terminal_backend_image_info
+
+    - name: Build local Hermes terminal backend image reference list
+      ansible.builtin.set_fact:
+        hermes_terminal_backend_local_image_refs: >-
+          {{
+            (hermes_terminal_backend_local_image_refs | default([]))
+            + (item.RepoTags | default([], true))
+            + (item.Names | default([], true))
+          }}
+      loop: "{{ hermes_terminal_backend_image_info.images | default([]) }}"
+      loop_control:
+        label: "{{ item.Id | default('unknown') }}"
+
+    - name: Set old Hermes terminal backend image tag list
+      ansible.builtin.set_fact:
+        hermes_terminal_backend_old_image_refs: >-
+          {{
+            hermes_terminal_backend_local_image_refs
+            | default([])
+            | select('match', '^' ~ (hermes_terminal_backend_image | regex_escape) ~ ':[^:]+$')
+            | reject('equalto', hermes_terminal_backend_image_ref)
+            | unique
+            | list
+          }}
+
+    - name: Prune old Hermes terminal backend image tags
+      containers.podman.podman_image:
+        name: "{{ item }}"
+        state: absent
+        force: true
+        executable: /usr/bin/podman
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: "-i"
+      environment: "{{ hermes_podman_environment }}"
+      loop: "{{ hermes_terminal_backend_old_image_refs }}"
+      loop_control:
+        label: "{{ item }}"
 
     # Confined root for the dashboard file browser (HERMES_DASHBOARD_FILES_ROOT) —
     # locks /api/files to this dir instead of allowing arbitrary host file read.
@@ -187,7 +286,7 @@
       ansible.builtin.assert:
         that:
           - hermes_merged_config.terminal.backend == "docker"
-          - hermes_merged_config.terminal.docker_image == hermes_devenv_image_ref
+          - hermes_merged_config.terminal.docker_image == hermes_terminal_backend_image_ref
           - "'--userns=keep-id:uid=1000,gid=1000' in hermes_merged_config.terminal.docker_extra_args"
           - "'/home/hermes/agent-repos:/workspace:Z' in hermes_merged_config.terminal.docker_volumes"
 
@@ -323,15 +422,6 @@
         creates: "/var/lib/systemd/linger/{{ hermes_user }}"
       become: true
 
-    # Resolve the hermes uid so the --user systemctl call below can reach that user's
-    # systemd bus via XDG_RUNTIME_DIR (mirrors the rootless idiom in
-    # igou-ansible/playbooks/linux/podman_quadlets.yaml).
-    - name: Resolve the hermes uid (for the per-user systemd runtime dir)
-      ansible.builtin.getent:
-        database: passwd
-        key: "{{ hermes_user }}"
-      become: true
-
     # Reload the per-user systemd manager so the new units are visible.
     # XDG_RUNTIME_DIR is required or `systemctl --user` can't find the bus
     # ("Failed to connect to bus").
@@ -342,7 +432,7 @@
       become: true
       become_user: "{{ hermes_user }}"
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
 
     - name: Enable and restart the Hermes gateway user unit
       ansible.builtin.systemd:
@@ -353,7 +443,7 @@
       become: true
       become_user: "{{ hermes_user }}"
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
 
     # The dashboard unit is enabled + started as the managed replacement for the
     # old out-of-band nohup, so it must come up on its own after a reboot/reprovision.
@@ -370,7 +460,7 @@
       become: true
       become_user: "{{ hermes_user }}"
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
       when: (hermes_env_values.HERMES_DASHBOARD_BASIC_AUTH_USERNAME | default('')) | length > 0
 
     - name: Ensure the journald drop-in directory exists
@@ -413,7 +503,7 @@
       become: true
       become_user: "{{ hermes_user }}"
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
 
     # Gated on the same auth username that gates the unit's start: no auth = no
     # running dashboard = nothing to restart.
@@ -425,5 +515,5 @@
       become: true
       become_user: "{{ hermes_user }}"
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[hermes_user][1] }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
       when: (hermes_env_values.HERMES_DASHBOARD_BASIC_AUTH_USERNAME | default('')) | length > 0

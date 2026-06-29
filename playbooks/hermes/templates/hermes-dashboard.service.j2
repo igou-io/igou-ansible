@@ -14,7 +14,7 @@ Type=simple
 ExecStart=%h/.local/bin/hermes dashboard --host {{ hermes_dashboard_host }} --port {{ hermes_dashboard_port }} --skip-build --no-open
 Restart=on-failure
 RestartSec=5
-{% if hermes_dashboard_enable_podman_chat | bool %}
+{% if hermes_dashboard_enable_podman_chat | default(false) | bool %}
 # Opt-in: dashboard Chat is spawned by this web UI unit, unlike
 # Slack/gateway/crons, which use their own working service paths.
 # Rootless Podman needs writable user runtime state and bind-mount sources.
