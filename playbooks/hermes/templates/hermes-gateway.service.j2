@@ -12,6 +12,7 @@ WorkingDirectory={{ hermes_state_mount }}
 Environment="PATH={{ hermes_state_mount }}/hermes-agent/venv/bin:{{ hermes_state_mount }}/node/bin:{{ hermes_home }}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="VIRTUAL_ENV={{ hermes_state_mount }}/hermes-agent/venv"
 Environment="HERMES_HOME={{ hermes_state_mount }}"
+Environment="HERMES_DOCKER_BINARY=/usr/bin/podman"
 Restart=always
 RestartSec=5
 RestartForceExitStatus=75

@@ -18,10 +18,9 @@
     hermes_home: /home/hermes
     hermes_state_device: /dev/vdb
     hermes_state_mount: "{{ hermes_home }}/.hermes"
-    # AAP extra_vars or inventory/group_vars must override this placeholder
-    # with a pinned tag before image pull; "latest" is rejected below.
+    # AAP extra_vars or inventory/group_vars must supply a pinned tag before
+    # image pull; "latest" is rejected below.
     hermes_devenv_image: ghcr.io/igou-io/igou-devenv
-    hermes_devenv_image_tag: "latest"
     hermes_devenv_image_ref: "{{ hermes_devenv_image }}:{{ hermes_devenv_image_tag }}"
     hermes_podman_subid_start: 100000
     hermes_podman_subid_count: 65536

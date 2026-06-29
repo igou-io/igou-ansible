@@ -14,6 +14,23 @@ Type=simple
 ExecStart=%h/.local/bin/hermes dashboard --host {{ hermes_dashboard_host }} --port {{ hermes_dashboard_port }} --skip-build --no-open
 Restart=on-failure
 RestartSec=5
+{% if hermes_dashboard_enable_podman_chat | bool %}
+# Opt-in: dashboard Chat is spawned by this web UI unit, unlike
+# Slack/gateway/crons, which use their own working service paths.
+# Rootless Podman needs writable user runtime state and bind-mount sources.
+# It also needs namespace creation and bind-mount preparation/relabeling, so
+# RestrictNamespaces=true, NoNewPrivileges=true, and @system-service filtering are
+# incompatible with Podman-enabled dashboard Chat. Testing also showed the
+# remaining systemd sandboxing directives below, including ReadWritePaths, make
+# newuidmap fail with EPERM in this user-service context, so the opt-in branch
+# omits them. This weakens dashboard hardening and is intentionally disabled by
+# default.
+NoNewPrivileges=false
+RestrictNamespaces=
+SystemCallFilter=
+SystemCallErrorNumber=
+Environment="HERMES_DOCKER_BINARY=/usr/bin/podman"
+{% else %}
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
@@ -24,6 +41,7 @@ RestrictNamespaces=true
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 LockPersonality=true
+{% endif %}
 
 [Install]
 WantedBy=default.target
