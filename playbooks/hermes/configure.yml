@@ -34,19 +34,6 @@
     # enabled when an auth username is set (fail closed — see the start task below).
     hermes_dashboard_host: "0.0.0.0"
     hermes_dashboard_port: 9119
-    hermes_dashboard_podman_readwrite_paths:
-      - "%t"
-      - "%h/.hermes"
-      - "%h/agent-repos"
-      - "%h/.codex"
-      - "%h/.claude"
-      - "%h/.claude.json"
-      - "%h/.config/opencode"
-      - "%h/.local/share/opencode"
-      - "%h/.config/gh"
-      - "%h/.config/argocd"
-      - "%h/.terraform.d"
-      - "%h/.local/share/cursor-agent"
     hermes_terminal_config:
       backend: docker
       docker_image: "{{ hermes_terminal_backend_image_ref }}"
@@ -115,12 +102,15 @@
     - name: Require pinned Hermes terminal backend image tag
       ansible.builtin.assert:
         that:
+          - hermes_terminal_backend_image is defined
+          - hermes_terminal_backend_image | default('') | length > 0
           - hermes_terminal_backend_image_tag is defined
-          - hermes_terminal_backend_image_tag | length > 0
+          - hermes_terminal_backend_image_tag | default('') | length > 0
           - hermes_terminal_backend_image_tag != "latest"
         fail_msg: >-
-          hermes_terminal_backend_image_tag must be pinned by inventory/group_vars before
-          configure.yml writes the Hermes terminal runtime config.
+          hermes_terminal_backend_image and hermes_terminal_backend_image_tag must be
+          set by inventory/group_vars before configure.yml writes the Hermes
+          terminal runtime config.
           Do not use latest for the Hermes runtime image.
 
     - name: Resolve the hermes uid
@@ -135,90 +125,103 @@
         hermes_podman_environment:
           XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
 
-    - name: Pre-pull Hermes terminal backend image
-      containers.podman.podman_image:
-        name: "{{ hermes_terminal_backend_image_ref }}"
-        state: present
-        pull: true
-        executable: /usr/bin/podman
-      become: true
-      become_user: "{{ hermes_user }}"
-      become_flags: "-i"
-      environment: "{{ hermes_podman_environment }}"
+    - name: Manage Hermes terminal backend image lifecycle
       when: hermes_terminal_backend_image_pre_pull | default(false) | bool
+      block:
+        - name: Pre-pull Hermes terminal backend image
+          containers.podman.podman_image:
+            name: "{{ hermes_terminal_backend_image_ref }}"
+            state: present
+            pull: true
+            executable: /usr/bin/podman
+          become: true
+          become_user: "{{ hermes_user }}"
+          become_flags: "-i"
+          environment: "{{ hermes_podman_environment }}"
 
-    - name: Pre-warm Hermes terminal backend image with rootless Podman keep-id mapping
-      ansible.builtin.command:
-        cmd: >-
-          timeout --kill-after=30s 10m
-          podman run --rm
-          --entrypoint /usr/bin/bash
-          --userns=keep-id:uid=1000,gid=1000
-          --user=1000:1000
-          -e HOME=/home/igou
-          -e BASH_ENV=/home/igou/.bashrc
-          {{ hermes_terminal_backend_image_ref }}
-          -lc 'whoami; id -u; id -g; pwd'
-      become: true
-      become_user: "{{ hermes_user }}"
-      become_flags: "-i"
-      environment: "{{ hermes_podman_environment }}"
-      register: hermes_terminal_backend_image_prewarm
-      changed_when: false
-      failed_when: >-
-        hermes_terminal_backend_image_prewarm.rc != 0
-        or (hermes_terminal_backend_image_prewarm.stdout_lines | default([]) | length) < 3
-        or hermes_terminal_backend_image_prewarm.stdout_lines[0] != "igou"
-        or hermes_terminal_backend_image_prewarm.stdout_lines[1] != "1000"
-        or hermes_terminal_backend_image_prewarm.stdout_lines[2] != "1000"
-      when: hermes_terminal_backend_image_pre_pull | default(false) | bool
+        - name: Pre-warm Hermes terminal backend image with rootless Podman keep-id mapping
+          ansible.builtin.command:
+            cmd: >-
+              timeout --kill-after=30s 10m
+              podman run --rm
+              --entrypoint /usr/bin/bash
+              --userns=keep-id:uid=1000,gid=1000
+              --user=1000:1000
+              -e HOME=/home/igou
+              -e BASH_ENV=/home/igou/.bashrc
+              {{ hermes_terminal_backend_image_ref }}
+              -lc 'whoami; id -u; id -g; pwd'
+          become: true
+          become_user: "{{ hermes_user }}"
+          become_flags: "-i"
+          environment: "{{ hermes_podman_environment }}"
+          register: hermes_terminal_backend_image_prewarm
+          changed_when: false
+          failed_when: >-
+            hermes_terminal_backend_image_prewarm.rc != 0
+            or (hermes_terminal_backend_image_prewarm.stdout_lines | default([]) | length) < 3
+            or hermes_terminal_backend_image_prewarm.stdout_lines[0] != "igou"
+            or hermes_terminal_backend_image_prewarm.stdout_lines[1] != "1000"
+            or hermes_terminal_backend_image_prewarm.stdout_lines[2] != "1000"
 
-    - name: Gather local Hermes terminal backend image tags
-      containers.podman.podman_image_info:
-        executable: /usr/bin/podman
-      become: true
-      become_user: "{{ hermes_user }}"
-      become_flags: "-i"
-      environment: "{{ hermes_podman_environment }}"
-      register: hermes_terminal_backend_image_info
+        - name: Gather local Hermes terminal backend image tags
+          containers.podman.podman_image_info:
+            executable: /usr/bin/podman
+          become: true
+          become_user: "{{ hermes_user }}"
+          become_flags: "-i"
+          environment: "{{ hermes_podman_environment }}"
+          register: hermes_terminal_backend_image_info
 
-    - name: Build local Hermes terminal backend image reference list
-      ansible.builtin.set_fact:
-        hermes_terminal_backend_local_image_refs: >-
-          {{
-            (hermes_terminal_backend_local_image_refs | default([]))
-            + (item.RepoTags | default([], true))
-            + (item.Names | default([], true))
-          }}
-      loop: "{{ hermes_terminal_backend_image_info.images | default([]) }}"
-      loop_control:
-        label: "{{ item.Id | default('unknown') }}"
+        - name: Initialize local Hermes terminal backend image reference list
+          ansible.builtin.set_fact:
+            hermes_terminal_backend_local_image_refs: []
 
-    - name: Set old Hermes terminal backend image tag list
-      ansible.builtin.set_fact:
-        hermes_terminal_backend_old_image_refs: >-
-          {{
-            hermes_terminal_backend_local_image_refs
-            | default([])
-            | select('match', '^' ~ (hermes_terminal_backend_image | regex_escape) ~ ':[^:]+$')
-            | reject('equalto', hermes_terminal_backend_image_ref)
-            | unique
-            | list
-          }}
+        - name: Build local Hermes terminal backend image reference list
+          ansible.builtin.set_fact:
+            hermes_terminal_backend_local_image_refs: >-
+              {{
+                hermes_terminal_backend_local_image_refs
+                + (item.RepoTags | default([], true))
+                + (item.Names | default([], true))
+              }}
+          loop: "{{ hermes_terminal_backend_image_info.images | default([]) }}"
+          loop_control:
+            label: "{{ item.Id | default('unknown') }}"
 
-    - name: Prune old Hermes terminal backend image tags
-      containers.podman.podman_image:
-        name: "{{ item }}"
-        state: absent
-        force: true
-        executable: /usr/bin/podman
-      become: true
-      become_user: "{{ hermes_user }}"
-      become_flags: "-i"
-      environment: "{{ hermes_podman_environment }}"
-      loop: "{{ hermes_terminal_backend_old_image_refs }}"
-      loop_control:
-        label: "{{ item }}"
+        - name: Require desired Hermes terminal backend image to be local before pruning
+          ansible.builtin.assert:
+            that:
+              - hermes_terminal_backend_image_ref in (hermes_terminal_backend_local_image_refs | unique | list)
+            fail_msg: >-
+              Refusing to prune old Hermes terminal backend image tags because
+              {{ hermes_terminal_backend_image_ref }} is not present in the local
+              rootless Podman image store for {{ hermes_user }}.
+
+        - name: Set old Hermes terminal backend image tag list
+          ansible.builtin.set_fact:
+            hermes_terminal_backend_old_image_refs: >-
+              {{
+                hermes_terminal_backend_local_image_refs
+                | select('match', '^' ~ (hermes_terminal_backend_image | regex_escape) ~ ':[^:]+$')
+                | reject('equalto', hermes_terminal_backend_image_ref)
+                | unique
+                | list
+              }}
+
+        - name: Prune old Hermes terminal backend image tags
+          containers.podman.podman_image:
+            name: "{{ item }}"
+            state: absent
+            force: true
+            executable: /usr/bin/podman
+          become: true
+          become_user: "{{ hermes_user }}"
+          become_flags: "-i"
+          environment: "{{ hermes_podman_environment }}"
+          loop: "{{ hermes_terminal_backend_old_image_refs }}"
+          loop_control:
+            label: "{{ item }}"
 
     # Confined root for the dashboard file browser (HERMES_DASHBOARD_FILES_ROOT) —
     # locks /api/files to this dir instead of allowing arbitrary host file read.
@@ -280,7 +283,9 @@
         group: "{{ hermes_user }}"
         mode: "0600"
       become: true
-      notify: Restart the Hermes gateway user unit
+      notify:
+        - Restart the Hermes gateway user unit
+        - Restart the Hermes dashboard user unit
 
     - name: Assert merged Hermes terminal backend config is present
       ansible.builtin.assert:
