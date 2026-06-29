@@ -15,8 +15,10 @@ ExecStart=%h/.local/bin/hermes dashboard --host {{ hermes_dashboard_host }} --po
 Restart=on-failure
 RestartSec=5
 {% if hermes_dashboard_enable_podman_chat | default(false) | bool %}
-# Opt-in: dashboard Chat is spawned by this web UI unit, unlike
-# Slack/gateway/crons, which use their own working service paths.
+# Opt-in: dashboard Chat is spawned by this web UI unit; gateway, Slack, and
+# crons use separate service paths, so this only relaxes dashboard hardening.
+# The terminal backend image defaults still assume the igou-devenv container
+# contract unless the container identity vars and image are changed together.
 # Rootless Podman needs writable user runtime state and bind-mount sources.
 # It also needs namespace creation and bind-mount preparation/relabeling, so
 # RestrictNamespaces=true, NoNewPrivileges=true, and @system-service filtering are
