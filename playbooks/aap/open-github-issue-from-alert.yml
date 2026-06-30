@@ -1,0 +1,190 @@
+---
+- name: Open GitHub issues from Alertmanager alerts
+  hosts: localhost
+  gather_facts: false
+  vars:
+    github_repo: igou-io/igou-openshift
+    github_token: "{{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') | default('') }}"
+    github_issue_labels:
+      - eda-alert
+      - incident
+    alert_group_status: "{{ alert_payload.status | default('unknown') }}"
+    firing_alerts: >-
+      {{ alert_payload.alerts | default([]) |
+         selectattr('status', 'equalto', 'firing') | list }}
+  tasks:
+    - name: Require an Alertmanager payload
+      ansible.builtin.assert:
+        that:
+          - alert_payload is defined
+          - alert_payload is mapping
+        fail_msg: >-
+          Launch this template from the EDA Alertmanager rulebook, or pass an
+          Alertmanager webhook payload as alert_payload.
+
+    # Disabled for EDA testing. Re-enable when GitHub issue writes are ready.
+    # - name: Require a GitHub token
+    #   ansible.builtin.assert:
+    #     that:
+    #       - github_token | length > 0
+    #     fail_msg: >-
+    #       GITHUB_TOKEN is empty. Attach the GitHub Token credential to this
+    #       job template.
+
+    - name: Build incident records
+      ansible.builtin.set_fact:
+        incident_records: "{{ incident_records | default([]) + [incident_record] }}"
+      vars:
+        labels: "{{ item.labels | default({}) }}"
+        annotations: "{{ item.annotations | default({}) }}"
+        alert_name: "{{ labels.alertname | default('unknown-alert') }}"
+        alert_namespace: "{{ labels.namespace | default('cluster') }}"
+        alert_target: >-
+          {{ labels.pod |
+             default(labels.instance |
+             default(labels.job |
+             default(labels.persistentvolumeclaim |
+             default(alert_namespace)))) }}
+        issue_title: "[Alert] {{ alert_name }} on {{ alert_namespace }}/{{ alert_target }}"
+        issue_body: |
+          Automated incident filed by AAP EDA from Alertmanager.
+
+          | Field | Value |
+          |---|---|
+          | Alert | `{{ alert_name }}` |
+          | Status | `{{ item.status | default(alert_group_status) }}` |
+          | Severity | `{{ labels.severity | default('unknown') }}` |
+          | Namespace | `{{ labels.namespace | default('n/a') }}` |
+          | Target | `{{ alert_target }}` |
+          | Started | `{{ item.startsAt | default('n/a') }}` |
+          | AAP job | `{{ awx_job_id | default('n/a') }}` |
+
+          ## Summary
+
+          {{ annotations.summary | default('No summary annotation present.') }}
+
+          ## Description
+
+          {{ annotations.description | default('No description annotation present.') }}
+
+          ## Links
+
+          - Generator: {{ item.generatorURL | default('n/a') }}
+          - Alertmanager: {{ alert_payload.externalURL | default('n/a') }}
+
+          ## Labels
+
+          ```json
+          {{ labels | to_nice_json }}
+          ```
+
+          ## Annotations
+
+          ```json
+          {{ annotations | to_nice_json }}
+          ```
+        incident_record:
+          title: "{{ issue_title }}"
+          body: "{{ issue_body }}"
+          alert_name: "{{ alert_name }}"
+          namespace: "{{ alert_namespace }}"
+          target: "{{ alert_target }}"
+      loop: "{{ firing_alerts }}"
+      loop_control:
+        label: "{{ item.labels.alertname | default('unknown-alert') }}"
+
+    - name: End cleanly when no firing alerts are present
+      ansible.builtin.meta: end_play
+      when: incident_records | default([]) | length == 0
+
+    # Disabled for EDA testing. Re-enable this block when GitHub issue writes
+    # are ready.
+    # - name: List open incident issues
+    #   ansible.builtin.uri:
+    #     url: >-
+    #       https://api.github.com/repos/{{ github_repo }}/issues?state=open&labels={{ github_issue_labels | join(',') }}&per_page=100
+    #     headers:
+    #       Authorization: "Bearer {{ github_token }}"
+    #       Accept: application/vnd.github+json
+    #       X-GitHub-Api-Version: "2022-11-28"
+    #     return_content: true
+    #   register: gh_open_issues
+    #
+    # - name: Index open issues by title
+    #   ansible.builtin.set_fact:
+    #     open_issue_by_title: >-
+    #       {{ open_issue_by_title | default({}) | combine({item.title: item}) }}
+    #   loop: >-
+    #     {{ gh_open_issues.json | default([]) |
+    #        rejectattr('pull_request', 'defined') | list }}
+    #   loop_control:
+    #     label: "{{ item.title }}"
+    #
+    # - name: Open new incident issues
+    #   ansible.builtin.uri:
+    #     url: "https://api.github.com/repos/{{ github_repo }}/issues"
+    #     method: POST
+    #     headers:
+    #       Authorization: "Bearer {{ github_token }}"
+    #       Accept: application/vnd.github+json
+    #       X-GitHub-Api-Version: "2022-11-28"
+    #     body_format: json
+    #     status_code: 201
+    #     body:
+    #       title: "{{ item.title }}"
+    #       labels: "{{ github_issue_labels }}"
+    #       body: "{{ item.body }}"
+    #   loop: "{{ incident_records }}"
+    #   loop_control:
+    #     label: "{{ item.title }}"
+    #   register: gh_new_issues
+    #   when: item.title not in (open_issue_by_title | default({}))
+    #
+    # - name: Comment on existing incident issues
+    #   ansible.builtin.uri:
+    #     url: >-
+    #       https://api.github.com/repos/{{ github_repo }}/issues/{{ open_issue_by_title[item.title].number }}/comments
+    #     method: POST
+    #     headers:
+    #       Authorization: "Bearer {{ github_token }}"
+    #       Accept: application/vnd.github+json
+    #       X-GitHub-Api-Version: "2022-11-28"
+    #     body_format: json
+    #     status_code: 201
+    #     body:
+    #       body: |
+    #         Alert re-fired from Alertmanager. AAP job: `{{ awx_job_id | default('n/a') }}`.
+    #
+    #         {{ item.body }}
+    #   loop: "{{ incident_records }}"
+    #   loop_control:
+    #     label: "{{ item.title }}"
+    #   register: gh_issue_comments
+    #   when: item.title in (open_issue_by_title | default({}))
+
+    - name: Show incident issues that would be opened
+      ansible.builtin.debug:
+        msg:
+          github_repo: "{{ github_repo }}"
+          title: "{{ item.title }}"
+          labels: "{{ github_issue_labels }}"
+          body: "{{ item.body }}"
+      loop: "{{ incident_records }}"
+      loop_control:
+        label: "{{ item.title }}"
+
+    - name: Collect created issue URLs
+      ansible.builtin.set_fact:
+        created_issue_urls: []
+
+    - name: Collect updated issue URLs
+      ansible.builtin.set_fact:
+        updated_issue_urls: []
+
+    - name: Publish GitHub issue artifacts
+      ansible.builtin.set_stats:
+        data:
+          eda_alert_issue_urls: "{{ created_issue_urls + updated_issue_urls }}"
+          eda_alert_created_issue_urls: "{{ created_issue_urls }}"
+          eda_alert_updated_issue_urls: "{{ updated_issue_urls }}"
+          eda_alert_count: "{{ incident_records | length }}"
