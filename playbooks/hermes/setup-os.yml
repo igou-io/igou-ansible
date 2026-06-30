@@ -518,54 +518,6 @@
         or hermes_devenv_smoke_test.stdout_lines[1] != "1000"
         or hermes_devenv_smoke_test.stdout_lines[2] != "1000"
 
-    # Future configure.yml phase handoff:
-    # - set HERMES_DOCKER_BINARY=/usr/bin/podman for the Hermes gateway process
-    # - manage Hermes config.yaml with terminal.backend: docker
-    # - set docker_image to {{ hermes_devenv_image_ref }}
-    # - set HOME=/home/igou
-    # - use docker_extra_args: --userns=keep-id:uid=1000,gid=1000 and --user=1000:1000
-    # - use explicit many-volume mappings from /home/hermes into /home/igou
-    # - do not mount all of /home/hermes or use privileged containers
-    - name: Create host-side directories for future igou-devenv Hermes runtime mounts
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        owner: "{{ hermes_user }}"
-        group: "{{ hermes_user }}"
-        mode: "0700"
-      loop:
-        - "{{ hermes_home }}/agent-repos"
-        - "{{ hermes_state_mount }}/cache"
-        - "{{ hermes_state_mount }}/cache/documents"
-        - "{{ hermes_home }}/.ssh"
-        - "{{ hermes_home }}/.kube"
-        - "{{ hermes_home }}/.claude"
-        - "{{ hermes_home }}/.codex"
-        - "{{ hermes_home }}/.config"
-        - "{{ hermes_home }}/.config/opencode"
-        - "{{ hermes_home }}/.config/gh"
-        - "{{ hermes_home }}/.config/argocd"
-        - "{{ hermes_home }}/.config/cursor"
-        - "{{ hermes_home }}/.cursor"
-        - "{{ hermes_home }}/.local"
-        - "{{ hermes_home }}/.local/share"
-        - "{{ hermes_home }}/.local/share/opencode"
-        - "{{ hermes_home }}/.terraform.d"
-      become: true
-
-    - name: Create optional mounted user config files if absent
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: touch
-        owner: "{{ hermes_user }}"
-        group: "{{ hermes_user }}"
-        mode: "{{ item.mode }}"
-        access_time: preserve
-        modification_time: preserve
-      loop:
-        - { path: "{{ hermes_home }}/.claude.json", mode: "0600" }
-        - { path: "{{ hermes_home }}/.gitconfig", mode: "0644" }
-      become: true
   handlers:
     - name: Clean DNF metadata
       ansible.builtin.command:
