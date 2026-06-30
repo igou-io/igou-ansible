@@ -548,7 +548,6 @@
         - "{{ hermes_home }}/.local"
         - "{{ hermes_home }}/.local/share"
         - "{{ hermes_home }}/.local/share/opencode"
-        - "{{ hermes_home }}/.local/share/cursor-agent"
         - "{{ hermes_home }}/.terraform.d"
       become: true
 
