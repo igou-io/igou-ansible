@@ -80,6 +80,8 @@
         - "/home/hermes/.local/share/opencode:{{ hermes_terminal_backend_container_home }}/.local/share/opencode:Z"
         - "/home/hermes/.config/gh:{{ hermes_terminal_backend_container_home }}/.config/gh:Z"
         - "/home/hermes/.config/argocd:{{ hermes_terminal_backend_container_home }}/.config/argocd:Z"
+        - "/home/hermes/.config/cursor:{{ hermes_terminal_backend_container_home }}/.config/cursor:ro,Z"
+        - "/home/hermes/.cursor:{{ hermes_terminal_backend_container_home }}/.cursor:Z"
         - "/home/hermes/.terraform.d:{{ hermes_terminal_backend_container_home }}/.terraform.d:Z"
   tasks:
     - name: Update managed Hermes environment values

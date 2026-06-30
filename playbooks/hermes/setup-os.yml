@@ -545,6 +545,8 @@
         - "{{ hermes_home }}/.config/opencode"
         - "{{ hermes_home }}/.config/gh"
         - "{{ hermes_home }}/.config/argocd"
+        - "{{ hermes_home }}/.config/cursor"
+        - "{{ hermes_home }}/.cursor"
         - "{{ hermes_home }}/.local"
         - "{{ hermes_home }}/.local/share"
         - "{{ hermes_home }}/.local/share/opencode"
