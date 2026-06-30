@@ -73,6 +73,7 @@
         - "/home/hermes/.claude:{{ hermes_terminal_backend_container_home }}/.claude:Z"
         - "/home/hermes/.claude.json:{{ hermes_terminal_backend_container_home }}/.claude.json:Z"
         - "/home/hermes/.codex:{{ hermes_terminal_backend_container_home }}/.codex:Z"
+        - "/home/hermes/.agents/skills:{{ hermes_terminal_backend_container_home }}/.agents/skills:Z"
         - "/home/hermes/.config/opencode:{{ hermes_terminal_backend_container_home }}/.config/opencode:Z"
         - "/home/hermes/.local/share/opencode:{{ hermes_terminal_backend_container_home }}/.local/share/opencode:Z"
         - "/home/hermes/.config/gh:{{ hermes_terminal_backend_container_home }}/.config/gh:Z"
@@ -274,6 +275,8 @@
         - "{{ hermes_home }}/.kube"
         - "{{ hermes_home }}/.claude"
         - "{{ hermes_home }}/.codex"
+        - "{{ hermes_home }}/.agents"
+        - "{{ hermes_home }}/.agents/skills"
         - "{{ hermes_home }}/.config"
         - "{{ hermes_home }}/.config/opencode"
         - "{{ hermes_home }}/.config/gh"
@@ -363,6 +366,7 @@
           - ("--userns=keep-id:uid=" ~ hermes_terminal_backend_container_uid ~ ",gid=" ~ hermes_terminal_backend_container_gid) in hermes_merged_config.terminal.docker_extra_args
           - ("--user=" ~ hermes_terminal_backend_container_uid ~ ":" ~ hermes_terminal_backend_container_gid) in hermes_merged_config.terminal.docker_extra_args
           - "'/home/hermes/agent-repos:/workspace:Z' in hermes_merged_config.terminal.docker_volumes"
+          - ('/home/hermes/.agents/skills:' ~ hermes_terminal_backend_container_home ~ '/.agents/skills:Z') in hermes_merged_config.terminal.docker_volumes
 
     - name: Ensure the nftables drop-in directory exists
       ansible.builtin.file:
