@@ -59,10 +59,7 @@
         BASH_ENV: "{{ hermes_terminal_backend_container_bash_env }}"
         PYTHONUNBUFFERED: "1"
       docker_forward_env:
-        - GITHUB_TOKEN
         - GH_TOKEN
-        - OPENAI_API_KEY
-        - ANTHROPIC_API_KEY
         - OPENCODE_GO_API_KEY
       docker_extra_args:
         - "--userns=keep-id:uid={{ hermes_terminal_backend_container_uid }},gid={{ hermes_terminal_backend_container_gid }}"
