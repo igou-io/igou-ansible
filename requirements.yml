@@ -28,7 +28,7 @@ roles:
     version: 1.4.1
 collections:
   - name: community.general
-    version: 13.0.1
+    version: 13.1.0
   - name: ansible.posix
     version: 2.2.0
   - name: kubernetes.core
@@ -57,7 +57,7 @@ collections:
   - name: ansible.netcommon
     version: 8.5.3
   - name: community.routeros
-    version: 3.20.0
+    version: 3.21.0
   - name: david_igou.routeros_configuration
     version: 0.0.7-alpha
   - name: amazon.aws
