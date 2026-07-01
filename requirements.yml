@@ -71,5 +71,5 @@ collections:
     version: v0.0.4-alpha
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
-    version: main
+    version: 26.4.0
 ...

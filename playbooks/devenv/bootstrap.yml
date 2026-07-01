@@ -18,7 +18,7 @@
     # Slim the packages role to only what a devcontainer host needs: the always-on
     # core packages (git/jq/make/curl/unzip) + pinned Node.js + the always-on
     # @devcontainers/cli. Everything heavy (CLIs, pip suite, extra OS packages) off.
-    # Disabling extra_packages also skips the dnf5-fragile CRB/EPEL enablement.
+    # Disabling extra_packages also skips the dnf5-fragile CRB step + bulk OS packages.
     packages_install_nodejs_pinned: true
     packages_install_extra_packages: false
     packages_install_pip_packages: false
@@ -63,7 +63,9 @@
         cmd: cloud-init status --wait
       register: __devenv_cloudinit
       changed_when: false
-      failed_when: false
+      # cloud-init status --wait: 0=done, 2=done with recoverable/degraded errors;
+      # anything else (1=error/disabled, 3=timeout) means the seed failed — surface it.
+      failed_when: __devenv_cloudinit.rc not in [0, 2]
       become: true
 
     - name: Gather facts (after the connection is proven)
@@ -73,27 +75,44 @@
     - role: david_igou.devhost.docker
     - role: david_igou.devhost.packages
 
-  tasks:
+  post_tasks:
     - name: Clone the igou-devenv repo (public, HTTPS — no agent forwarding needed)
       ansible.builtin.git:
         repo: "{{ devenv_repo }}"
         dest: "{{ ansible_user_dir }}/igou-devenv"
         version: "{{ devenv_repo_version }}"
 
-    - name: Launch code-server (detached) from the published devenv image
-      ansible.builtin.shell:
-        cmd: |
-          set -eu
-          docker rm -f igou-devenv-code-server >/dev/null 2>&1 || true
-          docker run -d --restart unless-stopped --name igou-devenv-code-server \
-            --user igou -e HOME=/home/igou -p 8080:8080 \
-            -v "{{ ansible_user_dir }}/igou-devenv:/workspace:Z" \
-            "{{ devenv_image }}" \
-            code-server --bind-addr 0.0.0.0:8080 /workspace --cert
+    - name: Install the Docker SDK for Python (community.docker.docker_container needs it on the target)
+      # python3-docker is in EPEL; enable EPEL only (from the Stream extras repo) — this
+      # does NOT run the dnf5-fragile CRB step the packages role's extra_packages would.
       become: true
-      changed_when: true
+      block:
+        - name: Enable the EPEL repository
+          ansible.builtin.dnf:
+            name: epel-release
+            state: present
+        - name: Install python3-docker
+          ansible.builtin.dnf:
+            name: python3-docker
+            state: present
+
+    - name: Launch code-server (detached) from the published devenv image
+      community.docker.docker_container:
+        name: igou-devenv-code-server
+        image: "{{ devenv_image }}"
+        state: started
+        pull: true
+        restart_policy: unless-stopped
+        user: igou
+        env:
+          HOME: /home/igou
+        ports:
+          - "8080:8080"
+        volumes:
+          - "{{ ansible_user_dir }}/igou-devenv:/workspace:Z"
+        command: code-server --bind-addr 0.0.0.0:8080 /workspace --cert
+      become: true
       when: devenv_launch_devcontainer | bool
-      # noqa command-instead-of-shell -- multi-step (rm -f guard + detached run) needs the shell
 
     - name: Summarize devenv access
       ansible.builtin.debug:

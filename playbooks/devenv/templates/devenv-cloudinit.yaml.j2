@@ -1,4 +1,5 @@
 #cloud-config
+{{ ansible_managed | comment }}
 # Minimal seed only: create the igou login user with authorized SSH keys and
 # enable the qemu-guest-agent (required so the kubevirt.core inventory reports the
 # virt-launcher pod IP, which is how AAP reaches the VM). ALL host configuration is

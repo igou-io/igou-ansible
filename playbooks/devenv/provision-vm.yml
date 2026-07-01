@@ -70,9 +70,7 @@
     vm_admin_user: igou
     devenv_ansible_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B"
     devenv_ssh_authorized_key: ""
-    devenv_authorized_keys: >-
-      {{ [devenv_ansible_pubkey]
-         + ([devenv_ssh_authorized_key] if (devenv_ssh_authorized_key | length > 0) else []) }}
+    devenv_authorized_keys: "{{ [devenv_ansible_pubkey, devenv_ssh_authorized_key] | reject('equalto', '') | list }}"
 
   pre_tasks:
     - name: Render the devenv cloud-init
