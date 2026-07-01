@@ -1,0 +1,23 @@
+#cloud-config
+{{ ansible_managed | comment }}
+# Minimal seed only: create the igou login user with authorized SSH keys and
+# enable the qemu-guest-agent (required so the kubevirt.core inventory reports the
+# virt-launcher pod IP, which is how AAP reaches the VM). ALL host configuration is
+# done afterwards by Ansible over SSH (playbooks/devenv/bootstrap.yml ->
+# david_igou.devhost). Deliberately no packages / docker / host prep here.
+hostname: {{ vm_name }}
+ssh_pwauth: false
+users:
+  - default
+  - name: {{ vm_admin_user }}
+    groups:
+      - wheel
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    shell: /bin/bash
+    ssh_authorized_keys:
+{% for key in devenv_authorized_keys %}
+      - {{ key }}
+{% endfor %}
+runcmd:
+  - ["systemctl", "enable", "--now", "qemu-guest-agent"]
