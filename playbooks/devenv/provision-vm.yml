@@ -29,6 +29,11 @@
     vm_state: present
     vm_rebuild: "{{ rebuild | default(false) | bool }}"
     vm_run_strategy: Always
+    # The virtualmachine-deployer-token credential authenticates as the
+    # virtualmachine-ops ServiceAccount, which can CRUD VMs/DataVolumes/Services
+    # but only get/list/watch namespaces. So the namespace is a prerequisite
+    # (create it once via `oc`/GitOps); don't try to create it here by default.
+    create_namespace: false
 
     # Root disk: clone the centos-stream10 golden image on the DEFAULT StorageClass.
     # Keep the size at the golden 30Gi — the default democratic-csi class deadlocks
@@ -85,7 +90,9 @@
         api_version: v1
         kind: Namespace
         name: "{{ vm_namespace }}"
-      when: vm_state == "present"
+      when:
+        - vm_state == "present"
+        - create_namespace | bool
 
     - name: Converge the devenv VM
       ansible.builtin.include_role:
