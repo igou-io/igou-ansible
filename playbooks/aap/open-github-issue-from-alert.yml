@@ -3,7 +3,7 @@
   hosts: localhost
   gather_facts: false
   vars:
-    github_repo: igou-io/igou-openshift
+    github_repo: igou-io/igou-inventory
     github_token: "{{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') | default('') }}"
     github_issue_labels:
       - eda-alert
