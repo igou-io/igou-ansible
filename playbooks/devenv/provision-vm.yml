@@ -1,0 +1,138 @@
+---
+# Provision / reprovision the CentOS "devenv" test VM on the casval burst node.
+#
+# Phase 1 of the devenv lifecycle. Creates the namespace, the VM (via the generic
+# kubevirt_vm_provision role: pod network + masquerade, cloned from the
+# centos-stream10 DataSource, pinned to the burst node), and the NodePort services
+# that expose SSH (22) and code-server (8080) for the operator's external access.
+# cloud-init is intentionally minimal (igou login user + keys + qemu-guest-agent);
+# the host is configured afterwards over SSH by playbooks/devenv/bootstrap.yml
+# (david_igou.devhost).
+#
+# Cluster API auth is ambient: kubevirt.core / kubernetes.core read the K8S_AUTH_*
+# env vars injected by the `virtualmachine-deployer-token` credential (custom type
+# `Kubernetes API Token`, see igou-inventory/group_vars/aap/credential_types.yml).
+# Run locally with a KUBECONFIG instead.
+#
+# Lifecycle knobs (pass as extra_vars at launch):
+#   rebuild=true       -> destructive reprovision (fresh VM, namespace/services kept)
+#   vm_state=absent    -> tear down VM + services (lets the autoscaler scale casval to 0)
+- name: Provision the devenv KubeVirt VM
+  hosts: "{{ host | default('localhost') }}"
+  # Talks to the cluster API via env-injected K8S_AUTH_* vars; no SSH. Force local
+  # so the inventory's localhost entry doesn't default to ssh.
+  connection: local
+  gather_facts: false
+  vars:
+    vm_name: devenv
+    vm_namespace: devenv
+    vm_state: present
+    vm_rebuild: "{{ rebuild | default(false) | bool }}"
+    vm_run_strategy: Always
+
+    # Root disk: clone the centos-stream10 golden image on the DEFAULT StorageClass.
+    # Keep the size at the golden 30Gi — the default democratic-csi class deadlocks
+    # on resize-during-clone, and no available credential can expand the PVC.
+    vm_os_datasource: centos-stream10
+    vm_storage_class: ""              # empty -> cluster default StorageClass
+    vm_root_size: 30Gi
+
+    # Compute (overridable at launch). No resources block -> Burstable QoS.
+    vm_cpu_cores: 8
+    vm_memory: 16Gi
+    vm_firmware: bios                 # the centos-stream10 golden image is BIOS-only
+
+    # Pin the versioned machine type so the burst autoscaler's synthetic template
+    # node (built from the casval MachineSet capacity-labels annotation) matches;
+    # otherwise the VM stays Pending and never triggers scale-from-zero.
+    vm_machine_type: pc-q35-rhel9.6.0
+    vm_architecture: amd64
+
+    # Burst placement (casval), passed explicitly to the generic role.
+    vm_node_selector:
+      node-role.kubernetes.io/burst: ""
+    vm_tolerations:
+      - key: workload
+        operator: Equal
+        value: burst
+        effect: NoSchedule
+
+    # Labels land on the VM and (via the module) on the virt-launcher pod, so the
+    # NodePort services below can select it.
+    vm_labels:
+      app: devenv
+      app.kubernetes.io/managed-by: ansible
+
+    # cloud-init login user + authorized keys. The igou public half of the AAP
+    # machine credential (op://awx/ansible-ssh-ed25519 field "public key") is baked
+    # in so AAP can converge the guest unattended in Phase 2. Append a personal key
+    # for direct NodePort SSH via -e devenv_ssh_authorized_key='ssh-ed25519 ...'.
+    vm_admin_user: igou
+    devenv_ansible_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B"
+    devenv_ssh_authorized_key: ""
+    devenv_authorized_keys: >-
+      {{ [devenv_ansible_pubkey]
+         + ([devenv_ssh_authorized_key] if (devenv_ssh_authorized_key | length > 0) else []) }}
+
+  pre_tasks:
+    - name: Render the devenv cloud-init
+      ansible.builtin.set_fact:
+        vm_cloud_init: "{{ lookup('template', 'templates/devenv-cloudinit.yaml.j2') }}"
+      when: vm_state == "present"
+
+  tasks:
+    - name: Ensure the devenv namespace exists
+      kubernetes.core.k8s:
+        state: present
+        api_version: v1
+        kind: Namespace
+        name: "{{ vm_namespace }}"
+      when: vm_state == "present"
+
+    - name: Converge the devenv VM
+      ansible.builtin.include_role:
+        name: kubevirt_vm_provision
+
+    - name: Manage the NodePort service exposing SSH
+      kubernetes.core.k8s:
+        state: "{{ vm_state }}"
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: devenv-ssh
+            namespace: "{{ vm_namespace }}"
+            labels:
+              app: devenv
+          spec:
+            type: NodePort
+            selector:
+              app: devenv
+            ports:
+              - name: ssh
+                port: 22
+                targetPort: 22
+                nodePort: 30022
+                protocol: TCP
+
+    - name: Manage the NodePort service exposing code-server
+      kubernetes.core.k8s:
+        state: "{{ vm_state }}"
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: devenv-code-server
+            namespace: "{{ vm_namespace }}"
+            labels:
+              app: devenv
+          spec:
+            type: NodePort
+            selector:
+              app: devenv
+            ports:
+              - name: code-server
+                port: 8080
+                targetPort: 8080
+                nodePort: 30080
+                protocol: TCP
