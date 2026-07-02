@@ -37,6 +37,17 @@
     devenv_image: ghcr.io/igou-io/igou-devenv:latest
     devenv_launch_devcontainer: true
 
+    # GitHub App runtime tokens (ghapp, local-mint mode). Gated OFF so this is
+    # a no-op until launched with -e devenv_ghapp_enabled=true. When on, the
+    # igou-dev App identity/key default from 1Password (vault claude; override
+    # devenv_ghapp_op_vault/_item or pass ghapp_client_* directly). The role
+    # params below are only templated when the gated role runs.
+    devenv_ghapp_enabled: false
+    ghapp_client_enabled: true
+    ghapp_client_user: igou
+    devenv_ghapp_op_item: igou-dev-github-app
+    devenv_ghapp_op_vault: claude
+
   pre_tasks:
     - name: Wait for the VM's SSH to come up
       ansible.builtin.wait_for_connection:
@@ -58,6 +69,17 @@
   roles:
     - role: david_igou.devhost.docker
     - role: david_igou.devhost.packages
+    - role: david_igou.devhost.ghapp
+      when: devenv_ghapp_enabled | bool
+      vars:
+        ghapp_client_id: >-
+          {{ ghapp_client_id | default(lookup('community.general.onepassword',
+             devenv_ghapp_op_item, field='client_id', vault=devenv_ghapp_op_vault), true) }}
+        ghapp_client_app_slug: "{{ ghapp_client_app_slug | default('igou-dev') }}"
+        ghapp_client_installations: "{{ ghapp_client_installations | default(dict([['david-igou', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_david-igou', vault=devenv_ghapp_op_vault)], ['igou-io', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_igou-io', vault=devenv_ghapp_op_vault)]]), true) }}"
+        ghapp_client_private_key_content: >-
+          {{ ghapp_client_private_key_content | default(lookup('community.general.onepassword',
+             devenv_ghapp_op_item, field='private_key', vault=devenv_ghapp_op_vault), true) }}
 
   post_tasks:
     - name: Clone the igou-devenv repo (public, HTTPS — no agent forwarding needed)
