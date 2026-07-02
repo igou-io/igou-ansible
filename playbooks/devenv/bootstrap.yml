@@ -71,14 +71,18 @@
     - role: david_igou.devhost.packages
     - role: david_igou.devhost.ghapp
       when: devenv_ghapp_enabled | bool
+      # Override vars use a devenv_-prefixed name so the role param can't
+      # reference itself (a self-referential {{ ghapp_client_id | default(...) }}
+      # recurses at arg-spec validation). Pass devenv_ghapp_client_id/... at
+      # launch to override the 1Password default.
       vars:
         ghapp_client_id: >-
-          {{ ghapp_client_id | default(lookup('community.general.onepassword',
+          {{ devenv_ghapp_client_id | default(lookup('community.general.onepassword',
              devenv_ghapp_op_item, field='client_id', vault=devenv_ghapp_op_vault), true) }}
-        ghapp_client_app_slug: "{{ ghapp_client_app_slug | default('igou-dev') }}"
-        ghapp_client_installations: "{{ ghapp_client_installations | default(dict([['david-igou', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_david-igou', vault=devenv_ghapp_op_vault)], ['igou-io', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_igou-io', vault=devenv_ghapp_op_vault)]]), true) }}"
+        ghapp_client_app_slug: "{{ devenv_ghapp_app_slug | default('igou-dev') }}"
+        ghapp_client_installations: "{{ devenv_ghapp_installations | default(dict([['david-igou', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_david-igou', vault=devenv_ghapp_op_vault)], ['igou-io', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_igou-io', vault=devenv_ghapp_op_vault)]]), true) }}"
         ghapp_client_private_key_content: >-
-          {{ ghapp_client_private_key_content | default(lookup('community.general.onepassword',
+          {{ devenv_ghapp_private_key | default(lookup('community.general.onepassword',
              devenv_ghapp_op_item, field='private_key', vault=devenv_ghapp_op_vault), true) }}
 
   post_tasks:
