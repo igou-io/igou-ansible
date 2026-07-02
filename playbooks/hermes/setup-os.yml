@@ -13,6 +13,10 @@
   # across the whole fleet - match the linux_baseline convention instead.
   hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
+  # Facts are gathered in pre_tasks after the connection is proven, so a freshly
+  # provisioned VM (sshd still coming up) doesn't fail at play start. For the
+  # live hermes VM the wait returns immediately.
+  gather_facts: false
   vars:
     hermes_user: hermes
     hermes_home: /home/hermes
@@ -48,6 +52,14 @@
         baseurl: "https://mirror.stream.centos.org/SIGs/{{ centos_stream_major }}-stream/extras/$basearch/extras-common/"
         enabled: true
         gpgcheck: true
+  pre_tasks:
+    - name: Wait for the VM's SSH to come up
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Gather facts (after the connection is proven)
+      ansible.builtin.setup:
+
   tasks:
     - name: Validate the target is CentOS Stream {{ centos_stream_major }}
       ansible.builtin.assert:
