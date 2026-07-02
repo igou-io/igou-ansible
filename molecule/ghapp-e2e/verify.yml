@@ -1,0 +1,270 @@
+---
+# Live verification against real GitHub: every mint here is a real
+# installation token from the real igou-dev / igou-hermes apps, scoped to the
+# scratch repos the installations allow.
+
+- name: Verify the devenv-style host (client / local mint)
+  hosts: ghapp-devenv
+  gather_facts: false
+  vars:
+    __ghapp_env:
+      GHAPP_CONFIG: /home/cloud-user/.config/ghapp/config.yaml
+  tasks:
+    - name: Mint a real scoped token (igou-io installation)
+      ansible.builtin.command:
+        cmd: ghapp token --repo igou-io/igou-infrastructure --permission contents=read --json
+      environment: "{{ __ghapp_env }}"
+      become: true
+      become_user: cloud-user
+      register: __mint_io
+      changed_when: false
+      no_log: true
+
+    - name: Assert the token is scoped to exactly the requested repo
+      ansible.builtin.assert:
+        that:
+          - __mint_json.token is match('^gh[a-z]_')
+          - __mint_json.auth.scoped_repositories == ['igou-io/igou-infrastructure']
+          - __mint_json.auth.scoped_permissions.contents == 'read'
+        fail_msg: "igou-io mint returned an unexpected scope"
+      vars:
+        __mint_json: "{{ __mint_io.stdout | from_json }}"
+
+    - name: Mint a real scoped token (david-igou installation, cross-org)
+      ansible.builtin.command:
+        cmd: >-
+          ghapp token --repo david-igou/hermes_github_app_plugin
+          --permission contents=read --json
+      environment: "{{ __ghapp_env }}"
+      become: true
+      become_user: cloud-user
+      register: __mint_dav
+      changed_when: false
+      no_log: true
+
+    - name: Assert the cross-org token is scoped correctly
+      ansible.builtin.assert:
+        that:
+          - __mint_json.auth.scoped_repositories == ['david-igou/hermes_github_app_plugin']
+        fail_msg: "david-igou mint returned an unexpected scope"
+      vars:
+        __mint_json: "{{ __mint_dav.stdout | from_json }}"
+
+    - name: Attempt a mint for a repo outside the installation (must fail)
+      ansible.builtin.command:
+        cmd: ghapp token --repo igou-io/not-in-the-installation --permission contents=read
+      environment: "{{ __ghapp_env }}"
+      become: true
+      become_user: cloud-user
+      register: __mint_denied
+      changed_when: false
+      failed_when: __mint_denied.rc == 0
+
+    - name: Exercise the git credential helper protocol
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          printf 'protocol=https\nhost=github.com\npath=igou-io/igou-infrastructure.git\n\n'
+          | git-credential-ghapp get
+      args:
+        executable: /bin/bash
+      environment: "{{ __ghapp_env }}"
+      become: true
+      become_user: cloud-user
+      register: __cred_helper
+      changed_when: false
+      no_log: true
+
+    - name: Assert the credential helper answered with a token
+      ansible.builtin.assert:
+        that:
+          - "'username=x-access-token' in __cred_helper.stdout"
+          - __cred_helper.stdout is search('password=gh[a-z]_')
+        fail_msg: "credential helper did not return a usable credential"
+
+    - name: Authenticated git ls-remote through the credential helper
+      ansible.builtin.command:
+        cmd: git ls-remote https://github.com/igou-io/igou-infrastructure.git HEAD
+      environment: "{{ __ghapp_env }}"
+      become: true
+      become_user: cloud-user
+      register: __ls_remote
+      changed_when: false
+
+    - name: Assert git resolved HEAD over HTTPS
+      ansible.builtin.assert:
+        that:
+          - __ls_remote.stdout | length > 0
+        fail_msg: "git ls-remote via the credential helper failed"
+
+    - name: Summarize devenv verification
+      ansible.builtin.debug:
+        msg: >-
+          Verified live: single-repo scoped mints for both installations,
+          out-of-installation mint rejected by GitHub, credential helper
+          protocol + authenticated git ls-remote.
+
+- name: Verify the hermes-style host (broker)
+  hosts: ghapp-hermes
+  gather_facts: false
+  become: true
+  vars:
+    __socket: /run/ghbroker/ghbroker.sock
+  tasks:
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert the broker service is active
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['ghapp-broker.service'].state == 'running'
+        fail_msg: "ghapp-broker.service is not running"
+
+    - name: Report SELinux mode (context for the container socket test)
+      ansible.builtin.command:
+        cmd: getenforce
+      register: __selinux
+      changed_when: false
+      failed_when: false
+
+    - name: Stat the broker key
+      ansible.builtin.stat:
+        path: /etc/ghbroker/key.pem
+      register: __key
+
+    - name: Assert key ownership and mode
+      ansible.builtin.assert:
+        that:
+          - __key.stat.pw_name == "ghbroker"
+          - __key.stat.mode == "0600"
+        fail_msg: "broker key has wrong owner/mode"
+
+    - name: Assert the hermes user cannot read the broker key
+      ansible.builtin.command:
+        cmd: runuser -u hermes -- cat /etc/ghbroker/key.pem
+      register: __key_probe
+      changed_when: false
+      failed_when: __key_probe.rc == 0
+
+    - name: Stat the broker socket
+      ansible.builtin.stat:
+        path: "{{ __socket }}"
+      register: __sock
+
+    - name: Assert socket group and mode
+      ansible.builtin.assert:
+        that:
+          - __sock.stat.gr_name == "hermes"
+          - __sock.stat.mode == "0660"
+        fail_msg: "broker socket has wrong group/mode"
+
+    - name: Read broker status over the socket
+      ansible.builtin.uri:
+        url: http://localhost/status
+        unix_socket: "{{ __socket }}"
+        return_content: true
+      register: __status
+
+    - name: Assert broker identity and policy
+      ansible.builtin.assert:
+        that:
+          - __status.json.app_slug == "igou-hermes"
+          - "'igou-io/igou-infrastructure' in __status.json.policy.allowed_repos"
+        fail_msg: "broker /status does not reflect the converged config"
+
+    - name: Mint a real token through the broker
+      ansible.builtin.uri:
+        url: http://localhost/token
+        unix_socket: "{{ __socket }}"
+        method: POST
+        body_format: json
+        body:
+          repo: igou-io/igou-infrastructure
+          permissions:
+            contents: read
+        return_content: true
+      register: __broker_mint
+      no_log: true
+
+    - name: Assert the broker minted a real scoped token
+      ansible.builtin.assert:
+        that:
+          - __broker_mint.json.token is match('^gh[a-z]_')
+          - __broker_mint.json.repositories == ['igou-io/igou-infrastructure']
+        fail_msg: "broker mint failed or returned an unexpected scope"
+
+    - name: Request a repo outside the policy (must be denied)
+      ansible.builtin.uri:
+        url: http://localhost/token
+        unix_socket: "{{ __socket }}"
+        method: POST
+        body_format: json
+        body:
+          repo: igou-io/igou-ansible
+          permissions:
+            contents: read
+        status_code: 403
+
+    - name: Request a permission above the ceiling (must be denied)
+      ansible.builtin.uri:
+        url: http://localhost/token
+        unix_socket: "{{ __socket }}"
+        method: POST
+        body_format: json
+        body:
+          repo: igou-io/igou-infrastructure
+          permissions:
+            secrets: write
+        status_code: 403
+
+    - name: Check the denials landed in journald
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          journalctl -u ghapp-broker.service --no-pager
+          | grep -c '"decision": "denied"'
+      args:
+        executable: /bin/bash
+      register: __audit
+      changed_when: false
+      failed_when: __audit.stdout | int < 2
+
+    # The terminal-backend simulation: a rootless podman container run AS the
+    # hermes user, mounting the broker runtime dir exactly like
+    # playbooks/hermes/configure.yml wires the Hermes terminal backend.
+    # This is the SELinux/userns reality check for the production mount.
+    - name: Mint from inside a rootless container as the hermes user
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          runuser -u hermes -- env XDG_RUNTIME_DIR=/run/user/$(id -u hermes)
+          podman run --rm
+          -v /run/ghbroker:/run/ghbroker
+          -e GHAPP_BROKER_SOCKET={{ __socket }}
+          quay.io/centos/centos:stream10
+          curl -sf --unix-socket {{ __socket }}
+          -X POST http://ghapp-broker/token
+          -H 'Content-Type: application/json'
+          -d '{"repo": "igou-io/igou-infrastructure", "permissions": {"contents": "read"}}'
+      args:
+        executable: /bin/bash
+      register: __container_mint
+      changed_when: false
+      no_log: true
+
+    - name: Assert the in-container mint returned a real token
+      ansible.builtin.assert:
+        that:
+          - (__container_mint.stdout | from_json).token is match('^gh[a-z]_')
+        fail_msg: >-
+          Mint from inside the rootless container failed — check SELinux
+          (getenforce reported above) and the socket group mapping.
+
+    - name: Summarize hermes verification
+      ansible.builtin.debug:
+        msg: >-
+          Verified live: broker unit active; key 0600 ghbroker and unreadable
+          to hermes; socket 0660 group hermes; real broker mint scoped to one
+          repo; out-of-policy repo and permission denied (403) and audited in
+          journald; real mint from inside a rootless podman container via the
+          production-style /run/ghbroker mount (SELinux={{ __selinux.stdout | default('unknown') }}).

@@ -1,0 +1,90 @@
+---
+# Converge mirrors the two gated integration slices exactly as the real
+# playbooks invoke them (playbooks/devenv/bootstrap.yml and
+# playbooks/hermes/setup-hermes.yml) — same role, same variable mapping, same
+# gates — against real App identities resolved from 1Password at runtime.
+# The full playbook chains stay with the AAP workflows; this scenario proves
+# the ghapp system itself end-to-end on real cluster VMs.
+
+- name: Converge the devenv-style host (ghapp client / local mint — igou-dev)
+  hosts: ghapp-devenv
+  gather_facts: true
+  vars:
+    devenv_ghapp_enabled: true
+    ghapp_client_enabled: true
+    ghapp_client_user: cloud-user
+    ghapp_client_id: >-
+      {{ lookup('ansible.builtin.pipe', 'op read op://claude/igou-dev-github-app/client_id') }}
+    ghapp_client_app_slug: igou-dev
+    ghapp_client_installations:
+      david-igou: >-
+        {{ lookup('ansible.builtin.pipe',
+                  'op read "op://claude/igou-dev-github-app/installation_id_david-igou"') }}
+      igou-io: >-
+        {{ lookup('ansible.builtin.pipe',
+                  'op read op://claude/igou-dev-github-app/installation_id_igou-io') }}
+    ghapp_client_private_key_content: >-
+      {{ lookup('ansible.builtin.pipe', 'op read op://claude/igou-dev-github-app/private_key') }}
+  roles:
+    - role: david_igou.devhost.ghapp
+      when: devenv_ghapp_enabled | bool
+
+- name: Converge the hermes-style host (ghapp broker — igou-hermes)
+  hosts: ghapp-hermes
+  gather_facts: true
+  become: true
+  vars:
+    hermes_user: hermes
+    hermes_ghapp_broker_enabled: true
+    hermes_ghapp_client_id: >-
+      {{ lookup('ansible.builtin.pipe', 'op read op://awx/igou-hermes-github-app/client_id') }}
+    hermes_ghapp_installations:
+      david-igou: >-
+        {{ lookup('ansible.builtin.pipe',
+                  'op read "op://awx/igou-hermes-github-app/installation_id_david-igou"') }}
+      igou-io: >-
+        {{ lookup('ansible.builtin.pipe',
+                  'op read op://awx/igou-hermes-github-app/installation_id_igou-io') }}
+    hermes_ghapp_private_key: >-
+      {{ lookup('ansible.builtin.pipe', 'op read op://awx/igou-hermes-github-app/private_key') }}
+    hermes_ghapp_policy:
+      allowed_repos:
+        - david-igou/hermes_github_app_plugin
+        - igou-io/igou-infrastructure
+      max_permissions:
+        contents: write
+        pull_requests: write
+        issues: write
+      default_permissions:
+        contents: read
+  tasks:
+    - name: Create the hermes service user (as the hermes VM lifecycle does)
+      ansible.builtin.user:
+        name: "{{ hermes_user }}"
+        shell: /bin/bash
+        state: present
+
+    - name: Install podman for the terminal-backend simulation in verify
+      ansible.builtin.package:
+        name: podman
+        state: present
+
+    - name: Enable lingering for rootless podman as the hermes user
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ hermes_user }}"
+      args:
+        creates: "/var/lib/systemd/linger/{{ hermes_user }}"
+
+    # Identical include + variable mapping to playbooks/hermes/setup-hermes.yml.
+    - name: Deploy the ghapp GitHub App token broker
+      ansible.builtin.include_role:
+        name: david_igou.devhost.ghapp
+      vars:
+        ghapp_broker_enabled: true
+        ghapp_broker_socket_group: "{{ hermes_user }}"
+        ghapp_broker_client_id: "{{ hermes_ghapp_client_id }}"
+        ghapp_broker_app_slug: "{{ hermes_ghapp_app_slug | default('igou-hermes') }}"
+        ghapp_broker_installations: "{{ hermes_ghapp_installations }}"
+        ghapp_broker_private_key_content: "{{ hermes_ghapp_private_key }}"
+        ghapp_broker_policy: "{{ hermes_ghapp_policy }}"
+      when: hermes_ghapp_broker_enabled | default(false) | bool
