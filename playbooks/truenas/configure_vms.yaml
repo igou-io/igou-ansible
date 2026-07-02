@@ -1,0 +1,101 @@
+---
+# Declaratively create KVM virtual machines on TrueNAS 25.10+ ("Virtual
+# Machines" / vm.* API) from the truenas_vms list, via midclt over SSH
+# (arensb.truenas has no vm modules).
+#
+# Create-only: VMs are matched by name; existing ones are reported and
+# left untouched (no cpu/memory/device reconciliation). Each pending VM
+# is created atomically by tasks/truenas_vm_present.yml — on a mid-chain
+# device failure the partial VM is deleted so a re-run can retry. VMs are
+# NOT started — first boot is operator-attended: start the VM, open its
+# display console, and pick "ocp-node" in the iPXE pin menu to install
+# RHCOS (the pin defaults to "Boot from disk" after 30s on later boots).
+#
+# Devices per VM (boot order):
+#   1000  NIC     VIRTIO, fixed MAC, attached to truenas_vm_bridge — netboot first
+#   1001  DISK    VIRTIO zvol (created when absent)
+#   1002  DISPLAY console via the TrueNAS UI
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_vm_bridge — host bridge for VM NICs (see configure_vm_bridge.yaml)
+#   truenas_vms       — list of {name, description?, vcpus, cores, threads,
+#                        memory_mib, bootloader?, autostart?, cpu_mode?, mac,
+#                        disk_zvol, disk_gib}
+
+- name: Configure KVM virtual machines on TrueNAS
+  hosts: truenas
+  gather_facts: false
+  become: false
+
+  tasks:
+
+    - name: Assert a VM list is defined
+      ansible.builtin.assert:
+        that: truenas_vms | default([]) | length > 0
+        fail_msg: truenas_vms is empty — define VMs in group_vars/truenas.yml
+
+    - name: Query network interfaces
+      ansible.builtin.command:
+        argv: [midclt, call, interface.query]
+      register: _ifquery
+      changed_when: false
+
+    - name: Assert the VM bridge exists
+      ansible.builtin.assert:
+        that: truenas_vm_bridge in (_ifquery.stdout | from_json | map(attribute='name') | list)
+        fail_msg: >-
+          {{ truenas_vm_bridge }} does not exist — run
+          playbooks/truenas/configure_vm_bridge.yaml first.
+
+    - name: Query existing VMs
+      ansible.builtin.command:
+        argv: [midclt, call, vm.query]
+      register: _vmquery
+      changed_when: false
+
+    - name: Index existing VM names
+      ansible.builtin.set_fact:
+        _existing_vms: "{{ _vmquery.stdout | from_json | map(attribute='name') | list }}"
+
+    - name: Split VM list into pending and existing
+      ansible.builtin.set_fact:
+        _pending_vms: "{{ truenas_vms | rejectattr('name', 'in', _existing_vms) | list }}"
+
+    - name: Report VMs already present (left untouched)
+      ansible.builtin.debug:
+        msg: "{{ truenas_vms | map(attribute='name') | select('in', _existing_vms) | list }}"
+
+    - name: Query existing zvols backing pending VM disks
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - pool.dataset.query
+          - >-
+            {{ [['id', 'in', _pending_vms | map(attribute='disk_zvol') | list],
+                ['type', '=', 'VOLUME']] | to_json }}
+      register: _zvolquery
+      changed_when: false
+      when: _pending_vms | length > 0
+
+    - name: Index existing zvols
+      ansible.builtin.set_fact:
+        _existing_zvols: >-
+          {{ (_zvolquery.stdout | default('[]')) | from_json
+             | map(attribute='id') | list }}
+
+    - name: Create pending VMs with their devices (atomic per VM)
+      ansible.builtin.include_tasks: tasks/truenas_vm_present.yml
+      loop: "{{ _pending_vms }}"
+      loop_control:
+        loop_var: vm_def
+        label: "{{ vm_def.name }}"
+
+    - name: Report summary
+      ansible.builtin.debug:
+        msg: >-
+          Created: {{ _pending_vms | map(attribute='name') | list }};
+          already present:
+          {{ truenas_vms | map(attribute='name') | select('in', _existing_vms) | list }}.
+          Start a new VM with `midclt call vm.start <id>` (or the UI) and select
+          "ocp-node" at its display console to install RHCOS.

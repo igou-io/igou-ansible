@@ -1,0 +1,212 @@
+---
+# Create tagged, IP-less VM bridges on the TrueNAS spare trunk port.
+# Additive and zero-downtime: the primary interface (enp2s0f0), its host
+# IPs, and the docker macvlan networks are never touched.
+#
+# Topology: truenas_vm_trunk_parent (enp1s0f0) is cabled to a tagged-only
+# switch trunk (crs317 sfp-sfpplus13, frame-types admit-only-vlan-tagged;
+# 1G module for now). For each entry in truenas_vm_bridges this play
+# creates vlan<tag>@trunk and a host bridge enslaving it, with NO host
+# IPs — pure L2 for VM taps. VM<->host traffic (e.g. the democratic-csi
+# portal at 10.10.9.213) hairpins through the switch between the trunk
+# port and the primary port: standard two-port forwarding.
+#
+# STP is disabled on these bridges: a single-member edge bridge cannot
+# form a loop, and the Linux STP listening/learning delay (~30s) on
+# newly-attached VM tap ports can outlast an iPXE DHCP window.
+#
+# Safety: uses the TrueNAS stage -> commit(rollback) -> checkin flow, and
+# the post-commit state is verified BEFORE interface.checkin — an assert
+# failure aborts the play inside the rollback window, so TrueNAS reverts
+# the change on its own at checkin_timeout. No host IPs move, so SSH
+# stays up throughout.
+#
+# Idempotent and health-checking: a converged re-run stages nothing but
+# still asserts the trunk link, the bare-L2 invariant, and that every
+# bridge/VLAN pair exists.
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_vm_trunk_parent — spare physical NIC cabled to the tagged trunk
+#   truenas_vm_bridges      — list of {name, vlan_name, vlan_tag}
+
+- name: Configure TrueNAS tagged VM bridges
+  hosts: truenas
+  gather_facts: false
+  become: false
+
+  tasks:
+
+    - name: Assert trunk and bridge variables are defined
+      ansible.builtin.assert:
+        that:
+          - truenas_vm_trunk_parent is defined
+          - truenas_vm_bridges | default([]) | length > 0
+        fail_msg: >-
+          truenas_vm_trunk_parent / truenas_vm_bridges are missing — define
+          them in group_vars/truenas.yml.
+
+    - name: Query current network interfaces
+      ansible.builtin.command:
+        argv: [midclt, call, interface.query]
+      register: _ifquery
+      changed_when: false
+
+    - name: Parse interface state
+      ansible.builtin.set_fact:
+        _ifaces: "{{ _ifquery.stdout | from_json }}"
+
+    - name: Compute missing VLAN sub-interfaces and bridges
+      vars:
+        _iface_names: "{{ _ifaces | map(attribute='name') | list }}"
+      ansible.builtin.set_fact:
+        _missing_vlans: "{{ truenas_vm_bridges | rejectattr('vlan_name', 'in', _iface_names) | list }}"
+        _missing_bridges: "{{ truenas_vm_bridges | rejectattr('name', 'in', _iface_names) | list }}"
+
+    - name: Note whether staging is needed
+      ansible.builtin.set_fact:
+        _changes_needed: "{{ (_missing_vlans + _missing_bridges) | length > 0 }}"
+
+    - name: Locate the trunk parent interface
+      ansible.builtin.set_fact:
+        _trunk: "{{ _ifaces | selectattr('name', 'equalto', truenas_vm_trunk_parent) | list }}"
+
+    - name: Assert the trunk parent exists
+      ansible.builtin.assert:
+        that: _trunk | length == 1
+        fail_msg: >-
+          {{ truenas_vm_trunk_parent }} does not exist on this host — check
+          truenas_vm_trunk_parent in group_vars/truenas.yml.
+
+    # An unconfigured port is administratively down at boot, so a plain
+    # link_state check cannot tell "no cable" from "admin down". Bring it
+    # up ephemerally for the probe; the middleware owns (and persists) the
+    # up state once the VLAN/bridge config is committed.
+    - name: Bring the trunk parent up for the link probe (ephemeral)
+      become: true
+      ansible.builtin.command:
+        argv: [ip, link, set, dev, "{{ truenas_vm_trunk_parent }}", up]
+      changed_when: false
+
+    - name: Probe trunk link state (up to 10s)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - interface.query
+          - '[["name", "=", "{{ truenas_vm_trunk_parent }}"]]'
+      register: _trunk_probe
+      changed_when: false
+      failed_when: false
+      retries: 5
+      delay: 2
+      until: >-
+        ((_trunk_probe.stdout | from_json | first | default({})).state
+         | default({})).link_state | default('') == 'LINK_STATE_UP'
+
+    - name: Assert the trunk parent has link (cable present)
+      ansible.builtin.assert:
+        that: (_trunk_probe.stdout | from_json | first).state.link_state == 'LINK_STATE_UP'
+        fail_msg: >-
+          {{ truenas_vm_trunk_parent }} has no link — check the cable/module to
+          the tagged switch trunk port (crs317 sfp-sfpplus13) and confirm the
+          switch config is deployed before running this play.
+
+    - name: Assert the trunk parent is a bare L2 port (no IPs, no DHCP/SLAAC)
+      ansible.builtin.assert:
+        that:
+          - _trunk[0].aliases | length == 0
+          - not _trunk[0].ipv4_dhcp
+          - not _trunk[0].ipv6_auto
+        fail_msg: >-
+          {{ truenas_vm_trunk_parent }} has IP configuration — refusing. This
+          play only manages a bare tagged trunk; move or remove the IPs first.
+
+    - name: Refuse to run with pending uncommitted interface changes
+      ansible.builtin.command:
+        argv: [midclt, call, interface.has_pending_changes]
+      register: _pending
+      changed_when: false
+      failed_when: _pending.stdout | trim != 'false'
+      when: _changes_needed
+
+    - name: Stage VLAN sub-interfaces on the trunk
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - interface.create
+          - >-
+            {{ {'name': item.vlan_name,
+                'type': 'VLAN',
+                'description': 'VM trunk VLAN ' ~ item.vlan_tag
+                               ~ ' (' ~ truenas_vm_trunk_parent ~ ')',
+                'vlan_parent_interface': truenas_vm_trunk_parent,
+                'vlan_tag': item.vlan_tag} | to_json }}
+      loop: "{{ _missing_vlans }}"
+      loop_control:
+        label: "{{ item.vlan_name }}"
+      changed_when: true
+
+    - name: Stage IP-less bridges enslaving the VLAN sub-interfaces
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - interface.create
+          - >-
+            {{ {'name': item.name,
+                'type': 'BRIDGE',
+                'description': 'VM bridge (tagged VLAN ' ~ item.vlan_tag
+                               ~ ' via ' ~ truenas_vm_trunk_parent ~ ', no host IPs)',
+                'bridge_members': [item.vlan_name],
+                'stp': false} | to_json }}
+      loop: "{{ _missing_bridges }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+
+    - name: Commit staged changes (no host IPs move — SSH stays up)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - interface.commit
+          - '{"rollback": true, "checkin_timeout": 60}'
+      changed_when: true
+      when: _changes_needed
+
+    - name: Query interfaces after commit
+      ansible.builtin.command:
+        argv: [midclt, call, interface.query]
+      register: _postquery
+      changed_when: false
+
+    - name: Assert every VM bridge and VLAN sub-interface exists
+      vars:
+        _post_names: "{{ _postquery.stdout | from_json | map(attribute='name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - item.name in _post_names
+          - item.vlan_name in _post_names
+        fail_msg: >-
+          {{ item.name }}/{{ item.vlan_name }} missing after commit — aborting
+          before checkin so the pending change auto-rolls back at
+          checkin_timeout; check `midclt call interface.query` and the
+          middleware log.
+      loop: "{{ truenas_vm_bridges }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Check in — persist the verified changes
+      ansible.builtin.command:
+        argv: [midclt, call, interface.checkin]
+      changed_when: true
+      when: _changes_needed
+
+    - name: Report next steps
+      ansible.builtin.debug:
+        msg: >-
+          Tagged VM bridge(s) ready:
+          {{ truenas_vm_bridges | map(attribute='name') | list }}. Next: run
+          configure_vms.yaml. The L2 path proves itself end-to-end when a VM
+          PXE-boots (DHCP from rb5009 arrives via the trunk).
