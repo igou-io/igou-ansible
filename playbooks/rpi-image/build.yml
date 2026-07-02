@@ -21,13 +21,19 @@
 
   vars:
     rpi_image_config: "{{ rpi_image_default_config }}"
-    rpi_image_build_id: >-
-      {{ lookup('ansible.builtin.pipe', 'date -u +%Y%m%dT%H%M%SZ') }}
     rpi_image_workdir: "{{ rpi_image_root }}/rpi-image-gen/work"
     rpi_image_publish_config_dir: >-
       {{ rpi_image_publish_dir }}/{{ rpi_image_config }}
 
   tasks:
+    # set_fact evaluates the lookup exactly once. As a lazy play var,
+    # every reference would re-run `date` and the publish path, latest
+    # symlink and set_stats could disagree (seen on the first live run).
+    - name: Pin build id
+      ansible.builtin.set_fact:
+        rpi_image_build_id: >-
+          {{ lookup('ansible.builtin.pipe', 'date -u +%Y%m%dT%H%M%SZ') }}
+
     - name: Assert pinned rpi-image-gen checkout is present
       ansible.builtin.command: # noqa: command-instead-of-module (read-only describe)
         cmd: git describe --tags --exact-match
