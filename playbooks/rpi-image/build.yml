@@ -53,8 +53,12 @@
         mode: "0644"
 
     # Serialise builds (scheduled vs manual) and log to the workspace so
-    # failures are diagnosable after the fact.
+    # failures are diagnosable after the fact. sbin dirs must be on PATH:
+    # rpi-image-gen's dependency check resolves tools like mkdosfs with
+    # `command -v`, and non-login SSH sessions don't get sbin by default.
     - name: Run rpi-image-gen build (async, logged)
+      environment:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       ansible.builtin.shell: |
         set -o pipefail
         exec 200>{{ rpi_image_root }}/build.lock
