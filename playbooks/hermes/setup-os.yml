@@ -97,6 +97,7 @@
         state: directory
         owner: "{{ hermes_user }}"
         group: "{{ hermes_user }}"
+        mode: "0755"
       become: true
 
     - name: Create xfs filesystem on the Hermes state device
