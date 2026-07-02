@@ -54,6 +54,16 @@
       app: hermes-test
       app.kubernetes.io/managed-by: ansible
 
+    # Persistent state disk (-> /dev/vdb -> ~/.hermes), like the live hermes VM.
+    # A blank CDI DataVolume the deployer credential can create (no raw PVC), so
+    # setup-os's state-disk mkfs/mount works and the full Hermes convergence runs
+    # as it does in production. Attached as a plain PVC -> survives VM rebuild.
+    hermes_test_state_dv: hermes-test-state
+    hermes_test_state_size: 20Gi
+    vm_extra_pvcs:
+      - name: state
+        claim: "{{ hermes_test_state_dv }}"
+
     # NodePort for external SSH — 30023 to avoid the devenv VM's 30022.
     hermes_test_ssh_nodeport: 30023
 
@@ -74,6 +84,26 @@
       when: vm_state == "present"
 
   tasks:
+    - name: Ensure the hermes-test state DataVolume exists (blank, survives rebuild)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: cdi.kubevirt.io/v1beta1
+          kind: DataVolume
+          metadata:
+            name: "{{ hermes_test_state_dv }}"
+            namespace: "{{ vm_namespace }}"
+            labels:
+              app: hermes-test
+          spec:
+            source:
+              blank: {}
+            storage:
+              resources:
+                requests:
+                  storage: "{{ hermes_test_state_size }}"
+      when: vm_state == "present"
+
     - name: Converge the hermes-test VM
       ansible.builtin.include_role:
         name: kubevirt_vm_provision
@@ -99,6 +129,15 @@
                 targetPort: 22
                 nodePort: "{{ hermes_test_ssh_nodeport }}"
                 protocol: TCP
+
+    - name: Remove the hermes-test state DataVolume on teardown
+      kubernetes.core.k8s:
+        state: absent
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataVolume
+        name: "{{ hermes_test_state_dv }}"
+        namespace: "{{ vm_namespace }}"
+      when: vm_state == "absent"
 
     - name: Summarize hermes-test access
       ansible.builtin.debug:
