@@ -86,6 +86,19 @@
         state: present
       become: true
 
+    # create_home does NOT re-own a home directory that already exists (e.g. one
+    # the state-disk mount created as root on a prior run before the user
+    # existed). Own the home top level explicitly so the hermes user can write
+    # ~/.cache etc. — the Hermes installer (run as hermes) needs it. recurse is
+    # off so the mounted ~/.hermes state disk keeps its own ownership.
+    - name: Ensure the hermes home directory is owned by the hermes user
+      ansible.builtin.file:
+        path: "{{ hermes_home }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+      become: true
+
     - name: Create xfs filesystem on the Hermes state device
       community.general.filesystem:
         fstype: xfs
