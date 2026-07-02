@@ -130,6 +130,21 @@
       failed_when: hermes_on_path.rc != 0 or 'hermes' not in hermes_on_path.stdout
       when: hermes_install_agent | default(true) | bool
 
+    # The agent needs the `anthropic` client to talk to models served over the
+    # Anthropic Messages API surface — which on opencode-go includes MiniMax and
+    # Qwen. Without it the agent aborts at init ("The 'anthropic' package is
+    # required for the Anthropic provider"). Hermes does not always pull it into
+    # its own venv, so install it here (idempotent). GLM/Kimi use the OpenAI
+    # surface and don't need it. Runs in the egress-open install window.
+    - name: Ensure the anthropic client is in the Hermes agent venv
+      ansible.builtin.pip:
+        name: "anthropic>=0.39.0"
+        state: present
+        virtualenv: "{{ hermes_state_mount }}/hermes-agent/venv"
+      become: true
+      become_user: "{{ hermes_user }}"
+      when: hermes_install_agent | default(true) | bool
+
     # tirith (pre-exec command scanner) is a GitHub-released binary that Hermes
     # normally auto-downloads on demand - but that needs the network, so it MUST be
     # fetched here in the egress window: at runtime (egress locked) the on-demand
