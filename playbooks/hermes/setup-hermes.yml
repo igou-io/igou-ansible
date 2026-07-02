@@ -113,10 +113,10 @@
     # as a dedicated ghbroker user and serves single-repo, permission-clamped
     # tokens over /run/ghbroker/ghbroker.sock; configure.yml (same gate) wires
     # the terminal containers to it and drops the static GH_TOKEN forward.
-    # NOTE go-live prerequisite: the live VM's OVN EgressFirewall pins external
-    # HTTPS to api.telegram.org — api.github.com must be allowed there before
-    # enabling this on hermes-hermes (the hermes-test namespace has no
-    # EgressFirewall, so the test VM is unaffected).
+    # Egress: the hermes namespace EgressFirewall (igou-openshift
+    # applications/hermes-agent) already allows github.com/api.github.com (+
+    # GitHub CIDRs) and the PyPI Fastly edges, so both the role's pip install
+    # and the broker's mint calls work under the locked policy.
     - name: Deploy the ghapp GitHub App token broker
       ansible.builtin.include_role:
         name: david_igou.devhost.ghapp
