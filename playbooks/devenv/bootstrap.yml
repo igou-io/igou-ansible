@@ -37,6 +37,15 @@
     devenv_image: ghcr.io/igou-io/igou-devenv:latest
     devenv_launch_devcontainer: true
 
+    # GitHub App runtime tokens (ghapp, local-mint mode). Gated OFF so this is
+    # a no-op until launched with -e devenv_ghapp_enabled=true plus the client
+    # identity extra-vars (ghapp_client_id, ghapp_client_installations, and a
+    # key source — for the test VM, ghapp_client_private_key_content delivered
+    # no_log from AAP; an op-read private_key_cmd is the devcontainer variant).
+    devenv_ghapp_enabled: false
+    ghapp_client_enabled: true
+    ghapp_client_user: igou
+
   pre_tasks:
     - name: Wait for the VM's SSH to come up
       ansible.builtin.wait_for_connection:
@@ -58,6 +67,8 @@
   roles:
     - role: david_igou.devhost.docker
     - role: david_igou.devhost.packages
+    - role: david_igou.devhost.ghapp
+      when: devenv_ghapp_enabled | bool
 
   post_tasks:
     - name: Clone the igou-devenv repo (public, HTTPS — no agent forwarding needed)
