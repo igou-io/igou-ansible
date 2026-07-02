@@ -70,16 +70,24 @@
       changed_when: false
       # noqa command-instead-of-shell -- sources .env then execs the agent
 
+    # Hermes redacts secrets in agent output, so the minted token is shown
+    # truncated (e.g. ghs_5r...4BIU) — do NOT require the full token string.
+    # The broker's own response fields (app_slug igou-hermes, the installation
+    # id, the single scoped repo) are not redacted and conclusively prove a real
+    # mint; DISPATCH uid=1000 proves it ran inside the dispatched container (the
+    # container's igou user is 1000, the host hermes user is not); the ghs_
+    # prefix confirms an installation token.
     - name: Assert the agent minted a real token from inside a dispatched container
       ansible.builtin.assert:
         that:
-          - _hermes_agent.stdout is search('gh[a-z]_[A-Za-z0-9]{20,}')
-          - _hermes_agent.stdout is search('igou-hermes')
           - _hermes_agent.stdout is search('DISPATCH uid=1000')
+          - _hermes_agent.stdout is search('ghs_')
+          - _hermes_agent.stdout is search('"app_slug":\\s*"igou-hermes"')
+          - _hermes_agent.stdout is search('igou-io/igou-infrastructure')
         fail_msg: >-
           The Hermes agent did not mint a real igou-hermes token from inside a
-          dispatched container (expected a ghs_ token, app_slug igou-hermes, and
-          DISPATCH uid=1000 proving in-container execution). Agent output:
+          dispatched container (expected DISPATCH uid=1000, a ghs_ token,
+          app_slug igou-hermes, and the scoped repo). Agent output:
           {{ _hermes_agent.stdout | default('') }}
         success_msg: >-
           The Hermes agent (opencode-go/{{ hermes_verify_model }}) dispatched a
