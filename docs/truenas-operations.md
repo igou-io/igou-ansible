@@ -111,7 +111,46 @@ ansible-playbook playbooks/truenas/configure_users.yml \
 ```
 
 The role is idempotent. Removing a user from the list does NOT delete it
-from TrueNAS (use the UI for deletes).
+from TrueNAS (use the UI for deletes, or set `state: absent` on the entry).
+
+### Privileges (role-based access) and user-linked API keys
+
+`configure_users.yml` also manages TrueNAS RBAC privileges and user-linked
+API keys. The `arensb.truenas` collection has no modules for `privilege.*` /
+`api_key.*`, so these are `midclt call` tasks
+(`playbooks/truenas/tasks/truenas_privilege.yml` and `truenas_api_key.yml`)
+with query-first idempotency.
+
+Driven by two group vars in `igou-inventory/group_vars/truenas.yml`:
+
+```yaml
+truenas_privileges:
+  - name: democratic-csi   # bound to local groups, grants roles
+    web_shell: false
+    local_groups:          # group names; resolved to gids at runtime
+      - csi
+    roles:                 # catalog: midclt call privilege.roles
+      - DATASET_WRITE
+      # ...
+
+truenas_api_keys:
+  - name: democratic-csi-ocp
+    username: csi          # key inherits this user's roles
+    # expires_at: <ISO-8601>  # optional
+```
+
+Notes:
+- Privileges are fully reconciled (create + update on role/group/web_shell
+  drift). Removing an entry does NOT delete the privilege on TrueNAS.
+- **API key material is printed exactly once, at creation** — store it in
+  1Password immediately; `api_key.query` never returns it again. To rotate,
+  delete the key (`midclt call api_key.delete <id>`) and re-run.
+- A user-linked key inherits the roles of its user's groups' privileges, so
+  scoping a key = scoping the user. Prefer one key per consuming
+  cluster/system so each can be revoked independently.
+- `--check` mode works: queries still run, mutations are skipped. On a
+  first run the privilege's group-existence assert is skipped too (the
+  group hasn't been created yet in a dry-run).
 
 ## NFS netboot
 
