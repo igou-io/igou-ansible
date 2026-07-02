@@ -126,7 +126,8 @@
         argv: [midclt, call, interface.has_pending_changes]
       register: _pending
       changed_when: false
-      failed_when: _pending.stdout | trim != 'false'
+      # midclt prints Python-style booleans here ("False"), not JSON
+      failed_when: _pending.stdout | trim | lower != 'false'
       when: _changes_needed
 
     - name: Stage VLAN sub-interfaces on the trunk

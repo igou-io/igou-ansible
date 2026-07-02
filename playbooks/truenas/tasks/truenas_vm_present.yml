@@ -67,7 +67,18 @@
                 'attributes': _disk_attrs} | to_json }}
       changed_when: true
 
+    # 25.10 requires a password on DISPLAY devices. Default: a random
+    # throwaway — the display binds to 127.0.0.1 (TrueNAS UI proxy) and
+    # an admin can read it back via `midclt call vm.device.query` if
+    # direct console auth is ever needed. Override with
+    # vm_def.display_password to pin one.
     - name: Attach display console (order 1002) to VM {{ vm_def.name }}
+      vars:
+        _display_password: >-
+          {{ vm_def.display_password
+             | default(lookup('ansible.builtin.password',
+                              '/dev/null length=24 chars=ascii_letters,digits')) }}
+      no_log: true
       ansible.builtin.command:
         argv:
           - midclt
@@ -76,7 +87,8 @@
           - >-
             {{ {'vm': (_vm_create.stdout | from_json).id,
                 'order': 1002,
-                'attributes': {'dtype': 'DISPLAY'}} | to_json }}
+                'attributes': {'dtype': 'DISPLAY',
+                               'password': _display_password}} | to_json }}
       changed_when: true
 
   rescue:
