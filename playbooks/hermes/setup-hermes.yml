@@ -13,6 +13,10 @@
   # whole fleet - match the linux_baseline convention instead.
   hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
+  # Facts are gathered in pre_tasks after the connection is proven, so a
+  # freshly provisioned VM (whose sshd may not be up yet) doesn't fail at play
+  # start. For the live hermes VM the wait returns immediately.
+  gather_facts: false
   vars:
     hermes_user: hermes
     hermes_home: /home/hermes
@@ -40,7 +44,37 @@
         issues: write
       default_permissions:
         contents: read
+  pre_tasks:
+    - name: Wait for the VM's SSH to come up
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Gather facts (after the connection is proven)
+      ansible.builtin.setup:
+
   tasks:
+    # When the full agent stack is skipped (broker-only test convergence), the
+    # linux_baseline step that normally creates the hermes service user isn't
+    # run, so ensure it here. For the live hermes flow (agent install on),
+    # setup-os already created the user and this is skipped.
+    - name: Ensure the hermes service user exists (broker-only convergence)
+      ansible.builtin.user:
+        name: "{{ hermes_user }}"
+        home: "{{ hermes_home }}"
+        shell: /bin/bash
+        create_home: true
+        state: present
+      become: true
+      when: not (hermes_install_agent | bool)
+
+    - name: Enable lingering for the hermes user (broker-only convergence)
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ hermes_user }}"
+      args:
+        creates: "/var/lib/systemd/linger/{{ hermes_user }}"
+      become: true
+      when: not (hermes_install_agent | bool)
+
     - name: Own the Hermes state mount to the hermes user
       ansible.builtin.file:
         path: "{{ hermes_state_mount }}"
