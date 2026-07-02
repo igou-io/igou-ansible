@@ -28,10 +28,12 @@
     # installer would otherwise leave a non-functional Chromium in ~/.cache. Flip
     # to false only after running that admin step out of band.
     hermes_install_skip_browser: true
-    # Install the Hermes agent + tirith scanner. Set false to converge only the
-    # base state mount and the gated ghapp broker — used by the hermes-test
-    # broker validation, where the full agent stack is not needed.
-    hermes_install_agent: true
+    # NB: hermes_install_agent is NOT set here as a play var. Play vars outrank
+    # inventory group_vars, so defining it here would shadow a group_vars
+    # override (e.g. group_vars/hermes_test.yml sets it false for the broker-only
+    # test). It is referenced as `hermes_install_agent | default(true)` in the
+    # task conditions below, so it defaults to true (full agent) unless a
+    # group/host var sets it.
     # Default broker minting policy (deny-not-clamp). Override with
     # hermes_ghapp_policy. Scratch repos only until go-live widens it.
     hermes_ghapp_policy_default:
@@ -65,7 +67,7 @@
         create_home: true
         state: present
       become: true
-      when: not (hermes_install_agent | bool)
+      when: not (hermes_install_agent | default(true) | bool)
 
     - name: Enable lingering for the hermes user (broker-only convergence)
       ansible.builtin.command:
@@ -73,7 +75,7 @@
       args:
         creates: "/var/lib/systemd/linger/{{ hermes_user }}"
       become: true
-      when: not (hermes_install_agent | bool)
+      when: not (hermes_install_agent | default(true) | bool)
 
     - name: Own the Hermes state mount to the hermes user
       ansible.builtin.file:
@@ -101,7 +103,7 @@
       # shell so the install script gets a sane $HOME/$PATH environment.
       become_flags: '-i'
       changed_when: true   # only runs when 'creates' target is absent
-      when: hermes_install_agent | bool
+      when: hermes_install_agent | default(true) | bool
 
     - name: Confirm the Hermes CLI and capture its version
       ansible.builtin.command:
@@ -111,7 +113,7 @@
       become_flags: '-i'
       register: hermes_version
       changed_when: false
-      when: hermes_install_agent | bool
+      when: hermes_install_agent | default(true) | bool
 
     # tirith (pre-exec command scanner) is a GitHub-released binary that Hermes
     # normally auto-downloads on demand - but that needs the network, so it MUST be
@@ -125,11 +127,11 @@
         path: "{{ hermes_state_mount }}/bin/tirith"
       register: hermes_tirith_bin
       become: true
-      when: hermes_install_agent | bool
+      when: hermes_install_agent | default(true) | bool
 
     - name: Install the tirith pre-exec command scanner from its GitHub release
       when:
-        - hermes_install_agent | bool
+        - hermes_install_agent | default(true) | bool
         - not (hermes_tirith_bin.stat.exists | default(false))
       become: true
       become_user: "{{ hermes_user }}"
