@@ -115,6 +115,21 @@
       changed_when: false
       when: hermes_install_agent | default(true) | bool
 
+    # Guardrail: prove `hermes` resolves by name in the hermes user's LOGIN shell
+    # (not just via the absolute path above). This catches the missing-dotfiles /
+    # PATH regression where ~/.local/bin never gets added to PATH. -lc forces a
+    # login shell so ~/.bash_profile -> ~/.bashrc -> ~/.local/bin apply.
+    - name: Verify the hermes CLI is on the hermes user login-shell PATH
+      ansible.builtin.command:
+        cmd: bash -lc 'command -v hermes'
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      register: hermes_on_path
+      changed_when: false
+      failed_when: hermes_on_path.rc != 0 or 'hermes' not in hermes_on_path.stdout
+      when: hermes_install_agent | default(true) | bool
+
     # tirith (pre-exec command scanner) is a GitHub-released binary that Hermes
     # normally auto-downloads on demand - but that needs the network, so it MUST be
     # fetched here in the egress window: at runtime (egress locked) the on-demand

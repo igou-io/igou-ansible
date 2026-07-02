@@ -100,6 +100,27 @@
         mode: "0755"
       become: true
 
+    # useradd only populates /etc/skel into a NEW home. Because /home/hermes can
+    # pre-exist (the state-disk mount creates it before the user is created),
+    # skel is skipped and the user ends up with no ~/.bash_profile / ~/.bashrc —
+    # so a login shell never adds ~/.local/bin to PATH and the Hermes CLI
+    # (installed there by setup-hermes) is not found by name. Seed the skel
+    # dotfiles if absent (force:false keeps any existing customisations). The
+    # skel .bashrc adds ~/.local/bin:~/bin and .bash_profile sources .bashrc.
+    - name: Ensure the hermes user has the /etc/skel login shell dotfiles
+      ansible.builtin.copy:
+        src: "/etc/skel/{{ item }}"
+        dest: "{{ hermes_home }}/{{ item }}"
+        remote_src: true
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+        force: false
+      loop:
+        - .bash_profile
+        - .bashrc
+      become: true
+
     - name: Create xfs filesystem on the Hermes state device
       community.general.filesystem:
         fstype: xfs
