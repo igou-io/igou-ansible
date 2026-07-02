@@ -91,13 +91,18 @@
     # existed). Own the home top level explicitly so the hermes user can write
     # ~/.cache etc. — the Hermes installer (run as hermes) needs it. recurse is
     # off so the mounted ~/.hermes state disk keeps its own ownership.
+    # Mode is parameterized (NOT a play var — play vars outrank group_vars) so a
+    # hardened host can lock the service-user home down. Defaults to 0755 (the
+    # prior value); the live hermes overrides to 0700 in group_vars. keep-id maps
+    # the terminal container's uid back to the hermes user, so podman still
+    # traverses the home regardless of the o+x bit.
     - name: Ensure the hermes home directory is owned by the hermes user
       ansible.builtin.file:
         path: "{{ hermes_home }}"
         state: directory
         owner: "{{ hermes_user }}"
         group: "{{ hermes_user }}"
-        mode: "0755"
+        mode: "{{ hermes_home_mode | default('0755') }}"
       become: true
 
     # useradd only populates /etc/skel into a NEW home. Because /home/hermes can
