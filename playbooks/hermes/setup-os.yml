@@ -74,6 +74,18 @@
           release={{ ansible_facts["distribution_release"] }}.
       become: true
 
+    # The hermes service user is normally created by linux_baseline
+    # (baseline_service_users) earlier in the convergence. Ensure it exists here
+    # too so setup-os is self-sufficient on a freshly provisioned VM (the state
+    # mount is chowned to hermes below). Idempotent no-op when baseline made it.
+    - name: Ensure the hermes service user exists
+      ansible.builtin.user:
+        name: "{{ hermes_user }}"
+        home: "{{ hermes_home }}"
+        create_home: true
+        state: present
+      become: true
+
     - name: Create xfs filesystem on the Hermes state device
       community.general.filesystem:
         fstype: xfs
