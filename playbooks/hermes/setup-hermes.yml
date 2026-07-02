@@ -194,21 +194,45 @@
     # so a launch only needs the flag; each is still overridable via extra-vars.
     # These lookups evaluate only when the gate is on (task-scoped vars on a
     # skipped task are never rendered), so the live hermes run is untouched.
-    - name: Deploy the ghapp GitHub App token broker
-      ansible.builtin.include_role:
-        name: david_igou.devhost.ghapp
-      vars:
-        _hermes_ghapp_item: "{{ hermes_ghapp_op_item | default('igou-hermes-github-app') }}"
-        _hermes_ghapp_vault: "{{ hermes_ghapp_op_vault | default('awx') }}"
-        ghapp_broker_enabled: true
-        ghapp_broker_socket_group: "{{ hermes_user }}"
-        ghapp_broker_client_id: >-
-          {{ hermes_ghapp_client_id | default(lookup('community.general.onepassword',
-             _hermes_ghapp_item, field='client_id', vault=_hermes_ghapp_vault), true) }}
-        ghapp_broker_app_slug: "{{ hermes_ghapp_app_slug | default('igou-hermes') }}"
-        ghapp_broker_installations: "{{ hermes_ghapp_installations | default(dict([['david-igou', lookup('community.general.onepassword', _hermes_ghapp_item, field='installation_id_david-igou', vault=_hermes_ghapp_vault)], ['igou-io', lookup('community.general.onepassword', _hermes_ghapp_item, field='installation_id_igou-io', vault=_hermes_ghapp_vault)]]), true) }}"
-        ghapp_broker_private_key_content: >-
-          {{ hermes_ghapp_private_key | default(lookup('community.general.onepassword',
-             _hermes_ghapp_item, field='private_key', vault=_hermes_ghapp_vault), true) }}
-        ghapp_broker_policy: "{{ hermes_ghapp_policy | default(hermes_ghapp_policy_default, true) }}"
+    # Wrapped in block/rescue to self-heal the venv perms on hardened hosts:
+    # `python3 -m venv` honors the login umask, so on a host with umask 0077 the
+    # role creates /opt/ghapp 0700 root and the non-root broker service user
+    # cannot exec it — the role's start task then fails 203/EXEC. Fixed at source
+    # in david_igou.devhost >=27.1.3, but AWX has collection syncing disabled so
+    # the EE must be rebuilt to deliver it; this SCM-delivered rescue covers
+    # hosts still on the older EE. On a healthy host the rescue never runs.
+    - name: Deploy the ghapp GitHub App token broker (self-heal venv perms)
       when: hermes_ghapp_broker_enabled | default(false) | bool
+      block:
+        - name: Deploy the ghapp GitHub App token broker
+          ansible.builtin.include_role:
+            name: david_igou.devhost.ghapp
+          vars:
+            _hermes_ghapp_item: "{{ hermes_ghapp_op_item | default('igou-hermes-github-app') }}"
+            _hermes_ghapp_vault: "{{ hermes_ghapp_op_vault | default('awx') }}"
+            ghapp_broker_enabled: true
+            ghapp_broker_socket_group: "{{ hermes_user }}"
+            ghapp_broker_client_id: >-
+              {{ hermes_ghapp_client_id | default(lookup('community.general.onepassword',
+                 _hermes_ghapp_item, field='client_id', vault=_hermes_ghapp_vault), true) }}
+            ghapp_broker_app_slug: "{{ hermes_ghapp_app_slug | default('igou-hermes') }}"
+            ghapp_broker_installations: "{{ hermes_ghapp_installations | default(dict([['david-igou', lookup('community.general.onepassword', _hermes_ghapp_item, field='installation_id_david-igou', vault=_hermes_ghapp_vault)], ['igou-io', lookup('community.general.onepassword', _hermes_ghapp_item, field='installation_id_igou-io', vault=_hermes_ghapp_vault)]]), true) }}"
+            ghapp_broker_private_key_content: >-
+              {{ hermes_ghapp_private_key | default(lookup('community.general.onepassword',
+                 _hermes_ghapp_item, field='private_key', vault=_hermes_ghapp_vault), true) }}
+            ghapp_broker_policy: "{{ hermes_ghapp_policy | default(hermes_ghapp_policy_default, true) }}"
+      rescue:
+        - name: Make the ghapp broker venv readable/traversable by the service user
+          ansible.builtin.file:
+            path: /opt/ghapp
+            state: directory
+            mode: u=rwX,go=rX
+            recurse: true
+          become: true
+
+        - name: Restart the ghapp broker after fixing the venv perms
+          ansible.builtin.systemd_service:
+            name: ghapp-broker.service
+            state: restarted
+            enabled: true
+          become: true
