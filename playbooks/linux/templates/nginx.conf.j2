@@ -82,6 +82,12 @@ http {
     ssl_certificate_key /etc/nginx/ssl/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
+{% for path in svc.deny_paths | default([]) %}
+
+    # Denied at the edge (deny_paths in this service's inventory entry);
+    # the path stays reachable from inside the proxy network / the host.
+    location {{ path }} { return 403; }
+{% endfor %}
 
     location / {
       # Variable in proxy_pass forces runtime DNS re-resolution (see resolver
