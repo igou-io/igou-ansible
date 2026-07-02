@@ -1,0 +1,109 @@
+---
+# Provision / reprovision a persistent hermes-test VM for validating the ghapp
+# token broker (and the wider Hermes convergence) via AAP, isolated from the
+# live hermes VM.
+#
+# Unlike playbooks/hermes/provision-vm.yml, this does NOT use the hermes
+# namespace's GitOps resources (the Argo-owned hermes-state PVC, the
+# EgressFirewall, the hardening VAP). It clones a generic centos-stream10 root
+# disk into the existing `devenv` namespace (which the deployer credential can
+# write and which the KubeVirt inventory already scans) and exposes SSH on a
+# NodePort distinct from the devenv VM's — so the two coexist. The discovered
+# inventory host is `hermes-test-devenv`; attach convergence vars via the static
+# `hermes_test` group + group_vars/hermes_test.yml in igou-inventory.
+#
+# Cluster API auth is ambient (K8S_AUTH_* from the virtualmachine-deployer-token
+# credential); run locally with a KUBECONFIG instead.
+#
+# Lifecycle knobs (extra_vars):
+#   rebuild=true    -> destructive reprovision (fresh VM)
+#   vm_state=absent -> tear down the VM + its NodePort service
+- name: Provision the hermes-test KubeVirt VM
+  hosts: "{{ host | default('localhost') }}"
+  connection: local
+  gather_facts: false
+  vars:
+    vm_name: hermes-test
+    vm_namespace: devenv
+    vm_state: present
+    vm_rebuild: "{{ rebuild | default(false) | bool }}"
+    vm_run_strategy: Always
+
+    # Generic clone on the default StorageClass, golden 30Gi (no resize).
+    vm_os_datasource: centos-stream10
+    vm_storage_class: ""
+    vm_root_size: 30Gi
+
+    vm_cpu_cores: 4
+    vm_memory: 8Gi
+    vm_firmware: bios
+
+    # Burst placement (casval) + versioned machine type so the autoscaler's
+    # synthetic template node matches (see playbooks/devenv/provision-vm.yml).
+    vm_machine_type: pc-q35-rhel9.6.0
+    vm_architecture: amd64
+    vm_node_selector:
+      node-role.kubernetes.io/burst: ""
+    vm_tolerations:
+      - key: workload
+        operator: Equal
+        value: burst
+        effect: NoSchedule
+
+    vm_labels:
+      app: hermes-test
+      app.kubernetes.io/managed-by: ansible
+
+    # NodePort for external SSH — 30023 to avoid the devenv VM's 30022.
+    hermes_test_ssh_nodeport: 30023
+
+    # cloud-init login user + keys. The igou public half of the AAP machine
+    # credential is baked in so AAP can converge the guest unattended; append a
+    # personal key via -e hermes_test_ssh_authorized_key='ssh-ed25519 ...'.
+    vm_admin_user: igou
+    hermes_test_ansible_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B"
+    hermes_test_ssh_authorized_key: ""
+    hermes_test_authorized_keys: >-
+      {{ [hermes_test_ansible_pubkey]
+         + ([hermes_test_ssh_authorized_key] if (hermes_test_ssh_authorized_key | length > 0) else []) }}
+
+  pre_tasks:
+    - name: Render the hermes-test cloud-init
+      ansible.builtin.set_fact:
+        vm_cloud_init: "{{ lookup('template', 'templates/hermes-test-cloudinit.yaml.j2') }}"
+      when: vm_state == "present"
+
+  tasks:
+    - name: Converge the hermes-test VM
+      ansible.builtin.include_role:
+        name: kubevirt_vm_provision
+
+    - name: Manage the NodePort service exposing SSH
+      kubernetes.core.k8s:
+        state: "{{ vm_state }}"
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: hermes-test-ssh
+            namespace: "{{ vm_namespace }}"
+            labels:
+              app: hermes-test
+          spec:
+            type: NodePort
+            selector:
+              app: hermes-test
+            ports:
+              - name: ssh
+                port: 22
+                targetPort: 22
+                nodePort: "{{ hermes_test_ssh_nodeport }}"
+                protocol: TCP
+
+    - name: Summarize hermes-test access
+      ansible.builtin.debug:
+        msg:
+          - "hermes-test VM provisioned in the devenv namespace on the casval burst node."
+          - "SSH:  ssh -p {{ hermes_test_ssh_nodeport }} igou@<any-node-ip>"
+          - "Converge: setup-os -> setup-hermes (ansible_limit=hermes-test-devenv)."
+      when: vm_state == "present"
