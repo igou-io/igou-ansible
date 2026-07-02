@@ -49,6 +49,28 @@
       become: true
       changed_when: false
 
+    # The github-auth skill Hermes auto-loads on GitHub tasks must be the
+    # broker-first override (configure.yml), not the stock PAT/SSH one — so agent
+    # sessions authenticate to GitHub via the broker without being told.
+    - name: Read the deployed github-auth skill
+      ansible.builtin.slurp:
+        src: "{{ hermes_state_mount }}/skills/github/github-auth/SKILL.md"
+      become: true
+      register: _github_auth_skill
+
+    - name: Assert the github-auth skill is the broker-first override
+      ansible.builtin.assert:
+        that:
+          - "'ghapp token broker' in (_github_auth_skill.content | b64decode)"
+          - "'POST /token' in (_github_auth_skill.content | b64decode)"
+          - "'GHAPP_BROKER_SOCKET' in (_github_auth_skill.content | b64decode)"
+        fail_msg: >-
+          The github-auth skill is not the broker-first override — agent sessions
+          would be told to use PATs/SSH instead of the broker.
+        success_msg: >-
+          github-auth skill is broker-first: agent sessions mint from the ghapp
+          broker for GitHub ops automatically.
+
     # Runs the Hermes agent as the hermes user (rootless podman), sourcing the
     # managed .env for OPENCODE_GO_API_KEY. The agent uses the opencode-go model
     # and dispatches a terminal container per the config.yaml terminal backend.

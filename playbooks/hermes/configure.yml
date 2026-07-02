@@ -146,6 +146,32 @@
         - Restart the Hermes gateway user unit
         - Restart the Hermes dashboard user unit
 
+    # When the broker is enabled, override the bundled `github-auth` skill (which
+    # tells the agent to use PATs / SSH / gh login) with a broker-first version:
+    # for any GitHub op the agent mints a scoped token from the broker socket and
+    # uses it directly. Hermes auto-loads this skill on GitHub tasks, so agent
+    # sessions authenticate via the broker without being told. Written AFTER the
+    # installer (setup-hermes), which restores the stock skill each run.
+    - name: Ensure the github-auth skill directory exists
+      ansible.builtin.file:
+        path: "{{ hermes_state_mount }}/skills/github/github-auth"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0755"
+      become: true
+      when: hermes_ghapp_broker_enabled | default(false) | bool
+
+    - name: Install the broker-first github-auth skill (overrides the bundled one)
+      ansible.builtin.copy:
+        src: files/github-auth-broker-SKILL.md
+        dest: "{{ hermes_state_mount }}/skills/github/github-auth/SKILL.md"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+      become: true
+      when: hermes_ghapp_broker_enabled | default(false) | bool
+
     - name: Map legacy Hermes devenv image tag to terminal backend image tag
       ansible.builtin.set_fact:
         hermes_terminal_backend_image_tag: "{{ hermes_devenv_image_tag }}"
