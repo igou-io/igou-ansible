@@ -1,11 +1,15 @@
 ---
-# Validate the ghapp token broker from a terminal container dispatched by the
-# Hermes platform's own terminal backend (not a hand-run podman container).
-# Runs on the converged hermes-test VM after setup-os -> setup-hermes ->
-# configure: reads the production `terminal:` config, dispatches an igou-devenv
-# container via Hermes's tools.terminal_tool, and mints a token via the broker
-# from inside it. Target with ansible_limit=hermes-test-devenv.
-- name: Verify the ghapp broker from a Hermes-dispatched terminal container
+# Validate the ghapp token broker end to end through the REAL Hermes agent:
+# a one-shot `hermes chat -q` quick command, driven by a real model (opencode
+# go), instructs the agent to run a mint command in its terminal. The agent's
+# terminal tool dispatches an igou-devenv container (configured by configure.yml
+# with GHAPP_BROKER_SOCKET + the broker socket mount), and mints a token via the
+# broker from inside it. This exercises the whole platform — model, agent loop,
+# terminal dispatch, broker — not just the terminal backend internals.
+#
+# Requires OPENCODE_GO_API_KEY in ~/.hermes/.env (configure.yml writes it from
+# hermes_env_values). Target with ansible_limit=hermes-test-devenv.
+- name: Verify the ghapp broker via a Hermes agent quick command (dispatched container)
   hosts: "{{ ansible_limit | default('hermes-test-devenv') }}"
   gather_facts: false
   vars:
@@ -13,6 +17,17 @@
     hermes_home: /home/hermes
     hermes_state_mount: "{{ hermes_home }}/.hermes"
     hermes_verify_repo: igou-io/igou-infrastructure
+    # opencode-go model for the agent. Override with hermes_verify_model.
+    hermes_verify_model: minimax-m2.7
+    # The quick command sent to the agent. It prints the in-container uid (proof
+    # the terminal tool dispatched a container — the container's igou user is
+    # 1000, the host hermes user is not) and mints via the broker socket.
+    hermes_verify_prompt: >-
+      Use your terminal tool to run this exact shell command once and report its
+      complete raw stdout verbatim, with no commentary: printf 'DISPATCH uid=%s\n'
+      "$(id -u)"; curl -s --unix-socket "$GHAPP_BROKER_SOCKET" -X POST
+      http://broker/token -H 'Content-Type: application/json' -d
+      '{"repo":"{{ hermes_verify_repo }}","permissions":{"contents":"read"}}'
   tasks:
     - name: Wait for SSH
       ansible.builtin.wait_for_connection:
@@ -28,33 +43,49 @@
       ansible.builtin.set_fact:
         _hermes_uid: "{{ ansible_facts.getent_passwd[hermes_user][1] }}"
 
-    - name: Install the broker-dispatch verification script
-      ansible.builtin.copy:
-        src: files/verify_broker_dispatch.py
-        dest: "{{ hermes_state_mount }}/verify_broker_dispatch.py"
-        owner: "{{ hermes_user }}"
-        group: "{{ hermes_user }}"
-        mode: "0755"
-      become: true
-
-    # Runs as the hermes user (rootless podman) from a hermes-owned cwd, with the
-    # podman binary and user runtime dir the Hermes gateway unit also uses. The
-    # script dispatches a container via Hermes's terminal backend and mints via
-    # the broker socket from inside it.
-    - name: Dispatch a Hermes terminal container and mint via the broker
+    - name: Assert OPENCODE_GO_API_KEY is present in the Hermes env
       ansible.builtin.command:
-        cmd: "{{ hermes_state_mount }}/hermes-agent/venv/bin/python {{ hermes_state_mount }}/verify_broker_dispatch.py"
-        chdir: "{{ hermes_state_mount }}"
+        cmd: "grep -q '^OPENCODE_GO_API_KEY=' {{ hermes_state_mount }}/.env"
+      become: true
+      changed_when: false
+
+    # Runs the Hermes agent as the hermes user (rootless podman), sourcing the
+    # managed .env for OPENCODE_GO_API_KEY. The agent uses the opencode-go model
+    # and dispatches a terminal container per the config.yaml terminal backend.
+    - name: Run a Hermes agent quick command that mints via the broker
+      ansible.builtin.shell:
+        cmd: >-
+          set -a; . {{ hermes_state_mount }}/.env; set +a;
+          exec {{ hermes_state_mount }}/hermes-agent/venv/bin/hermes chat
+          -q {{ hermes_verify_prompt | quote }}
+          --provider opencode-go -m {{ hermes_verify_model | quote }} --yolo
+        chdir: "{{ hermes_home }}"
       become: true
       become_user: "{{ hermes_user }}"
       environment:
         HERMES_HOME: "{{ hermes_state_mount }}"
         HERMES_DOCKER_BINARY: /usr/bin/podman
         XDG_RUNTIME_DIR: "/run/user/{{ _hermes_uid }}"
-        GHAPP_TEST_REPO: "{{ hermes_verify_repo }}"
-      register: _hermes_dispatch
+      register: _hermes_agent
       changed_when: false
+      # noqa command-instead-of-shell -- sources .env then execs the agent
 
-    - name: Show the dispatch verification result
+    - name: Assert the agent minted a real token from inside a dispatched container
+      ansible.builtin.assert:
+        that:
+          - _hermes_agent.stdout is search('gh[a-z]_[A-Za-z0-9]{20,}')
+          - _hermes_agent.stdout is search('igou-hermes')
+          - _hermes_agent.stdout is search('DISPATCH uid=1000')
+        fail_msg: >-
+          The Hermes agent did not mint a real igou-hermes token from inside a
+          dispatched container (expected a ghs_ token, app_slug igou-hermes, and
+          DISPATCH uid=1000 proving in-container execution). Agent output:
+          {{ _hermes_agent.stdout | default('') }}
+        success_msg: >-
+          The Hermes agent (opencode-go/{{ hermes_verify_model }}) dispatched a
+          terminal container (uid=1000) and minted a real igou-hermes token via
+          the broker under SELinux enforcing.
+
+    - name: Show the agent verification result
       ansible.builtin.debug:
-        msg: "{{ _hermes_dispatch.stdout_lines | select('search', 'OK:|http=|token') | list }}"
+        msg: "{{ _hermes_agent.stdout_lines | select('search', 'DISPATCH uid=|token|ghs_|app_slug') | list }}"
