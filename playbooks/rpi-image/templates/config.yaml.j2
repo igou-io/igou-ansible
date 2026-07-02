@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+# rpi-image-gen config — rendered by playbooks/rpi-image/build.yml from
+# igou-inventory group_vars/rpi_image_builders.yml.
+#
+# device-user-admin (pulled in via {{ rpi_image_base_layer }} ->
+# openssh-server) creates user1 with sudo; openssh-server installs the
+# authorized_keys and (pubkey_only=y) disables password/challenge auth.
+device:
+  layer: {{ rpi_image_device_layer }}
+  hostname: {{ rpi_image_hostname }}
+  storage_type: {{ rpi_image_storage_type }}
+  user1: {{ rpi_image_user }}
+  user1sudo: nopasswd
+{% if rpi_image_user1passhash is defined %}
+  user1passhash: '{{ rpi_image_user1passhash }}'
+{% endif %}
+
+image:
+  layer: image-rpios
+  name: {{ rpi_image_config }}
+  boot_part_size: 200%
+  root_part_size: 300%
+
+ssh:
+  pubkey_user1: {{ rpi_image_ssh_pubkey }}
+  pubkey_only: y
+
+layer:
+  base: {{ rpi_image_base_layer }}
+{% if rpi_image_extra_packages | length > 0 %}
+
+packages:
+{% for pkg in rpi_image_extra_packages %}
+  - {{ pkg }}
+{% endfor %}
+{% endif %}
