@@ -82,7 +82,7 @@
           - __cred_helper.stdout is search('password=gh[a-z]_')
         fail_msg: "credential helper did not return a usable credential"
 
-    - name: Authenticated git ls-remote through the credential helper
+    - name: Authenticated git ls-remote through the credential helper  # noqa: command-instead-of-module -- exercises the git credential helper end to end, which the module bypasses
       ansible.builtin.command:
         cmd: git ls-remote https://github.com/igou-io/igou-infrastructure.git HEAD
       environment: "{{ __ghapp_env }}"
@@ -248,6 +248,9 @@
           -d '{"repo": "igou-io/igou-infrastructure", "permissions": {"contents": "read"}}'
       args:
         executable: /bin/bash
+        # runuser drops to hermes; start from a dir hermes can traverse (the
+        # play runs as root, whose home hermes cannot chdir into).
+        chdir: /
       register: __container_mint
       changed_when: false
       no_log: true
