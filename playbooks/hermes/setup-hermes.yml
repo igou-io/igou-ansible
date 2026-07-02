@@ -24,6 +24,10 @@
     # installer would otherwise leave a non-functional Chromium in ~/.cache. Flip
     # to false only after running that admin step out of band.
     hermes_install_skip_browser: true
+    # Install the Hermes agent + tirith scanner. Set false to converge only the
+    # base state mount and the gated ghapp broker — used by the hermes-test
+    # broker validation, where the full agent stack is not needed.
+    hermes_install_agent: true
     # Default broker minting policy (deny-not-clamp). Override with
     # hermes_ghapp_policy. Scratch repos only until go-live widens it.
     hermes_ghapp_policy_default:
@@ -63,6 +67,7 @@
       # shell so the install script gets a sane $HOME/$PATH environment.
       become_flags: '-i'
       changed_when: true   # only runs when 'creates' target is absent
+      when: hermes_install_agent | bool
 
     - name: Confirm the Hermes CLI and capture its version
       ansible.builtin.command:
@@ -72,6 +77,7 @@
       become_flags: '-i'
       register: hermes_version
       changed_when: false
+      when: hermes_install_agent | bool
 
     # tirith (pre-exec command scanner) is a GitHub-released binary that Hermes
     # normally auto-downloads on demand - but that needs the network, so it MUST be
@@ -85,9 +91,12 @@
         path: "{{ hermes_state_mount }}/bin/tirith"
       register: hermes_tirith_bin
       become: true
+      when: hermes_install_agent | bool
 
     - name: Install the tirith pre-exec command scanner from its GitHub release
-      when: not hermes_tirith_bin.stat.exists
+      when:
+        - hermes_install_agent | bool
+        - not (hermes_tirith_bin.stat.exists | default(false))
       become: true
       become_user: "{{ hermes_user }}"
       vars:
