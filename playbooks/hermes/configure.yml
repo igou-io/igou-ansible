@@ -52,7 +52,10 @@
     # shared with the broker; if SELinux blocks the socket connect on the VM,
     # resolve at the podman level (label=disable for this mount), not by
     # relabeling the system directory.
-    hermes_ghapp_broker_enabled: false
+    # NB: NOT set as a play var — play vars outrank inventory group_vars, which
+    # would shadow a group_vars override (e.g. group_vars/hermes_test.yml sets
+    # it true). Referenced as `hermes_ghapp_broker_enabled | default(false)`
+    # below, so it defaults off unless a group/host var or -e sets it.
     hermes_ghapp_broker_runtime_dir: /run/ghbroker
     hermes_ghapp_broker_socket: "{{ hermes_ghapp_broker_runtime_dir }}/ghbroker.sock"
     hermes_terminal_config:
@@ -77,12 +80,12 @@
           }
           | combine(
               {'GHAPP_BROKER_SOCKET': hermes_ghapp_broker_socket}
-              if (hermes_ghapp_broker_enabled | bool) else {}
+              if (hermes_ghapp_broker_enabled | default(false) | bool) else {}
             )
         }}
       docker_forward_env: >-
         {{
-          ([] if (hermes_ghapp_broker_enabled | bool) else ['GH_TOKEN'])
+          ([] if (hermes_ghapp_broker_enabled | default(false) | bool) else ['GH_TOKEN'])
           + ['OPENCODE_GO_API_KEY']
         }}
       docker_extra_args:
@@ -109,7 +112,7 @@
           ]
           + (
               [hermes_ghapp_broker_runtime_dir ~ ':' ~ hermes_ghapp_broker_runtime_dir]
-              if (hermes_ghapp_broker_enabled | bool)
+              if (hermes_ghapp_broker_enabled | default(false) | bool)
               else ['/home/hermes/.config/gh:' ~ hermes_terminal_backend_container_home ~ '/.config/gh:Z']
             )
         }}
@@ -133,7 +136,7 @@
             hermes_env_values
             | combine(
                 {'GHAPP_BROKER_SOCKET': hermes_ghapp_broker_socket}
-                if (hermes_ghapp_broker_enabled | bool) else {}
+                if (hermes_ghapp_broker_enabled | default(false) | bool) else {}
               )
           )
           | dict2items | rejectattr('value', 'equalto', '') | list
@@ -424,7 +427,7 @@
           hermes_ghapp_broker_enabled is true but the terminal config still
           carries the legacy GH_TOKEN/gh-config wiring or lacks the broker
           socket mount/env.
-      when: hermes_ghapp_broker_enabled | bool
+      when: hermes_ghapp_broker_enabled | default(false) | bool
 
     - name: Ensure the nftables drop-in directory exists
       ansible.builtin.file:
