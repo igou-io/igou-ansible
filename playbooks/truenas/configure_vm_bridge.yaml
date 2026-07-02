@@ -3,9 +3,9 @@
 # Additive and zero-downtime: the primary interface (enp2s0f0), its host
 # IPs, and the docker macvlan networks are never touched.
 #
-# Topology: truenas_vm_trunk_parent (enp2s0f1, 10GBase-T) is cabled to a
-# tagged-only switch trunk (crs317 sfp-sfpplus10, frame-types
-# admit-only-vlan-tagged). For each entry in truenas_vm_bridges this play
+# Topology: truenas_vm_trunk_parent (enp1s0f0) is cabled to a tagged-only
+# switch trunk (crs317 sfp-sfpplus13, frame-types admit-only-vlan-tagged;
+# 1G module for now). For each entry in truenas_vm_bridges this play
 # creates vlan<tag>@trunk and a host bridge enslaving it, with NO host
 # IPs — pure L2 for VM taps. VM<->host traffic (e.g. the democratic-csi
 # portal at 10.10.9.213) hairpins through the switch between the trunk
@@ -70,14 +70,45 @@
       ansible.builtin.set_fact:
         _trunk: "{{ _ifaces | selectattr('name', 'equalto', truenas_vm_trunk_parent) | list }}"
 
-    - name: Assert the trunk parent exists and has link (cable present)
+    - name: Assert the trunk parent exists
       ansible.builtin.assert:
-        that:
-          - _trunk | length == 1
-          - _trunk[0].state.link_state == 'LINK_STATE_UP'
+        that: _trunk | length == 1
         fail_msg: >-
-          {{ truenas_vm_trunk_parent }} is missing or has no link — cable it to
-          the tagged switch trunk port (crs317 sfp-sfpplus10) and confirm the
+          {{ truenas_vm_trunk_parent }} does not exist on this host — check
+          truenas_vm_trunk_parent in group_vars/truenas.yml.
+
+    # An unconfigured port is administratively down at boot, so a plain
+    # link_state check cannot tell "no cable" from "admin down". Bring it
+    # up ephemerally for the probe; the middleware owns (and persists) the
+    # up state once the VLAN/bridge config is committed.
+    - name: Bring the trunk parent up for the link probe (ephemeral)
+      become: true
+      ansible.builtin.command:
+        argv: [ip, link, set, dev, "{{ truenas_vm_trunk_parent }}", up]
+      changed_when: false
+
+    - name: Probe trunk link state (up to 10s)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - interface.query
+          - '[["name", "=", "{{ truenas_vm_trunk_parent }}"]]'
+      register: _trunk_probe
+      changed_when: false
+      failed_when: false
+      retries: 5
+      delay: 2
+      until: >-
+        ((_trunk_probe.stdout | from_json | first | default({})).state
+         | default({})).link_state | default('') == 'LINK_STATE_UP'
+
+    - name: Assert the trunk parent has link (cable present)
+      ansible.builtin.assert:
+        that: (_trunk_probe.stdout | from_json | first).state.link_state == 'LINK_STATE_UP'
+        fail_msg: >-
+          {{ truenas_vm_trunk_parent }} has no link — check the cable/module to
+          the tagged switch trunk port (crs317 sfp-sfpplus13) and confirm the
           switch config is deployed before running this play.
 
     - name: Assert the trunk parent is a bare L2 port (no IPs, no DHCP/SLAAC)
