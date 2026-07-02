@@ -1,0 +1,137 @@
+---
+# Flash a published image to a removable USB device plugged into the
+# build host.
+#
+#   ansible-playbook playbooks/rpi-image/flash.yml \
+#     -i ../igou-inventory/inventory.yaml \
+#     -e flash_device=/dev/sdb \
+#     [-e flash_image=/srv/images/rpi/<config>/latest/<config>.img.xz] \
+#     [-e flash_confirm=true]
+#
+# Without flash_confirm=true the play stops after printing what it
+# WOULD do (dry-run by default — dd is unrecoverable).
+#
+# Safety model (layered; each alone protects the builder's own media):
+#   1. flash_device must match /dev/sd[a-z]+ exactly — the micro SD
+#      backup (/dev/mmcblk0), partitions, nvme/loop/zram can never be
+#      named as a target.
+#   2. The disks backing / and /boot/firmware (the boot SSD) are
+#      resolved live and refused, as is any disk with a mounted
+#      partition. The boot SSD is itself TRAN=usb, so transport alone
+#      is NOT trusted to identify removable scratch media.
+#   3. Target transport must be usb (excludes sata/sas sd* devices).
+
+- name: Flash a published image to a USB device on the build host
+  hosts: rpi_image_builders
+  become: true
+  gather_facts: false
+
+  vars:
+    rpi_image_config: "{{ rpi_image_default_config }}"
+    flash_image: >-
+      {{ rpi_image_publish_dir }}/{{ rpi_image_config
+      }}/latest/{{ rpi_image_config }}.img.xz
+
+  tasks:
+    - name: Assert flash_device names a whole sd* disk node
+      ansible.builtin.assert:
+        that:
+          - flash_device is defined
+          - flash_device is match('^/dev/sd[a-z]+$')
+        fail_msg: >-
+          Pass -e flash_device=/dev/sdX naming a whole disk.
+          /dev/mmcblk* (the builder's backup micro SD), partitions and
+          non-sd nodes are never accepted.
+
+    - name: Assert image exists on the builder
+      ansible.builtin.stat:
+        path: "{{ flash_image }}"
+      register: flash_image_stat
+      failed_when: not flash_image_stat.stat.exists
+
+    - name: Inspect target transport
+      ansible.builtin.command:
+        cmd: lsblk -dno TRAN {{ flash_device }}
+      register: flash_tran
+      changed_when: false
+
+    - name: Inspect target size/model
+      ansible.builtin.command:
+        cmd: lsblk -dno SIZE,MODEL {{ flash_device }}
+      register: flash_ident
+      changed_when: false
+
+    - name: Inspect target mountpoints
+      ansible.builtin.command:
+        cmd: lsblk -rno MOUNTPOINTS {{ flash_device }}
+      register: flash_mounts
+      changed_when: false
+
+    - name: Resolve disks backing / and /boot/firmware
+      ansible.builtin.shell: |
+        set -euo pipefail
+        for m in / /boot/firmware ; do
+          src=$(findmnt -no SOURCE "$m") || continue
+          pk=$(lsblk -no PKNAME "$src" | head -1)
+          if [ -n "$pk" ] ; then echo "/dev/$pk" ; else echo "$src" ; fi
+        done | sort -u
+      args:
+        executable: /bin/bash
+      register: flash_protected
+      changed_when: false
+
+    - name: Assert target is not the boot disk and carries no mounts
+      ansible.builtin.assert:
+        that:
+          - flash_device not in flash_protected.stdout_lines
+          - flash_tran.stdout | trim == 'usb'
+          - flash_mounts.stdout_lines | select() | list | length == 0
+        fail_msg: >-
+          Refusing {{ flash_device }}: it is the builder's boot disk
+          ({{ flash_protected.stdout_lines | join(', ') }}), has mounted
+          partitions ({{ flash_mounts.stdout_lines | select() | list
+          | join(', ') }}), or is not USB-attached
+          (transport '{{ flash_tran.stdout | trim }}').
+
+    - name: Show flash plan
+      ansible.builtin.debug:
+        msg: >-
+          WOULD write {{ flash_image }}
+          ({{ flash_image_stat.stat.size | filesizeformat }}) to
+          {{ flash_device }} ({{ flash_ident.stdout | trim }}, usb).
+          Re-run with -e flash_confirm=true to flash.
+
+    - name: Stop before writing (dry-run without flash_confirm=true)
+      ansible.builtin.meta: end_play
+      when: not (flash_confirm | default(false) | bool)
+
+    - name: Flash image to {{ flash_device }}
+      ansible.builtin.shell: |
+        set -euo pipefail
+        xzcat '{{ flash_image }}' \
+          | dd of='{{ flash_device }}' bs=4M conv=fsync oflag=direct
+        sync
+        partprobe '{{ flash_device }}'
+      args:
+        executable: /bin/bash
+      async: 3600
+      poll: 15
+      register: flash_write
+      changed_when: true
+
+    - name: Verify written media (partition table + filesystems)
+      ansible.builtin.command:
+        cmd: lsblk -rno NAME,FSTYPE {{ flash_device }}
+      register: flash_verify
+      changed_when: false
+      failed_when: >-
+        flash_verify.stdout_lines | length < 3
+        or 'vfat' not in flash_verify.stdout
+        or 'ext4' not in flash_verify.stdout
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          flashed {{ flash_image | basename }} to {{ flash_device }}
+          ({{ flash_ident.stdout | trim }}); partitions:
+          {{ flash_verify.stdout_lines | join(' | ') }}

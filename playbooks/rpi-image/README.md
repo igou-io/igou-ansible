@@ -16,10 +16,13 @@ rpi-image-gen release, image definition, publish layout).
 |---|---|
 | `converge.yml` | Owns the build host: prerequisites, pinned rpi-image-gen checkout + `install_deps.sh`, workspace/publish dirs. Idempotent; run after changing the pin. |
 | `build.yml` | Render config → build (async, flock-serialised, logged) → verify → publish. |
+| `flash.yml` | Write a published image to a USB device plugged into the builder. Dry-run unless `-e flash_confirm=true`; structurally cannot target the builder's boot SSD or backup micro SD (device-name contract + live boot-disk / mount / transport guards). |
 
 ```sh
 ansible-playbook playbooks/rpi-image/converge.yml -i ../igou-inventory/inventory.yaml
 ansible-playbook playbooks/rpi-image/build.yml -i ../igou-inventory/inventory.yaml
+ansible-playbook playbooks/rpi-image/flash.yml -i ../igou-inventory/inventory.yaml \
+  -e flash_device=/dev/sdb -e flash_confirm=true
 ```
 
 ## Verify stage
