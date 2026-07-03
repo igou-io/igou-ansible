@@ -1,0 +1,155 @@
+---
+# Destroy a TrueNAS-hosted VM worker: drain + remove the cluster Node,
+# then delete the backing KVM VM (and, by default, its zvol).
+#
+# !! UNTESTED (2026-07-03): written during the truenas-w1 build-out but
+# deliberately NOT executed yet — the cluster's democratic-csi driver
+# migration is in flight. Supervise the first run.
+#
+# Ordering rationale: drain first; power the VM off BEFORE deleting the
+# Node object (a live kubelet re-registers the node on its next
+# heartbeat); delete the Node last. The zvol is destroyed by default —
+# a kept zvol still holds a bootable OS, which would short-circuit the
+# reprovision boot chain (disk boots first). Set -e destroy_zvol=false
+# to keep it. Pool config-lock congestion can make the zvol delete
+# slow (minutes) — the task uses a --job call and waits.
+#
+# Usage:
+#   export KUBECONFIG=<cluster kubeconfig>
+#   ansible-playbook playbooks/openshift/vm_worker_destroy.yaml \
+#     -i igou-inventory/inventory.yaml -e vm_worker=truenas-w1.igou.systems
+#
+# Vars: vm_worker (default truenas-w1.igou.systems), drain_timeout
+#   (300s), drain_force (true — evicts unmanaged pods), destroy_zvol
+#   (true). The worker's VM/zvol are resolved from truenas_vms via each
+#   entry's `openshift_node` key (igou-inventory group_vars/truenas.yml).
+
+- name: Drain the VM worker node
+  hosts: "{{ target_cluster | default('ocp') }}"
+  connection: local
+  gather_facts: false
+  vars:
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems') }}"
+    drain_timeout: 300
+    drain_force: true
+  tasks:
+
+    - name: Assert KUBECONFIG is set in the environment
+      ansible.builtin.assert:
+        that: lookup('env', 'KUBECONFIG') | length > 0
+        fail_msg: Export KUBECONFIG before running this playbook.
+
+    - name: Check whether the node exists
+      ansible.builtin.command:
+        argv: [oc, get, node, "{{ worker }}", --no-headers]
+      register: _node_check
+      changed_when: false
+      failed_when: false
+
+    - name: Record node presence
+      ansible.builtin.set_fact:
+        _node_present: "{{ _node_check.rc == 0 }}"
+
+    - name: Cordon the node
+      ansible.builtin.command:
+        argv: [oc, adm, cordon, "{{ worker }}"]
+      when: _node_present
+      changed_when: true
+
+    - name: Drain the node
+      ansible.builtin.command:
+        argv: "{{ ['oc', 'adm', 'drain', worker, '--ignore-daemonsets', '--delete-emptydir-data', '--timeout=' ~ drain_timeout ~ 's'] + (['--force'] if drain_force | bool else []) }}"
+      when: _node_present
+      changed_when: true
+
+- name: Power off and delete the backing VM on TrueNAS
+  hosts: truenas
+  gather_facts: false
+  vars:
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems') }}"
+  tasks:
+
+    - name: Resolve the VM definition for this worker
+      ansible.builtin.set_fact:
+        _vm_def: >-
+          {{ (truenas_vms | selectattr('openshift_node', 'defined')
+              | selectattr('openshift_node', 'equalto', worker)
+              | list + [{}]) | first }}
+
+    - name: Assert the worker maps to a truenas_vms entry
+      ansible.builtin.assert:
+        that: _vm_def.name is defined
+        fail_msg: >-
+          No truenas_vms entry has openshift_node == {{ worker }} —
+          add the mapping in group_vars/truenas.yml.
+
+    - name: Query the VM
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.query
+          - "{{ [['name', '=', _vm_def.name]] | to_json }}"
+      register: _vmq
+      changed_when: false
+
+    - name: Record VM state (empty when already deleted)
+      ansible.builtin.set_fact:
+        _vm: "{{ (_vmq.stdout | from_json + [{}]) | first }}"
+
+    - name: Power off the VM
+      ansible.builtin.command:
+        argv: [midclt, call, vm.poweroff, "{{ _vm.id }}"]
+      when: _vm.id is defined and _vm.status.state == 'RUNNING'
+      changed_when: true
+
+    - name: Delete the VM
+      ansible.builtin.command:
+        argv: [midclt, call, vm.delete, "{{ _vm.id }}"]
+      when: _vm.id is defined
+      changed_when: true
+
+    - name: Check whether the backing zvol exists
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - pool.dataset.query
+          - "{{ [['id', '=', _vm_def.disk_zvol], ['type', '=', 'VOLUME']] | to_json }}"
+      register: _zvolq
+      changed_when: false
+      when: destroy_zvol | default(true) | bool
+
+    - name: Destroy the backing zvol (slow under pool config-lock congestion)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - --job
+          - pool.dataset.delete
+          - "{{ _vm_def.disk_zvol | to_json }}"
+      when:
+        - destroy_zvol | default(true) | bool
+        - _zvolq.stdout | from_json | length > 0
+      changed_when: true
+
+- name: Remove the Node object from the cluster
+  hosts: "{{ target_cluster | default('ocp') }}"
+  connection: local
+  gather_facts: false
+  vars:
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems') }}"
+  tasks:
+
+    - name: Delete the Node object
+      ansible.builtin.command:
+        argv: [oc, delete, node, "{{ worker }}", --ignore-not-found]
+      changed_when: true
+
+    - name: Report result
+      ansible.builtin.debug:
+        msg: >-
+          {{ worker }} destroyed (node removed; VM/zvol deleted per flags).
+          Reprovision with playbooks/openshift/vm_worker_reprovision.yaml —
+          the static lease, netboot pin, and inventory identity all remain
+          in git, so the rebuilt node converges to the same identity.

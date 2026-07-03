@@ -1,0 +1,263 @@
+---
+# Reprovision a TrueNAS-hosted VM worker end-to-end, unattended:
+#   1. configure_vms.yaml recreates the VM with a blank zvol
+#   2. generate a full add-node ISO (`oc adm node-image create`, no
+#      --pxe) for this worker only
+#   3. copy the ISO to the TrueNAS host and attach/refresh it as the
+#      VM's CDROM (boot order 1005), then start the VM
+#   4. approve this node's CSRs (scoped) until the node is Ready
+#
+# !! UNTESTED (2026-07-03): written during the truenas-w1 build-out but
+# deliberately NOT executed yet — the cluster's democratic-csi driver
+# migration is in flight. Supervise the first run.
+#
+# Boot design — no netboot-pin changes required: with the zvol blank,
+# firmware boot order falls through disk(1) -> netboot image(2) [pin
+# menu times out to local, sanboot fails, iPXE exits] -> CDROM(3) = the
+# agent ISO, which installs RHCOS and reboots; the installed disk then
+# boots first forever after. The stale ISO stays attached and inert
+# (its embedded token expires; it is only reachable when the disk is
+# not bootable — which is exactly when you want it).
+#
+# Usage:
+#   export KUBECONFIG=<cluster kubeconfig>
+#   ansible-playbook playbooks/openshift/vm_worker_reprovision.yaml \
+#     -i igou-inventory/inventory.yaml -e vm_worker=truenas-w1.igou.systems
+#
+# Notes:
+# - The configure_vms import creates EVERY missing truenas_vms entry
+#   (create-only semantics), not just this worker.
+# - The node must NOT currently exist in the cluster (run
+#   vm_worker_destroy.yaml first); asserted below.
+# - No CSI smoke test here by design — validate storage manually once
+#   the democratic-csi driver migration completes.
+
+- name: Recreate the VM with a blank zvol (create-only semantics)
+  import_playbook: ../truenas/configure_vms.yaml
+
+- name: Generate the add-node ISO
+  hosts: "{{ target_cluster | default('ocp') }}"
+  connection: local
+  gather_facts: true
+  vars:
+    _cluster: "{{ target_cluster | default('ocp') }}"
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems') }}"
+    openshift_add_node_work_dir: "{{ ansible_env.HOME }}/openshift-add-node-iso/{{ _cluster }}"
+  pre_tasks:
+
+    - name: Assert KUBECONFIG is set in the environment
+      ansible.builtin.assert:
+        that: lookup('env', 'KUBECONFIG') | length > 0
+        fail_msg: Export KUBECONFIG before running this playbook.
+
+    - name: Discover nodes already joined to the cluster
+      ansible.builtin.command:
+        cmd: oc get nodes -o jsonpath={.items[*].metadata.name}
+      register: _existing_nodes
+      changed_when: false
+
+    - name: Assert the worker is not currently a cluster node
+      vars:
+        _joined: "{{ _existing_nodes.stdout.split() }}"
+        _joined_short: "{{ _existing_nodes.stdout.split() | map('regex_replace', '[.].*$', '') | list }}"
+      ansible.builtin.assert:
+        that: worker not in (_joined + _joined_short)
+        fail_msg: >-
+          {{ worker }} is still a node in the cluster — run
+          playbooks/openshift/vm_worker_destroy.yaml first.
+
+    - name: Restrict nodes-config rendering to this worker
+      ansible.builtin.set_fact:
+        _pending_workers:
+          - "{{ worker }}"
+
+  tasks:
+
+    - name: Wipe stale work dir
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}"
+        state: absent
+
+    - name: Create fresh work dir
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Fetch cluster pull secret to work dir
+      ansible.builtin.shell: |
+        set -o pipefail
+        oc -n openshift-config get secret pull-secret \
+          -o jsonpath='{.data.\.dockerconfigjson}' \
+          | base64 -d > "{{ openshift_add_node_work_dir }}/auth.json"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    - name: Lock down pull secret file mode
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}/auth.json"
+        mode: "0600"
+
+    - name: Render nodes-config.yaml (this worker only)
+      ansible.builtin.template:
+        src: templates/nodes-config.yaml.j2
+        dest: "{{ openshift_add_node_work_dir }}/nodes-config.yaml"
+        mode: "0644"
+
+    - name: Run `oc adm node-image create` (full ISO)
+      ansible.builtin.command:
+        cmd: >-
+          oc adm node-image create
+          --dir {{ openshift_add_node_work_dir }}
+          --registry-config {{ openshift_add_node_work_dir }}/auth.json
+      changed_when: true
+
+    - name: Verify the ISO exists
+      ansible.builtin.stat:
+        path: "{{ openshift_add_node_work_dir }}/node.{{ openshift_add_node_arch }}.iso"
+      register: _iso_stat
+      failed_when: not _iso_stat.stat.exists
+
+    - name: Set fact for later plays — ISO path
+      ansible.builtin.set_fact:
+        openshift_add_node_iso:
+          path: "{{ openshift_add_node_work_dir }}/node.{{ openshift_add_node_arch }}.iso"
+
+- name: Attach the ISO and boot the VM
+  hosts: truenas
+  become: true
+  gather_facts: false
+  vars:
+    _cluster: "{{ target_cluster | default('ocp') }}"
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems') }}"
+    _iso_src: "{{ hostvars[_cluster]['openshift_add_node_iso']['path'] }}"
+    _images_dir: /mnt/ssd/vms/images
+  tasks:
+
+    - name: Resolve the VM definition for this worker
+      ansible.builtin.set_fact:
+        _vm_def: >-
+          {{ (truenas_vms | selectattr('openshift_node', 'defined')
+              | selectattr('openshift_node', 'equalto', worker)
+              | list + [{}]) | first }}
+
+    - name: Assert the worker maps to a truenas_vms entry
+      ansible.builtin.assert:
+        that: _vm_def.name is defined
+        fail_msg: >-
+          No truenas_vms entry has openshift_node == {{ worker }} —
+          add the mapping in group_vars/truenas.yml.
+
+    - name: Query the VM (created by the configure_vms import)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.query
+          - "{{ [['name', '=', _vm_def.name]] | to_json }}"
+      register: _vmq
+      changed_when: false
+
+    - name: Assert the VM exists and is stopped
+      vars:
+        _vm: "{{ (_vmq.stdout | from_json + [{}]) | first }}"
+      ansible.builtin.assert:
+        that:
+          - _vm.id is defined
+          - _vm.status.state == 'STOPPED'
+        fail_msg: >-
+          VM {{ _vm_def.name }} is missing or not STOPPED — expected a
+          fresh, never-started VM from configure_vms.yaml.
+
+    - name: Copy the add-node ISO to the host
+      ansible.posix.synchronize:
+        src: "{{ _iso_src }}"
+        dest: "{{ _images_dir }}/{{ _vm_def.name }}-addnode.iso"
+        rsync_opts:
+          - "--chmod=F0644"
+
+    - name: Find an existing CDROM device on the VM
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.query
+          - "{{ [['vm', '=', (_vmq.stdout | from_json | first).id], ['attributes.dtype', '=', 'CDROM']] | to_json }}"
+      register: _cdq
+      changed_when: false
+
+    - name: Attach the ISO as a new CDROM (order 1005)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vmq.stdout | from_json | first).id,
+                'order': 1005,
+                'attributes': {'dtype': 'CDROM',
+                               'path': _images_dir ~ '/' ~ _vm_def.name ~ '-addnode.iso'}} | to_json }}
+      when: _cdq.stdout | from_json | length == 0
+      changed_when: true
+
+    - name: Point the existing CDROM at the fresh ISO
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.update
+          - "{{ (_cdq.stdout | from_json | first).id }}"
+          - >-
+            {{ {'attributes': {'dtype': 'CDROM',
+                               'path': _images_dir ~ '/' ~ _vm_def.name ~ '-addnode.iso'}} | to_json }}
+      when: _cdq.stdout | from_json | length > 0
+      changed_when: true
+
+    - name: Start the VM (retries ride out transient zvol-open error 512)
+      ansible.builtin.command:
+        argv: [midclt, call, vm.start, "{{ (_vmq.stdout | from_json | first).id }}"]
+      register: _start
+      until: _start.rc == 0
+      retries: 10
+      delay: 15
+      changed_when: true
+
+- name: Approve CSRs and wait for the node to join
+  hosts: "{{ target_cluster | default('ocp') }}"
+  connection: local
+  gather_facts: false
+  vars:
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems') }}"
+    join_timeout_minutes: 30
+  tasks:
+
+    - name: Approve this node's pending CSRs and probe readiness
+      # Scoped approval only: the node-bootstrapper client CSR and this
+      # node's kubelet serving CSR — never blanket-approves.
+      ansible.builtin.shell: |
+        set -o pipefail
+        oc get csr -o go-template='{% raw %}{{range .items}}{{if not .status}}{{.metadata.name}} {{.spec.username}}{{"\n"}}{{end}}{{end}}{% endraw %}' \
+          | awk -v w="system:node:{{ worker }}" \
+              '$2 == "system:serviceaccount:openshift-machine-config-operator:node-bootstrapper" || $2 == w {print $1}' \
+          | xargs -r oc adm certificate approve
+        if [ "$(oc get node {{ worker }} -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null)" = "True" ]; then
+          echo JOINED-READY
+        fi
+      args:
+        executable: /bin/bash
+      register: _join
+      until: "'JOINED-READY' in _join.stdout"
+      retries: "{{ join_timeout_minutes | int * 2 }}"
+      delay: 30
+      changed_when: "'approved' in _join.stdout"
+
+    - name: Report result
+      ansible.builtin.debug:
+        msg: >-
+          {{ worker }} rejoined and Ready. The add-node ISO remains
+          attached as inert boot fallback (token-expired; only reachable
+          when the disk is unbootable). Deliberately NOT validated here:
+          storage smoke tests — run one manually once the democratic-csi
+          driver migration completes.
