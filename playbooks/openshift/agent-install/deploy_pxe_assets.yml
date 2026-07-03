@@ -62,60 +62,44 @@
           changed_when: true
 
 
-- name: Copy boot artifacts to TrueNAS netbootxyz directory
+- name: Publish boot artifacts to the public nginx host
+  # Post-2026-05-11 netboot migration: agent-install artifacts are served
+  # from https://public.igou.systems/boot-files/<cluster>/ (see
+  # docs/netboot-operations.md). The retired netbootxyz container paths
+  # (/mnt/ssd/containers/netbootxyz/...) must not be referenced. The iPXE
+  # script is NOT published: the boot flow is the rb5009 per-host pin,
+  # which carries its own kernel/initrd/rootfs URLs.
   hosts: truenas
   become: true
   gather_facts: false
   vars:
     cluster_host: "{{ target_cluster }}"
     boot_artifacts_src: "{{ hostvars[cluster_host]['openshift_agent_install_work_dir_resolved'] }}/cluster-manifests/boot-artifacts"
-    boot_mac: "{{ hostvars[cluster_host]['openshift_agent_install_boot_mac'] }}"
-    ipxe_filename: "{{ boot_mac | replace(':', '') }}-install-openshift.ipxe"
-    truenas_boot_files_dest: /mnt/ssd/containers/netbootxyz/assets
-    truenas_ipxe_dest: /mnt/ssd/containers/netbootxyz/config/menus
+    netboot_public_files_dest: "/mnt/ssd/public/boot-files/{{ cluster_host }}"
   tasks:
-    - name: Verify iPXE destination directory exists
-      ansible.builtin.stat:
-        path: "{{ truenas_ipxe_dest }}"
-      register: _ipxe_dest_stat
-
-    - name: Fail if iPXE destination directory does not exist
-      ansible.builtin.assert:
-        that:
-          - _ipxe_dest_stat.stat.exists
-          - _ipxe_dest_stat.stat.isdir
-        fail_msg: "iPXE destination directory {{ truenas_ipxe_dest }} does not exist"
-
-    - name: Ensure boot files destination directory exists
+    - name: Ensure boot files destination directory exists (nginx needs 0755)
       ansible.builtin.file:
-        path: "{{ truenas_boot_files_dest }}/{{ cluster_host }}"
+        path: "{{ netboot_public_files_dest }}"
         state: directory
         mode: "0755"
-        owner: "1000"
-        group: "1000"
 
-    - name: Copy boot files to TrueNAS (excluding iPXE script)
+    - name: Copy boot files to the public nginx share (excluding iPXE script)
       ansible.posix.synchronize:
         src: "{{ boot_artifacts_src }}/"
-        dest: "{{ truenas_boot_files_dest }}/{{ cluster_host }}/"
+        dest: "{{ netboot_public_files_dest }}/"
         delete: true
         rsync_opts:
           - "--exclude=*.ipxe"
-          - "--chown=1000:1000"
+          - "--chmod=D0755,F0644"
 
-    - name: Copy iPXE script to TrueNAS
-      ansible.builtin.copy:
-        src: "{{ boot_artifacts_src }}/agent.{{ hostvars[cluster_host]['openshift_agent_install_arch'] | default('x86_64') }}.ipxe"
-        dest: "{{ truenas_ipxe_dest }}/{{ ipxe_filename }}"
-        mode: "0644"
-        owner: "1000"
-        group: "1000"
-
-    # This copies the ipxe script itself to netbootxyz. It is not the default boot option for a host, but referrenced in the .ipxe file served by netbootxyz.
-    - name: Copy iPXE script to TrueNAS local dir  # This works around a weird bug in netbootxyz
-      ansible.builtin.copy:
-        src: "{{ boot_artifacts_src }}/agent.{{ hostvars[cluster_host]['openshift_agent_install_arch'] | default('x86_64') }}.ipxe"
-        dest: "{{ truenas_ipxe_dest }}/local/{{ ipxe_filename }}"
-        mode: "0644"
-        owner: "1000"
-        group: "1000"
+    - name: Verify artifacts are served over HTTPS
+      ansible.builtin.uri:
+        url: "https://public.igou.systems/boot-files/{{ cluster_host }}/{{ item }}"
+        method: HEAD
+        status_code: 200
+      loop:
+        - agent.x86_64-vmlinuz
+        - agent.x86_64-initrd.img
+        - agent.x86_64-rootfs.img
+      delegate_to: localhost
+      become: false
