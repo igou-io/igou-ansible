@@ -102,12 +102,24 @@
   gather_facts: false
   become: false
 
+  vars:
+    # Optional scoping: truenas_vms_only (list of VM names) limits this
+    # run to the named subset of truenas_vms. Used by
+    # playbooks/openshift/vm_worker_reprovision.yaml so recreating one
+    # worker never recreates OTHER intentionally-absent VMs.
+    _vm_list: >-
+      {{ truenas_vms | default([]) | selectattr('name', 'in', truenas_vms_only) | list
+         if truenas_vms_only is defined else truenas_vms | default([]) }}
+
   tasks:
 
     - name: Assert a VM list is defined
       ansible.builtin.assert:
-        that: truenas_vms | default([]) | length > 0
-        fail_msg: truenas_vms is empty — define VMs in group_vars/truenas.yml
+        that: _vm_list | length > 0
+        fail_msg: >-
+          No VMs to configure — truenas_vms is empty
+          {{ '(or nothing matched truenas_vms_only)' if truenas_vms_only is defined else '' }};
+          define VMs in group_vars/truenas.yml.
 
     - name: Query network interfaces
       ansible.builtin.command:
@@ -135,20 +147,20 @@
     - name: Stage netboot fallback images referenced by VM definitions
       when:
         - truenas_vm_netboot_image_src is defined
-        - truenas_vms | selectattr('netboot_image', 'defined') | list | length > 0
+        - _vm_list | selectattr('netboot_image', 'defined') | list | length > 0
       become: true
       ansible.builtin.copy:
         src: "{{ truenas_vm_netboot_image_src }}"
         dest: "{{ item }}"
         mode: '0644'
       loop: >-
-        {{ truenas_vms | selectattr('netboot_image', 'defined')
+        {{ _vm_list | selectattr('netboot_image', 'defined')
            | map(attribute='netboot_image') | unique | list }}
 
     - name: Assert netboot fallback images exist on the host
       vars:
         _image_paths: >-
-          {{ truenas_vms | selectattr('netboot_image', 'defined')
+          {{ _vm_list | selectattr('netboot_image', 'defined')
              | map(attribute='netboot_image') | unique | list }}
       ansible.builtin.command:
         argv: [test, -f, "{{ item }}"]
@@ -159,11 +171,11 @@
 
     - name: Split VM list into pending and existing
       ansible.builtin.set_fact:
-        _pending_vms: "{{ truenas_vms | rejectattr('name', 'in', _existing_vms) | list }}"
+        _pending_vms: "{{ _vm_list | rejectattr('name', 'in', _existing_vms) | list }}"
 
     - name: Report VMs already present (left untouched)
       ansible.builtin.debug:
-        msg: "{{ truenas_vms | map(attribute='name') | select('in', _existing_vms) | list }}"
+        msg: "{{ _vm_list | map(attribute='name') | select('in', _existing_vms) | list }}"
 
     - name: Query existing zvols backing pending VM disks
       ansible.builtin.command:
@@ -196,6 +208,6 @@
         msg: >-
           Created: {{ _pending_vms | map(attribute='name') | list }};
           already present:
-          {{ truenas_vms | map(attribute='name') | select('in', _existing_vms) | list }}.
+          {{ _vm_list | map(attribute='name') | select('in', _existing_vms) | list }}.
           Start a new VM with `midclt call vm.start <id>` (or the UI) and select
           "ocp-node" at its display console to install RHCOS.
