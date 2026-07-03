@@ -88,8 +88,10 @@
                 annotations:
                   managed-by: ansible
               type: Opaque
-              stringData:
-                1password-credentials.json: "{{ lookup('community.general.onepassword_doc', 'ocp-connect-credentials', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) }}"
+              # data + b64encode (not stringData): onepassword_doc returns bytes,
+              # which ansible-core >= 2.19 refuses to serialize to module args.
+              data:
+                1password-credentials.json: "{{ lookup('community.general.onepassword_doc', 'ocp-connect-credentials', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) | b64encode }}"
           no_log: true
 
         - name: Seed the Connect access token Secret (for ESO)
