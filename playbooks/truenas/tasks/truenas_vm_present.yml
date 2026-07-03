@@ -1,0 +1,153 @@
+---
+# Create one KVM VM and its devices as an atomic unit. Included per VM by
+# configure_vms.yaml (loop_var: vm_def; consumes _existing_zvols and
+# truenas_vm_bridge from the calling play).
+#
+# On any device-attach failure the just-created VM is deleted so a re-run
+# can retry cleanly — without this, the create-only reconciliation in
+# configure_vms.yaml would skip the half-created VM by name forever. A
+# zvol created by a failed run is deliberately kept: the retry attaches it
+# as an existing volume.
+
+- name: Create VM with its devices — {{ vm_def.name }}
+  block:
+
+    - name: Create VM {{ vm_def.name }}
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.create
+          - >-
+            {{ {'name': vm_def.name,
+                'description': vm_def.description | default(''),
+                'vcpus': vm_def.vcpus,
+                'cores': vm_def.cores,
+                'threads': vm_def.threads,
+                'memory': vm_def.memory_mib,
+                'bootloader': vm_def.bootloader | default('UEFI'),
+                'cpu_mode': vm_def.cpu_mode | default('HOST-PASSTHROUGH'),
+                'enable_secure_boot': false,
+                'autostart': vm_def.autostart | default(true)} | to_json }}
+      register: _vm_create
+      changed_when: true
+
+    - name: Attach NIC (order 1003; not a boot device — see netboot note below) to VM {{ vm_def.name }}
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vm_create.stdout | from_json).id,
+                'order': 1003,
+                'attributes': {'dtype': 'NIC',
+                               'type': 'VIRTIO',
+                               'nic_attach': truenas_vm_bridge,
+                               'mac': vm_def.mac}} | to_json }}
+      changed_when: true
+
+    - name: Attach boot disk (order 1001, zvol created when absent) to VM {{ vm_def.name }}
+      vars:
+        _disk_attrs: >-
+          {{ {'dtype': 'DISK', 'type': 'VIRTIO',
+              'path': '/dev/zvol/' ~ vm_def.disk_zvol}
+             if vm_def.disk_zvol in _existing_zvols
+             else {'dtype': 'DISK', 'type': 'VIRTIO', 'create_zvol': true,
+                   'zvol_name': vm_def.disk_zvol,
+                   'zvol_volsize': vm_def.disk_gib | int * 1073741824} }}
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vm_create.stdout | from_json).id,
+                'order': 1001,
+                'attributes': _disk_attrs} | to_json }}
+      changed_when: true
+
+    # 25.10 requires a password on DISPLAY devices. Default: a random
+    # throwaway — the display binds to 127.0.0.1 (TrueNAS UI proxy) and
+    # an admin can read it back via `midclt call vm.device.query` if
+    # direct console auth is ever needed. Override with
+    # vm_def.display_password to pin one.
+    - name: Attach display console (order 1002) to VM {{ vm_def.name }}
+      vars:
+        _display_password: >-
+          {{ vm_def.display_password
+             | default(lookup('ansible.builtin.password',
+                              '/dev/null length=24 chars=ascii_letters,digits')) }}
+      no_log: true
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vm_create.stdout | from_json).id,
+                'order': 1002,
+                'attributes': {'dtype': 'DISPLAY',
+                               'password': _display_password}} | to_json }}
+      changed_when: true
+
+    # TrueNAS middleware only emits libvirt boot entries for disk-family
+    # devices (CDROM/DISK/RAW) — a NIC can never be a boot device, so
+    # "PXE-first" is impossible on the vm.* API. Instead, this RAW device
+    # (the custom netboot.xyz EFI disk image built by
+    # playbooks/routeros/deploy_netboot_binaries.yml) is attached AFTER
+    # the zvol in boot order: a blank disk falls through to it, giving
+    # the exact physical netboot chain (DHCP -> rb5009 TFTP pin ->
+    # menu/installer); once an OS is installed the disk boots first and
+    # the image stays as a permanent reinstall fallback.
+    - name: Attach netboot fallback image (order 1004, boots only when the disk is not bootable) to VM {{ vm_def.name }}
+      when: vm_def.netboot_image is defined
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vm_create.stdout | from_json).id,
+                'order': 1004,
+                'attributes': {'dtype': 'RAW',
+                               'path': vm_def.netboot_image,
+                               'type': 'AHCI',
+                               'exists': true}} | to_json }}
+      changed_when: true
+
+    # Optional install ISO (CDROM gets a boot entry, unlike NICs). Sits
+    # last in boot order: a blank disk falls through netboot_image (if
+    # any) and then the ISO; once an OS is installed the disk boots
+    # first. Middleware requires the path to live under /mnt/.
+    - name: Attach install ISO (order 1005, boots only when earlier devices do not) to VM {{ vm_def.name }}
+      when: vm_def.iso is defined
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vm_create.stdout | from_json).id,
+                'order': 1005,
+                'attributes': {'dtype': 'CDROM',
+                               'path': vm_def.iso}} | to_json }}
+      changed_when: true
+
+  rescue:
+
+    - name: Delete partially-created VM {{ vm_def.name }}
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.delete
+          - "{{ (_vm_create.stdout | from_json).id }}"
+      when: _vm_create.rc | default(1) == 0
+      changed_when: true
+
+    - name: Report unrecoverable creation failure for VM {{ vm_def.name }}
+      ansible.builtin.fail:
+        msg: >-
+          VM {{ vm_def.name }} failed mid-creation; the partial VM was deleted
+          so a re-run can retry. See the first failed task above for the cause.

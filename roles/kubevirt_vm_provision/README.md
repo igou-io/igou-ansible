@@ -43,6 +43,9 @@ module reads `K8S_AUTH_*` (AAP/EE) or your kubeconfig.
 | `vm_memory` | `4Gi` | Guest memory (`domain.memory.guest`; Burstable QoS) |
 | `vm_firmware` | `bios` | `bios` \| `efi` |
 | `vm_machine_type` | `q35` | Machine type |
+| `vm_architecture` | `""` | `spec.template.spec.architecture` (e.g. `amd64`); omitted when empty |
+| `vm_node_selector` | `{}` | `spec.template.spec.nodeSelector`; omitted when empty. Caller supplies the labels (e.g. burst: `{node-role.kubernetes.io/burst: ""}`) |
+| `vm_tolerations` | `[]` | `spec.template.spec.tolerations`; omitted when empty (e.g. burst: `[{key: workload, operator: Equal, value: burst, effect: NoSchedule}]`) |
 | `vm_log_serial_console` | `true` | Enable serial-console logging (a virtio-rng device is always attached) |
 | `vm_extra_pvcs` | `[]` | Existing PVCs to attach as data disks: `[{name, claim}]` |
 | `vm_cloud_init` | `""` | cloud-init NoCloud userData string (empty → no cloud-init disk) |
@@ -74,6 +77,9 @@ loop to provision several VMs in one play.
 ```
 
 > The role emits a single masquerade interface on the pod network and no
-> resources block (Burstable QoS). For secondary/Multus networks, GPUs, host
-> devices, or Guaranteed QoS, drive `kubevirt.core.kubevirt_vm` directly — and
-> note that admission policies (e.g. a VAP) may forbid those for hardened VMs.
+> resources block (Burstable QoS). Node placement is generic —
+> `vm_node_selector` / `vm_tolerations` / `vm_architecture` are passthroughs the
+> caller sets (e.g. to target the casval burst node). For secondary/Multus
+> networks, GPUs, host devices, or Guaranteed QoS, drive
+> `kubevirt.core.kubevirt_vm` directly — and note that admission policies (e.g. a
+> VAP) may forbid those for hardened VMs.

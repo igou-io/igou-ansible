@@ -1,0 +1,5 @@
+{{ ansible_managed | comment }}
+# netserver: standalone drivers + upsd serving the network, so the
+# nut_exporter and future upsmon netclients (TrueNAS, OpenShift nodes) can
+# read UPS state from this host.
+MODE=netserver

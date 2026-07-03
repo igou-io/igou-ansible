@@ -1,0 +1,201 @@
+---
+# Declaratively create KVM virtual machines on TrueNAS 25.10+ ("Virtual
+# Machines" / vm.* API) from the truenas_vms list, via midclt over SSH
+# (arensb.truenas has no vm modules).
+#
+# Create-only: VMs are matched by name; existing ones are reported and
+# left untouched (no cpu/memory/device reconciliation). Each pending VM
+# is created atomically by tasks/truenas_vm_present.yml — on a mid-chain
+# device failure the partial VM is deleted so a re-run can retry. VMs are
+# NOT started — first boot is operator-attended: start the VM, open its
+# display console, and pick "ocp-node" in the iPXE pin menu to install
+# RHCOS (the pin defaults to "Boot from disk" after 30s on later boots).
+#
+# Devices per VM:
+#   1001  DISK    VIRTIO zvol (created when absent) — boot 1
+#   1002  DISPLAY console via the TrueNAS UI
+#   1003  NIC     VIRTIO, fixed MAC, attached to truenas_vm_bridge
+#   1004  RAW     optional netboot fallback image (netboot_image) — boot 2
+#   1005  CDROM   optional install ISO (iso, path under /mnt/) — boot 3
+#
+# ── Why a local netboot image instead of PXE ──────────────────────────
+# (validated live on 25.10.1) The vm.* API cannot make a NIC a boot
+# device: middleware only writes libvirt <boot order> for CDROM/DISK/RAW
+# (middlewared/plugins/vm/devices/{cdrom,storage_devices}.py), so the
+# VM firmware never runs the NIC's PXE path at all and falls to the
+# UEFI shell. On a physical host the PXE ROM would DHCP and download
+# netboot.xyz.efi from rb5009's TFTP; the RAW netboot_image is a local
+# copy of that SAME custom binary (same deploy_netboot_binaries build
+# artifact, wrapped in a bootable FAT image) standing in for the
+# un-runnable PXE ROM. From its first instruction onward the flow is
+# identical to physical netboot: DHCP against rb5009 -> next-server ->
+# chain tftp://rb5009/MAC-<hex>.ipxe -> pin/menu/installer. Only the
+# initial binary is sourced locally; every decision still lives on
+# rb5009 + the public nginx, and the copy task re-syncs the image from
+# the build cache (truenas_vm_netboot_image_src) on every run, so
+# rebuilding the binaries keeps VM and TFTP copies in lockstep.
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_vm_bridge — host bridge for VM NICs (see configure_vm_bridge.yaml)
+#   truenas_vms       — list of {name, description?, vcpus, cores, threads,
+#                        memory_mib, bootloader?, autostart?, cpu_mode?, mac,
+#                        disk_zvol, disk_gib, netboot_image?, iso?,
+#                        display_password?}
+#   truenas_vm_netboot_image_src — optional control-node path to the
+#                        netboot.xyz EFI disk image to stage onto the host
+#
+# ── Example invocations ────────────────────────────────────────────────
+#
+# Create every inventory-defined VM (truenas_vms in group_vars/truenas.yml,
+# e.g. truenasw1 with its netboot fallback image):
+#
+#   ansible-playbook playbooks/truenas/configure_vms.yaml \
+#     -i igou-inventory/inventory.yaml
+#
+# One-off VM that NETBOOTS via the fallback image (full chain: DHCP ->
+# rb5009 iPXE pin for its MAC -> menu/kickstart/installer). Add a
+# netboot_host_pins entry for the MAC in group_vars/all/netboot.yml and
+# deploy it (deploy_assets.yml) or the VM lands in the unpinned fallback
+# menu. Extra-vars REPLACE truenas_vms, so only the VMs listed here are
+# considered (existing ones are never touched):
+#
+#   cat > /tmp/vm.yml <<'VMEOF'
+#   truenas_vms:
+#     - name: nettest1                 # alphanumeric only
+#       vcpus: 1
+#       cores: 2
+#       threads: 1
+#       memory_mib: 4096
+#       mac: "52:54:00:0A:09:70"
+#       disk_zvol: ssd/vms/nettest1-root
+#       disk_gib: 20
+#       netboot_image: /mnt/ssd/vms/images/netboot.xyz.efi.dsk
+#   VMEOF
+#   ansible-playbook playbooks/truenas/configure_vms.yaml \
+#     -i igou-inventory/inventory.yaml -e @/tmp/vm.yml
+#
+# One-off VM installing from a LOCAL LINUX ISO already on the host
+# (blank disk boots the ISO; after install the disk boots first and the
+# ISO remains as inert fallback media):
+#
+#   cat > /tmp/vm.yml <<'VMEOF'
+#   truenas_vms:
+#     - name: isotest1
+#       vcpus: 1
+#       cores: 2
+#       threads: 1
+#       memory_mib: 4096
+#       mac: "52:54:00:0A:09:71"
+#       disk_zvol: ssd/vms/isotest1-root
+#       disk_gib: 20
+#       iso: /mnt/ssd/vms/images/CentOS-Stream-10-latest-x86_64-dvd1.iso
+#   VMEOF
+#   ansible-playbook playbooks/truenas/configure_vms.yaml \
+#     -i igou-inventory/inventory.yaml -e @/tmp/vm.yml
+#
+# VMs are never started by this play. Start one with
+# `midclt call vm.start <id>` (or the UI) and use the display console
+# for any interactive install.
+
+- name: Configure KVM virtual machines on TrueNAS
+  hosts: truenas
+  gather_facts: false
+  become: false
+
+  tasks:
+
+    - name: Assert a VM list is defined
+      ansible.builtin.assert:
+        that: truenas_vms | default([]) | length > 0
+        fail_msg: truenas_vms is empty — define VMs in group_vars/truenas.yml
+
+    - name: Query network interfaces
+      ansible.builtin.command:
+        argv: [midclt, call, interface.query]
+      register: _ifquery
+      changed_when: false
+
+    - name: Assert the VM bridge exists
+      ansible.builtin.assert:
+        that: truenas_vm_bridge in (_ifquery.stdout | from_json | map(attribute='name') | list)
+        fail_msg: >-
+          {{ truenas_vm_bridge }} does not exist — run
+          playbooks/truenas/configure_vm_bridge.yaml first.
+
+    - name: Query existing VMs
+      ansible.builtin.command:
+        argv: [midclt, call, vm.query]
+      register: _vmquery
+      changed_when: false
+
+    - name: Index existing VM names
+      ansible.builtin.set_fact:
+        _existing_vms: "{{ _vmquery.stdout | from_json | map(attribute='name') | list }}"
+
+    - name: Stage netboot fallback images referenced by VM definitions
+      when:
+        - truenas_vm_netboot_image_src is defined
+        - truenas_vms | selectattr('netboot_image', 'defined') | list | length > 0
+      become: true
+      ansible.builtin.copy:
+        src: "{{ truenas_vm_netboot_image_src }}"
+        dest: "{{ item }}"
+        mode: '0644'
+      loop: >-
+        {{ truenas_vms | selectattr('netboot_image', 'defined')
+           | map(attribute='netboot_image') | unique | list }}
+
+    - name: Assert netboot fallback images exist on the host
+      vars:
+        _image_paths: >-
+          {{ truenas_vms | selectattr('netboot_image', 'defined')
+             | map(attribute='netboot_image') | unique | list }}
+      ansible.builtin.command:
+        argv: [test, -f, "{{ item }}"]
+      loop: "{{ _image_paths }}"
+      changed_when: false
+      register: _netboot_image_stat
+      failed_when: _netboot_image_stat.rc != 0
+
+    - name: Split VM list into pending and existing
+      ansible.builtin.set_fact:
+        _pending_vms: "{{ truenas_vms | rejectattr('name', 'in', _existing_vms) | list }}"
+
+    - name: Report VMs already present (left untouched)
+      ansible.builtin.debug:
+        msg: "{{ truenas_vms | map(attribute='name') | select('in', _existing_vms) | list }}"
+
+    - name: Query existing zvols backing pending VM disks
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - pool.dataset.query
+          - >-
+            {{ [['id', 'in', _pending_vms | map(attribute='disk_zvol') | list],
+                ['type', '=', 'VOLUME']] | to_json }}
+      register: _zvolquery
+      changed_when: false
+      when: _pending_vms | length > 0
+
+    - name: Index existing zvols
+      ansible.builtin.set_fact:
+        _existing_zvols: >-
+          {{ (_zvolquery.stdout | default('[]')) | from_json
+             | map(attribute='id') | list }}
+
+    - name: Create pending VMs with their devices (atomic per VM)
+      ansible.builtin.include_tasks: tasks/truenas_vm_present.yml
+      loop: "{{ _pending_vms }}"
+      loop_control:
+        loop_var: vm_def
+        label: "{{ vm_def.name }}"
+
+    - name: Report summary
+      ansible.builtin.debug:
+        msg: >-
+          Created: {{ _pending_vms | map(attribute='name') | list }};
+          already present:
+          {{ truenas_vms | map(attribute='name') | select('in', _existing_vms) | list }}.
+          Start a new VM with `midclt call vm.start <id>` (or the UI) and select
+          "ocp-node" at its display console to install RHCOS.

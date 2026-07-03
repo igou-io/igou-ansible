@@ -1,0 +1,74 @@
+---
+# Converge the rpi-image-gen build host (rpi-builder).
+#
+# Owns everything OS-level on the builder so a reflash costs one run:
+# prerequisites, the pinned rpi-image-gen checkout, its host dependencies
+# and the workspace/publish directory layout. Pipeline vars live in
+# igou-inventory group_vars/rpi_image_builders.yml.
+#
+#   ansible-playbook playbooks/rpi-image/converge.yml \
+#     -i ../igou-inventory/inventory.yaml
+#
+# rpi-image-gen only supports Debian bookworm/trixie arm64 natively
+# (building via QEMU on x86 is unsupported upstream), hence the assert.
+
+- name: Converge the rpi-image-gen build host
+  hosts: rpi_image_builders
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Assert supported build host (Debian >=12 arm64)
+      ansible.builtin.assert:
+        that:
+          - ansible_architecture == 'aarch64'
+          - ansible_os_family == 'Debian'
+          - ansible_distribution_major_version | int >= 12
+        fail_msg: >-
+          rpi-image-gen requires a Debian bookworm/trixie arm64 build host;
+          {{ inventory_hostname }} is
+          {{ ansible_distribution }} {{ ansible_distribution_version }}
+          {{ ansible_architecture }}
+
+    - name: Install base prerequisites
+      ansible.builtin.apt:
+        name:
+          - git
+          - xz-utils
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create workspace and publish directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ rpi_image_build_user }}"
+        group: "{{ rpi_image_build_user }}"
+        mode: "0755"
+      loop:
+        - "{{ rpi_image_root }}"
+        - "{{ rpi_image_root }}/configs"
+        - "{{ rpi_image_root }}/logs"
+        - "{{ rpi_image_publish_dir }}"
+
+    - name: Clone rpi-image-gen at the pinned release
+      become: false
+      ansible.builtin.git:
+        repo: https://github.com/raspberrypi/rpi-image-gen.git
+        dest: "{{ rpi_image_root }}/rpi-image-gen"
+        version: "{{ rpi_image_gen_version }}"
+        force: true
+      register: rpi_image_gen_checkout
+
+    # install_deps.sh apt-installs the build toolchain (mmdebstrap,
+    # bdebstrap, genimage, podman, ...). Re-run whenever the pinned
+    # checkout moves; force with -e rpi_image_gen_force_deps=true.
+    - name: Install rpi-image-gen host dependencies
+      ansible.builtin.command:
+        cmd: ./install_deps.sh
+        chdir: "{{ rpi_image_root }}/rpi-image-gen"
+      when: >-
+        rpi_image_gen_checkout is changed
+        or (rpi_image_gen_force_deps | default(false) | bool)
+      changed_when: true

@@ -92,10 +92,9 @@ http {
 {% endif %}
 {% for path in svc.deny_paths | default([]) %}
 
-    # Denied at the edge regardless of any app-level auth.
-    location {{ path }} {
-      deny all;
-    }
+    # Denied at the edge (deny_paths in this service's inventory entry);
+    # the path stays reachable from inside the proxy network / the host.
+    location {{ path }} { return 403; }
 {% endfor %}
 
     location / {

@@ -3,7 +3,7 @@ version: 3
 images:
   base_image:
     # renovate: datasource=docker depName=quay.io/centos/centos
-    name: quay.io/centos/centos:stream10-minimal@sha256:96ec023a5306c35c44797f918d9ba369d174a4ed9d4025f9d3902752b17cf8bf
+    name: quay.io/centos/centos:stream10-minimal@sha256:8553fc71b29dfcbba3e82349dfdbff2f57f45c6dbf0cbcb631f662c81e0124d6
 options:
   package_manager_path: /usr/bin/microdnf
 dependencies:

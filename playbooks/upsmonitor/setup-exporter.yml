@@ -1,0 +1,133 @@
+---
+# Upsmonitor convergence - nut_exporter phase. Installs the DRuggeri
+# nut_exporter (prebuilt GitHub-release binary, sha256-verified) as a
+# hardened systemd service reading upsd on localhost.
+#
+# One exporter instance serves every UPS: Prometheus scrapes
+# /ups_metrics?ups=<name> once per UPS (see igou-openshift
+# components/user-workload-monitoring/exporters/upsmonitor). Direct-LAN
+# scrape model, so the listen address binds beyond localhost.
+#
+# battery.runtime is NOT in the exporter's default variable set - the
+# vars_enable default below adds it (the runtime alert depends on it).
+- name: Upsmonitor convergence - nut_exporter
+  hosts: "{{ ansible_limit | default('upsmonitor.igou.systems') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    # Effective values; inventory overrides the un-prefixed names (play vars
+    # outrank inventory, hence the default() merge pattern).
+    _nut_exporter_version: "{{ nut_exporter_version | default('3.3.0') }}"
+    _nut_exporter_listen_address: "{{ nut_exporter_listen_address | default('127.0.0.1:9199') }}"
+    _nut_exporter_vars_enable: >-
+      {{ nut_exporter_vars_enable | default([
+           'battery.charge',
+           'battery.runtime',
+           'battery.voltage',
+           'battery.voltage.nominal',
+           'input.voltage',
+           'input.voltage.nominal',
+           'input.frequency',
+           'output.voltage',
+           'ups.load',
+           'ups.realpower.nominal',
+           'ups.status',
+         ]) }}
+    _nut_exporter_arch: >-
+      {{ {'x86_64': 'linux-amd64',
+          'aarch64': 'linux-arm64',
+          'armv7l': 'linux-arm'}[ansible_architecture] }}
+    _nut_exporter_asset: "nut_exporter-v{{ _nut_exporter_version }}-{{ _nut_exporter_arch }}"
+    _nut_exporter_base: "https://github.com/DRuggeri/nut_exporter/releases/download/v{{ _nut_exporter_version }}"
+    _nut_exporter_dist: /opt/nut_exporter
+
+  tasks:
+    - name: Create the nut_exporter system user
+      ansible.builtin.user:
+        name: nut_exporter
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+    - name: Create the release cache directory
+      ansible.builtin.file:
+        path: "{{ _nut_exporter_dist }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Versioned filename: bumping nut_exporter_version downloads the new
+    # asset and refreshes /usr/local/bin on the next run.
+    - name: Download the nut_exporter release binary (sha256-verified)
+      ansible.builtin.get_url:
+        url: "{{ _nut_exporter_base }}/{{ _nut_exporter_asset }}"
+        dest: "{{ _nut_exporter_dist }}/{{ _nut_exporter_asset }}"
+        checksum: "sha256:{{ _nut_exporter_base }}/nut_exporter_{{ _nut_exporter_version }}_checksums.txt"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install nut_exporter into /usr/local/bin
+      ansible.builtin.copy:
+        src: "{{ _nut_exporter_dist }}/{{ _nut_exporter_asset }}"
+        dest: /usr/local/bin/nut_exporter
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart nut_exporter
+
+    - name: Template the nut_exporter systemd unit
+      ansible.builtin.template:
+        src: templates/nut_exporter.service.j2
+        dest: /etc/systemd/system/nut_exporter.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart nut_exporter
+
+    - name: Enable and start nut_exporter
+      ansible.builtin.systemd_service:
+        name: nut_exporter.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Apply any pending exporter restart before verifying
+      ansible.builtin.meta: flush_handlers
+
+    # Verification scrapes loopback; a wildcard or LAN bind still answers
+    # on 127.0.0.1 unless pinned to a foreign address.
+    - name: Scrape the exporter once per UPS
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ _nut_exporter_listen_address | regex_replace('^.*:', '') }}/ups_metrics?ups={{ item.name }}"
+        return_content: true
+      loop: "{{ nut_upses }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: setup_exporter_scrape
+      # The exporter needs a beat after restart to reach upsd.
+      retries: 5
+      delay: 3
+      until: >-
+        setup_exporter_scrape.status == 200 and
+        'network_ups_tools_ups_status' in setup_exporter_scrape.content
+
+    - name: Report scraped status flags per UPS
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.name }} active status flags:
+          {{ item.content | regex_findall('network_ups_tools_ups_status\{flag="(OL|OB|LB|RB|FSD)"\} 1') }}
+      loop: "{{ setup_exporter_scrape.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+  handlers:
+    - name: Restart nut_exporter
+      ansible.builtin.systemd_service:
+        name: nut_exporter.service
+        state: restarted
+        daemon_reload: true

@@ -13,6 +13,10 @@
   # across the whole fleet - match the linux_baseline convention instead.
   hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
+  # Facts are gathered in pre_tasks after the connection is proven, so a freshly
+  # provisioned VM (sshd still coming up) doesn't fail at play start. For the
+  # live hermes VM the wait returns immediately.
+  gather_facts: false
   vars:
     hermes_user: hermes
     hermes_home: /home/hermes
@@ -48,6 +52,14 @@
         baseurl: "https://mirror.stream.centos.org/SIGs/{{ centos_stream_major }}-stream/extras/$basearch/extras-common/"
         enabled: true
         gpgcheck: true
+  pre_tasks:
+    - name: Wait for the VM's SSH to come up
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Gather facts (after the connection is proven)
+      ansible.builtin.setup:
+
   tasks:
     - name: Validate the target is CentOS Stream {{ centos_stream_major }}
       ansible.builtin.assert:
@@ -60,6 +72,58 @@
           Detected distribution={{ ansible_facts["distribution"] }},
           major={{ ansible_facts["distribution_major_version"] }},
           release={{ ansible_facts["distribution_release"] }}.
+      become: true
+
+    # The hermes service user is normally created by linux_baseline
+    # (baseline_service_users) earlier in the convergence. Ensure it exists here
+    # too so setup-os is self-sufficient on a freshly provisioned VM (the state
+    # mount is chowned to hermes below). Idempotent no-op when baseline made it.
+    - name: Ensure the hermes service user exists
+      ansible.builtin.user:
+        name: "{{ hermes_user }}"
+        home: "{{ hermes_home }}"
+        create_home: true
+        state: present
+      become: true
+
+    # create_home does NOT re-own a home directory that already exists (e.g. one
+    # the state-disk mount created as root on a prior run before the user
+    # existed). Own the home top level explicitly so the hermes user can write
+    # ~/.cache etc. — the Hermes installer (run as hermes) needs it. recurse is
+    # off so the mounted ~/.hermes state disk keeps its own ownership.
+    # Mode is parameterized (NOT a play var — play vars outrank group_vars) so a
+    # hardened host can lock the service-user home down. Defaults to 0755 (the
+    # prior value); the live hermes overrides to 0700 in group_vars. keep-id maps
+    # the terminal container's uid back to the hermes user, so podman still
+    # traverses the home regardless of the o+x bit.
+    - name: Ensure the hermes home directory is owned by the hermes user
+      ansible.builtin.file:
+        path: "{{ hermes_home }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "{{ hermes_home_mode | default('0755') }}"
+      become: true
+
+    # useradd only populates /etc/skel into a NEW home. Because /home/hermes can
+    # pre-exist (the state-disk mount creates it before the user is created),
+    # skel is skipped and the user ends up with no ~/.bash_profile / ~/.bashrc —
+    # so a login shell never adds ~/.local/bin to PATH and the Hermes CLI
+    # (installed there by setup-hermes) is not found by name. Seed the skel
+    # dotfiles if absent (force:false keeps any existing customisations). The
+    # skel .bashrc adds ~/.local/bin:~/bin and .bash_profile sources .bashrc.
+    - name: Ensure the hermes user has the /etc/skel login shell dotfiles
+      ansible.builtin.copy:
+        src: "/etc/skel/{{ item }}"
+        dest: "{{ hermes_home }}/{{ item }}"
+        remote_src: true
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+        force: false
+      loop:
+        - .bash_profile
+        - .bashrc
       become: true
 
     - name: Create xfs filesystem on the Hermes state device

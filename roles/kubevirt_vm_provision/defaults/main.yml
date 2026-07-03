@@ -31,6 +31,13 @@ vm_memory: 4Gi
 vm_firmware: bios
 vm_machine_type: q35
 
+# Scheduling / placement. All optional and emitted only when set; the caller
+# supplies the concrete values (e.g. the casval burst node label + taint). Keeping
+# these generic keeps the role free of any node-topology knowledge.
+vm_architecture: ""          # spec.template.spec.architecture (e.g. amd64); omitted when empty
+vm_node_selector: {}         # spec.template.spec.nodeSelector; omitted when empty
+vm_tolerations: []           # spec.template.spec.tolerations; omitted when empty
+
 # Devices (a virtio-rng device is always attached)
 vm_log_serial_console: true
 

@@ -1,0 +1,198 @@
+---
+# Upsmonitor convergence - NUT netserver phase. Installs Network UPS Tools
+# and drives BOTH rack UPSes (APC + CyberPower) over USB HID from one Pi,
+# one nut-driver@<ups> instance per UPS, disambiguated by USB vendorid.
+#
+# MODE=netserver: upsd listens on the LAN (VLAN9) so the DRuggeri
+# nut_exporter (setup-exporter.yml) and, later, upsmon netclients on other
+# servers (TrueNAS, OpenShift nodes) can read UPS state. The Pi itself runs
+# upsmon as `primary` and powers off cleanly when the last UPS goes
+# critical.
+#
+# UPS definitions come from inventory (igou-inventory
+# host_vars/upsmonitor.igou.systems.yml, `nut_upses`). upsd account
+# passwords come from 1Password (op://claude/upsmonitor-nut) at run time —
+# never stored in the repo.
+- name: Upsmonitor convergence - NUT netserver
+  hosts: "{{ ansible_limit | default('upsmonitor.igou.systems') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    # Effective values; inventory overrides the un-prefixed names. Play vars
+    # outrank inventory, so defaults are merged here via default() instead
+    # of defining the public names as play vars.
+    _nut_listen: "{{ nut_listen | default([{'address': '0.0.0.0', 'port': 3493}]) }}"
+    _nut_pollinterval: "{{ nut_pollinterval | default(5) }}"
+    # upsd account passwords, resolved from 1Password on the controller.
+    _nut_upsmon_password: >-
+      {{ lookup('community.general.onepassword',
+         nut_op_item | default('upsmonitor-nut'),
+         field='upsmon_password', vault=nut_op_vault | default('claude')) }}
+    _nut_monitor_password: >-
+      {{ lookup('community.general.onepassword',
+         nut_op_item | default('upsmonitor-nut'),
+         field='monitor_password', vault=nut_op_vault | default('claude')) }}
+
+  tasks:
+    - name: Assert UPS definitions are present in inventory
+      ansible.builtin.assert:
+        that:
+          - nut_upses is defined
+          - nut_upses | length > 0
+        fail_msg: >-
+          nut_upses must be defined in inventory (see igou-inventory
+          host_vars/upsmonitor.igou.systems.yml).
+
+    - name: Install NUT server and client
+      ansible.builtin.apt:
+        name:
+          - nut-server
+          - nut-client
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    # The nut-server package ships 62-nut-usbups.rules, but USB devices
+    # enumerated BEFORE the install keep their old root-only permissions and
+    # every driver start dies with "insufficient permissions". Re-apply the
+    # rules to already-present devices - no replug needed. Harmless no-op on
+    # an already-converged host.
+    - name: Re-apply udev rules to pre-existing USB devices
+      ansible.builtin.command: udevadm trigger --subsystem-match=usb --action=change
+      changed_when: false
+
+    - name: Set NUT mode to netserver
+      ansible.builtin.template:
+        src: templates/nut.conf.j2
+        dest: /etc/nut/nut.conf
+        owner: root
+        group: nut
+        mode: "0640"
+      notify:
+        - Resync NUT driver instances
+        - Restart NUT drivers
+        - Restart upsd
+        - Restart upsmon
+
+    - name: Define UPS driver instances (ups.conf)
+      ansible.builtin.template:
+        src: templates/ups.conf.j2
+        dest: /etc/nut/ups.conf
+        owner: root
+        group: nut
+        mode: "0640"
+      notify:
+        - Resync NUT driver instances
+        - Restart NUT drivers
+        - Restart upsd
+
+    - name: Configure upsd listeners (upsd.conf)
+      ansible.builtin.template:
+        src: templates/upsd.conf.j2
+        dest: /etc/nut/upsd.conf
+        owner: root
+        group: nut
+        mode: "0640"
+      notify:
+        - Restart upsd
+
+    - name: Configure upsd accounts (upsd.users)
+      ansible.builtin.template:
+        src: templates/upsd.users.j2
+        dest: /etc/nut/upsd.users
+        owner: root
+        group: nut
+        mode: "0640"
+      no_log: true  # rendered content carries the upsd passwords
+      notify:
+        - Restart upsd
+        - Restart upsmon
+
+    - name: Configure upsmon as primary (upsmon.conf)
+      ansible.builtin.template:
+        src: templates/upsmon.conf.j2
+        dest: /etc/nut/upsmon.conf
+        owner: root
+        group: nut
+        mode: "0640"
+      no_log: true  # MONITOR lines carry the upsmon password
+      notify:
+        - Restart upsmon
+
+    # The enumerator path unit re-runs nut-driver-enumerator.service whenever
+    # ups.conf changes, keeping nut-driver@<ups> instances in sync outside
+    # Ansible runs too.
+    - name: Enable the NUT driver enumerator path watch
+      ansible.builtin.systemd_service:
+        name: nut-driver-enumerator.path
+        enabled: true
+        state: started
+
+    - name: Enable NUT services at boot
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+      loop:
+        - nut-server.service
+        - nut-monitor.service
+
+    - name: Apply any pending NUT restarts before verifying
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure NUT services are running
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - nut-server.service
+        - nut-monitor.service
+
+    - name: Wait for upsd to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 3493
+        timeout: 30
+
+    - name: Query each UPS through upsd
+      ansible.builtin.command: "upsc {{ item.name }}@localhost ups.status"
+      loop: "{{ nut_upses }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: setup_nut_upsc
+      changed_when: false
+      # Drivers can take a few seconds to publish after a cold start.
+      retries: 5
+      delay: 5
+      until: setup_nut_upsc.rc == 0
+
+    - name: Report UPS statuses
+      ansible.builtin.debug:
+        msg: >-
+          {{ setup_nut_upsc.results
+             | map(attribute='item.name')
+             | zip(setup_nut_upsc.results | map(attribute='stdout'))
+             | map('join', ': ') | list }}
+
+  handlers:
+    # Handler order is definition order: regenerate driver instances from
+    # ups.conf first, then bounce drivers, then upsd, then upsmon.
+    - name: Resync NUT driver instances
+      ansible.builtin.systemd_service:
+        name: nut-driver-enumerator.service
+        state: restarted
+
+    - name: Restart NUT drivers
+      ansible.builtin.systemd_service:
+        name: nut-driver.target
+        state: restarted
+
+    - name: Restart upsd
+      ansible.builtin.systemd_service:
+        name: nut-server.service
+        state: restarted
+
+    - name: Restart upsmon
+      ansible.builtin.systemd_service:
+        name: nut-monitor.service
+        state: restarted
