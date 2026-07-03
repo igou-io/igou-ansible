@@ -11,16 +11,27 @@
 # display console, and pick "ocp-node" in the iPXE pin menu to install
 # RHCOS (the pin defaults to "Boot from disk" after 30s on later boots).
 #
-# Devices per VM (boot order):
-#   1000  NIC     VIRTIO, fixed MAC, attached to truenas_vm_bridge — netboot first
-#   1001  DISK    VIRTIO zvol (created when absent)
+# Devices per VM:
+#   1001  DISK    VIRTIO zvol (created when absent) — boot 1
 #   1002  DISPLAY console via the TrueNAS UI
+#   1003  NIC     VIRTIO, fixed MAC, attached to truenas_vm_bridge
+#   1004  RAW     optional netboot fallback image (netboot_image) — boot 2
+#
+# NOTE (validated live on 25.10.1): the vm.* API cannot make a NIC a
+# boot device (middleware only writes libvirt boot entries for
+# CDROM/DISK/RAW), so netboot is delivered via the RAW fallback image:
+# blank disk -> netboot.xyz EFI image -> DHCP -> rb5009 TFTP pin. The
+# image is staged from the deploy_netboot_binaries build cache when
+# truenas_vm_netboot_image_src is set.
 #
 # Variables (igou-inventory group_vars/truenas.yml):
 #   truenas_vm_bridge — host bridge for VM NICs (see configure_vm_bridge.yaml)
 #   truenas_vms       — list of {name, description?, vcpus, cores, threads,
 #                        memory_mib, bootloader?, autostart?, cpu_mode?, mac,
-#                        disk_zvol, disk_gib}
+#                        disk_zvol, disk_gib, netboot_image?,
+#                        display_password?}
+#   truenas_vm_netboot_image_src — optional control-node path to the
+#                        netboot.xyz EFI disk image to stage onto the host
 
 - name: Configure KVM virtual machines on TrueNAS
   hosts: truenas
@@ -56,6 +67,31 @@
     - name: Index existing VM names
       ansible.builtin.set_fact:
         _existing_vms: "{{ _vmquery.stdout | from_json | map(attribute='name') | list }}"
+
+    - name: Stage netboot fallback images referenced by VM definitions
+      when:
+        - truenas_vm_netboot_image_src is defined
+        - truenas_vms | selectattr('netboot_image', 'defined') | list | length > 0
+      become: true
+      ansible.builtin.copy:
+        src: "{{ truenas_vm_netboot_image_src }}"
+        dest: "{{ item }}"
+        mode: '0644'
+      loop: >-
+        {{ truenas_vms | selectattr('netboot_image', 'defined')
+           | map(attribute='netboot_image') | unique | list }}
+
+    - name: Assert netboot fallback images exist on the host
+      vars:
+        _image_paths: >-
+          {{ truenas_vms | selectattr('netboot_image', 'defined')
+             | map(attribute='netboot_image') | unique | list }}
+      ansible.builtin.command:
+        argv: [test, -f, "{{ item }}"]
+      loop: "{{ _image_paths }}"
+      changed_when: false
+      register: _netboot_image_stat
+      failed_when: _netboot_image_stat.rc != 0
 
     - name: Split VM list into pending and existing
       ansible.builtin.set_fact:
