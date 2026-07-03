@@ -68,6 +68,7 @@
         - "/home/hermes/agent-repos:/workspace:Z"
         - "/home/hermes/.hermes/cache/documents:/output:Z"
         - "/home/hermes/.gitconfig:{{ hermes_terminal_backend_container_home }}/.gitconfig:ro,Z"
+        - "/home/hermes/.netrc:{{ hermes_terminal_backend_container_home }}/.netrc:ro,Z"
         - "/home/hermes/.ssh:{{ hermes_terminal_backend_container_home }}/.ssh:ro,Z"
         - "/home/hermes/.kube:{{ hermes_terminal_backend_container_home }}/.kube:ro,Z"
         - "/home/hermes/.claude:{{ hermes_terminal_backend_container_home }}/.claude:Z"
@@ -97,6 +98,27 @@
       notify:
         - Restart the Hermes gateway user unit
         - Restart the Hermes dashboard user unit
+
+    # Ambient HTTP basic-auth for services agents scrape (`curl -n`; Python
+    # requests/httpx also honor .netrc). Declared as hermes_netrc_machines in
+    # group_vars/hermes.yml with 1Password lookups — the credential never
+    # appears in prompts, skills, or shell history. Always written (possibly
+    # empty) so the terminal-backend bind mount below has a valid source.
+    - name: Provision the hermes user .netrc
+      ansible.builtin.copy:
+        dest: "/home/{{ hermes_user }}/.netrc"
+        content: |-
+          # Managed by Ansible - playbooks/hermes/configure.yml
+          {% for m in hermes_netrc_machines | default([]) %}
+          machine {{ m.machine }}
+            login {{ m.login }}
+            password {{ m.password }}
+          {% endfor %}
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0600"
+      become: true
+      no_log: true
 
     - name: Map legacy Hermes devenv image tag to terminal backend image tag
       ansible.builtin.set_fact:

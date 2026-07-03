@@ -82,6 +82,21 @@ http {
     ssl_certificate_key /etc/nginx/ssl/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
+{% if svc.basic_auth is defined %}
+
+    # Whole-site HTTP basic auth. The htpasswd file is delivered as a podman
+    # secret mounted into the nginx container (linux_nginx_extra_secrets) -
+    # never as a file on the host, matching the TLS material convention.
+    auth_basic           "{{ svc.basic_auth.realm | default(svc.server_name) }}";
+    auth_basic_user_file {{ svc.basic_auth.user_file }};
+{% endif %}
+{% for path in svc.deny_paths | default([]) %}
+
+    # Denied at the edge regardless of any app-level auth.
+    location {{ path }} {
+      deny all;
+    }
+{% endfor %}
 
     location / {
       # Variable in proxy_pass forces runtime DNS re-resolution (see resolver
