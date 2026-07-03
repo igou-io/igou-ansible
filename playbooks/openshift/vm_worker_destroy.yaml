@@ -20,16 +20,21 @@
 #     -i igou-inventory/inventory.yaml -e vm_worker=truenas-w1.igou.systems
 #
 # Vars: vm_worker (default truenas-w1.igou.systems), drain_timeout
-#   (300s), drain_force (true — evicts unmanaged pods), destroy_zvol
-#   (true). The worker's VM/zvol are resolved from truenas_vms via each
-#   entry's `openshift_node` key (igou-inventory group_vars/truenas.yml).
+#   (300s), drain_force (true — evicts unmanaged pods),
+#   drain_ignore_errors (false — a PDB-blocked drain fails the play and
+#   leaves the node cordoned for manual resolution; set true to proceed
+#   to VM poweroff anyway, sacrificing eviction grace for pods the drain
+#   could not move), destroy_zvol (true). The worker's VM/zvol are
+#   resolved from truenas_vms via each entry's `openshift_node` key
+#   (igou-inventory group_vars/truenas.yml); the mapping is asserted
+#   BEFORE the drain so a mistyped-but-real node name is never disrupted.
 
 - name: Drain the VM worker node
   hosts: "{{ target_cluster | default('ocp') }}"
   connection: local
   gather_facts: false
   vars:
-    worker: "{{ vm_worker | default('truenas-w1.igou.systems') }}"
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
     drain_timeout: 300
     drain_force: true
   tasks:
@@ -38,6 +43,25 @@
       ansible.builtin.assert:
         that: lookup('env', 'KUBECONFIG') | length > 0
         fail_msg: Export KUBECONFIG before running this playbook.
+
+    # Guard BEFORE any disruption: this playbook must never drain a node
+    # it cannot also destroy. Without this, a mistyped-but-real node name
+    # (e.g. a bare-metal worker) would be cordoned and drained before the
+    # truenas play's own mapping assert aborted the run.
+    - name: Assert the worker maps to a truenas_vms entry (pre-drain guard)
+      vars:
+        _vm_mapped_nodes: >-
+          {{ hostvars[groups['truenas'] | first].truenas_vms
+             | selectattr('openshift_node', 'defined')
+             | map(attribute='openshift_node') | list }}
+      ansible.builtin.assert:
+        that:
+          - worker | length > 0
+          - worker in _vm_mapped_nodes
+        fail_msg: >-
+          No truenas_vms entry has openshift_node == '{{ worker }}' —
+          refusing to touch the node. Add the mapping in
+          group_vars/truenas.yml if this really is a TrueNAS VM worker.
 
     - name: Check whether the node exists
       ansible.builtin.command:
@@ -56,17 +80,25 @@
       when: _node_present
       changed_when: true
 
+    # A PDB-blocked drain fails here by default, leaving the node
+    # cordoned for manual resolution (nothing has been deleted yet).
+    # -e drain_ignore_errors=true proceeds to poweroff regardless.
     - name: Drain the node
       ansible.builtin.command:
         argv: "{{ ['oc', 'adm', 'drain', worker, '--ignore-daemonsets', '--delete-emptydir-data', '--timeout=' ~ drain_timeout ~ 's'] + (['--force'] if drain_force | bool else []) }}"
       when: _node_present
+      register: _drain
       changed_when: true
+      failed_when:
+        - _drain.rc is defined
+        - _drain.rc != 0
+        - not (drain_ignore_errors | default(false) | bool)
 
 - name: Power off and delete the backing VM on TrueNAS
   hosts: truenas
   gather_facts: false
   vars:
-    worker: "{{ vm_worker | default('truenas-w1.igou.systems') }}"
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
   tasks:
 
     - name: Resolve the VM definition for this worker
@@ -138,13 +170,14 @@
   connection: local
   gather_facts: false
   vars:
-    worker: "{{ vm_worker | default('truenas-w1.igou.systems') }}"
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
   tasks:
 
     - name: Delete the Node object
       ansible.builtin.command:
         argv: [oc, delete, node, "{{ worker }}", --ignore-not-found]
-      changed_when: true
+      register: _node_del
+      changed_when: "'deleted' in _node_del.stdout"
 
     - name: Report result
       ansible.builtin.debug:
