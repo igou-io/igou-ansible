@@ -1,0 +1,32 @@
+{{ ansible_managed | comment }}
+# One section per USB UPS -> one nut-driver@<name> systemd instance.
+# Instances are matched to hardware by USB vendorid/productid (stable across
+# reboots, unlike bus/device numbers).
+maxretry = 3
+pollinterval = {{ _nut_pollinterval }}
+
+{% for ups in nut_upses %}
+[{{ ups.name }}]
+    driver = {{ ups.driver | default('usbhid-ups') }}
+    port = {{ ups.port | default('auto') }}
+    desc = "{{ ups.desc | default(ups.name) }}"
+{% if ups.vendorid is defined %}
+    vendorid = {{ ups.vendorid }}
+{% endif %}
+{% if ups.productid is defined %}
+    productid = {{ ups.productid }}
+{% endif %}
+{% if ups.serial is defined %}
+    serial = "{{ ups.serial }}"
+{% endif %}
+{% for flag in ups.flags | default([]) %}
+    {{ flag }}
+{% endfor %}
+{% for key, value in (ups.options | default({})).items() %}
+    {{ key }} = {{ value }}
+{% endfor %}
+{% for key, value in (ups.overrides | default({})).items() %}
+    override.{{ key }} = {{ value }}
+{% endfor %}
+
+{% endfor %}
