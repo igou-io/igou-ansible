@@ -116,6 +116,24 @@
                                'exists': true}} | to_json }}
       changed_when: true
 
+    # Optional install ISO (CDROM gets a boot entry, unlike NICs). Sits
+    # last in boot order: a blank disk falls through netboot_image (if
+    # any) and then the ISO; once an OS is installed the disk boots
+    # first. Middleware requires the path to live under /mnt/.
+    - name: Attach install ISO (order 1005, boots only when earlier devices do not) to VM {{ vm_def.name }}
+      when: vm_def.iso is defined
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vm_create.stdout | from_json).id,
+                'order': 1005,
+                'attributes': {'dtype': 'CDROM',
+                               'path': vm_def.iso}} | to_json }}
+      changed_when: true
+
   rescue:
 
     - name: Delete partially-created VM {{ vm_def.name }}

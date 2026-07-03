@@ -16,6 +16,7 @@
 #   1002  DISPLAY console via the TrueNAS UI
 #   1003  NIC     VIRTIO, fixed MAC, attached to truenas_vm_bridge
 #   1004  RAW     optional netboot fallback image (netboot_image) — boot 2
+#   1005  CDROM   optional install ISO (iso, path under /mnt/) — boot 3
 #
 # NOTE (validated live on 25.10.1): the vm.* API cannot make a NIC a
 # boot device (middleware only writes libvirt boot entries for
@@ -28,10 +29,63 @@
 #   truenas_vm_bridge — host bridge for VM NICs (see configure_vm_bridge.yaml)
 #   truenas_vms       — list of {name, description?, vcpus, cores, threads,
 #                        memory_mib, bootloader?, autostart?, cpu_mode?, mac,
-#                        disk_zvol, disk_gib, netboot_image?,
+#                        disk_zvol, disk_gib, netboot_image?, iso?,
 #                        display_password?}
 #   truenas_vm_netboot_image_src — optional control-node path to the
 #                        netboot.xyz EFI disk image to stage onto the host
+#
+# ── Example invocations ────────────────────────────────────────────────
+#
+# Create every inventory-defined VM (truenas_vms in group_vars/truenas.yml,
+# e.g. truenasw1 with its netboot fallback image):
+#
+#   ansible-playbook playbooks/truenas/configure_vms.yaml \
+#     -i igou-inventory/inventory.yaml
+#
+# One-off VM that NETBOOTS via the fallback image (full chain: DHCP ->
+# rb5009 iPXE pin for its MAC -> menu/kickstart/installer). Add a
+# netboot_host_pins entry for the MAC in group_vars/all/netboot.yml and
+# deploy it (deploy_assets.yml) or the VM lands in the unpinned fallback
+# menu. Extra-vars REPLACE truenas_vms, so only the VMs listed here are
+# considered (existing ones are never touched):
+#
+#   cat > /tmp/vm.yml <<'VMEOF'
+#   truenas_vms:
+#     - name: nettest1                 # alphanumeric only
+#       vcpus: 1
+#       cores: 2
+#       threads: 1
+#       memory_mib: 4096
+#       mac: "52:54:00:0A:09:70"
+#       disk_zvol: ssd/vms/nettest1-root
+#       disk_gib: 20
+#       netboot_image: /mnt/ssd/vms/images/netboot.xyz.efi.dsk
+#   VMEOF
+#   ansible-playbook playbooks/truenas/configure_vms.yaml \
+#     -i igou-inventory/inventory.yaml -e @/tmp/vm.yml
+#
+# One-off VM installing from a LOCAL LINUX ISO already on the host
+# (blank disk boots the ISO; after install the disk boots first and the
+# ISO remains as inert fallback media):
+#
+#   cat > /tmp/vm.yml <<'VMEOF'
+#   truenas_vms:
+#     - name: isotest1
+#       vcpus: 1
+#       cores: 2
+#       threads: 1
+#       memory_mib: 4096
+#       mac: "52:54:00:0A:09:71"
+#       disk_zvol: ssd/vms/isotest1-root
+#       disk_gib: 20
+#       iso: /mnt/ssd/vms/images/CentOS-Stream-10-latest-x86_64-dvd1.iso
+#   VMEOF
+#   ansible-playbook playbooks/truenas/configure_vms.yaml \
+#     -i igou-inventory/inventory.yaml -e @/tmp/vm.yml
+#
+# VMs are never started by this play. Start one with
+# `midclt call vm.start <id>` (or the UI) and use the display console
+# for any interactive install.
 
 - name: Configure KVM virtual machines on TrueNAS
   hosts: truenas
