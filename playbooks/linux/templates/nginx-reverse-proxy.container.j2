@@ -24,6 +24,10 @@ Network={{ linux_proxy_network | default('proxy') }}.network
 # playbooks/linux/acme_certificate_podman_secret.yaml - never as files on disk.
 Secret={{ linux_tls_fullchain_secret | default('igou-tls-fullchain') }},type=mount,target=/etc/nginx/ssl/fullchain.pem,mode=0444
 Secret={{ linux_tls_key_secret | default('igou-tls-key') }},type=mount,target=/etc/nginx/ssl/privkey.pem,mode=0400
+{% for secret in linux_nginx_extra_secrets | default([]) %}
+# Extra per-host secret mounts (htpasswd files etc.); see linux_nginx_extra_secrets.
+Secret={{ secret }}
+{% endfor %}
 # Reverse-proxy config templated onto the host (linux_podman_config_files).
 Volume=%h/containers/nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z
 
