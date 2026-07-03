@@ -88,8 +88,10 @@
                 annotations:
                   managed-by: ansible
               type: Opaque
-              stringData:
-                1password-credentials.json: "{{ lookup('community.general.onepassword_doc', 'ocp-connect-credentials', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) }}"
+              # data + b64encode (not stringData): onepassword_doc returns bytes,
+              # which ansible-core >= 2.19 refuses to serialize to module args.
+              data:
+                1password-credentials.json: "{{ lookup('community.general.onepassword_doc', 'ocp-connect-credentials', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) | b64encode }}"
           no_log: true
 
         - name: Seed the Connect access token Secret (for ESO)
@@ -105,7 +107,10 @@
                   managed-by: ansible
               type: Opaque
               stringData:
-                token: "{{ lookup('community.general.onepassword', 'ocp-connect-token', field='token', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) }}"
+                # The Connect JWT lives in the item's `credential` field (the `token`
+                # field holds an unrelated 83-char stub; verified 2026-07-03 during the
+                # cluster rebuild — the JWT has aud=com.1password.connect).
+                token: "{{ lookup('community.general.onepassword', 'ocp-connect-token', field='credential', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) }}"
           no_log: true
 
         - name: Create Gitops ClusterRoleBinding
