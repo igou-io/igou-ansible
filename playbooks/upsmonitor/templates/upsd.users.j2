@@ -1,0 +1,11 @@
+{{ ansible_managed | comment }}
+# Local upsmon (this Pi) - primary: may set FSD (forced shutdown).
+[upsmon]
+    password = {{ _nut_upsmon_password }}
+    upsmon primary
+
+# Remote upsmon netclients (TrueNAS, OpenShift nodes, ...) - secondary:
+# read state + honor FSD, no control. Also usable by read-only tooling.
+[monitor]
+    password = {{ _nut_monitor_password }}
+    upsmon secondary

@@ -1,0 +1,4 @@
+{{ ansible_managed | comment }}
+{% for listen in _nut_listen %}
+LISTEN {{ listen.address }} {{ listen.port | default(3493) }}
+{% endfor %}

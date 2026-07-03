@@ -1,0 +1,28 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Prometheus NUT exporter (DRuggeri)
+Wants=network-online.target
+After=network-online.target nut-server.service
+
+[Service]
+Type=simple
+User=nut_exporter
+Group=nut_exporter
+ExecStart=/usr/local/bin/nut_exporter \
+  --nut.server=127.0.0.1 \
+  --web.listen-address={{ _nut_exporter_listen_address }} \
+  --nut.vars_enable={{ _nut_exporter_vars_enable | join(',') }}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
