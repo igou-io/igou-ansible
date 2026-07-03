@@ -18,12 +18,22 @@
 #   1004  RAW     optional netboot fallback image (netboot_image) — boot 2
 #   1005  CDROM   optional install ISO (iso, path under /mnt/) — boot 3
 #
-# NOTE (validated live on 25.10.1): the vm.* API cannot make a NIC a
-# boot device (middleware only writes libvirt boot entries for
-# CDROM/DISK/RAW), so netboot is delivered via the RAW fallback image:
-# blank disk -> netboot.xyz EFI image -> DHCP -> rb5009 TFTP pin. The
-# image is staged from the deploy_netboot_binaries build cache when
-# truenas_vm_netboot_image_src is set.
+# ── Why a local netboot image instead of PXE ──────────────────────────
+# (validated live on 25.10.1) The vm.* API cannot make a NIC a boot
+# device: middleware only writes libvirt <boot order> for CDROM/DISK/RAW
+# (middlewared/plugins/vm/devices/{cdrom,storage_devices}.py), so the
+# VM firmware never runs the NIC's PXE path at all and falls to the
+# UEFI shell. On a physical host the PXE ROM would DHCP and download
+# netboot.xyz.efi from rb5009's TFTP; the RAW netboot_image is a local
+# copy of that SAME custom binary (same deploy_netboot_binaries build
+# artifact, wrapped in a bootable FAT image) standing in for the
+# un-runnable PXE ROM. From its first instruction onward the flow is
+# identical to physical netboot: DHCP against rb5009 -> next-server ->
+# chain tftp://rb5009/MAC-<hex>.ipxe -> pin/menu/installer. Only the
+# initial binary is sourced locally; every decision still lives on
+# rb5009 + the public nginx, and the copy task re-syncs the image from
+# the build cache (truenas_vm_netboot_image_src) on every run, so
+# rebuilding the binaries keeps VM and TFTP copies in lockstep.
 #
 # Variables (igou-inventory group_vars/truenas.yml):
 #   truenas_vm_bridge — host bridge for VM NICs (see configure_vm_bridge.yaml)
