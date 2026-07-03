@@ -18,6 +18,26 @@
         - "'firewalld.service' in ansible_facts.services"
         - ansible_facts.services['firewalld.service'].status != 'not-found'
 
+    # democratic-csi node plugins exec iscsiadm / mount.nfs on the host,
+    # so every node needs the iSCSI initiator and NFS client installed
+    # (igou-kubernetes components/democratic-csi).
+    - name: Install CSI node prerequisites (iSCSI initiator, NFS client)
+      ansible.builtin.apt:
+        name:
+          - open-iscsi
+          - nfs-common
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == 'Debian'
+
+    - name: Enable and start iscsid
+      ansible.builtin.systemd:
+        name: iscsid
+        enabled: true
+        state: started
+      when: ansible_os_family == 'Debian'
+
 # Refresh op://awx/<cluster>-kubeconfig after every install/update. Skips
 # with a warning when OP_CONNECT_* env is absent (local runs w/o Connect).
 - name: Publish kubeconfig to 1Password
