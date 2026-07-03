@@ -32,7 +32,7 @@
       register: _vm_create
       changed_when: true
 
-    - name: Attach NIC (boot order 1000, chains the iPXE pin) to VM {{ vm_def.name }}
+    - name: Attach NIC (order 1003; not a boot device — see netboot note below) to VM {{ vm_def.name }}
       ansible.builtin.command:
         argv:
           - midclt
@@ -40,7 +40,7 @@
           - vm.device.create
           - >-
             {{ {'vm': (_vm_create.stdout | from_json).id,
-                'order': 1000,
+                'order': 1003,
                 'attributes': {'dtype': 'NIC',
                                'type': 'VIRTIO',
                                'nic_attach': truenas_vm_bridge,
@@ -89,6 +89,49 @@
                 'order': 1002,
                 'attributes': {'dtype': 'DISPLAY',
                                'password': _display_password}} | to_json }}
+      changed_when: true
+
+    # TrueNAS middleware only emits libvirt boot entries for disk-family
+    # devices (CDROM/DISK/RAW) — a NIC can never be a boot device, so
+    # "PXE-first" is impossible on the vm.* API. Instead, this RAW device
+    # (the custom netboot.xyz EFI disk image built by
+    # playbooks/routeros/deploy_netboot_binaries.yml) is attached AFTER
+    # the zvol in boot order: a blank disk falls through to it, giving
+    # the exact physical netboot chain (DHCP -> rb5009 TFTP pin ->
+    # menu/installer); once an OS is installed the disk boots first and
+    # the image stays as a permanent reinstall fallback.
+    - name: Attach netboot fallback image (order 1004, boots only when the disk is not bootable) to VM {{ vm_def.name }}
+      when: vm_def.netboot_image is defined
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vm_create.stdout | from_json).id,
+                'order': 1004,
+                'attributes': {'dtype': 'RAW',
+                               'path': vm_def.netboot_image,
+                               'type': 'AHCI',
+                               'exists': true}} | to_json }}
+      changed_when: true
+
+    # Optional install ISO (CDROM gets a boot entry, unlike NICs). Sits
+    # last in boot order: a blank disk falls through netboot_image (if
+    # any) and then the ISO; once an OS is installed the disk boots
+    # first. Middleware requires the path to live under /mnt/.
+    - name: Attach install ISO (order 1005, boots only when earlier devices do not) to VM {{ vm_def.name }}
+      when: vm_def.iso is defined
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vm_create.stdout | from_json).id,
+                'order': 1005,
+                'attributes': {'dtype': 'CDROM',
+                               'path': vm_def.iso}} | to_json }}
       changed_when: true
 
   rescue:
