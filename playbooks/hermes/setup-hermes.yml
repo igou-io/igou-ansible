@@ -137,6 +137,23 @@
       failed_when: hermes_on_path.rc != 0 or 'hermes' not in hermes_on_path.stdout
       when: hermes_install_agent | default(true) | bool
 
+    # The Hermes agent venv is created by `uv venv`, which does NOT seed pip.
+    # The ansible.builtin.pip task below drives the venv's own pip interpreter,
+    # so pip must exist inside the venv first — seed it with uv (the tool that
+    # built the venv; ships at ~/.hermes/bin/uv). Idempotent via `creates`.
+    # Without this, a fresh converge fails the anthropic install with
+    # "Unable to find pip in the virtualenv ... under any of these names: pip3, pip".
+    - name: Ensure pip exists in the uv-built Hermes agent venv
+      ansible.builtin.command:
+        cmd: >-
+          {{ hermes_state_mount }}/bin/uv pip install
+          --python {{ hermes_state_mount }}/hermes-agent/venv/bin/python pip
+        creates: "{{ hermes_state_mount }}/hermes-agent/venv/bin/pip"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      when: hermes_install_agent | default(true) | bool
+
     # The agent needs the `anthropic` client to talk to models served over the
     # Anthropic Messages API surface — which on opencode-go includes MiniMax and
     # Qwen. Without it the agent aborts at init ("The 'anthropic' package is
