@@ -1,0 +1,9 @@
+---
+- name: Destroy — remove the throwaway RustFS server
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Remove RustFS container
+      containers.podman.podman_container:
+        name: molecule-rustfs
+        state: absent

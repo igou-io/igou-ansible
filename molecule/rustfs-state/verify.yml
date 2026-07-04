@@ -1,0 +1,68 @@
+---
+# Verify, in order:
+#   1. the role repairs the drift side_effect.yml injected, and reports
+#      exactly the expected change set;
+#   2. a follow-up run is clean (changed=0, empty change list);
+#   3. dead credentials fail the play (liveness path).
+- name: Verify
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Re-converge over injected drift
+      ansible.builtin.include_role:
+        name: rustfs_state
+
+    - name: Assert all four drifts were caught and repaired
+      ansible.builtin.assert:
+        that:
+          - "'molecule:policy:app-rw:update' in rustfs_state_changes"
+          - "'molecule:bucket:app-backups:versioning:enable' in rustfs_state_changes"
+          - "'molecule:bucket:app-backups:lifecycle:import' in rustfs_state_changes"
+          - "'molecule:user:app-user:create' in rustfs_state_changes"
+          - "'molecule:user:app-user:attach:app-rw' in rustfs_state_changes"
+          - rustfs_state_liveness_failures | length == 0
+        fail_msg: "unexpected change set: {{ rustfs_state_changes }}"
+
+    - name: Converge again (must be clean)
+      ansible.builtin.include_role:
+        name: rustfs_state
+
+    - name: Assert the follow-up run found nothing to do
+      ansible.builtin.assert:
+        that:
+          - rustfs_state_changes | length == 0
+          - rustfs_state_unmanaged | length == 0
+          - rustfs_state_liveness_failures | length == 0
+        fail_msg: >-
+          not clean after repair: changes={{ rustfs_state_changes }}
+          unmanaged={{ rustfs_state_unmanaged }}
+
+    - name: Liveness failure path — wrong stored secret must fail the play
+      block:
+        - name: Run role with a bad user secret
+          ansible.builtin.include_role:
+            name: rustfs_state
+          vars:
+            rustfs_instances:
+              - name: molecule-bad
+                endpoint: "{{ rustfs_molecule_endpoint }}"
+                admin_access_key: "{{ rustfs_molecule_admin_access_key }}"
+                admin_secret_key: "{{ rustfs_molecule_admin_secret_key }}"
+                users:
+                  - name: app-user
+                    policies:
+                      - app-rw
+                    secret_key: definitely-not-the-secret
+                    liveness_bucket: app-data
+
+        - name: Unreachable — the role must have failed above
+          ansible.builtin.fail:
+            msg: liveness check passed with a wrong secret
+      rescue:
+        - name: Assert the failure was the liveness assert
+          ansible.builtin.assert:
+            that:
+              - "'molecule-bad:app-user' in (rustfs_state_liveness_failures | join(' '))"
+            fail_msg: "role failed for an unexpected reason: {{ ansible_failed_result | default({}) }}"

@@ -1,0 +1,119 @@
+---
+# Reconcile one bucket (loop_var: rustfs_bucket): existence, versioning
+# (only when the `versioning` key is present), lifecycle rules (only when
+# `lifecycle.rules` is present). Quotas are intentionally out of scope for
+# v1 — nothing live uses them.
+
+- name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Create"
+  when: rustfs_bucket.name not in _rustfs_current_buckets
+  block:
+    - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Record change"
+      ansible.builtin.set_fact:
+        rustfs_state_changes: "{{ rustfs_state_changes + [rustfs_instance.name ~ ':bucket:' ~ rustfs_bucket.name ~ ':create'] }}"
+
+    - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Make bucket"
+      ansible.builtin.command: "{{ rustfs_state_rc }} bucket create {{ rustfs_instance.name }}/{{ rustfs_bucket.name }}"
+      environment: "{{ rustfs_state_env }}"
+      register: _rustfs_bucket_create
+      retries: "{{ rustfs_state_retries }}"
+      delay: "{{ rustfs_state_retry_delay }}"
+      until: _rustfs_bucket_create.rc == 0
+      changed_when: true
+
+- name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Versioning"
+  when: rustfs_bucket.versioning is defined
+  block:
+    - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Read versioning"
+      ansible.builtin.command: >-
+        {{ rustfs_state_rc }} bucket version info
+        {{ rustfs_instance.name }}/{{ rustfs_bucket.name }} --json
+      environment: "{{ rustfs_state_env }}"
+      register: _rustfs_versioning
+      retries: "{{ rustfs_state_retries }}"
+      delay: "{{ rustfs_state_retry_delay }}"
+      until: _rustfs_versioning.rc == 0 or 'network_error' not in _rustfs_versioning.stdout
+      failed_when: false
+      check_mode: false
+      changed_when: false
+
+    # A bucket missing in check mode reads as unversioned.
+    - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Compute versioning drift"
+      ansible.builtin.set_fact:
+        _rustfs_versioning_current: >-
+          {{ _rustfs_versioning.rc == 0
+             and ((_rustfs_versioning.stdout | from_json).enabled | bool) }}
+
+    - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Converge versioning"
+      when: (_rustfs_versioning_current | bool) != (rustfs_bucket.versioning | bool)
+      block:
+        - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Record change"
+          ansible.builtin.set_fact:
+            rustfs_state_changes: >-
+              {{ rustfs_state_changes
+                 + [rustfs_instance.name ~ ':bucket:' ~ rustfs_bucket.name ~ ':versioning:'
+                    ~ (rustfs_bucket.versioning | bool | ternary('enable', 'suspend'))] }}
+
+        - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Set versioning"
+          ansible.builtin.command: >-
+            {{ rustfs_state_rc }} bucket version
+            {{ rustfs_bucket.versioning | bool | ternary('enable', 'suspend') }}
+            {{ rustfs_instance.name }}/{{ rustfs_bucket.name }}
+          environment: "{{ rustfs_state_env }}"
+          register: _rustfs_versioning_set
+          retries: "{{ rustfs_state_retries }}"
+          delay: "{{ rustfs_state_retry_delay }}"
+          until: _rustfs_versioning_set.rc == 0
+          changed_when: true
+
+- name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Lifecycle"
+  when: rustfs_bucket.lifecycle.rules is defined
+  block:
+    - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Export current rules"
+      ansible.builtin.command: >-
+        {{ rustfs_state_rc }} ilm rule export
+        {{ rustfs_instance.name }}/{{ rustfs_bucket.name }}
+      environment: "{{ rustfs_state_env }}"
+      register: _rustfs_ilm
+      retries: "{{ rustfs_state_retries }}"
+      delay: "{{ rustfs_state_retry_delay }}"
+      until: _rustfs_ilm.rc == 0 or 'network_error' not in _rustfs_ilm.stdout
+      failed_when: false
+      check_mode: false
+      changed_when: false
+
+    # A bucket with no lifecycle configuration (or missing in check mode)
+    # reads as an empty rule list. Comparison strips server-generated rule
+    # ids on both sides.
+    - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Compute lifecycle drift"
+      ansible.builtin.set_fact:
+        _rustfs_ilm_matches: >-
+          {{ (((_rustfs_ilm.stdout | from_json).rules | default([])) | rustfs_canonical_ilm)
+             == (rustfs_bucket.lifecycle.rules | rustfs_canonical_ilm)
+             if _rustfs_ilm.rc == 0
+             else (rustfs_bucket.lifecycle.rules | length == 0) }}
+
+    - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Converge lifecycle"
+      when: not (_rustfs_ilm_matches | bool)
+      block:
+        - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Record change"
+          ansible.builtin.set_fact:
+            rustfs_state_changes: "{{ rustfs_state_changes + [rustfs_instance.name ~ ':bucket:' ~ rustfs_bucket.name ~ ':lifecycle:import'] }}"
+
+        - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Render rules"
+          ansible.builtin.copy:
+            content: "{{ {'rules': rustfs_bucket.lifecycle.rules} | to_nice_json }}"
+            dest: "{{ rustfs_state_workdir }}/ilm-{{ rustfs_instance.name }}-{{ rustfs_bucket.name }}.json"
+            mode: "0600"
+          changed_when: false
+
+        - name: "{{ rustfs_instance.name }} | bucket {{ rustfs_bucket.name }} | Import rules"
+          ansible.builtin.command: >-
+            {{ rustfs_state_rc }} ilm rule import
+            {{ rustfs_instance.name }}/{{ rustfs_bucket.name }}
+            {{ rustfs_state_workdir }}/ilm-{{ rustfs_instance.name }}-{{ rustfs_bucket.name }}.json
+          environment: "{{ rustfs_state_env }}"
+          register: _rustfs_ilm_import
+          retries: "{{ rustfs_state_retries }}"
+          delay: "{{ rustfs_state_retry_delay }}"
+          until: _rustfs_ilm_import.rc == 0
+          changed_when: true

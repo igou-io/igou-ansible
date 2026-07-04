@@ -1,0 +1,92 @@
+---
+- name: Assert desired state is provided
+  ansible.builtin.assert:
+    that:
+      - rustfs_instances is iterable
+      - rustfs_instances is not string
+    fail_msg: rustfs_instances must be a list of instances (see roles/rustfs_state/README.md)
+
+# check_mode: false throughout the scaffolding — the nightly drift job runs
+# with --check and still needs the rc binary, aliases, and live reads to
+# compute drift.
+- name: Create working directory (rc binary, alias store, rendered documents)
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: rustfs-state-
+  register: _rustfs_workdir
+  check_mode: false
+  changed_when: false
+
+- name: Reconcile RustFS instances
+  block:
+    - name: Initialize run facts
+      ansible.builtin.set_fact:
+        rustfs_state_workdir: "{{ _rustfs_workdir.path }}"
+        rustfs_state_env:
+          XDG_CONFIG_HOME: "{{ _rustfs_workdir.path }}/xdg"
+        rustfs_state_changes: []
+        rustfs_state_unmanaged: []
+        rustfs_state_liveness_failures: []
+
+    - name: Install pinned rc CLI
+      when: not rustfs_state_rc_binary
+      check_mode: false
+      block:
+        - name: Download rc tarball (checksum-verified)
+          ansible.builtin.get_url:
+            url: "{{ rustfs_state_rc_url }}"
+            dest: "{{ rustfs_state_workdir }}/rc.tar.gz"
+            checksum: "{{ rustfs_state_rc_checksum }}"
+            mode: "0600"
+          changed_when: false
+
+        - name: Extract rc
+          ansible.builtin.unarchive:
+            src: "{{ rustfs_state_workdir }}/rc.tar.gz"
+            dest: "{{ rustfs_state_workdir }}"
+            remote_src: true
+          changed_when: false
+
+    - name: Resolve rc binary path
+      ansible.builtin.set_fact:
+        rustfs_state_rc: "{{ rustfs_state_rc_binary | default(rustfs_state_workdir ~ '/rc', true) }}"
+
+    - name: Reconcile each instance
+      ansible.builtin.include_tasks: instance.yml
+      loop: "{{ rustfs_instances }}"
+      loop_control:
+        loop_var: rustfs_instance
+        label: "{{ rustfs_instance.name }}"
+
+  always:
+    - name: Remove working directory (binary, aliases, rendered documents)
+      ansible.builtin.file:
+        path: "{{ _rustfs_workdir.path }}"
+        state: absent
+      check_mode: false
+      changed_when: false
+
+- name: Reconcile summary
+  ansible.builtin.debug:
+    msg:
+      changes: "{{ rustfs_state_changes }}"
+      unmanaged_on_server: "{{ rustfs_state_unmanaged }}"
+      liveness_failures: "{{ rustfs_state_liveness_failures }}"
+
+# The invariant that catches the InvalidAccessKeyId class of failure: the
+# key pair stored in 1Password must actually authenticate against the
+# server. A failure here means they diverged (wedged server, stale item,
+# manual rotation) — fix the item or the server, never ignore.
+- name: Fail on dead credentials (1Password vs server divergence)
+  ansible.builtin.assert:
+    that: rustfs_state_liveness_failures | length == 0
+    fail_msg: >-
+      Credentials in 1Password no longer authenticate against the server:
+      {{ rustfs_state_liveness_failures | join(', ') }}
+  when: rustfs_state_liveness_failures is defined
+
+- name: Fail on drift (drift-detection mode)
+  ansible.builtin.assert:
+    that: rustfs_state_changes | length == 0
+    fail_msg: "Drift detected: {{ rustfs_state_changes | join(', ') }}"
+  when: rustfs_state_fail_on_drift | bool

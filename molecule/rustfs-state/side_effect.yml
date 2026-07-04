@@ -1,0 +1,105 @@
+---
+# Inject out-of-band drift behind the role's back, using a private rc
+# install (the role shreds its own): rewrite a policy document, suspend
+# versioning, change a lifecycle rule, delete a user. verify.yml then
+# proves the role reports and repairs all of it.
+- name: Side effect — inject drift
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  vars:
+    _drift_dir: /tmp/molecule-rustfs-drift
+    _rc: "{{ _drift_dir }}/rc"
+    _rc_env:
+      XDG_CONFIG_HOME: "{{ _drift_dir }}/xdg"
+  tasks:
+    - name: Create drift workdir
+      ansible.builtin.file:
+        path: "{{ _drift_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Download pinned rc (same pin as the role)
+      ansible.builtin.get_url:
+        url: "https://github.com/rustfs/cli/releases/download/v0.1.25/rustfs-cli-linux-amd64-v0.1.25.tar.gz"
+        dest: "{{ _drift_dir }}/rc.tar.gz"
+        checksum: "sha256:a2d359f9c1c934886e236eb264318bbab326cb67cfae718e3a5186c8cfae82fe"
+        mode: "0600"
+
+    - name: Extract rc
+      ansible.builtin.unarchive:
+        src: "{{ _drift_dir }}/rc.tar.gz"
+        dest: "{{ _drift_dir }}"
+        remote_src: true
+
+    - name: Register admin alias
+      ansible.builtin.command:
+        argv:
+          - "{{ _rc }}"
+          - alias
+          - set
+          - drift
+          - "{{ rustfs_molecule_endpoint }}"
+          - "{{ rustfs_molecule_admin_access_key }}"
+          - "{{ rustfs_molecule_admin_secret_key }}"
+      environment: "{{ _rc_env }}"
+      changed_when: true
+
+    - name: "Drift 1: rewrite policy app-rw (drop the write statement)"
+      ansible.builtin.copy:
+        content: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "ListOnly",
+                "Effect": "Allow",
+                "Action": ["s3:ListBucket"],
+                "Resource": ["arn:aws:s3:::app-data"]
+              }
+            ]
+          }
+        dest: "{{ _drift_dir }}/drifted-policy.json"
+        mode: "0600"
+
+    - name: "Drift 1: apply rewritten policy"
+      ansible.builtin.command: "{{ _rc }} admin policy create drift app-rw {{ _drift_dir }}/drifted-policy.json"
+      environment: "{{ _rc_env }}"
+      changed_when: true
+
+    - name: "Drift 2: suspend versioning on app-backups"
+      ansible.builtin.command: "{{ _rc }} bucket version suspend drift/app-backups"
+      environment: "{{ _rc_env }}"
+      changed_when: true
+
+    - name: "Drift 3: replace lifecycle rules on app-backups"
+      ansible.builtin.copy:
+        content: |
+          {
+            "rules": [
+              {
+                "id": "33333333-3333-3333-3333-333333333333",
+                "status": "Enabled",
+                "prefix": "backups/",
+                "noncurrentVersionExpiration": {"noncurrentDays": 7}
+              }
+            ]
+          }
+        dest: "{{ _drift_dir }}/drifted-ilm.json"
+        mode: "0600"
+
+    - name: "Drift 3: import drifted lifecycle"
+      ansible.builtin.command: "{{ _rc }} ilm rule import drift/app-backups {{ _drift_dir }}/drifted-ilm.json"
+      environment: "{{ _rc_env }}"
+      changed_when: true
+
+    - name: "Drift 4: delete user app-user"
+      ansible.builtin.command: "{{ _rc }} admin user rm drift app-user"
+      environment: "{{ _rc_env }}"
+      changed_when: true
+
+    - name: Remove drift workdir
+      ansible.builtin.file:
+        path: "{{ _drift_dir }}"
+        state: absent

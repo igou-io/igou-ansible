@@ -1,0 +1,29 @@
+---
+- name: Prepare — start a throwaway RustFS server
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tasks:
+    # Pinned to the exact version running live (TrueNAS apps rustfs +
+    # rustfs-cold) so the test exercises the same admin API.
+    - name: Start RustFS container
+      containers.podman.podman_container:
+        name: molecule-rustfs
+        image: docker.io/rustfs/rustfs:1.0.0-beta.8
+        state: started
+        recreate: true
+        publish:
+          - "127.0.0.1:9100:9000"
+        env:
+          RUSTFS_ACCESS_KEY: "{{ rustfs_molecule_admin_access_key }}"
+          RUSTFS_SECRET_KEY: "{{ rustfs_molecule_admin_secret_key }}"
+
+    - name: Wait for the S3 endpoint
+      ansible.builtin.uri:
+        url: "{{ rustfs_molecule_endpoint }}"
+        status_code: [200, 403]
+      register: _rustfs_up
+      retries: 30
+      delay: 2
+      until: _rustfs_up is not failed

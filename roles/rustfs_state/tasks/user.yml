@@ -1,0 +1,93 @@
+---
+# Reconcile one IAM user (loop_var: rustfs_user): existence and policy
+# attachments. The user's name IS its access key.
+#
+# Secret handling:
+# - creation reads the secret from an inline `secret_key` (molecule) or the
+#   user's 1Password item (credential_item + credential_vault; secret field
+#   defaults to `password`). If neither is present the task fails — this
+#   role never generates credentials (publishing them back to 1Password
+#   needs a write-capable Connect grant, which is a known gap, see
+#   igou-inventory#123 gap 2).
+# - an EXISTING user's secret is never touched (rc `admin user add` on an
+#   existing access key would reset it) — rotation is a deliberate manual
+#   act, not a converge side effect.
+
+- name: "{{ rustfs_instance.name }} | user {{ rustfs_user.name }} | Compute state"
+  ansible.builtin.set_fact:
+    _rustfs_user_exists: "{{ rustfs_user.name in (_rustfs_current_users | map(attribute='accessKey') | list) }}"
+    _rustfs_user_current_policies: >-
+      {{ (_rustfs_current_users
+          | selectattr('accessKey', 'equalto', rustfs_user.name)
+          | map(attribute='policies') | first) | default([]) }}
+
+- name: "{{ rustfs_instance.name }} | user {{ rustfs_user.name }} | Create"
+  when: not (_rustfs_user_exists | bool)
+  block:
+    - name: "{{ rustfs_instance.name }} | user {{ rustfs_user.name }} | Record change"
+      ansible.builtin.set_fact:
+        rustfs_state_changes: "{{ rustfs_state_changes + [rustfs_instance.name ~ ':user:' ~ rustfs_user.name ~ ':create'] }}"
+
+    - name: "{{ rustfs_instance.name }} | user {{ rustfs_user.name }} | Add user"
+      ansible.builtin.command:
+        argv:
+          - "{{ rustfs_state_rc }}"
+          - admin
+          - user
+          - add
+          - "{{ rustfs_instance.name }}"
+          - "{{ rustfs_user.name }}"
+          - >-
+            {{ rustfs_user.secret_key
+               if rustfs_user.secret_key is defined
+               else lookup('community.general.onepassword',
+                           rustfs_user.credential_item,
+                           field=rustfs_user.credential_secret_key_field | default('password'),
+                           vault=rustfs_user.credential_vault) }}
+      environment: "{{ rustfs_state_env }}"
+      register: _rustfs_user_add
+      retries: "{{ rustfs_state_retries }}"
+      delay: "{{ rustfs_state_retry_delay }}"
+      until: _rustfs_user_add.rc == 0
+      no_log: true
+      changed_when: true
+
+- name: "{{ rustfs_instance.name }} | user {{ rustfs_user.name }} | Attach missing policies"
+  vars:
+    _rustfs_user_missing_policies: >-
+      {{ (rustfs_user.policies | default([]))
+         | difference(_rustfs_user_exists | bool | ternary(_rustfs_user_current_policies, [])) }}
+  when: _rustfs_user_missing_policies | length > 0
+  block:
+    - name: "{{ rustfs_instance.name }} | user {{ rustfs_user.name }} | Record change"
+      ansible.builtin.set_fact:
+        rustfs_state_changes: >-
+          {{ rustfs_state_changes
+             + [rustfs_instance.name ~ ':user:' ~ rustfs_user.name ~ ':attach:'
+                ~ (_rustfs_user_missing_policies | join('+'))] }}
+
+    - name: "{{ rustfs_instance.name }} | user {{ rustfs_user.name }} | Attach"
+      ansible.builtin.command: >-
+        {{ rustfs_state_rc }} admin policy attach {{ rustfs_instance.name }}
+        {{ _rustfs_user_missing_policies | join(',') }}
+        --user {{ rustfs_user.name }}
+      environment: "{{ rustfs_state_env }}"
+      register: _rustfs_user_attach
+      retries: "{{ rustfs_state_retries }}"
+      delay: "{{ rustfs_state_retry_delay }}"
+      until: _rustfs_user_attach.rc == 0
+      changed_when: true
+
+# Policies attached on the server but absent from the spec are reported,
+# never detached (rc 0.1.x has no detach subcommand anyway).
+- name: "{{ rustfs_instance.name }} | user {{ rustfs_user.name }} | Record extra attachments"
+  vars:
+    _rustfs_user_extra_policies: >-
+      {{ (_rustfs_user_exists | bool | ternary(_rustfs_user_current_policies, []))
+         | difference(rustfs_user.policies | default([])) }}
+  when: _rustfs_user_extra_policies | length > 0
+  ansible.builtin.set_fact:
+    rustfs_state_unmanaged: >-
+      {{ rustfs_state_unmanaged
+         + [rustfs_instance.name ~ ':user:' ~ rustfs_user.name ~ ':extra-attachment:'
+            ~ (_rustfs_user_extra_policies | join('+'))] }}
