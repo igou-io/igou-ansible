@@ -1,0 +1,66 @@
+---
+- name: Hermes admin - persistent on-VM Claude Code session
+  # Stands up a durable, Remote-Control-enabled Claude Code session on the Hermes
+  # VM, running as the unprivileged `hermes` service user, for administering the
+  # agent from the terminal / phone / claude.ai. Survives disconnects AND reboots
+  # via a systemd --user unit + the hermes user's linger (enabled in setup-os).
+  #
+  # Prereqs (from the normal hermes convergence): the `hermes` user exists with
+  # linger enabled and the `claude` CLI on its login-shell PATH (setup-hermes
+  # installs it to ~/.local/bin; setup-os seeds the skel dotfiles that put
+  # ~/.local/bin on PATH). Run this after setup-hermes.
+  #
+  # Two things are intentionally NOT provisioned here because they are first-run,
+  # interactive, or secret — do them once by attaching to the session:
+  #     sudo -u hermes XDG_RUNTIME_DIR=/run/user/<uid> tmux attach -t {{ hermes_admin_session_name }}
+  #   1. Auth: run `/login` (claude.ai OAuth; account-bound, not a service secret).
+  #   2. First-run onboarding (theme + trust dialog) is a one-time keypress.
+  hosts: "{{ ansible_limit | default('hermes-hermes') }}"
+  become: true
+  vars:
+    hermes_user: hermes
+    hermes_home: /home/hermes
+    hermes_admin_session_name: hermes-admin
+    hermes_admin_rc_name: hermes admin
+    hermes_admin_workdir: "{{ hermes_home }}/.hermes"
+  tasks:
+    - name: Install tmux (persistent session multiplexer)
+      ansible.builtin.package:
+        name: tmux
+        state: present
+
+    - name: Resolve the hermes user's uid (for XDG_RUNTIME_DIR / the user bus)
+      ansible.builtin.command:
+        cmd: "id -u {{ hermes_user }}"
+      register: hermes_admin_uid
+      changed_when: false
+
+    - name: Ensure the hermes systemd --user unit directory exists
+      ansible.builtin.file:
+        path: "{{ hermes_home }}/.config/systemd/user"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0755"
+
+    - name: Render the persistent Claude admin session systemd --user unit
+      ansible.builtin.template:
+        src: hermes-admin.service.j2
+        dest: "{{ hermes_home }}/.config/systemd/user/{{ hermes_admin_session_name }}.service"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+      register: hermes_admin_unit
+
+    - name: Enable and (re)start the Claude admin session
+      become: true
+      become_user: "{{ hermes_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hermes_admin_uid.stdout }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ hermes_admin_uid.stdout }}/bus"
+      ansible.builtin.systemd_service:
+        name: "{{ hermes_admin_session_name }}.service"
+        scope: user
+        enabled: true
+        daemon_reload: true
+        state: "{{ 'restarted' if hermes_admin_unit.changed else 'started' }}"
