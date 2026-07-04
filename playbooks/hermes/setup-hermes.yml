@@ -5,6 +5,13 @@
   # setup-os.yml has mounted and owned the persistent Hermes state directory and
   # prepared the service user's shell.
   #
+  # Installs, all as the unprivileged `hermes` service user:
+  #   - the Hermes Agent (Nous installer) + its tirith pre-exec scanner,
+  #   - the OpenCode, Claude Code, and Codex coding-agent CLIs.
+  # Every install uses each vendor's official method (curl installer or GitHub
+  # release binary) — deliberately NOT npm: the guest egress firewall admits the
+  # vendors' installer/API/GitHub endpoints but not registry.npmjs.org.
+  #
   # Run order: setup-os (egress open) -> setup-hermes (egress open) -> lock egress
   # -> configure.
   #
@@ -193,6 +200,120 @@
             include:
               - tirith
             mode: "0755"
+
+    # === Additional coding-agent CLIs (installed as the hermes service user) ===
+    # Each fetches from the network, so they run here in the egress-open window.
+    # `become_flags: -i` forces a login shell so the service user (nologin-style)
+    # gets a sane $HOME/$PATH for the vendor installers. `creates:` makes each
+    # install idempotent. No npm (see play header).
+
+    - name: Install the OpenCode CLI as the hermes user
+      ansible.builtin.shell:
+        # Official installer; drops the binary in ~/.opencode/bin and wires PATH
+        # into the user's shell rc files.
+        cmd: >-
+          set -o pipefail && curl -fsSL https://opencode.ai/install | bash
+        creates: "{{ hermes_home }}/.opencode/bin/opencode"
+        executable: /bin/bash
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      changed_when: true
+
+    - name: Confirm the OpenCode CLI is runnable
+      ansible.builtin.command:
+        cmd: "{{ hermes_home }}/.opencode/bin/opencode --version"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      register: hermes_opencode_version
+      changed_when: false
+
+    - name: Install the Claude Code CLI as the hermes user (official installer)
+      ansible.builtin.shell:
+        # Official native installer: downloads + SHA-256-verifies the release, then
+        # its own `install` step places the binary at ~/.local/bin/claude.
+        cmd: >-
+          set -o pipefail && curl -fsSL https://claude.ai/install.sh | bash
+        creates: "{{ hermes_home }}/.local/bin/claude"
+        executable: /bin/bash
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      changed_when: true
+
+    - name: Confirm the Claude Code CLI is runnable
+      ansible.builtin.command:
+        cmd: "{{ hermes_home }}/.local/bin/claude --version"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      register: hermes_claude_version
+      changed_when: false
+
+    # Codex ships no curl installer and no npmjs.org access here, so pull the
+    # official statically-linked (musl) release binary from GitHub, like tirith.
+    # Its release tarball has no companion checksums file for the plain binary
+    # (only the codex-package variant does); HTTPS to the official openai/codex
+    # release is the trust anchor. Pin _codex_ref to a tag for reproducibility.
+    - name: Check whether the Codex CLI is already installed
+      ansible.builtin.stat:
+        path: "{{ hermes_home }}/.local/bin/codex"
+      register: hermes_codex_bin
+      become: true
+
+    - name: Install the Codex CLI from its GitHub release as the hermes user
+      when: not hermes_codex_bin.stat.exists
+      become: true
+      become_user: "{{ hermes_user }}"
+      vars:
+        _codex_ref: latest
+        # arch -> codex release triple (musl = statically linked, portable)
+        _codex_target: >-
+          {{ {'x86_64': 'x86_64-unknown-linux-musl',
+              'aarch64': 'aarch64-unknown-linux-musl'}[ansible_architecture] }}
+        _codex_url: >-
+          https://github.com/openai/codex/releases/{{ 'latest/download'
+          if _codex_ref == 'latest' else 'download/' ~ _codex_ref }}/codex-{{ _codex_target }}.tar.gz
+      block:
+        - name: Ensure the hermes user's local bin exists
+          ansible.builtin.file:
+            path: "{{ hermes_home }}/.local/bin"
+            state: directory
+            owner: "{{ hermes_user }}"
+            group: "{{ hermes_user }}"
+            mode: "0755"
+
+        - name: Download the Codex release tarball
+          ansible.builtin.get_url:
+            url: "{{ _codex_url }}"
+            dest: "{{ hermes_state_mount }}/codex-{{ _codex_target }}.tar.gz"
+            mode: "0644"
+
+        - name: Extract the Codex binary into the Hermes bin directory
+          ansible.builtin.unarchive:
+            src: "{{ hermes_state_mount }}/codex-{{ _codex_target }}.tar.gz"
+            dest: "{{ hermes_state_mount }}/bin"
+            remote_src: true
+            include:
+              - "codex-{{ _codex_target }}"
+            mode: "0755"
+
+        - name: Install the Codex binary as `codex` on the user's PATH
+          ansible.builtin.copy:
+            src: "{{ hermes_state_mount }}/bin/codex-{{ _codex_target }}"
+            dest: "{{ hermes_home }}/.local/bin/codex"
+            remote_src: true
+            mode: "0755"
+
+    - name: Confirm the Codex CLI is runnable
+      ansible.builtin.command:
+        cmd: "{{ hermes_home }}/.local/bin/codex --version"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      register: hermes_codex_version
+      changed_when: false
 
     # ghapp GitHub App token broker (gated OFF; flip with
     # -e hermes_ghapp_broker_enabled=true). Runs in this egress-open phase
