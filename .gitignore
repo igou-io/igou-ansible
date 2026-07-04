@@ -19,3 +19,4 @@ testvars.yml
 # Superpowers brainstorming/plan scratch docs
 docs/superpowers/
 .claude/settings.local.json
+__pycache__/

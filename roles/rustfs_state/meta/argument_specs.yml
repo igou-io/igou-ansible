@@ -1,0 +1,144 @@
+---
+argument_specs:
+  main:
+    short_description: Reconcile RustFS in-server state against a declarative spec
+    description:
+      - Reconciles IAM policies, buckets, versioning, lifecycle rules, users and
+        policy attachments on one or more RustFS instances via the pinned rc CLI,
+        and verifies that the provided per-user credentials actually authenticate.
+      - The role is a pure function over its inputs. Every credential arrives as
+        a resolved value — the role performs no secret lookups; op:// lookup
+        expressions belong in the caller's data (inventory group_vars).
+      - Run with --check for drift-detection mode (reads execute, mutations do
+        not, and the play fails on any drift or dead credential).
+    options:
+      rustfs_state_instances:
+        description: Instances to reconcile, with resolved credentials.
+        type: list
+        elements: dict
+        required: true
+        options:
+          name:
+            description: Instance name; used as the rc alias and in reports.
+            type: str
+            required: true
+          endpoint:
+            description: Base URL of the instance (https://host:port).
+            type: str
+            required: true
+          admin_access_key:
+            description: Resolved admin/root access key.
+            type: str
+            required: true
+          admin_secret_key:
+            description: Resolved admin/root secret key.
+            type: str
+            required: true
+            no_log: true
+          policies:
+            description: Managed IAM policies.
+            type: list
+            elements: dict
+            default: []
+            options:
+              name:
+                description: Policy name.
+                type: str
+                required: true
+              document:
+                description: >-
+                  IAM policy document, verbatim from `rc admin policy info`
+                  (free-form dict; ordering differences are absorbed by the
+                  role's canonical comparison).
+                type: dict
+                required: true
+          buckets:
+            description: Managed buckets.
+            type: list
+            elements: dict
+            default: []
+            options:
+              name:
+                description: Bucket name.
+                type: str
+                required: true
+              versioning:
+                description: Desired versioning state. Omit to leave unmanaged.
+                type: bool
+              lifecycle:
+                description: Lifecycle configuration. Omit to leave unmanaged.
+                type: dict
+                options:
+                  rules:
+                    description: >-
+                      Lifecycle rules, verbatim from `rc ilm rule export`.
+                      Every rule MUST carry an `id` (`rc ilm rule import`
+                      rejects id-less rules); ids are ignored in drift
+                      comparison.
+                    type: list
+                    elements: dict
+                    required: true
+          users:
+            description: Managed IAM users; a user's name is its access key.
+            type: list
+            elements: dict
+            default: []
+            options:
+              name:
+                description: Access key (identity) of the user on the server.
+                type: str
+                required: true
+              policies:
+                description: Policy names to attach.
+                type: list
+                elements: str
+                default: []
+              secret_key:
+                description: >-
+                  Resolved secret key. Required when the user may need to be
+                  created and for the liveness check. Never rewritten for an
+                  existing user.
+                type: str
+                no_log: true
+              access_key:
+                description: >-
+                  Access key to use for the liveness check, as stored in the
+                  credential store (defaults to name). A mismatch with the
+                  server identity is exactly what liveness detects.
+                type: str
+              liveness_bucket:
+                description: >-
+                  Bucket to list with the provided credentials each run;
+                  enables the credential-liveness check.
+                type: str
+      rustfs_state_rc_version:
+        description: Pinned rc CLI version.
+        type: str
+        default: "0.1.25"
+      rustfs_state_rc_checksum:
+        description: sha256 checksum of the pinned rc tarball.
+        type: str
+      rustfs_state_rc_url:
+        description: Download URL of the pinned rc tarball.
+        type: str
+      rustfs_state_rc_binary:
+        description: Path to a pre-installed rc binary; empty downloads the pin.
+        type: str
+        default: ""
+      rustfs_state_retries:
+        description: Retries per rc call (flaky admin API).
+        type: int
+        default: 8
+      rustfs_state_retry_delay:
+        description: Delay in seconds between retries.
+        type: int
+        default: 3
+      rustfs_state_builtin_policies:
+        description: Server-shipped policies never reported as unmanaged.
+        type: list
+        elements: str
+      rustfs_state_fail_on_drift:
+        description: >-
+          Fail the play when any change is (or would be) made. Defaults to
+          the check-mode flag, which makes --check the drift-detection mode.
+        type: bool

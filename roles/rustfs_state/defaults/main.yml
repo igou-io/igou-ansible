@@ -31,6 +31,10 @@ rustfs_state_builtin_policies:
 # converge run fixes drift instead of failing on it.
 rustfs_state_fail_on_drift: "{{ ansible_check_mode }}"
 
-# Desired state — a list of instances; see the role README for the schema.
-# Lives in igou-inventory (group_vars/rustfs.yml).
-rustfs_instances: []
+# rustfs_state_instances — REQUIRED, deliberately no default: a run without
+# a spec must fail loudly, not pass green. A list of instances with
+# RESOLVED credential values; the role performs no secret lookups itself
+# (function-style interface — op:// lookup expressions belong in the
+# caller's data, e.g. igou-inventory group_vars/rustfs.yml). Schema:
+# meta/argument_specs.yml + README.
+# rustfs_state_instances:

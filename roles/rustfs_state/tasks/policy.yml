@@ -1,56 +1,58 @@
 ---
-# Reconcile one IAM policy (loop_var: rustfs_policy).
+# Reconcile one IAM policy (loop_var: rustfs_state_policy).
 #
 # Retries only network-class failures ("not found" must fall through so a
 # missing policy is detected instead of retried to exhaustion): the rc error
 # JSON carries details.type == "network_error" for the retryable class.
 
-- name: "{{ rustfs_instance.name }} | policy {{ rustfs_policy.name }} | Read current document"
+- name: "Read current document for policy {{ rustfs_state_instance.name ~ ':' ~ rustfs_state_policy.name }}"
   ansible.builtin.command: >-
     {{ rustfs_state_rc }} admin policy info
-    {{ rustfs_instance.name }} {{ rustfs_policy.name }} --json
+    {{ rustfs_state_instance.name }} {{ rustfs_state_policy.name }} --json
   environment: "{{ rustfs_state_env }}"
-  register: _rustfs_policy_info
+  register: _rustfs_state_policy_info
   retries: "{{ rustfs_state_retries }}"
   delay: "{{ rustfs_state_retry_delay }}"
-  until: _rustfs_policy_info.rc == 0 or 'network_error' not in _rustfs_policy_info.stdout
+  until: >-
+    _rustfs_state_policy_info.rc == 0
+    or 'network_error' not in (_rustfs_state_policy_info.stdout ~ _rustfs_state_policy_info.stderr)
   failed_when: false
   check_mode: false
   changed_when: false
 
-- name: "{{ rustfs_instance.name }} | policy {{ rustfs_policy.name }} | Compute drift"
+- name: "Compute drift for policy {{ rustfs_state_instance.name ~ ':' ~ rustfs_state_policy.name }}"
   ansible.builtin.set_fact:
-    _rustfs_policy_exists: "{{ rustfs_policy.name in _rustfs_current_policies }}"
-    _rustfs_policy_matches: >-
-      {{ _rustfs_policy_info.rc == 0
-         and ((_rustfs_policy_info.stdout | from_json).policy.policy | rustfs_canonical_policy)
-             == (rustfs_policy.document | rustfs_canonical_policy) }}
+    _rustfs_state_policy_exists: "{{ rustfs_state_policy.name in _rustfs_state_current_policies }}"
+    _rustfs_state_policy_matches: >-
+      {{ _rustfs_state_policy_info.rc == 0
+         and ((_rustfs_state_policy_info.stdout | from_json).policy.policy | rustfs_canonical_policy)
+             == (rustfs_state_policy.document | rustfs_canonical_policy) }}
 
-- name: "{{ rustfs_instance.name }} | policy {{ rustfs_policy.name }} | Apply"
-  when: not (_rustfs_policy_matches | bool)
+- name: "Apply policy {{ rustfs_state_instance.name ~ ':' ~ rustfs_state_policy.name }}"
+  when: not (_rustfs_state_policy_matches | bool)
   block:
-    - name: "{{ rustfs_instance.name }} | policy {{ rustfs_policy.name }} | Record change"
+    - name: "Record change for policy {{ rustfs_state_instance.name ~ ':' ~ rustfs_state_policy.name }}"
       ansible.builtin.set_fact:
         rustfs_state_changes: >-
           {{ rustfs_state_changes
-             + [rustfs_instance.name ~ ':policy:' ~ rustfs_policy.name ~ ':'
-                ~ (_rustfs_policy_exists | bool | ternary('update', 'create'))] }}
+             + [rustfs_state_instance.name ~ ':policy:' ~ rustfs_state_policy.name ~ ':'
+                ~ (_rustfs_state_policy_exists | bool | ternary('update', 'create'))] }}
 
-    - name: "{{ rustfs_instance.name }} | policy {{ rustfs_policy.name }} | Render document"
+    - name: "Render document for policy {{ rustfs_state_instance.name ~ ':' ~ rustfs_state_policy.name }}"
       ansible.builtin.copy:
-        content: "{{ rustfs_policy.document | to_nice_json }}"
-        dest: "{{ rustfs_state_workdir }}/policy-{{ rustfs_instance.name }}-{{ rustfs_policy.name }}.json"
+        content: "{{ rustfs_state_policy.document | to_nice_json }}"
+        dest: "{{ rustfs_state_workdir }}/policy-{{ rustfs_state_instance.name }}-{{ rustfs_state_policy.name }}.json"
         mode: "0600"
       changed_when: false
 
-    - name: "{{ rustfs_instance.name }} | policy {{ rustfs_policy.name }} | Create/update"
+    - name: "Create or update policy {{ rustfs_state_instance.name ~ ':' ~ rustfs_state_policy.name }}"
       ansible.builtin.command: >-
         {{ rustfs_state_rc }} admin policy create
-        {{ rustfs_instance.name }} {{ rustfs_policy.name }}
-        {{ rustfs_state_workdir }}/policy-{{ rustfs_instance.name }}-{{ rustfs_policy.name }}.json
+        {{ rustfs_state_instance.name }} {{ rustfs_state_policy.name }}
+        {{ rustfs_state_workdir }}/policy-{{ rustfs_state_instance.name }}-{{ rustfs_state_policy.name }}.json
       environment: "{{ rustfs_state_env }}"
-      register: _rustfs_policy_apply
+      register: _rustfs_state_policy_apply
       retries: "{{ rustfs_state_retries }}"
       delay: "{{ rustfs_state_retry_delay }}"
-      until: _rustfs_policy_apply.rc == 0
+      until: _rustfs_state_policy_apply.rc == 0
       changed_when: true

@@ -3,7 +3,7 @@
   hosts: localhost
   gather_facts: false
   vars_files:
-    - vars.yml
+    - files/vars.yml
   tasks:
     # Pinned to the exact version running live (TrueNAS apps rustfs +
     # rustfs-cold) so the test exercises the same admin API.
@@ -16,14 +16,14 @@
         publish:
           - "127.0.0.1:9100:9000"
         env:
-          RUSTFS_ACCESS_KEY: "{{ rustfs_molecule_admin_access_key }}"
-          RUSTFS_SECRET_KEY: "{{ rustfs_molecule_admin_secret_key }}"
+          RUSTFS_ACCESS_KEY: "{{ rustfs_state_molecule_admin_access_key }}"
+          RUSTFS_SECRET_KEY: "{{ rustfs_state_molecule_admin_secret_key }}"
 
     - name: Wait for the S3 endpoint
       ansible.builtin.uri:
-        url: "{{ rustfs_molecule_endpoint }}"
+        url: "{{ rustfs_state_molecule_endpoint }}"
         status_code: [200, 403]
-      register: _rustfs_up
+      register: _rustfs_state_molecule_up
       retries: 30
       delay: 2
-      until: _rustfs_up is not failed
+      until: _rustfs_state_molecule_up is not failed

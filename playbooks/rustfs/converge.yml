@@ -1,8 +1,8 @@
 ---
 # Reconcile RustFS in-server state (policies, buckets, versioning,
 # lifecycle, users, attachments) against the declarative spec in
-# igou-inventory (group_vars/rustfs.yml) and verify that the credentials
-# stored in 1Password actually authenticate. igou-inventory#122.
+# igou-inventory (group_vars/rustfs.yml, rustfs_state_instances) and verify
+# that the provided credentials actually authenticate. igou-inventory#122.
 #
 # Modes:
 #   converge:        run as-is; applies drift, fails on dead credentials
@@ -10,10 +10,15 @@
 #                    any drift or a dead credential is found (AAP job
 #                    template rustfs_state_drift, nightly)
 #
+# The role is a pure function over rustfs_state_instances — it performs no
+# secret lookups. The op:// lookup expressions live in the inventory data,
+# so the run still needs OP_CONNECT_HOST / OP_CONNECT_TOKEN in the
+# environment (AAP: the onepassword-connect-token credential) for those
+# values to resolve.
+#
 # Targets the `rustfs` inventory group — a control stub with
 # ansible_connection: local; the role reaches each instance's HTTPS
-# endpoint itself via the pinned rc CLI. Requires OP_CONNECT_HOST /
-# OP_CONNECT_TOKEN (AAP: the onepassword-connect-token credential).
+# endpoint itself via the pinned rc CLI.
 - name: Reconcile RustFS instances
   hosts: "{{ host | default('rustfs') }}"
   gather_facts: false

@@ -1,127 +1,114 @@
 ---
-# Reconcile one instance (loop_var: rustfs_instance).
-#
-# Admin credentials come from an inline override (admin_access_key /
-# admin_secret_key — molecule) or a 1Password item (admin_credential_item +
-# admin_credential_vault; field names default to username/password to match
-# the existing rustfs consumer items).
+# Reconcile one instance (loop_var: rustfs_state_instance). Credentials
+# arrive RESOLVED in the instance data — the role performs no secret
+# lookups (function-style interface, see meta/argument_specs.yml).
 
-- name: "{{ rustfs_instance.name }} | Resolve admin credentials"
-  ansible.builtin.set_fact:
-    _rustfs_admin_ak: >-
-      {{ rustfs_instance.admin_access_key
-         if rustfs_instance.admin_access_key is defined
-         else lookup('community.general.onepassword',
-                     rustfs_instance.admin_credential_item,
-                     field=rustfs_instance.admin_access_key_field | default('username'),
-                     vault=rustfs_instance.admin_credential_vault) }}
-    _rustfs_admin_sk: >-
-      {{ rustfs_instance.admin_secret_key
-         if rustfs_instance.admin_secret_key is defined
-         else lookup('community.general.onepassword',
-                     rustfs_instance.admin_credential_item,
-                     field=rustfs_instance.admin_secret_key_field | default('password'),
-                     vault=rustfs_instance.admin_credential_vault) }}
-  no_log: true
-  check_mode: false
-
-- name: "{{ rustfs_instance.name }} | Register rc alias"
+- name: "Register rc alias for instance {{ rustfs_state_instance.name }}"
   ansible.builtin.command:
     argv:
       - "{{ rustfs_state_rc }}"
       - alias
       - set
-      - "{{ rustfs_instance.name }}"
-      - "{{ rustfs_instance.endpoint }}"
-      - "{{ _rustfs_admin_ak }}"
-      - "{{ _rustfs_admin_sk }}"
+      - "{{ rustfs_state_instance.name }}"
+      - "{{ rustfs_state_instance.endpoint }}"
+      - "{{ rustfs_state_instance.admin_access_key }}"
+      - "{{ rustfs_state_instance.admin_secret_key }}"
   environment: "{{ rustfs_state_env }}"
-  register: _rustfs_alias
+  register: _rustfs_state_alias
   retries: "{{ rustfs_state_retries }}"
   delay: "{{ rustfs_state_retry_delay }}"
-  until: _rustfs_alias.rc == 0
+  until: _rustfs_state_alias.rc == 0
   no_log: true
   check_mode: false
   changed_when: false
 
-- name: "{{ rustfs_instance.name }} | Read buckets"
-  ansible.builtin.command: "{{ rustfs_state_rc }} ls {{ rustfs_instance.name }} --json"
+- name: "Read buckets on {{ rustfs_state_instance.name }}"
+  ansible.builtin.command: "{{ rustfs_state_rc }} ls {{ rustfs_state_instance.name }} --json"
   environment: "{{ rustfs_state_env }}"
-  register: _rustfs_ls
+  register: _rustfs_state_ls
   retries: "{{ rustfs_state_retries }}"
   delay: "{{ rustfs_state_retry_delay }}"
-  until: _rustfs_ls.rc == 0
+  until: _rustfs_state_ls.rc == 0
   check_mode: false
   changed_when: false
 
-- name: "{{ rustfs_instance.name }} | Read policies"
-  ansible.builtin.command: "{{ rustfs_state_rc }} admin policy ls {{ rustfs_instance.name }} --json"
+- name: "Read policies on {{ rustfs_state_instance.name }}"
+  ansible.builtin.command: "{{ rustfs_state_rc }} admin policy ls {{ rustfs_state_instance.name }} --json"
   environment: "{{ rustfs_state_env }}"
-  register: _rustfs_policy_ls
+  register: _rustfs_state_policy_ls
   retries: "{{ rustfs_state_retries }}"
   delay: "{{ rustfs_state_retry_delay }}"
-  until: _rustfs_policy_ls.rc == 0
+  until: _rustfs_state_policy_ls.rc == 0
   check_mode: false
   changed_when: false
 
-- name: "{{ rustfs_instance.name }} | Read users"
-  ansible.builtin.command: "{{ rustfs_state_rc }} admin user ls {{ rustfs_instance.name }} --json"
+- name: "Read users on {{ rustfs_state_instance.name }}"
+  ansible.builtin.command: "{{ rustfs_state_rc }} admin user ls {{ rustfs_state_instance.name }} --json"
   environment: "{{ rustfs_state_env }}"
-  register: _rustfs_user_ls
+  register: _rustfs_state_user_ls
   retries: "{{ rustfs_state_retries }}"
   delay: "{{ rustfs_state_retry_delay }}"
-  until: _rustfs_user_ls.rc == 0
+  until: _rustfs_state_user_ls.rc == 0
   check_mode: false
   changed_when: false
 
-- name: "{{ rustfs_instance.name }} | Parse current state"
+- name: "Parse current state of {{ rustfs_state_instance.name }}"
   ansible.builtin.set_fact:
-    _rustfs_current_buckets: "{{ (_rustfs_ls.stdout | from_json)['items'] | default([]) | map(attribute='key') | list }}"
-    _rustfs_current_policies: "{{ (_rustfs_policy_ls.stdout | from_json).policies | default([]) }}"
-    _rustfs_current_users: "{{ (_rustfs_user_ls.stdout | from_json).users | default([]) }}"
+    _rustfs_state_current_buckets: "{{ (_rustfs_state_ls.stdout | from_json)['items'] | default([]) | map(attribute='key') | list }}"
+    _rustfs_state_current_policies: "{{ (_rustfs_state_policy_ls.stdout | from_json).policies | default([]) }}"
+    _rustfs_state_current_users: "{{ (_rustfs_state_user_ls.stdout | from_json).users | default([]) }}"
 
-- name: "{{ rustfs_instance.name }} | Reconcile policies"
+- name: "Reconcile policies on {{ rustfs_state_instance.name }}"
   ansible.builtin.include_tasks: policy.yml
-  loop: "{{ rustfs_instance.policies | default([]) }}"
+  loop: "{{ rustfs_state_instance.policies | default([]) }}"
   loop_control:
-    loop_var: rustfs_policy
-    label: "{{ rustfs_instance.name }}:{{ rustfs_policy.name }}"
+    loop_var: rustfs_state_policy
+    label: "{{ rustfs_state_instance.name }}:{{ rustfs_state_policy.name }}"
 
-- name: "{{ rustfs_instance.name }} | Reconcile buckets"
+- name: "Reconcile buckets on {{ rustfs_state_instance.name }}"
   ansible.builtin.include_tasks: bucket.yml
-  loop: "{{ rustfs_instance.buckets | default([]) }}"
+  loop: "{{ rustfs_state_instance.buckets | default([]) }}"
   loop_control:
-    loop_var: rustfs_bucket
-    label: "{{ rustfs_instance.name }}:{{ rustfs_bucket.name }}"
+    loop_var: rustfs_state_bucket
+    label: "{{ rustfs_state_instance.name }}:{{ rustfs_state_bucket.name }}"
 
-- name: "{{ rustfs_instance.name }} | Reconcile users"
+- name: "Reconcile users on {{ rustfs_state_instance.name }}"
   ansible.builtin.include_tasks: user.yml
-  loop: "{{ rustfs_instance.users | default([]) }}"
+  loop: "{{ rustfs_state_instance.users | default([]) }}"
   loop_control:
-    loop_var: rustfs_user
-    label: "{{ rustfs_instance.name }}:{{ rustfs_user.name }}"
+    loop_var: rustfs_state_user
+    label: "{{ rustfs_state_instance.name }}:{{ rustfs_state_user.name }}"
 
-- name: "{{ rustfs_instance.name }} | Verify credential liveness"
+# A user that is missing from the server in check mode is pending creation
+# (already reported as drift) — probing its credentials would misreport a
+# dead credential, so liveness skips it there. In a real converge the user
+# was just created, so the probe is valid.
+- name: "Verify credential liveness on {{ rustfs_state_instance.name }}"
   ansible.builtin.include_tasks: liveness.yml
-  loop: "{{ rustfs_instance.users | default([]) }}"
+  loop: "{{ rustfs_state_instance.users | default([]) }}"
   loop_control:
-    loop_var: rustfs_user
-    label: "{{ rustfs_instance.name }}:{{ rustfs_user.name }}"
-  when: rustfs_user.liveness_bucket is defined
+    loop_var: rustfs_state_user
+    label: "{{ rustfs_state_instance.name }}:{{ rustfs_state_user.name }}"
+  when:
+    - rustfs_state_user.liveness_bucket is defined
+    - rustfs_state_user.secret_key is defined
+    - >-
+      rustfs_state_user.name in (_rustfs_state_current_users | map(attribute='accessKey') | list)
+      or not ansible_check_mode
 
 # Deletion safety: resources on the server but absent from the spec are
 # REPORTED, never deleted.
-- name: "{{ rustfs_instance.name }} | Record unmanaged server-side resources"
+- name: "Record unmanaged server-side resources on {{ rustfs_state_instance.name }}"
   ansible.builtin.set_fact:
     rustfs_state_unmanaged: >-
       {{ rustfs_state_unmanaged
-         + (_rustfs_current_buckets
-            | difference(rustfs_instance.buckets | default([]) | map(attribute='name') | list)
-            | map('regex_replace', '^(.*)$', rustfs_instance.name ~ ':bucket:\1') | list)
-         + (_rustfs_current_users | map(attribute='accessKey') | list
-            | difference(rustfs_instance.users | default([]) | map(attribute='name') | list)
-            | map('regex_replace', '^(.*)$', rustfs_instance.name ~ ':user:\1') | list)
-         + (_rustfs_current_policies
+         + (_rustfs_state_current_buckets
+            | difference(rustfs_state_instance.buckets | default([]) | map(attribute='name') | list)
+            | map('regex_replace', '^(.*)$', rustfs_state_instance.name ~ ':bucket:\1') | list)
+         + (_rustfs_state_current_users | map(attribute='accessKey') | list
+            | difference(rustfs_state_instance.users | default([]) | map(attribute='name') | list)
+            | map('regex_replace', '^(.*)$', rustfs_state_instance.name ~ ':user:\1') | list)
+         + (_rustfs_state_current_policies
             | difference(rustfs_state_builtin_policies)
-            | difference(rustfs_instance.policies | default([]) | map(attribute='name') | list)
-            | map('regex_replace', '^(.*)$', rustfs_instance.name ~ ':policy:\1') | list) }}
+            | difference(rustfs_state_instance.policies | default([]) | map(attribute='name') | list)
+            | map('regex_replace', '^(.*)$', rustfs_state_instance.name ~ ':policy:\1') | list) }}

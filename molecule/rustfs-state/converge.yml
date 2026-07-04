@@ -3,6 +3,6 @@
   hosts: localhost
   gather_facts: false
   vars_files:
-    - vars.yml
+    - files/vars.yml
   roles:
     - rustfs_state

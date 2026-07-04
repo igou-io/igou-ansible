@@ -1,11 +1,4 @@
 ---
-- name: Assert desired state is provided
-  ansible.builtin.assert:
-    that:
-      - rustfs_instances is iterable
-      - rustfs_instances is not string
-    fail_msg: rustfs_instances must be a list of instances (see roles/rustfs_state/README.md)
-
 # check_mode: false throughout the scaffolding — the nightly drift job runs
 # with --check and still needs the rc binary, aliases, and live reads to
 # compute drift.
@@ -13,7 +6,7 @@
   ansible.builtin.tempfile:
     state: directory
     prefix: rustfs-state-
-  register: _rustfs_workdir
+  register: _rustfs_state_workdir_result
   check_mode: false
   changed_when: false
 
@@ -21,9 +14,9 @@
   block:
     - name: Initialize run facts
       ansible.builtin.set_fact:
-        rustfs_state_workdir: "{{ _rustfs_workdir.path }}"
+        rustfs_state_workdir: "{{ _rustfs_state_workdir_result.path }}"
         rustfs_state_env:
-          XDG_CONFIG_HOME: "{{ _rustfs_workdir.path }}/xdg"
+          XDG_CONFIG_HOME: "{{ _rustfs_state_workdir_result.path }}/xdg"
         rustfs_state_changes: []
         rustfs_state_unmanaged: []
         rustfs_state_liveness_failures: []
@@ -53,20 +46,20 @@
 
     - name: Reconcile each instance
       ansible.builtin.include_tasks: instance.yml
-      loop: "{{ rustfs_instances }}"
+      loop: "{{ rustfs_state_instances }}"
       loop_control:
-        loop_var: rustfs_instance
-        label: "{{ rustfs_instance.name }}"
+        loop_var: rustfs_state_instance
+        label: "{{ rustfs_state_instance.name }}"
 
   always:
     - name: Remove working directory (binary, aliases, rendered documents)
       ansible.builtin.file:
-        path: "{{ _rustfs_workdir.path }}"
+        path: "{{ _rustfs_state_workdir_result.path }}"
         state: absent
       check_mode: false
       changed_when: false
 
-- name: Reconcile summary
+- name: Report reconcile summary
   ansible.builtin.debug:
     msg:
       changes: "{{ rustfs_state_changes }}"
@@ -74,16 +67,16 @@
       liveness_failures: "{{ rustfs_state_liveness_failures }}"
 
 # The invariant that catches the InvalidAccessKeyId class of failure: the
-# key pair stored in 1Password must actually authenticate against the
-# server. A failure here means they diverged (wedged server, stale item,
-# manual rotation) — fix the item or the server, never ignore.
-- name: Fail on dead credentials (1Password vs server divergence)
+# provided key pair (resolved from the credential store by the caller) must
+# actually authenticate against the server. A failure means they diverged
+# (wedged server, stale item, manual rotation) — fix the store or the
+# server, never ignore.
+- name: Fail on dead credentials (credential store vs server divergence)
   ansible.builtin.assert:
     that: rustfs_state_liveness_failures | length == 0
     fail_msg: >-
-      Credentials in 1Password no longer authenticate against the server:
+      Provided credentials no longer authenticate against the server:
       {{ rustfs_state_liveness_failures | join(', ') }}
-  when: rustfs_state_liveness_failures is defined
 
 - name: Fail on drift (drift-detection mode)
   ansible.builtin.assert:
