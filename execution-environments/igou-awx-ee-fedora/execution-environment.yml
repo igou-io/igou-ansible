@@ -66,7 +66,7 @@ additional_build_steps:
         chmod +x /usr/local/bin/kustomize && \
         rm -f /tmp/kustomize.tar.gz
     # renovate: datasource=github-releases depName=hashicorp/terraform
-    ARG TERRAFORM_VERSION="v1.15.6"
+    ARG TERRAFORM_VERSION="v1.15.7"
     RUN curl -L -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION#v}/terraform_${TERRAFORM_VERSION#v}_linux_amd64.zip" && \
         unzip -o /tmp/terraform.zip -d /usr/local/bin/ && \
         chmod +x /usr/local/bin/terraform && \
