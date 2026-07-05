@@ -3,7 +3,7 @@ version: 3
 images:
   base_image:
     # renovate: datasource=docker depName=quay.io/fedora/fedora
-    name: quay.io/fedora/fedora:45@sha256:d0e6bea60fa54e903bf4b6cc800981702774dd6aac7d88f0d3e5a8b518c506bc
+    name: quay.io/fedora/fedora:45@sha256:fd94a2d509c9acc0703b702a185c1be67365defcb30765226f64884c1cb5a428
 options:
   package_manager_path: /usr/bin/dnf
 dependencies:
