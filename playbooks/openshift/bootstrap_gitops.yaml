@@ -7,14 +7,27 @@
     K8S_AUTH_KUBECONFIG: "{{ kubeconfig | default(omit) }}"
   vars:
     gitops_repo: "https://github.com/igou-io/igou-openshift.git"
-  vars_prompt:
-    - name: op_bootstrap_sa_token
-      prompt: "1Password ocp-bootstrap service-account token (ops_...)"
-      private: true
   tasks:
     - name: Create 1P Connect secrets, deploy and cluster-config application
       tags: create-objects
       block:
+        # The Connect-seed lookups below authenticate to the ocp-connect-bootstrap
+        # vault via the ocp-bootstrap service account, read from the
+        # OP_SERVICE_ACCOUNT_TOKEN env var (community.general onepassword* env
+        # fallback). ansible-navigator.yml passes this var into the EE; AAP
+        # injects it via a credential. vars_prompt is NOT used: it silently
+        # returns empty under ansible-navigator/AAP (no interactive TTY wired to
+        # the lookup), which makes the lookup fall through to an interactive
+        # sign-in and fail with "Missing required parameters".
+        - name: Assert the bootstrap service-account token is present
+          ansible.builtin.assert:
+            that:
+              - lookup('ansible.builtin.env', 'OP_SERVICE_ACCOUNT_TOKEN') | length > 0
+            fail_msg: >-
+              OP_SERVICE_ACCOUNT_TOKEN is not set. Export the ocp-bootstrap
+              service-account token (ops_...) before running, e.g.
+              `export OP_SERVICE_ACCOUNT_TOKEN=ops_...`.
+          run_once: true
         - name: Create Gitops namespace
           kubernetes.core.k8s:
             state: present
@@ -88,9 +101,13 @@
                 annotations:
                   managed-by: ansible
               type: Opaque
-              stringData:
-                1password-credentials.json: "{{ lookup('community.general.onepassword_doc', 'ocp-connect-credentials', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) }}"
-          no_log: true
+              # onepassword_doc returns the document as bytes, which newer
+              # ansible-core refuses to serialize into module args. base64 it
+              # into data (b64encode runs the value through to_bytes, so it
+              # handles bytes cleanly) instead of using stringData.
+              data:
+                1password-credentials.json: "{{ lookup('community.general.onepassword_doc', 'ocp-connect-credentials', vault='ocp-connect-bootstrap') | b64encode }}"
+          no_log: false
 
         - name: Seed the Connect access token Secret (for ESO)
           kubernetes.core.k8s:
@@ -105,7 +122,7 @@
                   managed-by: ansible
               type: Opaque
               stringData:
-                token: "{{ lookup('community.general.onepassword', 'ocp-connect-token', field='token', vault='ocp-connect-bootstrap', service_account_token=op_bootstrap_sa_token) }}"
+                token: "{{ lookup('community.general.onepassword', 'ocp-connect-token', field='credential', vault='ocp-connect-bootstrap') }}"
           no_log: true
 
         - name: Create Gitops ClusterRoleBinding
