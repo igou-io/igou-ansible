@@ -29,7 +29,7 @@
     gitops_repo: https://github.com/igou-io/igou-kubernetes.git
     gitops_ref: master
     gitops_cluster: internal
-    kubeconfig_op_vault: claude
+    kubeconfig_op_vault: lab_rk8s
     kubeconfig_op_item: rk8s-kubeconfig
     connect_secret_namespace: external-secrets
     connect_secret_name: onepassword-connect-token

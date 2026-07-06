@@ -38,7 +38,7 @@
         state: started
       when: ansible_os_family == 'Debian'
 
-# Refresh op://awx/<cluster>-kubeconfig after every install/update. Skips
+# Refresh op://lab_rk8s/<cluster>-kubeconfig after every install/update. Skips
 # with a warning when OP_CONNECT_* env is absent (local runs w/o Connect).
 - name: Publish kubeconfig to 1Password
   ansible.builtin.import_playbook: publish-kubeconfig-1password.yaml
