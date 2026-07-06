@@ -1,5 +1,5 @@
 ---
-- hosts: "{{ host }}"
+- hosts: "{{ host | default('rhel') }}"
   become: true
   gather_facts: false
   vars:
@@ -8,10 +8,12 @@
       autoupdate: false
       remediation: absent
       state: present
+    # rhsm_username / rhsm_password are defined in igou-inventory
+    # group_vars/rhel.yml (companion PR), not in this playbook.
     rhc_auth:
       login:
-        username: "{{ lookup('community.general.onepassword', 'redhat-login', field='username', vault='awx') }}"
-        password: "{{ lookup('community.general.onepassword', 'redhat-login', field='password', vault='awx') }}"
+        username: "{{ rhsm_username }}"
+        password: "{{ rhsm_password }}"
     rhc_repositories:
       - {name: "rhel-9-for-x86_64-baseos-rpms", state: enabled}
       - {name: "rhel-9-for-x86_64-appstream-rpms", state: enabled}
