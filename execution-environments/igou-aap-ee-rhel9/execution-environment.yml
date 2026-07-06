@@ -70,7 +70,6 @@ dependencies:
         # "Failed to get token: HTTP Error 404".
         version: ">=4.8.0"
       - name: infra.aap_configuration
-      - name: infra.aap_utilities
 additional_build_steps:
   prepend_base: |
     RUN microdnf install -y git-core
