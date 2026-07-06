@@ -69,7 +69,7 @@
       app.kubernetes.io/managed-by: ansible
 
     # cloud-init login user + authorized keys. The igou public half of the AAP
-    # machine credential (op://awx/ansible-ssh-ed25519 field "public key") is baked
+    # machine credential (op://lab_aap/ansible-ssh-ed25519 field "public key") is baked
     # in so AAP can converge the guest unattended in Phase 2. Append a personal key
     # for direct NodePort SSH via -e devenv_ssh_authorized_key='ssh-ed25519 ...'.
     vm_admin_user: igou
