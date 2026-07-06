@@ -1,6 +1,6 @@
 AAP_NAV_CFG := playbooks/aap/ansible-navigator.yml
 
-.PHONY: lint yamllint syntax-check _check-inv aap-configure aap-sync-credentials aap-sync-templates
+.PHONY: lint yamllint syntax-check _check-inv aap-configure aap-sync-credentials aap-sync-templates aap-bootstrap-connect
 
 lint:
 	ansible-lint --profile=production
@@ -38,3 +38,7 @@ aap-sync-credentials: _check-inv ## Sync only AAP credentials
 aap-sync-templates: _check-inv ## Sync only AAP job templates / projects / workflows / schedules
 	ANSIBLE_NAVIGATOR_CONFIG=$(AAP_NAV_CFG) \
 	  ansible-navigator run playbooks/aap/configure-aap-templates.yml
+
+aap-bootstrap-connect: _check-inv ## Seed the Onepassword Connect credential (needs OP_SERVICE_ACCOUNT_TOKEN)
+	ANSIBLE_NAVIGATOR_CONFIG=$(AAP_NAV_CFG) \
+	  ansible-navigator run playbooks/aap/bootstrap-connect-credential.yml
