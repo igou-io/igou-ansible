@@ -34,11 +34,10 @@ jobs:
         env:
           # Files under playbooks/ that ansible-playbook --syntax-check cannot parse:
           #  - ansible-navigator.yml: navigator config, not a playbook (top-level dict)
-          #  - rhsm-system-register / 2-register-to-rhsm: subscription-only collections
+          #  - rhsm-system-register: subscription-only collections
           SKIP_PLAYBOOKS: |
             playbooks/aap/ansible-navigator.yml
             playbooks/rhel/rhsm-system-register.yml
-            playbooks/openshift_virtualization/aap-25-vm/2-register-to-rhsm.yml
         run: |
           # Exclude non-playbook YAML: task-include sidecars (_*.yml), any
           # tasks/ subdirectory (Ansible convention), transport/ task-include

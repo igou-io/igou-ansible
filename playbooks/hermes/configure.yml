@@ -41,6 +41,23 @@
     # enabled when an auth username is set (fail closed — see the start task below).
     hermes_dashboard_host: "0.0.0.0"
     hermes_dashboard_port: 9119
+    # ghapp token broker wiring (gated OFF — flip with
+    # -e hermes_ghapp_broker_enabled=true, same gate as the broker deploy in
+    # setup-hermes.yml). When enabled the terminal containers mount the broker
+    # runtime directory (directory, not the socket file, so a broker restart
+    # doesn't leave stale bind-mounted inodes), get GHAPP_BROKER_SOCKET so
+    # ghapp/gh-app/git-credential-ghapp mint through the broker, and LOSE the
+    # static GH_TOKEN forward and the mounted human gh config.
+    # NOTE: mounted without :Z — /run/ghbroker is a root-managed runtime dir
+    # shared with the broker; if SELinux blocks the socket connect on the VM,
+    # resolve at the podman level (label=disable for this mount), not by
+    # relabeling the system directory.
+    # NB: NOT set as a play var — play vars outrank inventory group_vars, which
+    # would shadow a group_vars override (e.g. group_vars/hermes_test.yml sets
+    # it true). Referenced as `hermes_ghapp_broker_enabled | default(false)`
+    # below, so it defaults off unless a group/host var or -e sets it.
+    hermes_ghapp_broker_runtime_dir: /run/ghbroker
+    hermes_ghapp_broker_socket: "{{ hermes_ghapp_broker_runtime_dir }}/ghbroker.sock"
     hermes_terminal_config:
       backend: docker
       docker_image: "{{ hermes_terminal_backend_image_ref }}"
@@ -54,33 +71,52 @@
       container_memory: 8192
       container_persistent: true
       docker_run_as_host_user: false
-      docker_env:
-        HOME: "{{ hermes_terminal_backend_container_home }}"
-        BASH_ENV: "{{ hermes_terminal_backend_container_bash_env }}"
-        PYTHONUNBUFFERED: "1"
-      docker_forward_env:
-        - GH_TOKEN
-        - OPENCODE_GO_API_KEY
+      docker_env: >-
+        {{
+          {
+            'HOME': hermes_terminal_backend_container_home,
+            'BASH_ENV': hermes_terminal_backend_container_bash_env,
+            'PYTHONUNBUFFERED': '1',
+          }
+          | combine(
+              {'GHAPP_BROKER_SOCKET': hermes_ghapp_broker_socket}
+              if (hermes_ghapp_broker_enabled | default(false) | bool) else {}
+            )
+        }}
+      docker_forward_env: >-
+        {{
+          ([] if (hermes_ghapp_broker_enabled | default(false) | bool) else ['GH_TOKEN'])
+          + ['OPENCODE_GO_API_KEY']
+        }}
       docker_extra_args:
         - "--userns=keep-id:uid={{ hermes_terminal_backend_container_uid }},gid={{ hermes_terminal_backend_container_gid }}"
         - "--user={{ hermes_terminal_backend_container_uid }}:{{ hermes_terminal_backend_container_gid }}"
-      docker_volumes:
-        - "/home/hermes/agent-repos:/workspace:Z"
-        - "/home/hermes/.hermes/cache/documents:/output:Z"
-        - "/home/hermes/.gitconfig:{{ hermes_terminal_backend_container_home }}/.gitconfig:ro,Z"
-        - "/home/hermes/.ssh:{{ hermes_terminal_backend_container_home }}/.ssh:ro,Z"
-        - "/home/hermes/.kube:{{ hermes_terminal_backend_container_home }}/.kube:ro,Z"
-        - "/home/hermes/.claude:{{ hermes_terminal_backend_container_home }}/.claude:Z"
-        - "/home/hermes/.claude.json:{{ hermes_terminal_backend_container_home }}/.claude.json:Z"
-        - "/home/hermes/.codex:{{ hermes_terminal_backend_container_home }}/.codex:Z"
-        - "/home/hermes/.agents/skills:{{ hermes_terminal_backend_container_home }}/.agents/skills:Z"
-        - "/home/hermes/.config/opencode:{{ hermes_terminal_backend_container_home }}/.config/opencode:Z"
-        - "/home/hermes/.local/share/opencode:{{ hermes_terminal_backend_container_home }}/.local/share/opencode:Z"
-        - "/home/hermes/.config/gh:{{ hermes_terminal_backend_container_home }}/.config/gh:Z"
-        - "/home/hermes/.config/argocd:{{ hermes_terminal_backend_container_home }}/.config/argocd:Z"
-        - "/home/hermes/.config/cursor:{{ hermes_terminal_backend_container_home }}/.config/cursor:ro,Z"
-        - "/home/hermes/.cursor:{{ hermes_terminal_backend_container_home }}/.cursor:Z"
-        - "/home/hermes/.terraform.d:{{ hermes_terminal_backend_container_home }}/.terraform.d:Z"
+      docker_volumes: >-
+        {{
+          [
+            '/home/hermes/agent-repos:/workspace:Z',
+            '/home/hermes/.hermes/cache/documents:/output:Z',
+            '/home/hermes/.gitconfig:' ~ hermes_terminal_backend_container_home ~ '/.gitconfig:ro,Z',
+            '/home/hermes/.netrc:' ~ hermes_terminal_backend_container_home ~ '/.netrc:ro,Z',
+            '/home/hermes/.ssh:' ~ hermes_terminal_backend_container_home ~ '/.ssh:ro,Z',
+            '/home/hermes/.kube:' ~ hermes_terminal_backend_container_home ~ '/.kube:ro,Z',
+            '/home/hermes/.claude:' ~ hermes_terminal_backend_container_home ~ '/.claude:Z',
+            '/home/hermes/.claude.json:' ~ hermes_terminal_backend_container_home ~ '/.claude.json:Z',
+            '/home/hermes/.codex:' ~ hermes_terminal_backend_container_home ~ '/.codex:Z',
+            '/home/hermes/.agents/skills:' ~ hermes_terminal_backend_container_home ~ '/.agents/skills:Z',
+            '/home/hermes/.config/opencode:' ~ hermes_terminal_backend_container_home ~ '/.config/opencode:Z',
+            '/home/hermes/.local/share/opencode:' ~ hermes_terminal_backend_container_home ~ '/.local/share/opencode:Z',
+            '/home/hermes/.config/argocd:' ~ hermes_terminal_backend_container_home ~ '/.config/argocd:Z',
+            '/home/hermes/.config/cursor:' ~ hermes_terminal_backend_container_home ~ '/.config/cursor:ro,Z',
+            '/home/hermes/.cursor:' ~ hermes_terminal_backend_container_home ~ '/.cursor:Z',
+            '/home/hermes/.terraform.d:' ~ hermes_terminal_backend_container_home ~ '/.terraform.d:Z',
+          ]
+          + (
+              [hermes_ghapp_broker_runtime_dir ~ ':' ~ hermes_ghapp_broker_runtime_dir]
+              if (hermes_ghapp_broker_enabled | default(false) | bool)
+              else ['/home/hermes/.config/gh:' ~ hermes_terminal_backend_container_home ~ '/.config/gh:Z']
+            )
+        }}
   tasks:
     - name: Update managed Hermes environment values
       ansible.builtin.lineinfile:
@@ -92,11 +128,71 @@
         group: "{{ hermes_user }}"
         mode: "0600"
       become: true
-      loop: "{{ hermes_env_values | dict2items | rejectattr('value', 'equalto', '') | list }}"
+      # GHAPP_BROKER_SOCKET is appended for the gateway process itself when the
+      # ghapp broker is enabled, so the in-process github_app_* plugin tools
+      # also mint through the broker instead of needing key material.
+      loop: >-
+        {{
+          (
+            hermes_env_values
+            | combine(
+                {'GHAPP_BROKER_SOCKET': hermes_ghapp_broker_socket}
+                if (hermes_ghapp_broker_enabled | default(false) | bool) else {}
+              )
+          )
+          | dict2items | rejectattr('value', 'equalto', '') | list
+        }}
       no_log: true
       notify:
         - Restart the Hermes gateway user unit
         - Restart the Hermes dashboard user unit
+
+    # Ambient HTTP basic-auth for services agents scrape (`curl -n`; Python
+    # requests/httpx also honor .netrc). Declared as hermes_netrc_machines in
+    # group_vars/hermes.yml with 1Password lookups — the credential never
+    # appears in prompts, skills, or shell history. Always written (possibly
+    # empty) so the terminal-backend bind mount below has a valid source.
+    - name: Provision the hermes user .netrc
+      ansible.builtin.copy:
+        dest: "/home/{{ hermes_user }}/.netrc"
+        content: |-
+          # Managed by Ansible - playbooks/hermes/configure.yml
+          {% for m in hermes_netrc_machines | default([]) %}
+          machine {{ m.machine }}
+            login {{ m.login }}
+            password {{ m.password }}
+          {% endfor %}
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0600"
+      become: true
+      no_log: true
+
+    # When the broker is enabled, override the bundled `github-auth` skill (which
+    # tells the agent to use PATs / SSH / gh login) with a broker-first version:
+    # for any GitHub op the agent mints a scoped token from the broker socket and
+    # uses it directly. Hermes auto-loads this skill on GitHub tasks, so agent
+    # sessions authenticate via the broker without being told. Written AFTER the
+    # installer (setup-hermes), which restores the stock skill each run.
+    - name: Ensure the github-auth skill directory exists
+      ansible.builtin.file:
+        path: "{{ hermes_state_mount }}/skills/github/github-auth"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0755"
+      become: true
+      when: hermes_ghapp_broker_enabled | default(false) | bool
+
+    - name: Install the broker-first github-auth skill (overrides the bundled one)
+      ansible.builtin.copy:
+        src: files/github-auth-broker-SKILL.md
+        dest: "{{ hermes_state_mount }}/skills/github/github-auth/SKILL.md"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+      become: true
+      when: hermes_ghapp_broker_enabled | default(false) | bool
 
     - name: Map legacy Hermes devenv image tag to terminal backend image tag
       ansible.builtin.set_fact:
@@ -367,6 +463,19 @@
           - ("--user=" ~ hermes_terminal_backend_container_uid ~ ":" ~ hermes_terminal_backend_container_gid) in hermes_merged_config.terminal.docker_extra_args
           - "'/home/hermes/agent-repos:/workspace:Z' in hermes_merged_config.terminal.docker_volumes"
           - ('/home/hermes/.agents/skills:' ~ hermes_terminal_backend_container_home ~ '/.agents/skills:Z') in hermes_merged_config.terminal.docker_volumes
+
+    - name: Assert the ghapp broker terminal wiring
+      ansible.builtin.assert:
+        that:
+          - hermes_merged_config.terminal.docker_env.GHAPP_BROKER_SOCKET == hermes_ghapp_broker_socket
+          - "'GH_TOKEN' not in hermes_merged_config.terminal.docker_forward_env"
+          - (hermes_ghapp_broker_runtime_dir ~ ':' ~ hermes_ghapp_broker_runtime_dir) in hermes_merged_config.terminal.docker_volumes
+          - hermes_merged_config.terminal.docker_volumes | select('search', '/.config/gh:') | length == 0
+        fail_msg: >-
+          hermes_ghapp_broker_enabled is true but the terminal config still
+          carries the legacy GH_TOKEN/gh-config wiring or lacks the broker
+          socket mount/env.
+      when: hermes_ghapp_broker_enabled | default(false) | bool
 
     - name: Ensure the nftables drop-in directory exists
       ansible.builtin.file:

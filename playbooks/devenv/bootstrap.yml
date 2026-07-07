@@ -1,0 +1,134 @@
+---
+# Phase 2 of the devenv lifecycle: configure the freshly-provisioned VM into a
+# Docker host capable of running the igou-devenv devcontainer, using my
+# david_igou.devhost collection, then launch code-server from the published image.
+#
+# Reached over SSH by AAP: the kubevirt.core inventory (source igou_kubevirt_ocp)
+# resolves this host's virt-launcher pod IP; the play connects as remote_user igou
+# (ansible.cfg) with the `ansible_user_ed25519` machine credential. The workflow
+# node passes ansible_limit=devenv-devenv (hosts: reads it before group_vars apply).
+#
+# NB: intentionally NO play-level become. The david_igou.devhost roles self-elevate
+# per task, and the packages role's user-level npm / @devcontainers/cli tasks must
+# run as the igou login user (not root).
+- name: Configure the devenv host via david_igou.devhost
+  hosts: "{{ ansible_limit | default('devenv-devenv') }}"
+  gather_facts: false
+  vars:
+    # Keep the host lean (devhost >= 27.0.0 mise interface). A devcontainer host only
+    # needs docker + a distro Node.js + @devcontainers/cli; the CLI toolset lives in
+    # the devcontainer, so mise (packages_install_cli_tools) stays OFF. cli_tools=false
+    # installs the distro Node.js fallback for @devcontainers/cli and skips the heavy
+    # CLI/pip/extra-OS-package work (incl. the dnf5-fragile CRB/EPEL step).
+    packages_install_cli_tools: false
+    packages_install_extra_packages: false
+    packages_install_pip_packages: false
+    packages_install_onepassword: false
+    packages_install_github_cli: false
+    packages_install_claude_code: false
+    packages_install_cursor_agent: false
+
+    # docker role: install the full daemon (docker-ce + containerd.io).
+    docker_install_daemon: true
+
+    # devenv extras
+    devenv_repo: https://github.com/igou-io/igou-devenv.git
+    devenv_repo_version: main
+    devenv_image: ghcr.io/igou-io/igou-devenv:latest
+    devenv_launch_devcontainer: true
+
+    # GitHub App runtime tokens (ghapp, local-mint mode). Gated OFF so this is
+    # a no-op until launched with -e devenv_ghapp_enabled=true. When on, the
+    # igou-dev App identity/key default from 1Password (vault claude; override
+    # devenv_ghapp_op_vault/_item or pass ghapp_client_* directly). The role
+    # params below are only templated when the gated role runs.
+    devenv_ghapp_enabled: false
+    ghapp_client_enabled: true
+    ghapp_client_user: igou
+    devenv_ghapp_op_item: igou-dev-github-app
+    devenv_ghapp_op_vault: claude
+
+  pre_tasks:
+    - name: Wait for the VM's SSH to come up
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for cloud-init to finish seeding the user
+      ansible.builtin.command:
+        cmd: cloud-init status --wait
+      register: __devenv_cloudinit
+      changed_when: false
+      # cloud-init status --wait: 0=done, 2=done with recoverable/degraded errors;
+      # anything else (1=error/disabled, 3=timeout) means the seed failed — surface it.
+      failed_when: __devenv_cloudinit.rc not in [0, 2]
+      become: true
+
+    - name: Gather facts (after the connection is proven)
+      ansible.builtin.setup:
+
+  roles:
+    - role: david_igou.devhost.docker
+    - role: david_igou.devhost.packages
+    - role: david_igou.devhost.ghapp
+      when: devenv_ghapp_enabled | bool
+      # Override vars use a devenv_-prefixed name so the role param can't
+      # reference itself (a self-referential {{ ghapp_client_id | default(...) }}
+      # recurses at arg-spec validation). Pass devenv_ghapp_client_id/... at
+      # launch to override the 1Password default.
+      vars:
+        ghapp_client_id: >-
+          {{ devenv_ghapp_client_id | default(lookup('community.general.onepassword',
+             devenv_ghapp_op_item, field='client_id', vault=devenv_ghapp_op_vault), true) }}
+        ghapp_client_app_slug: "{{ devenv_ghapp_app_slug | default('igou-dev') }}"
+        ghapp_client_installations: "{{ devenv_ghapp_installations | default(dict([['david-igou', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_david-igou', vault=devenv_ghapp_op_vault)], ['igou-io', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_igou-io', vault=devenv_ghapp_op_vault)]]), true) }}"
+        ghapp_client_private_key_content: >-
+          {{ devenv_ghapp_private_key | default(lookup('community.general.onepassword',
+             devenv_ghapp_op_item, field='private_key', vault=devenv_ghapp_op_vault), true) }}
+
+  post_tasks:
+    - name: Clone the igou-devenv repo (public, HTTPS — no agent forwarding needed)
+      ansible.builtin.git:
+        repo: "{{ devenv_repo }}"
+        dest: "{{ ansible_user_dir }}/igou-devenv"
+        version: "{{ devenv_repo_version }}"
+
+    - name: Install the Docker SDK for Python (community.docker.docker_container needs it on the target)
+      # python3-docker is in EPEL; enable EPEL only (from the Stream extras repo) — this
+      # does NOT run the dnf5-fragile CRB step the packages role's extra_packages would.
+      become: true
+      block:
+        - name: Enable the EPEL repository
+          ansible.builtin.dnf:
+            name: epel-release
+            state: present
+        - name: Install python3-docker
+          ansible.builtin.dnf:
+            name: python3-docker
+            state: present
+
+    - name: Launch code-server (detached) from the published devenv image
+      community.docker.docker_container:
+        name: igou-devenv-code-server
+        image: "{{ devenv_image }}"
+        state: started
+        pull: true
+        restart_policy: unless-stopped
+        user: igou
+        env:
+          HOME: /home/igou
+        ports:
+          - "8080:8080"
+        volumes:
+          - "{{ ansible_user_dir }}/igou-devenv:/workspace:Z"
+        command: code-server --bind-addr 0.0.0.0:8080 /workspace --cert
+      become: true
+      when: devenv_launch_devcontainer | bool
+
+    - name: Summarize devenv access
+      ansible.builtin.debug:
+        msg:
+          - "devenv host configured (docker-ce + node + @devcontainers/cli)."
+          - "SSH:         ssh -p 30022 igou@<any-node-ip>"
+          - "code-server: https://<any-node-ip>:30080  (self-signed TLS)"
+          - "cs password: docker exec igou-devenv-code-server cat /home/igou/.config/code-server/config.yaml"
+          - "Test a from-scratch build:  cd ~/igou-devenv && make e2e"

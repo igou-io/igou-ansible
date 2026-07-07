@@ -1,0 +1,143 @@
+---
+# Build, verify and publish a Raspberry Pi OS image with rpi-image-gen.
+#
+#   ansible-playbook playbooks/rpi-image/build.yml \
+#     -i ../igou-inventory/inventory.yaml
+#
+# Useful overrides:
+#   -e rpi_image_hostname=foo        host-specific image
+#   -e rpi_image_config=bar          alternate config/publish name
+#   -e rpi_image_user1passhash=...   bake a password hash (else key-only)
+#
+# Stages: render config -> build (async) -> verify (loop-mount
+# assertions against the produced image) -> publish (xz + sha256 +
+# latest symlink + retention prune). A build that fails verification
+# is not published.
+
+- name: Build a Raspberry Pi OS image with rpi-image-gen
+  hosts: rpi_image_builders
+  become: false
+  gather_facts: false
+
+  vars:
+    rpi_image_config: "{{ rpi_image_default_config }}"
+    rpi_image_workdir: "{{ rpi_image_root }}/rpi-image-gen/work"
+    rpi_image_publish_config_dir: >-
+      {{ rpi_image_publish_dir }}/{{ rpi_image_config }}
+
+  tasks:
+    # set_fact evaluates the lookup exactly once. As a lazy play var,
+    # every reference would re-run `date` and the publish path, latest
+    # symlink and set_stats could disagree (seen on the first live run).
+    - name: Pin build id
+      ansible.builtin.set_fact:
+        rpi_image_build_id: >-
+          {{ lookup('ansible.builtin.pipe', 'date -u +%Y%m%dT%H%M%SZ') }}
+
+    - name: Assert pinned rpi-image-gen checkout is present
+      ansible.builtin.command: # noqa: command-instead-of-module (read-only describe)
+        cmd: git describe --tags --exact-match
+        chdir: "{{ rpi_image_root }}/rpi-image-gen"
+      register: rpi_image_gen_tag
+      changed_when: false
+      # A mismatch means the host was never converged (or the pin moved):
+      # run converge.yml first.
+      failed_when: >-
+        rpi_image_gen_tag.rc != 0
+        or rpi_image_gen_tag.stdout != rpi_image_gen_version
+
+    - name: Render image config {{ rpi_image_config }}
+      ansible.builtin.template:
+        src: templates/config.yaml.j2
+        dest: "{{ rpi_image_root }}/configs/{{ rpi_image_config }}.yaml"
+        mode: "0644"
+
+    - name: Mark build start (for artifact discovery)
+      ansible.builtin.file:
+        path: "{{ rpi_image_root }}/.build-start"
+        state: touch
+        mode: "0644"
+
+    # Serialise builds (scheduled vs manual) and log to the workspace so
+    # failures are diagnosable after the fact. sbin dirs must be on PATH:
+    # rpi-image-gen's dependency check resolves tools like mkdosfs with
+    # `command -v`, and non-login SSH sessions don't get sbin by default.
+    - name: Run rpi-image-gen build (async, logged)
+      environment:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      ansible.builtin.shell: |
+        set -o pipefail
+        exec 200>{{ rpi_image_root }}/build.lock
+        flock -n 200 || { echo "another build is running" >&2; exit 75; }
+        ./rpi-image-gen build \
+          -c {{ rpi_image_root }}/configs/{{ rpi_image_config }}.yaml \
+          2>&1 | tee {{ rpi_image_root }}/logs/{{ rpi_image_build_id }}.log
+      args:
+        executable: /bin/bash
+        chdir: "{{ rpi_image_root }}/rpi-image-gen"
+      async: 7200
+      poll: 30
+      register: rpi_image_build
+      changed_when: true
+
+    - name: Locate produced image
+      ansible.builtin.command:
+        cmd: >-
+          find {{ rpi_image_workdir }} -name '{{ rpi_image_config }}.img'
+          -newer {{ rpi_image_root }}/.build-start
+      register: rpi_image_find
+      changed_when: false
+      failed_when: rpi_image_find.stdout_lines | length != 1
+
+    - name: Verify image contents (loop-mount assertions)
+      become: true
+      ansible.builtin.shell: |
+        set -euo pipefail
+        img='{{ rpi_image_find.stdout_lines[0] }}'
+        mnt=$(mktemp -d)
+        dev=$(losetup -fP --show "$img")
+        trap 'umount -q "$mnt" 2>/dev/null || true; losetup -d "$dev"; rmdir "$mnt"' EXIT
+        mount -o ro "${dev}p2" "$mnt"
+        grep -qF '{{ rpi_image_ssh_pubkey }}' \
+          "$mnt/home/{{ rpi_image_user }}/.ssh/authorized_keys"
+        grep -qF '{{ rpi_image_user }} ALL=(ALL) NOPASSWD: ALL' \
+          "$mnt/etc/sudoers.d/010_rpi-nopasswd"
+        grep -q '^PasswordAuthentication no' \
+          "$mnt/etc/ssh/sshd_config.d/01pubkey-only.conf"
+        chroot "$mnt" /usr/bin/systemctl is-enabled ssh
+        echo VERIFY_OK
+      args:
+        executable: /bin/bash
+      register: rpi_image_verify
+      changed_when: false
+
+    - name: Publish image {{ rpi_image_build_id }}
+      ansible.builtin.shell: |
+        set -euo pipefail
+        dest='{{ rpi_image_publish_config_dir }}/{{ rpi_image_build_id }}'
+        mkdir -p "$dest"
+        xz -T0 -c '{{ rpi_image_find.stdout_lines[0] }}' \
+          > "$dest/{{ rpi_image_config }}.img.xz"
+        cd "$dest" && sha256sum ./*.img.xz > SHA256SUMS
+        ln -sfn "$dest" '{{ rpi_image_publish_config_dir }}/latest'
+        cd '{{ rpi_image_publish_config_dir }}'
+        ls -1d 20*/ | sort | head -n -{{ rpi_image_publish_retain }} \
+          | xargs -r rm -rf
+      args:
+        executable: /bin/bash
+      register: rpi_image_publish
+      changed_when: true
+
+    - name: Record artifact location
+      ansible.builtin.set_stats:
+        data:
+          rpi_image_artifact: >-
+            {{ rpi_image_publish_config_dir }}/{{ rpi_image_build_id
+            }}/{{ rpi_image_config }}.img.xz
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          published {{ rpi_image_publish_config_dir }}/{{ rpi_image_build_id
+          }}/{{ rpi_image_config }}.img.xz (latest ->
+          {{ rpi_image_build_id }})

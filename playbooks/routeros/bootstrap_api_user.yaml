@@ -8,7 +8,7 @@
 # via the agent-forwarded igou+cet1024w user); we lean on that.
 #
 # 1Password layout: one item per device named `<short-host>-api` in vault
-# `awx`, with `username` + `password` fields. Pre-create these before running
+# `lab_routeros`, with `username` + `password` fields. Pre-create these before running
 # (matches the existing rb5009-api convention). The item's username field
 # determines the RouterOS user this playbook upserts on the device.
 #
@@ -29,7 +29,7 @@
   gather_facts: false
 
   vars:
-    # 1P item naming convention: <short-host>-api in the awx vault.
+    # 1P item naming convention: <short-host>-api in the lab_routeros vault.
     # short-host = inventory_hostname's first DNS label (crs328.igou.systems -> crs328).
     routeros_bootstrap_op_item: "{{ inventory_hostname | split('.') | first }}-api"
 
@@ -45,8 +45,8 @@
       delegate_to: localhost
       connection: local
       ansible.builtin.set_fact:
-        _bootstrap_api_username: "{{ lookup('community.general.onepassword', routeros_bootstrap_op_item, field='username', vault='awx') }}"
-        _bootstrap_api_password: "{{ lookup('community.general.onepassword', routeros_bootstrap_op_item, field='password', vault='awx') }}"
+        _bootstrap_api_username: "{{ lookup('community.general.onepassword', routeros_bootstrap_op_item, field='username', vault='lab_routeros') }}"
+        _bootstrap_api_password: "{{ lookup('community.general.onepassword', routeros_bootstrap_op_item, field='password', vault='lab_routeros') }}"
       no_log: true
 
     - name: Refuse to continue if 1P item produced empty creds
@@ -55,7 +55,7 @@
           - _bootstrap_api_username | length > 0
           - _bootstrap_api_password | length > 0
         fail_msg: >-
-          1Password item op://awx/{{ routeros_bootstrap_op_item }} resolved
+          1Password item op://lab_routeros/{{ routeros_bootstrap_op_item }} resolved
           empty username or password. Create the item with both fields before
           running this playbook.
 

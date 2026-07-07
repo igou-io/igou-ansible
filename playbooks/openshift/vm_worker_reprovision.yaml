@@ -1,0 +1,380 @@
+---
+# Reprovision a TrueNAS-hosted VM worker end-to-end, unattended:
+#   1. configure_vms.yaml recreates THIS worker's VM with a blank zvol
+#      (scoped via truenas_vms_only; other absent VMs are not recreated)
+#   2. generate a full add-node ISO (`oc adm node-image create`, no
+#      --pxe) for this worker only
+#   3. copy the ISO to the TrueNAS host, attach/refresh it as the VM's
+#      CDROM (order 1005) and demote the netboot RAW below it for the
+#      install boot, then start the VM
+#   4. approve this node's CSRs (scoped, incl. decoding bootstrapper CSR
+#      subjects) until the node is Ready, then restore the netboot RAW
+#      to its steady-state boot order
+#
+# !! UNTESTED (2026-07-03): written during the truenas-w1 build-out but
+# deliberately NOT executed yet — the cluster's democratic-csi driver
+# migration is in flight. Supervise the first run.
+#
+# Boot design — no netboot-pin changes required: with the zvol blank,
+# the install boot falls through disk(1001, blank) -> agent ISO CDROM
+# (1005; the netboot RAW is temporarily demoted to 1006 so the install
+# never depends on firmware advancing past a failed iPXE exit), RHCOS
+# installs and reboots, and the installed disk then boots first forever
+# after. After the node joins, the netboot RAW is restored to 1004.
+# The stale ISO stays attached but is NOT a usable reinstall path (its
+# embedded ignition token expires within ~24h) — to rebuild again,
+# rerun this playbook.
+#
+# Usage:
+#   export KUBECONFIG=<cluster kubeconfig>
+#   ansible-playbook playbooks/openshift/vm_worker_reprovision.yaml \
+#     -i igou-inventory/inventory.yaml -e vm_worker=truenas-w1.igou.systems
+#
+# Notes:
+# - The node must NOT currently exist in the cluster (run
+#   vm_worker_destroy.yaml first); asserted below.
+# - No CSI smoke test here by design — validate storage manually once
+#   the democratic-csi driver migration completes.
+
+- name: Recreate the VM with a blank zvol (create-only, scoped to this worker)
+  import_playbook: ../truenas/configure_vms.yaml
+  vars:
+    truenas_vms_only: >-
+      {{ truenas_vms | selectattr('openshift_node', 'defined')
+         | selectattr('openshift_node', 'equalto',
+                      vm_worker | default('truenas-w1.igou.systems', true))
+         | map(attribute='name') | list }}
+
+- name: Generate the add-node ISO
+  hosts: "{{ target_cluster | default('ocp') }}"
+  connection: local
+  gather_facts: true
+  vars:
+    _cluster: "{{ target_cluster | default('ocp') }}"
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
+    openshift_add_node_work_dir: "{{ ansible_env.HOME }}/openshift-add-node-iso/{{ _cluster }}"
+    # Full-ISO mode: suppress the PXE-only bootArtifactsBaseURL field in
+    # the shared nodes-config template.
+    openshift_add_node_pxe: false
+  pre_tasks:
+
+    - name: Assert KUBECONFIG is set in the environment
+      ansible.builtin.assert:
+        that: lookup('env', 'KUBECONFIG') | length > 0
+        fail_msg: Export KUBECONFIG before running this playbook.
+
+    - name: Discover nodes already joined to the cluster
+      ansible.builtin.command:
+        cmd: oc get nodes -o jsonpath={.items[*].metadata.name}
+      register: _existing_nodes
+      changed_when: false
+
+    - name: Assert the worker is not currently a cluster node
+      vars:
+        _joined: "{{ _existing_nodes.stdout.split() }}"
+        _joined_short: "{{ _existing_nodes.stdout.split() | map('regex_replace', '[.].*$', '') | list }}"
+      ansible.builtin.assert:
+        that: worker not in (_joined + _joined_short)
+        fail_msg: >-
+          {{ worker }} is still a node in the cluster — run
+          playbooks/openshift/vm_worker_destroy.yaml first.
+
+    - name: Restrict nodes-config rendering to this worker
+      ansible.builtin.set_fact:
+        _pending_workers:
+          - "{{ worker }}"
+
+  tasks:
+
+    - name: Wipe stale work dir
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}"
+        state: absent
+
+    - name: Create fresh work dir
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Fetch cluster pull secret to work dir
+      ansible.builtin.shell: |
+        set -o pipefail
+        oc -n openshift-config get secret pull-secret \
+          -o jsonpath='{.data.\.dockerconfigjson}' \
+          | base64 -d > "{{ openshift_add_node_work_dir }}/auth.json"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    - name: Lock down pull secret file mode
+      ansible.builtin.file:
+        path: "{{ openshift_add_node_work_dir }}/auth.json"
+        mode: "0600"
+
+    - name: Render nodes-config.yaml (this worker only)
+      ansible.builtin.template:
+        src: templates/nodes-config.yaml.j2
+        dest: "{{ openshift_add_node_work_dir }}/nodes-config.yaml"
+        mode: "0644"
+
+    - name: Run `oc adm node-image create` (full ISO)
+      ansible.builtin.command:
+        cmd: >-
+          oc adm node-image create
+          --dir {{ openshift_add_node_work_dir }}
+          --registry-config {{ openshift_add_node_work_dir }}/auth.json
+      changed_when: true
+
+    - name: Verify the ISO exists
+      ansible.builtin.stat:
+        path: "{{ openshift_add_node_work_dir }}/node.{{ openshift_add_node_arch }}.iso"
+      register: _iso_stat
+      failed_when: not _iso_stat.stat.exists
+
+    - name: Set fact for later plays — ISO path
+      ansible.builtin.set_fact:
+        openshift_add_node_iso:
+          path: "{{ openshift_add_node_work_dir }}/node.{{ openshift_add_node_arch }}.iso"
+
+- name: Attach the ISO and boot the VM
+  hosts: truenas
+  become: true
+  gather_facts: false
+  vars:
+    _cluster: "{{ target_cluster | default('ocp') }}"
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
+    _iso_src: "{{ hostvars[_cluster]['openshift_add_node_iso']['path'] }}"
+    _images_dir: /mnt/ssd/vms/images
+  tasks:
+
+    - name: Resolve the VM definition for this worker
+      ansible.builtin.set_fact:
+        _vm_def: >-
+          {{ (truenas_vms | selectattr('openshift_node', 'defined')
+              | selectattr('openshift_node', 'equalto', worker)
+              | list + [{}]) | first }}
+
+    - name: Assert the worker maps to a truenas_vms entry
+      ansible.builtin.assert:
+        that: _vm_def.name is defined
+        fail_msg: >-
+          No truenas_vms entry has openshift_node == {{ worker }} —
+          add the mapping in group_vars/truenas.yml.
+
+    - name: Query the VM (created by the configure_vms import)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.query
+          - "{{ [['name', '=', _vm_def.name]] | to_json }}"
+      register: _vmq
+      changed_when: false
+
+    - name: Assert the VM exists and is stopped
+      vars:
+        _vm: "{{ (_vmq.stdout | from_json + [{}]) | first }}"
+      ansible.builtin.assert:
+        that:
+          - _vm.id is defined
+          - _vm.status.state == 'STOPPED'
+        fail_msg: >-
+          VM {{ _vm_def.name }} is missing or not STOPPED — expected a
+          fresh, never-started VM from configure_vms.yaml.
+
+    - name: Copy the add-node ISO to the host
+      ansible.posix.synchronize:
+        src: "{{ _iso_src }}"
+        dest: "{{ _images_dir }}/{{ _vm_def.name }}-addnode.iso"
+        rsync_opts:
+          - "--chmod=F0644"
+
+    # Query the VM's devices unfiltered and pick out dtypes client-side:
+    # `attributes.dtype` is a path into a JSON column, and middleware
+    # filter support for that is unverified — an ignored filter would
+    # return ALL devices and a blind `first` would then rewrite the boot
+    # disk or NIC. Jinja-side filtering is correct regardless.
+    - name: Query the VM's devices
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.query
+          - "{{ [['vm', '=', (_vmq.stdout | from_json | first).id]] | to_json }}"
+      register: _devq
+      changed_when: false
+
+    - name: Index the VM's CDROM and netboot RAW devices
+      ansible.builtin.set_fact:
+        _cdroms: >-
+          {{ _devq.stdout | from_json
+             | selectattr('attributes.dtype', 'defined')
+             | selectattr('attributes.dtype', 'equalto', 'CDROM') | list }}
+        _netboot_raws: >-
+          {{ _devq.stdout | from_json
+             | selectattr('attributes.dtype', 'defined')
+             | selectattr('attributes.dtype', 'equalto', 'RAW') | list }}
+
+    - name: Attach the ISO as a new CDROM (order 1005)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.create
+          - >-
+            {{ {'vm': (_vmq.stdout | from_json | first).id,
+                'order': 1005,
+                'attributes': {'dtype': 'CDROM',
+                               'path': _images_dir ~ '/' ~ _vm_def.name ~ '-addnode.iso'}} | to_json }}
+      when: _cdroms | length == 0
+      changed_when: true
+
+    - name: Point the existing CDROM at the fresh ISO
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.update
+          - "{{ (_cdroms | first).id }}"
+          - >-
+            {{ {'attributes': {'dtype': 'CDROM',
+                               'path': _images_dir ~ '/' ~ _vm_def.name ~ '-addnode.iso'}} | to_json }}
+      when: _cdroms | length > 0
+      changed_when: true
+
+    # Whether UEFI advances to the next boot entry when the netboot
+    # image's iPXE exits non-zero is firmware-dependent; don't bet the
+    # unattended install on it. Demote the RAW below the CDROM so the
+    # fresh agent ISO is the first fallback after the (blank) disk.
+    # Restored to 1004 by the final play once the node has joined.
+    - name: Demote the netboot RAW below the install CDROM (order 1006)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.update
+          - "{{ item.id }}"
+          - "{{ {'order': 1006} | to_json }}"
+      loop: "{{ _netboot_raws }}"
+      loop_control:
+        label: "device {{ item.id }} (order {{ item.order }})"
+      when: item.order != 1006
+      changed_when: true
+
+    - name: Start the VM (retries ride out transient zvol-open error 512)
+      ansible.builtin.command:
+        argv: [midclt, call, vm.start, "{{ (_vmq.stdout | from_json | first).id }}"]
+      register: _start
+      until: _start.rc == 0
+      retries: 10
+      delay: 15
+      changed_when: true
+
+- name: Approve CSRs and wait for the node to join
+  hosts: "{{ target_cluster | default('ocp') }}"
+  connection: local
+  gather_facts: false
+  vars:
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
+    join_timeout_minutes: 30
+  tasks:
+
+    - name: Approve this node's pending CSRs and probe readiness
+      # Scoped approval only. Kubelet serving CSRs carry the node in
+      # spec.username (system:node:<worker>). Bootstrapper client CSRs
+      # all arrive as the shared node-bootstrapper SA with no node
+      # identity in the requestor, so the CSR subject CN inside
+      # spec.request is decoded and must name this worker — a pending
+      # CSR from some other joining node is never approved.
+      ansible.builtin.shell: |
+        set -o pipefail
+        approve=""
+        while read -r name user; do
+          [ -z "$name" ] && continue
+          if [ "$user" = "system:node:{{ worker }}" ]; then
+            approve="$approve $name"
+          elif [ "$user" = "system:serviceaccount:openshift-machine-config-operator:node-bootstrapper" ]; then
+            subject=$(oc get csr "$name" -o jsonpath='{.spec.request}' | base64 -d | openssl req -noout -subject)
+            case "$subject" in
+              *"system:node:{{ worker }}"*) approve="$approve $name" ;;
+            esac
+          fi
+        done <<EOF
+        $(oc get csr -o go-template='{% raw %}{{range .items}}{{if not .status.conditions}}{{.metadata.name}} {{.spec.username}}{{"\n"}}{{end}}{{end}}{% endraw %}')
+        EOF
+        if [ -n "$approve" ]; then
+          oc adm certificate approve $approve
+        fi
+        if [ "$(oc get node {{ worker }} -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null)" = "True" ]; then
+          echo JOINED-READY
+        fi
+      args:
+        executable: /bin/bash
+      register: _join
+      until: "'JOINED-READY' in _join.stdout"
+      retries: "{{ join_timeout_minutes | int * 2 }}"
+      delay: 30
+      changed_when: "'approved' in _join.stdout"
+
+- name: Restore the netboot RAW to its steady-state boot order
+  hosts: truenas
+  gather_facts: false
+  vars:
+    worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
+  tasks:
+
+    - name: Resolve the VM definition for this worker
+      ansible.builtin.set_fact:
+        _vm_def: >-
+          {{ (truenas_vms | selectattr('openshift_node', 'defined')
+              | selectattr('openshift_node', 'equalto', worker)
+              | list + [{}]) | first }}
+
+    - name: Query the VM
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.query
+          - "{{ [['name', '=', _vm_def.name]] | to_json }}"
+      register: _vmq
+      changed_when: false
+
+    - name: Query the VM's devices
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.query
+          - "{{ [['vm', '=', (_vmq.stdout | from_json | first).id]] | to_json }}"
+      register: _devq
+      changed_when: false
+
+    - name: Restore demoted netboot RAW devices to order 1004
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.device.update
+          - "{{ item.id }}"
+          - "{{ {'order': 1004} | to_json }}"
+      loop: >-
+        {{ _devq.stdout | from_json
+           | selectattr('attributes.dtype', 'defined')
+           | selectattr('attributes.dtype', 'equalto', 'RAW')
+           | selectattr('order', 'equalto', 1006) | list }}
+      loop_control:
+        label: "device {{ item.id }}"
+      changed_when: true
+
+    - name: Report result
+      ansible.builtin.debug:
+        msg: >-
+          {{ worker }} rejoined and Ready; netboot RAW restored to its
+          steady-state boot order. The add-node ISO remains attached but
+          is NOT a usable reinstall path (its embedded ignition token
+          expires within ~24h) — rerun this playbook to rebuild again.
+          Deliberately NOT validated here: storage smoke tests — run one
+          manually once the democratic-csi driver migration completes.

@@ -1,5 +1,8 @@
 ---
-{# Renders nodes-config.yaml for `oc adm node-image create --pxe`.
+{# Renders nodes-config.yaml for `oc adm node-image create` (both the
+   --pxe flow in add_node_iso.yml and the full-ISO flow in
+   vm_worker_reprovision.yaml, which sets openshift_add_node_pxe=false
+   to suppress the PXE-only bootArtifactsBaseURL field).
    Iterates the workers pending addition (computed in the playbook as
    _pending_workers: group members not already joined to the cluster)
    and emits one hosts[] entry per worker. Optional dict fields are
@@ -19,4 +22,6 @@ hosts:
     networkConfig: {{ h.openshift_add_node_network_config | to_json }}
 {%   endif %}
 {% endfor %}
+{% if openshift_add_node_pxe | default(true) %}
 bootArtifactsBaseURL: "{{ openshift_add_node_boot_artifacts_base_url }}"
+{% endif %}

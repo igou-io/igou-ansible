@@ -1,5 +1,12 @@
 ---
-# Configure users on TrueNAS via arensb.truenas.user (non-deprecated parameters only).
+# Configure users on TrueNAS via arensb.truenas.user (non-deprecated parameters only),
+# plus role-based privileges (privilege.*) and user-linked API keys (api_key.*)
+# via midclt — no arensb.truenas module exists for those two resources.
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_users      — list of arensb.truenas.user parameter dicts
+#   truenas_privileges — list of {name, local_groups, roles, web_shell}
+#   truenas_api_keys   — list of {name, username, expires_at?}
 - name: Configure users on TrueNAS
   hosts: truenas
   gather_facts: false
@@ -24,8 +31,49 @@
         smb: "{{ item.smb | default(omit) }}"
         ssh_authorized_keys: "{{ item.ssh_authorized_keys | default(omit) }}"
         append_pubkeys: "{{ item.append_pubkeys | default(omit) }}"
+        sudo_commands: "{{ item.sudo_commands | default(omit) }}"
         sudo_commands_nopasswd: "{{ item.sudo_commands_nopasswd | default(omit) }}"
         delete_group: "{{ item.delete_group | default(omit) }}"
       loop: "{{ truenas_users }}"
       loop_control:
         label: "{{ item.name }}"
+
+    - name: Manage role-based privileges
+      when: truenas_privileges | default([]) | length > 0
+      block:
+
+        - name: Query local groups
+          ansible.builtin.command: midclt call group.query
+          register: truenas_group_query
+          changed_when: false
+          check_mode: false
+
+        - name: Query existing privileges
+          ansible.builtin.command: midclt call privilege.query
+          register: truenas_privilege_query
+          changed_when: false
+          check_mode: false
+
+        - name: Configure privileges
+          ansible.builtin.include_tasks: tasks/truenas_privilege.yml
+          loop: "{{ truenas_privileges }}"
+          loop_control:
+            loop_var: privilege
+            label: "{{ privilege.name }}"
+
+    - name: Manage user-linked API keys
+      when: truenas_api_keys | default([]) | length > 0
+      block:
+
+        - name: Query existing API keys
+          ansible.builtin.command: midclt call api_key.query
+          register: truenas_api_key_query
+          changed_when: false
+          check_mode: false
+
+        - name: Configure API keys
+          ansible.builtin.include_tasks: tasks/truenas_api_key.yml
+          loop: "{{ truenas_api_keys }}"
+          loop_control:
+            loop_var: api_key
+            label: "{{ api_key.name }}"

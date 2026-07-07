@@ -53,6 +53,6 @@ channel) in `group_vars/routeros.yml`.
 8. rb5009 only: run the netboot playbooks to restore TFTP binaries + pins.
 
 Connection notes: all API playbooks resolve creds once per host from the 1P
-`<short-host>-api` item (vault `awx`) and talk api-ssl :8729 with
+`<short-host>-api` item (vault `lab_routeros`) and talk api-ssl :8729 with
 `validate_certs: false` (self-signed). SSH-based plays (backups, upgrades,
 manage_users reads) use `network_cli` on port 3480.

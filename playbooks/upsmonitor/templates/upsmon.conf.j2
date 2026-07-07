@@ -1,0 +1,22 @@
+{{ ansible_managed | comment }}
+# This Pi is the NUT primary for every monitored UPS. It is PoE-powered
+# (crs328), not fed by either UPS directly, so MINSUPPLIES 1 with both
+# UPSes at powervalue 1 means: shut the Pi down only when the LAST UPS
+# goes on-battery+low - at which point the switch feeding it is about to
+# die anyway.
+RUN_AS_USER nut
+
+{% for ups in nut_upses %}
+MONITOR {{ ups.name }}@localhost 1 upsmon {{ _nut_upsmon_password }} primary
+{% endfor %}
+
+MINSUPPLIES 1
+SHUTDOWNCMD "/sbin/shutdown -h +0"
+POLLFREQ 5
+POLLFREQALERT 5
+HOSTSYNC 15
+DEADTIME 15
+POWERDOWNFLAG /etc/killpower
+RBWARNTIME 43200
+NOCOMMWARNTIME 300
+FINALDELAY 5

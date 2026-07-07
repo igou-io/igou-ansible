@@ -178,10 +178,10 @@
     # limit. set_fact evaluates each lookup a single time and caches the literal.
     - name: Resolve api-ssl credentials once (avoid per-loop 1Password lookups)
       ansible.builtin.set_fact:
-        routeros_api_username: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='username', vault='awx') }}"
-        routeros_api_password: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='password', vault='awx') }}"
+        routeros_api_username: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='username', vault='lab_routeros') }}"
+        routeros_api_password: "{{ lookup('community.general.onepassword', _routeros_api_op_item, field='password', vault='lab_routeros') }}"
       vars:
-        # 1P item naming convention: <short-host>-api in vault `awx`
+        # 1P item naming convention: <short-host>-api in vault `lab_routeros`
         # (crs310.igou.systems -> crs310-api; rb5009.igou.systems -> rb5009-api).
         _routeros_api_op_item: "{{ inventory_hostname | split('.') | first }}-api"
       no_log: true

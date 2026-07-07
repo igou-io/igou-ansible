@@ -28,6 +28,7 @@
               service-account token (ops_...) before running, e.g.
               `export OP_SERVICE_ACCOUNT_TOKEN=ops_...`.
           run_once: true
+
         - name: Create Gitops namespace
           kubernetes.core.k8s:
             state: present
@@ -101,13 +102,11 @@
                 annotations:
                   managed-by: ansible
               type: Opaque
-              # onepassword_doc returns the document as bytes, which newer
-              # ansible-core refuses to serialize into module args. base64 it
-              # into data (b64encode runs the value through to_bytes, so it
-              # handles bytes cleanly) instead of using stringData.
+              # data + b64encode (not stringData): onepassword_doc returns bytes,
+              # which ansible-core >= 2.19 refuses to serialize to module args.
               data:
                 1password-credentials.json: "{{ lookup('community.general.onepassword_doc', 'ocp-connect-credentials', vault='ocp-connect-bootstrap') | b64encode }}"
-          no_log: false
+          no_log: true
 
         - name: Seed the Connect access token Secret (for ESO)
           kubernetes.core.k8s:
@@ -122,6 +121,9 @@
                   managed-by: ansible
               type: Opaque
               stringData:
+                # The Connect JWT lives in the item's `credential` field (the `token`
+                # field holds an unrelated 83-char stub; verified 2026-07-03 during the
+                # cluster rebuild — the JWT has aud=com.1password.connect).
                 token: "{{ lookup('community.general.onepassword', 'ocp-connect-token', field='credential', vault='ocp-connect-bootstrap') }}"
           no_log: true
 

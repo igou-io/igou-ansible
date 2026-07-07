@@ -1,0 +1,71 @@
+---
+# Ensure one TrueNAS role-based privilege matches its declared state.
+#
+# Expects:
+#   privilege               — one truenas_privileges entry:
+#                               name         (required) privilege name
+#                               local_groups (required) local group names
+#                               roles        (required) role names
+#                                            (catalog: midclt call privilege.roles)
+#                               web_shell    (optional) default false
+#   truenas_group_query     — registered `midclt call group.query`
+#   truenas_privilege_query — registered `midclt call privilege.query`
+
+- name: Resolve current state for privilege {{ privilege.name }}
+  ansible.builtin.set_fact:
+    _privilege_gids: >-
+      {{ truenas_group_query.stdout | from_json
+         | selectattr('group', 'in', privilege.local_groups)
+         | map(attribute='gid') | sort }}
+    _privilege_current: >-
+      {{ truenas_privilege_query.stdout | from_json
+         | selectattr('name', '==', privilege.name) | list }}
+
+# Skipped in check mode: groups declared via truenas_users (create_group)
+# won't exist yet on a first-run dry-run because nothing was created.
+- name: Assert local groups exist for privilege {{ privilege.name }}
+  ansible.builtin.assert:
+    that:
+      - _privilege_gids | length == privilege.local_groups | length
+    fail_msg: >-
+      Not all of {{ privilege.local_groups }} exist on TrueNAS. Declare the
+      group via truenas_users (create_group: true) or create it first.
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Build desired payload for privilege {{ privilege.name }}
+  ansible.builtin.set_fact:
+    _privilege_payload: >-
+      {{ {'name': privilege.name,
+          'local_groups': _privilege_gids,
+          'ds_groups': [],
+          'roles': privilege.roles | sort,
+          'web_shell': privilege.web_shell | default(false) | bool} }}
+
+- name: Create privilege {{ privilege.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - privilege.create
+      - "{{ _privilege_payload | to_json }}"
+  when: _privilege_current | length == 0
+  changed_when: true
+
+- name: Update privilege {{ privilege.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - privilege.update
+      - "{{ _privilege_current[0].id }}"
+      - "{{ _privilege_payload | to_json }}"
+  when:
+    - _privilege_current | length == 1
+    - >-
+      (_privilege_current[0].roles | sort != _privilege_payload.roles)
+      or (_privilege_current[0].local_groups | map(attribute='gid') | sort
+          != _privilege_payload.local_groups)
+      or (_privilege_current[0].web_shell | bool
+          != _privilege_payload.web_shell | bool)
+  changed_when: true

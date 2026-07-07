@@ -1,0 +1,22 @@
+#cloud-config
+# Minimal seed for the hermes-test broker-validation VM: create the igou login
+# user with authorized SSH keys and enable the qemu-guest-agent (so the
+# kubevirt.core inventory reports the virt-launcher pod IP, which is how AAP
+# reaches the VM). The hermes service user + broker are configured afterwards by
+# Ansible over SSH (setup-os -> setup-hermes). Deliberately nothing else here.
+hostname: {{ vm_name }}
+ssh_pwauth: false
+users:
+  - default
+  - name: {{ vm_admin_user }}
+    groups:
+      - wheel
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    shell: /bin/bash
+    ssh_authorized_keys:
+{% for key in hermes_test_authorized_keys %}
+      - {{ key }}
+{% endfor %}
+runcmd:
+  - ["systemctl", "enable", "--now", "qemu-guest-agent"]

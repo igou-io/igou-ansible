@@ -1,0 +1,19 @@
+{#
+  Managed by Ansible - playbooks/linux/podman_quadlets.yaml.
+  Registry credentials for rootless podman (private image pulls + podman
+  auto-update). Delivered to ~/.config/containers/auth.json for the run
+  user, which is on podman's default credential search path
+  ($XDG_CONFIG_HOME/containers/auth.json).
+
+  linux_registry_auth:
+    registry: ghcr.io          # optional, defaults to ghcr.io
+    username: <account the token belongs to>
+    token: <PAT with read:packages, from 1Password>
+#}
+{
+  "auths": {
+    "{{ linux_registry_auth.registry | default('ghcr.io') }}": {
+      "auth": "{{ (linux_registry_auth.username ~ ':' ~ linux_registry_auth.token) | b64encode }}"
+    }
+  }
+}

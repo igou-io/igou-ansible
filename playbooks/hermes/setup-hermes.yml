@@ -5,6 +5,13 @@
   # setup-os.yml has mounted and owned the persistent Hermes state directory and
   # prepared the service user's shell.
   #
+  # Installs, all as the unprivileged `hermes` service user:
+  #   - the Hermes Agent (Nous installer) + its tirith pre-exec scanner,
+  #   - the OpenCode, Claude Code, and Codex coding-agent CLIs.
+  # Every install uses each vendor's official method (curl installer or GitHub
+  # release binary) — deliberately NOT npm: the guest egress firewall admits the
+  # vendors' installer/API/GitHub endpoints but not registry.npmjs.org.
+  #
   # Run order: setup-os (egress open) -> setup-hermes (egress open) -> lock egress
   # -> configure.
   #
@@ -13,6 +20,10 @@
   # whole fleet - match the linux_baseline convention instead.
   hosts: "{{ ansible_limit | default('hermes-hermes') }}"
   become: true
+  # Facts are gathered in pre_tasks after the connection is proven, so a
+  # freshly provisioned VM (whose sshd may not be up yet) doesn't fail at play
+  # start. For the live hermes VM the wait returns immediately.
+  gather_facts: false
   vars:
     hermes_user: hermes
     hermes_home: /home/hermes
@@ -24,7 +35,55 @@
     # installer would otherwise leave a non-functional Chromium in ~/.cache. Flip
     # to false only after running that admin step out of band.
     hermes_install_skip_browser: true
+    # NB: hermes_install_agent is NOT set here as a play var. Play vars outrank
+    # inventory group_vars, so defining it here would shadow a group_vars
+    # override (e.g. group_vars/hermes_test.yml sets it false for the broker-only
+    # test). It is referenced as `hermes_install_agent | default(true)` in the
+    # task conditions below, so it defaults to true (full agent) unless a
+    # group/host var sets it.
+    # Default broker minting policy (deny-not-clamp). Override with
+    # hermes_ghapp_policy. Scratch repos only until go-live widens it.
+    hermes_ghapp_policy_default:
+      allowed_repos:
+        - david-igou/hermes_github_app_plugin
+        - igou-io/igou-infrastructure
+      max_permissions:
+        contents: write
+        pull_requests: write
+        issues: write
+      default_permissions:
+        contents: read
+  pre_tasks:
+    - name: Wait for the VM's SSH to come up
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Gather facts (after the connection is proven)
+      ansible.builtin.setup:
+
   tasks:
+    # When the full agent stack is skipped (broker-only test convergence), the
+    # linux_baseline step that normally creates the hermes service user isn't
+    # run, so ensure it here. For the live hermes flow (agent install on),
+    # setup-os already created the user and this is skipped.
+    - name: Ensure the hermes service user exists (broker-only convergence)
+      ansible.builtin.user:
+        name: "{{ hermes_user }}"
+        home: "{{ hermes_home }}"
+        shell: /bin/bash
+        create_home: true
+        state: present
+      become: true
+      when: not (hermes_install_agent | default(true) | bool)
+
+    - name: Enable lingering for the hermes user (broker-only convergence)
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ hermes_user }}"
+      args:
+        creates: "/var/lib/systemd/linger/{{ hermes_user }}"
+      become: true
+      when: not (hermes_install_agent | default(true) | bool)
+
     - name: Own the Hermes state mount to the hermes user
       ansible.builtin.file:
         path: "{{ hermes_state_mount }}"
@@ -51,6 +110,7 @@
       # shell so the install script gets a sane $HOME/$PATH environment.
       become_flags: '-i'
       changed_when: true   # only runs when 'creates' target is absent
+      when: hermes_install_agent | default(true) | bool
 
     - name: Confirm the Hermes CLI and capture its version
       ansible.builtin.command:
@@ -60,6 +120,54 @@
       become_flags: '-i'
       register: hermes_version
       changed_when: false
+      when: hermes_install_agent | default(true) | bool
+
+    # Guardrail: prove `hermes` resolves by name in the hermes user's LOGIN shell
+    # (not just via the absolute path above). This catches the missing-dotfiles /
+    # PATH regression where ~/.local/bin never gets added to PATH. -lc forces a
+    # login shell so ~/.bash_profile -> ~/.bashrc -> ~/.local/bin apply.
+    - name: Verify the hermes CLI is on the hermes user login-shell PATH
+      ansible.builtin.command:
+        cmd: bash -lc 'command -v hermes'
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      register: hermes_on_path
+      changed_when: false
+      failed_when: hermes_on_path.rc != 0 or 'hermes' not in hermes_on_path.stdout
+      when: hermes_install_agent | default(true) | bool
+
+    # The Hermes agent venv is created by `uv venv`, which does NOT seed pip.
+    # The ansible.builtin.pip task below drives the venv's own pip interpreter,
+    # so pip must exist inside the venv first — seed it with uv (the tool that
+    # built the venv; ships at ~/.hermes/bin/uv). Idempotent via `creates`.
+    # Without this, a fresh converge fails the anthropic install with
+    # "Unable to find pip in the virtualenv ... under any of these names: pip3, pip".
+    - name: Ensure pip exists in the uv-built Hermes agent venv
+      ansible.builtin.command:
+        cmd: >-
+          {{ hermes_state_mount }}/bin/uv pip install
+          --python {{ hermes_state_mount }}/hermes-agent/venv/bin/python pip
+        creates: "{{ hermes_state_mount }}/hermes-agent/venv/bin/pip"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      when: hermes_install_agent | default(true) | bool
+
+    # The agent needs the `anthropic` client to talk to models served over the
+    # Anthropic Messages API surface — which on opencode-go includes MiniMax and
+    # Qwen. Without it the agent aborts at init ("The 'anthropic' package is
+    # required for the Anthropic provider"). Hermes does not always pull it into
+    # its own venv, so install it here (idempotent). GLM/Kimi use the OpenAI
+    # surface and don't need it. Runs in the egress-open install window.
+    - name: Ensure the anthropic client is in the Hermes agent venv
+      ansible.builtin.pip:
+        name: "anthropic>=0.39.0"
+        state: present
+        virtualenv: "{{ hermes_state_mount }}/hermes-agent/venv"
+      become: true
+      become_user: "{{ hermes_user }}"
+      when: hermes_install_agent | default(true) | bool
 
     # tirith (pre-exec command scanner) is a GitHub-released binary that Hermes
     # normally auto-downloads on demand - but that needs the network, so it MUST be
@@ -73,9 +181,12 @@
         path: "{{ hermes_state_mount }}/bin/tirith"
       register: hermes_tirith_bin
       become: true
+      when: hermes_install_agent | default(true) | bool
 
     - name: Install the tirith pre-exec command scanner from its GitHub release
-      when: not hermes_tirith_bin.stat.exists
+      when:
+        - hermes_install_agent | default(true) | bool
+        - not (hermes_tirith_bin.stat.exists | default(false))
       become: true
       become_user: "{{ hermes_user }}"
       vars:
@@ -106,3 +217,175 @@
             include:
               - tirith
             mode: "0755"
+
+    # === Additional coding-agent CLIs (installed as the hermes service user) ===
+    # Each fetches from the network, so they run here in the egress-open window.
+    # `become_flags: -i` forces a login shell so the service user (nologin-style)
+    # gets a sane $HOME/$PATH for the vendor installers. `creates:` makes each
+    # install idempotent. No npm (see play header).
+
+    - name: Install the OpenCode CLI as the hermes user
+      ansible.builtin.shell:
+        # Official installer; drops the binary in ~/.opencode/bin and wires PATH
+        # into the user's shell rc files.
+        cmd: >-
+          set -o pipefail && curl -fsSL https://opencode.ai/install | bash
+        creates: "{{ hermes_home }}/.opencode/bin/opencode"
+        executable: /bin/bash
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      changed_when: true
+
+    - name: Confirm the OpenCode CLI is runnable
+      ansible.builtin.command:
+        cmd: "{{ hermes_home }}/.opencode/bin/opencode --version"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      register: hermes_opencode_version
+      changed_when: false
+
+    - name: Install the Claude Code CLI as the hermes user (official installer)
+      ansible.builtin.shell:
+        # Official native installer: downloads + SHA-256-verifies the release, then
+        # its own `install` step places the binary at ~/.local/bin/claude.
+        cmd: >-
+          set -o pipefail && curl -fsSL https://claude.ai/install.sh | bash
+        creates: "{{ hermes_home }}/.local/bin/claude"
+        executable: /bin/bash
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      changed_when: true
+
+    - name: Confirm the Claude Code CLI is runnable
+      ansible.builtin.command:
+        cmd: "{{ hermes_home }}/.local/bin/claude --version"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      register: hermes_claude_version
+      changed_when: false
+
+    # Codex ships no curl installer and no npmjs.org access here, so pull the
+    # official statically-linked (musl) release binary from GitHub, like tirith.
+    # Its release tarball has no companion checksums file for the plain binary
+    # (only the codex-package variant does); HTTPS to the official openai/codex
+    # release is the trust anchor. Pin _codex_ref to a tag for reproducibility.
+    - name: Check whether the Codex CLI is already installed
+      ansible.builtin.stat:
+        path: "{{ hermes_home }}/.local/bin/codex"
+      register: hermes_codex_bin
+      become: true
+
+    - name: Install the Codex CLI from its GitHub release as the hermes user
+      when: not hermes_codex_bin.stat.exists
+      become: true
+      become_user: "{{ hermes_user }}"
+      vars:
+        _codex_ref: latest
+        # arch -> codex release triple (musl = statically linked, portable)
+        _codex_target: >-
+          {{ {'x86_64': 'x86_64-unknown-linux-musl',
+              'aarch64': 'aarch64-unknown-linux-musl'}[ansible_architecture] }}
+        _codex_url: >-
+          https://github.com/openai/codex/releases/{{ 'latest/download'
+          if _codex_ref == 'latest' else 'download/' ~ _codex_ref }}/codex-{{ _codex_target }}.tar.gz
+      block:
+        - name: Ensure the hermes user's local bin exists
+          ansible.builtin.file:
+            path: "{{ hermes_home }}/.local/bin"
+            state: directory
+            owner: "{{ hermes_user }}"
+            group: "{{ hermes_user }}"
+            mode: "0755"
+
+        - name: Download the Codex release tarball
+          ansible.builtin.get_url:
+            url: "{{ _codex_url }}"
+            dest: "{{ hermes_state_mount }}/codex-{{ _codex_target }}.tar.gz"
+            mode: "0644"
+
+        - name: Extract the Codex binary into the Hermes bin directory
+          ansible.builtin.unarchive:
+            src: "{{ hermes_state_mount }}/codex-{{ _codex_target }}.tar.gz"
+            dest: "{{ hermes_state_mount }}/bin"
+            remote_src: true
+            include:
+              - "codex-{{ _codex_target }}"
+            mode: "0755"
+
+        - name: Install the Codex binary as `codex` on the user's PATH
+          ansible.builtin.copy:
+            src: "{{ hermes_state_mount }}/bin/codex-{{ _codex_target }}"
+            dest: "{{ hermes_home }}/.local/bin/codex"
+            remote_src: true
+            mode: "0755"
+
+    - name: Confirm the Codex CLI is runnable
+      ansible.builtin.command:
+        cmd: "{{ hermes_home }}/.local/bin/codex --version"
+      become: true
+      become_user: "{{ hermes_user }}"
+      become_flags: '-i'
+      register: hermes_codex_version
+      changed_when: false
+
+    # ghapp GitHub App token broker (gated OFF; flip with
+    # -e hermes_ghapp_broker_enabled=true). Runs in this egress-open phase
+    # because the role pip-installs from GitHub. The broker holds the App key
+    # as a dedicated ghbroker user and serves single-repo, permission-clamped
+    # tokens over /run/ghbroker/ghbroker.sock; configure.yml (same gate) wires
+    # the terminal containers to it and drops the static GH_TOKEN forward.
+    # Egress: the hermes namespace EgressFirewall (igou-openshift
+    # applications/hermes-agent) already allows github.com/api.github.com (+
+    # GitHub CIDRs) and the PyPI Fastly edges, so both the role's pip install
+    # and the broker's mint calls work under the locked policy.
+    # The App identity/key default from 1Password (vault awx, the same vault
+    # and onepassword-connect-token credential the dashboard auth already uses),
+    # so a launch only needs the flag; each is still overridable via extra-vars.
+    # These lookups evaluate only when the gate is on (task-scoped vars on a
+    # skipped task are never rendered), so the live hermes run is untouched.
+    # Wrapped in block/rescue to self-heal the venv perms on hardened hosts:
+    # `python3 -m venv` honors the login umask, so on a host with umask 0077 the
+    # role creates /opt/ghapp 0700 root and the non-root broker service user
+    # cannot exec it — the role's start task then fails 203/EXEC. Fixed at source
+    # in david_igou.devhost >=27.1.3, but AWX has collection syncing disabled so
+    # the EE must be rebuilt to deliver it; this SCM-delivered rescue covers
+    # hosts still on the older EE. On a healthy host the rescue never runs.
+    - name: Deploy the ghapp GitHub App token broker (self-heal venv perms)
+      when: hermes_ghapp_broker_enabled | default(false) | bool
+      block:
+        - name: Deploy the ghapp GitHub App token broker
+          ansible.builtin.include_role:
+            name: david_igou.devhost.ghapp
+          vars:
+            _hermes_ghapp_item: "{{ hermes_ghapp_op_item | default('igou-hermes-github-app') }}"
+            _hermes_ghapp_vault: "{{ hermes_ghapp_op_vault | default('awx') }}"
+            ghapp_broker_enabled: true
+            ghapp_broker_socket_group: "{{ hermes_user }}"
+            ghapp_broker_client_id: >-
+              {{ hermes_ghapp_client_id | default(lookup('community.general.onepassword',
+                 _hermes_ghapp_item, field='client_id', vault=_hermes_ghapp_vault), true) }}
+            ghapp_broker_app_slug: "{{ hermes_ghapp_app_slug | default('igou-hermes') }}"
+            ghapp_broker_installations: "{{ hermes_ghapp_installations | default(dict([['david-igou', lookup('community.general.onepassword', _hermes_ghapp_item, field='installation_id_david-igou', vault=_hermes_ghapp_vault)], ['igou-io', lookup('community.general.onepassword', _hermes_ghapp_item, field='installation_id_igou-io', vault=_hermes_ghapp_vault)]]), true) }}"
+            ghapp_broker_private_key_content: >-
+              {{ hermes_ghapp_private_key | default(lookup('community.general.onepassword',
+                 _hermes_ghapp_item, field='private_key', vault=_hermes_ghapp_vault), true) }}
+            ghapp_broker_policy: "{{ hermes_ghapp_policy | default(hermes_ghapp_policy_default, true) }}"
+      rescue:
+        - name: Make the ghapp broker venv readable/traversable by the service user
+          ansible.builtin.file:
+            path: /opt/ghapp
+            state: directory
+            mode: u=rwX,go=rX
+            recurse: true
+          become: true
+
+        - name: Restart the ghapp broker after fixing the venv perms
+          ansible.builtin.systemd_service:
+            name: ghapp-broker.service
+            state: restarted
+            enabled: true
+          become: true

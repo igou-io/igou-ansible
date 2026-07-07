@@ -1,0 +1,11 @@
+---
+collections:
+  - name: david_igou.molecule_provisioners
+    version: 0.0.4-alpha
+  - name: https://github.com/david-igou/ansible-collection-devhost.git
+    type: git
+    version: 27.1.2
+  - name: kubernetes.core
+    version: ">=5.0.0"
+  - name: community.general
+    version: ">=10.0.0"

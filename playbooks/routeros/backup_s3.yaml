@@ -19,7 +19,7 @@
 # schedules routeros_backup_s3_{daily,weekly,monthly} set the tier.
 #
 # S3 credentials are resolved at runtime from 1Password
-# (vault: awx, item: routeros-backups-rustfs-cold,
+# (vault: lab_s3, item: routeros-backups-rustfs-cold,
 #  fields: username / password / host).
 #
 # Default scope: the routeros group. Override target with:
@@ -35,9 +35,9 @@
     routeros_s3_prefix: routeros
     routeros_s3_region: us-east-1
     routeros_s3_tier: daily
-    routeros_s3_endpoint: "https://{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='host', vault='awx') }}"
-    routeros_s3_access_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='username', vault='awx') }}"
-    routeros_s3_secret_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='password', vault='awx') }}"
+    routeros_s3_endpoint: "https://{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='host', vault='lab_s3') }}"
+    routeros_s3_access_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='username', vault='lab_s3') }}"
+    routeros_s3_secret_key: "{{ lookup('community.general.onepassword', 'routeros-backups-rustfs-cold', field='password', vault='lab_s3') }}"
 
     routeros_backup_show_sensitive: true
     routeros_backup_binary: true

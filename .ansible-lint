@@ -6,7 +6,6 @@ exclude_paths:
   - .ansible/
   - .tekton/  # Tekton/PaC manifests — Kubernetes CRDs, not Ansible content
   - playbooks/netbox/  # davidwittman.redis
-  - playbooks/openshift_virtualization/aap-25-vm/  # ansible-role-kubevirt_vm_manage, redhat.rhel_system_roles.rhc
   - playbooks/openshift_virtualization/virtualmachine-manage-testing.yml  # ansible-role-kubevirt_vm_manage
   - playbooks/openshift_virtualization/virtualmachine-tests/  # ansible-role-kubevirt_vm_manage
   - playbooks/rhel/rhsm-system-register.yml  # redhat.rhel_system_roles.rhc
@@ -15,3 +14,9 @@ exclude_paths:
   - roles/kubevirt_provision_survey/  # infra.controller_configuration.job_templates
   - roles/kubevirt_vm_snapshot/  # short interface + internal register/set_fact vars intentionally unprefixed for ergonomic CLI/extra_vars; lint logic via `ansible-lint -x var-naming`
   - roles/kubevirt_vm_provision/  # same: short vm_* interface + internal _kvp_* accumulators; lint logic via `ansible-lint -x var-naming`
+  # ghapp-e2e provisioner shims import david_igou.molecule_provisioners (pinned
+  # in the scenario's collections.yml, not installed in the lint env). converge/
+  # verify stay linted; these three only import_playbook the external collection.
+  - molecule/ghapp-e2e/create.yml
+  - molecule/ghapp-e2e/destroy.yml
+  - molecule/ghapp-e2e/prepare.yml

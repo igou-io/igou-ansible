@@ -40,12 +40,12 @@ ansible-navigator run playbooks/kubernetes/install-k3s-cluster.yml \
 After install, the imported `publish-kubeconfig-1password.yaml` play
 slurps the kubeconfig from the control-plane node
 (`/etc/rancher/k3s/k3s.yaml`), rewrites the server URL to the control
-node's FQDN, and upserts it to `op://claude/<cluster>-kubeconfig` (the
+node's FQDN, and upserts it to `op://lab_rk8s/<cluster>-kubeconfig` (the
 `kubeconfig` field is base64 — decode on use). The devcontainer loads
 it with `use rk8s` (igou-devenv `envs/rk8s.env`). Needs
 `OP_CONNECT_HOST` and `OP_CONNECT_TOKEN` in the env (AAP injects them
 via the "Onepassword Connect" credential) and a token with write access
-to the claude vault; without the env the publish step skips with a
+to the lab_rk8s vault; without the env the publish step skips with a
 warning. Re-publish on demand via the `k3s_publish_kubeconfig` AAP
 template or by running the publish playbook directly.
 
@@ -65,7 +65,7 @@ playbook handles both via `geerlingguy.containerd` and an
 
 `bootstrap-gitops.yaml` bootstraps a cluster from igou-kubernetes'
 app-of-apps layout (see `docs/bootstrap.md` there). It pulls the
-kubeconfig from `op://claude/<cluster>-kubeconfig` (published by the
+kubeconfig from `op://lab_rk8s/<cluster>-kubeconfig` (published by the
 install playbook above), installs argocd, seeds the 1Password Connect
 token secret backing the `onepassword` ClusterSecretStore, and applies
 `clusters/<cluster>` — after which argocd self-manages the cluster.

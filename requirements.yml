@@ -12,8 +12,6 @@ roles:
     version: 2.1.5
   - name: robertdebock.update
     version: 3.1.10
-  - name: robertdebock.terraform
-    version: 4.1.9
   - name: geerlingguy.helm
     version: 1.0.1
   - name: David-Igou.kubevirt_vm_manage
@@ -42,7 +40,7 @@ collections:
   - name: ansible.utils
     version: 6.0.3
   - name: felixfontein.acme
-    version: 0.11.0
+    version: 0.11.1
   - name: community.crypto
     version: 3.2.2
   - name: artis3n.tailscale
@@ -71,5 +69,5 @@ collections:
     version: v0.0.4-alpha
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
-    version: main
+    version: 27.1.3
 ...

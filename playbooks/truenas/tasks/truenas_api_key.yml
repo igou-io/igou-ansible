@@ -1,0 +1,44 @@
+---
+# Ensure one user-linked TrueNAS API key exists.
+#
+# The key material is returned by the API ONLY at creation time. It is
+# displayed once so it can be stored in 1Password; it cannot be recovered
+# afterwards. To rotate, delete the key (UI or `midclt call api_key.delete`)
+# and re-run this playbook.
+#
+# Expects:
+#   api_key               — one truenas_api_keys entry:
+#                             name       (required) key name
+#                             username   (required) linked local user
+#                             expires_at (optional) ISO-8601 expiry
+#   truenas_api_key_query — registered `midclt call api_key.query`
+
+- name: Resolve current state for API key {{ api_key.name }}
+  ansible.builtin.set_fact:
+    _api_key_current: >-
+      {{ truenas_api_key_query.stdout | from_json
+         | selectattr('name', '==', api_key.name) | list }}
+
+- name: Create API key {{ api_key.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - api_key.create
+      - >-
+        {{ ({'name': api_key.name, 'username': api_key.username}
+            | combine({'expires_at': api_key.expires_at}
+                      if api_key.expires_at is defined else {})) | to_json }}
+  when: _api_key_current | length == 0
+  register: _api_key_create
+  changed_when: true
+  no_log: true
+
+- name: Show once (store in 1Password NOW) API key {{ api_key.name }}
+  ansible.builtin.debug:
+    msg: >-
+      New TrueNAS API key '{{ api_key.name }}'
+      (user {{ api_key.username }}):
+      {{ (_api_key_create.stdout | from_json).key }}
+      — this is the only time it is shown; it is unrecoverable afterwards.
+  when: _api_key_create is not skipped

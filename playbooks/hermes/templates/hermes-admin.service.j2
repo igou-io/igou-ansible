@@ -1,0 +1,28 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Persistent Claude Code "{{ hermes_admin_rc_name }}" session (tmux, Remote Control) as the hermes user
+After=default.target
+
+[Service]
+# forking + KillMode=none: systemd tracks the daemonized tmux server as the main
+# PID and never reaps it. (Type=oneshot+RemainAfterExit was tried and reaped the
+# server's cgroup once ExecStart returned; systemd-run --service-type=forking
+# mis-tracked tmux's double-fork and also reaped it.)
+Type=forking
+KillMode=none
+Restart=on-failure
+RestartSec=3
+Environment=TERM=xterm-256color
+# Keep the tmux server alive even with no sessions/clients attached.
+ExecStartPre=-/usr/bin/tmux set-option -g exit-empty off
+# Window is an interactive login shell (=> ~/.local/bin on PATH so `claude`
+# resolves). send-keys then runs claude as a foreground *interactive* job (TTY =
+# the pane pty), which holds it at the /login screen instead of dropping to
+# non-interactive --print mode. --remote-control registers the session (named
+# "{{ hermes_admin_rc_name }}") with claude.ai for terminal/phone/web control.
+ExecStart=/usr/bin/tmux new-session -d -s {{ hermes_admin_session_name }} -x 220 -y 50 -c {{ hermes_admin_workdir }} /bin/bash -l
+ExecStartPost=/usr/bin/tmux send-keys -t {{ hermes_admin_session_name }} 'claude --remote-control "{{ hermes_admin_rc_name }}"' Enter
+ExecStop=/usr/bin/tmux kill-server
+
+[Install]
+WantedBy=default.target
