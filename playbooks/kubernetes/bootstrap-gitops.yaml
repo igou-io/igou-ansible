@@ -4,12 +4,25 @@
 # Mirrors igou-kubernetes docs/bootstrap.md, with the secret seed between
 # the two applies:
 #   1. kustomize build --enable-helm components/argocd | kubectl apply --server-side
-#   2. seed external-secrets/onepassword-connect-token from the OP_CONNECT_*
-#      env (AAP "Onepassword Connect" credential) — backs the `onepassword`
-#      ClusterSecretStore so ExternalSecrets can resolve
+#   2. seed external-secrets/onepassword-connect-token with the rk8s ENTITY
+#      Connect token, read from the dedicated ocp-connect-bootstrap vault via
+#      the read-only ocp-bootstrap service-account token — same pattern as
+#      openshift/hub-cluster/bootstrap_gitops.yaml. Backs the `onepassword`
+#      ClusterSecretStores so ExternalSecrets can resolve. (Previously this
+#      seeded whatever was in $OP_CONNECT_TOKEN, which is the token used for
+#      the kubeconfig read — not necessarily the rk8s entity token.)
 #   3. kustomize build --enable-helm clusters/<cluster> | kubectl apply
 # After step 3 the cluster self-manages: argocd adopts its own install and
 # reconciles everything in the repo.
+#
+# Two credentials are needed:
+#   - OP_CONNECT_HOST/OP_CONNECT_TOKEN (Connect mode) — reads the kubeconfig
+#     from lab_rk8s. Attach the AAP "Onepassword Connect" credential / export.
+#   - op_bootstrap_sa_token (ocp-bootstrap SA, ops_...) — reads the rk8s entity
+#     Connect token from ocp-connect-bootstrap. Prompted; pass -e for AAP.
+# Keep the SA token OUT of the global OP_SERVICE_ACCOUNT_TOKEN env, or the
+# `op` CLI runs the kubeconfig lookup in SA mode too (the ocp-bootstrap SA
+# has no grant on lab_rk8s) — that is why it is a play var, not an env var.
 #
 # The kubeconfig comes from op://<vault>/<item>/kubeconfig (base64), as
 # published by install-k3s-cluster.yml / the k3s_publish_kubeconfig AAP
@@ -19,7 +32,8 @@
 #
 #   ansible-playbook playbooks/kubernetes/bootstrap-gitops.yaml \
 #     [-e gitops_ref=master] [-e gitops_cluster=internal] \
-#     [-e kubeconfig_op_item=rk8s-kubeconfig]
+#     [-e kubeconfig_op_item=rk8s-kubeconfig] \
+#     [-e op_bootstrap_sa_token=ops_...] [-e connect_token_op_item=rk8s-connect-token]
 - name: Bootstrap cluster GitOps from igou-kubernetes
   hosts: localhost
   connection: local
@@ -33,16 +47,32 @@
     kubeconfig_op_item: rk8s-kubeconfig
     connect_secret_namespace: external-secrets
     connect_secret_name: onepassword-connect-token
+    # rk8s entity Connect token — read from the dedicated ocp-connect-bootstrap
+    # vault (same as openshift/hub-cluster/bootstrap_gitops.yaml), authenticating
+    # as the read-only ocp-bootstrap SA. The Connect JWT lives in the item's
+    # `credential` field (aud=com.1password.connect).
+    connect_token_op_vault: ocp-connect-bootstrap
+    connect_token_op_item: rk8s-connect-token
+    connect_token_op_field: credential
+
+  vars_prompt:
+    - name: op_bootstrap_sa_token
+      prompt: "1Password ocp-bootstrap service-account token (ops_...)"
+      private: true
 
   tasks:
-    - name: Assert 1Password Connect env is present
+    - name: Assert bootstrap credentials are present
       ansible.builtin.assert:
         that:
           - lookup('ansible.builtin.env', 'OP_CONNECT_HOST') | length > 0
           - lookup('ansible.builtin.env', 'OP_CONNECT_TOKEN') | length > 0
+          - op_bootstrap_sa_token | default('') | length > 0
         fail_msg: >-
-          OP_CONNECT_HOST/OP_CONNECT_TOKEN are not set. Attach the
-          "Onepassword Connect" credential (AAP) or export the env (local).
+          Need both: OP_CONNECT_HOST/OP_CONNECT_TOKEN (Connect mode — reads the
+          kubeconfig from {{ kubeconfig_op_vault }}; attach the AAP "Onepassword
+          Connect" credential or export the env) AND op_bootstrap_sa_token (the
+          ocp-bootstrap SA — reads the rk8s entity token from
+          {{ connect_token_op_vault }}; prompted, or pass -e for AAP).
 
     - name: Create workspace directory
       ansible.builtin.tempfile:
@@ -96,18 +126,25 @@
           register: _ns_apply
           changed_when: "' created' in _ns_apply.stdout"
 
-        - name: Seed the 1Password Connect token secret
-          ansible.builtin.shell:
-            cmd: |
-              set -o pipefail
-              kubectl -n {{ connect_secret_namespace }} create secret generic {{ connect_secret_name }} \
-                --from-literal=token="$OP_CONNECT_TOKEN" --dry-run=client -o yaml \
-                | kubectl apply --server-side --force-conflicts -f -
-            executable: /bin/bash
-          environment:
-            KUBECONFIG: "{{ _ws.path }}/kubeconfig"
-          register: _seed_apply
-          changed_when: "' configured' in _seed_apply.stdout or ' created' in _seed_apply.stdout"
+        - name: Seed the rk8s entity Connect token secret (for ESO)
+          kubernetes.core.k8s:
+            state: present
+            kubeconfig: "{{ _ws.path }}/kubeconfig"
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: "{{ connect_secret_name }}"
+                namespace: "{{ connect_secret_namespace }}"
+                annotations:
+                  managed-by: ansible
+              type: Opaque
+              stringData:
+                # Read the rk8s ENTITY Connect token from ocp-connect-bootstrap via
+                # the ocp-bootstrap SA (service_account_token). Passing the token as
+                # a lookup arg — not via the OP_SERVICE_ACCOUNT_TOKEN env — keeps the
+                # kubeconfig lookup above in Connect mode.
+                token: "{{ lookup('community.general.onepassword', connect_token_op_item, field=connect_token_op_field, vault=connect_token_op_vault, service_account_token=op_bootstrap_sa_token) }}"
           no_log: true
 
         - name: Apply the cluster root ({{ gitops_cluster }})
