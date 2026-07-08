@@ -68,6 +68,13 @@
     # and the git task's force:true keeps tracked files canonical anyway. Hugo
     # writes the minified site over the served dir (--cleanDestinationDir
     # prunes files deleted from the source).
+    #
+    # SELinux label flags matter here: the output dir is ALSO bind-mounted by
+    # the nginx quadlet, so it is shared between two containers and MUST use the
+    # shared label ":z" (lowercase). ":Z" would stamp it with an MCS category
+    # private to this one-shot builder, which the (different) nginx container
+    # then cannot read - the site loads but every generated asset 404/403s.
+    # The source is builder-only, so its private ":Z" is correct.
     - name: Build the site with a one-shot Hugo container
       ansible.builtin.command:
         argv:
@@ -77,7 +84,7 @@
           - --volume
           - "{{ _src }}:/src:Z"
           - --volume
-          - "{{ _dest }}:/out:Z"
+          - "{{ _dest }}:/out:z"
           - "{{ _builder }}"
           - hugo
           - --minify
