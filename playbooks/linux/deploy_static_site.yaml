@@ -98,3 +98,22 @@
       environment: "{{ _rootless_env }}"
       when: _checkout is changed or (site_force_build | default(false) | bool)
       changed_when: true
+      notify: Make the built site world-readable
+
+  handlers:
+    # The site nginx container and this build run as separate rootless
+    # containers, so "root" in the Hugo builder (host uid of _run_user) is a
+    # different subuid than nginx's worker. nginx can therefore only read the
+    # output if it is world-readable. Hugo emits page HTML 0644, but pipeline
+    # assets (css/style.css, processed images) can land 0600, which nginx then
+    # 403s - the site loads unstyled. a+rX adds read to every file and traverse
+    # (+x) to directories only, matching `chmod -R a+rX` idempotently. Runs as
+    # a handler: only fires when the build task above reported a change.
+    - name: Make the built site world-readable
+      ansible.builtin.file:
+        path: "{{ _dest }}"
+        recurse: true
+        mode: a+rX
+      become: true
+      become_user: "{{ _run_user }}"
+      environment: "{{ _rootless_env }}"
