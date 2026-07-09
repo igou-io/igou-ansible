@@ -1,0 +1,99 @@
+---
+# Publish the Microsoft Evaluation Center Windows ISO library on
+# public.igou.systems so CDI can import them over HTTP(S) into the ocp cluster.
+# Design: igou-io/igou-openshift#380 Phase 1.
+#
+# The nginx-reverse-proxy container on TrueNAS serves /mnt/ssd/public read-only
+# at public.igou.systems (autoindex), so dropping the ISOs under
+# /mnt/ssd/public/isos/windows/ publishes them with zero nginx config changes:
+#   https://public.igou.systems/isos/windows/<file>.iso   (and http:// for CDI)
+#
+# igounas (Synology) is the archival source of truth; TrueNAS holds the serving
+# copy. igounas DSM has no sftp/scp, so the transfer streams over ssh (cat).
+#
+# Variables (group_vars/truenas.yml):
+#   truenas_public_pool          ZFS pool backing /mnt/<pool>/public (default: ssd)
+#   truenas_public_quota         refquota to set on the public dataset (e.g. "150G")
+#   truenas_windows_iso_src_host ssh host holding the ISO library (igounas)
+#   truenas_windows_iso_src_dir  source dir on that host
+#   truenas_windows_isos         list of ISO filenames to publish
+#
+# Prerequisite: the TrueNAS SSH user can reach truenas_windows_iso_src_host by
+# ssh key (igounas → truenas path is not KEX-blackholed; the devcontainer path
+# is — run this via AAP or from a host on the lab network, not the devcontainer).
+
+- name: Publish Windows eval ISOs on public.igou.systems
+  hosts: truenas
+  gather_facts: false
+  become: false
+  vars:
+    # Defaults publish the full library from igounas; override in
+    # group_vars/truenas.yml as needed.
+    truenas_public_pool: ssd
+    truenas_public_quota: "150G"
+    truenas_windows_iso_src_host: igou@igounas.igou.systems
+    truenas_windows_iso_src_dir: /volume1/igoushare/Lab/isos/windows
+    truenas_windows_isos:
+      - winserver2025-eval-en-us.iso
+      - winserver2022-eval-en-us.iso
+      - winserver2019-eval-en-us.iso
+      - winserver2016-eval-en-us.iso
+      - win11-25h2-enterprise-eval-en-us.iso
+      - win11-ltsc2024-enterprise-eval-en-us.iso
+      - win11-iot-ltsc2024-enterprise-eval-en-us.iso
+    _pool: "{{ truenas_public_pool }}"
+    _dst_dir: "/mnt/{{ truenas_public_pool }}/public/isos/windows"
+    _src_host: "{{ truenas_windows_iso_src_host }}"
+    _src_dir: "{{ truenas_windows_iso_src_dir }}"
+  tasks:
+
+    - name: Bump the public dataset refquota (headroom for the ISO library)
+      arensb.truenas.filesystem:
+        name: "{{ _pool }}/public"
+        state: present
+        type: FILESYSTEM
+        refquota: "{{ truenas_public_quota }}"
+      tags: [quota]
+
+    - name: Ensure the published ISO directory exists
+      ansible.builtin.file:
+        path: "{{ _dst_dir }}"
+        state: directory
+        mode: "0755"
+      tags: [dir]
+
+    - name: Stream each ISO from the archival host (skip if size already matches)
+      ansible.builtin.shell:
+        cmd: >
+          set -o pipefail;
+          src_size=$(ssh -o BatchMode=yes {{ _src_host }} "stat -c%s {{ _src_dir }}/{{ item }}");
+          dst_size=$(stat -c%s "{{ _dst_dir }}/{{ item }}" 2>/dev/null || echo 0);
+          if [ "$src_size" != "$dst_size" ]; then
+            ssh -o BatchMode=yes {{ _src_host }} "cat {{ _src_dir }}/{{ item }}" > "{{ _dst_dir }}/{{ item }}";
+            echo transferred;
+          else
+            echo skipped;
+          fi
+      args:
+        executable: /bin/bash
+      register: _xfer
+      changed_when: "'transferred' in _xfer.stdout"
+      loop: "{{ truenas_windows_isos }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [transfer]
+
+    - name: Publish the SHA256SUMS manifest
+      ansible.builtin.shell:
+        cmd: ssh -o BatchMode=yes {{ _src_host }} "cat {{ _src_dir }}/SHA256SUMS" > "{{ _dst_dir }}/SHA256SUMS"
+      changed_when: true
+      tags: [transfer]
+
+    - name: Verify checksums on the serving copy (hard gate)
+      ansible.builtin.command:
+        cmd: sha256sum -c SHA256SUMS
+        chdir: "{{ _dst_dir }}"
+      register: _sha
+      changed_when: false
+      failed_when: _sha.rc != 0
+      tags: [verify]
