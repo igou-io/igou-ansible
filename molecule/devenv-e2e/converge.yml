@@ -51,3 +51,49 @@
         PATH: "{{ ansible_user_dir }}/.local/bin:{{ ansible_env.PATH }}"
       register: __up_release
       changed_when: true
+
+# Expose code-server externally via a NodePort service, mirroring phase 1 of the
+# production provision-vm.yml (which this scenario otherwise replaces): that
+# playbook pins a devenv-code-server NodePort on 30080 so the operator reaches
+# the editor from outside the cluster. We recreate the same reachability path
+# here so verify can prove it end-to-end. The k8s call runs on the controller —
+# the play targets the VM host (for parity with the surrounding converge plays)
+# but delegates to localhost, where the KUBECONFIG env lives, exactly like the
+# provisioner's own create tasks talk to the cluster API.
+- name: Expose code-server externally via a NodePort service
+  hosts: devenv-devenv
+  gather_facts: false
+  vars:
+    # Namespace matches the provisioner's kubevirt role default (the shared
+    # `molecule` namespace); the SSH NodePort it creates lands here too.
+    devenv_e2e_namespace: molecule
+    # Instance-scoped name so it can't collide with the provisioner's own
+    # `devenv-devenv` SSH service in this shared namespace.
+    devenv_e2e_cs_service: devenv-devenv-code-server
+  tasks:
+    - name: Create the code-server NodePort service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ devenv_e2e_cs_service }}"
+            namespace: "{{ devenv_e2e_namespace }}"
+          spec:
+            type: NodePort
+            selector:
+              # The label the provisioner puts on the virt-launcher pod (the same
+              # one its SSH service selects on) — routes to this VM's code-server.
+              kubevirt.io/domain: devenv-devenv
+            ports:
+              - name: code-server
+                port: 8080
+                targetPort: 8080
+                protocol: TCP
+                # Deliberately NO fixed nodePort. Production pins 30080, but this
+                # scenario shares the `molecule` namespace with any other run, so
+                # squatting a fixed host port would clash; let the cluster
+                # allocate one and verify discovers it dynamically.
+      delegate_to: localhost
+      run_once: true
