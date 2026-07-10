@@ -1,0 +1,80 @@
+# roles/rpi_rootfs/tasks/main.yml
+#
+# Per-host Pi rootfs provisioning. Idempotent: a sentinel JSON written at
+# end-of-run records the resolved src URL + image sha256 + host. Skip
+# the whole provision when the sentinel matches the current inputs and
+# force_refresh is false. Structure mirrors the armbian collection's
+# rootfs_provision role.
+---
+- name: Validate inputs
+  ansible.builtin.include_tasks: _validate_inputs.yml
+
+- name: Resolve source classification + cache paths
+  ansible.builtin.include_tasks: _resolve_src.yml
+
+- name: Force-refresh — remove existing target_dir + cache entries when requested
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ rpi_rootfs_target_dir }}"
+    - "{{ rpi_rootfs_tftp_dir }}"
+    - "{{ __rpi_rootfs_img_xz }}"
+    - "{{ __rpi_rootfs_img_raw }}"
+  when: rpi_rootfs_force_refresh | bool
+
+- name: Probe sentinel from a previous successful run
+  ansible.builtin.stat:
+    path: "{{ rpi_rootfs_target_dir }}/.rpi_rootfs_provision_complete"
+  register: __rpi_rootfs_sentinel
+
+- name: Parse existing sentinel
+  ansible.builtin.slurp:
+    src: "{{ rpi_rootfs_target_dir }}/.rpi_rootfs_provision_complete"
+  register: __rpi_rootfs_sentinel_raw
+  when: __rpi_rootfs_sentinel.stat.exists
+
+# Skip comparison uses src (URL) and host only — not src_sha256 — same
+# trade-off as the armbian role: re-hashing on every run would defeat
+# the cache. An upstream serving new bytes at the same URL needs
+# rpi_rootfs_force_refresh=true.
+- name: Set fact for sentinel matching
+  ansible.builtin.set_fact:
+    __rpi_rootfs_should_skip: >-
+      {{
+        __rpi_rootfs_sentinel.stat.exists
+        and (
+          (__rpi_rootfs_sentinel_raw.content | b64decode | from_json).src == rpi_rootfs_src
+        )
+        and (
+          (__rpi_rootfs_sentinel_raw.content | b64decode | from_json).host == rpi_rootfs_host
+        )
+      }}
+  when: __rpi_rootfs_sentinel.stat.exists
+
+- name: Set skip fact false when no sentinel
+  ansible.builtin.set_fact:
+    __rpi_rootfs_should_skip: false
+  when: not __rpi_rootfs_sentinel.stat.exists
+
+- name: Provision (skipped when sentinel matches)
+  when: not __rpi_rootfs_should_skip
+  block:
+    - name: Download or copy source image
+      ansible.builtin.include_tasks: _download_or_copy.yml
+
+    - name: Extract boot + root partitions from source image
+      ansible.builtin.include_tasks: _extract.yml
+
+    - name: Post-process rootfs for diskless boot
+      ansible.builtin.include_tasks: _postprocess.yml
+
+    - name: Reset host identity (hostname, machine-id, ssh keys)
+      ansible.builtin.include_tasks: _identity_reset.yml
+      when: rpi_rootfs_reset_identity | bool
+
+    - name: Write provision sentinel
+      ansible.builtin.include_tasks: _write_sentinel.yml
+  always:
+    - name: Clean up loop device and mounts
+      ansible.builtin.include_tasks: _cleanup.yml

@@ -1,0 +1,178 @@
+---
+# Per-Pi netboot staging: netboot server first, then the router.
+#   1. rpis group: resolve contract + TFTP prefix + rootfs src per host.
+#   2. netboot_server group: rpi_rootfs_provision per managed Pi
+#      (NFS rootfs + full boot-partition TFTP staging).
+#   3. netboot_server group: fetch each Pi's shared boot assets
+#      (firmware/kernel/dtb) to the controller cache.
+#   4. rpis group (serial): upload the shared <model>/<build_id> set to
+#      the router's flash once (size-gated dedup across Pis on the same
+#      build) and register this Pi's per-prefix /ip tftp rows pointing
+#      into it. Pin files (config.txt/cmdline.txt) are owned by
+#      converge_boot_mode.yml, not staged here.
+#
+# Scope with -e rpi_group=<group> — not --limit. The plays mix rpis
+# with netboot_server, and plays 2-3 loop over the rpis group from the
+# netboot_server host, so --limit silently empties them.
+- name: Resolve per-Pi config and rootfs sources
+  hosts: "{{ rpi_group | default('rpis') }}"
+  gather_facts: false
+  tasks:
+    - name: Resolve effective rpi config
+      ansible.builtin.include_tasks: tasks/_resolve_rpi_config.yml
+
+    - name: Resolve rpi_rootfs_src per host
+      ansible.builtin.include_tasks: tasks/_resolve_rootfs_src.yml
+      when: rpi_netboot_managed
+
+- name: Provision per-Pi NFS rootfs + TFTP staging
+  hosts: "{{ rpi_netboot_server_group | default('netboot_server') }}"
+  become: true
+  gather_facts: false
+  vars:
+    _managed_pis: >-
+      {{ groups[rpi_group | default('rpis')]
+         | map('extract', hostvars)
+         | selectattr('rpi_netboot_managed', 'defined')
+         | selectattr('rpi_netboot_managed')
+         | map(attribute='inventory_hostname') | list }}
+  tasks:
+    - name: Run rpi_rootfs_provision per Pi
+      ansible.builtin.include_role:
+        name: rpi_rootfs
+      vars:
+        rpi_rootfs_src: "{{ hostvars[_pi].rpi_rootfs_src }}"
+        rpi_rootfs_host: "{{ _pi }}"
+        rpi_rootfs_force_refresh: "{{ rpi_force_refresh | default(false) }}"
+      loop: "{{ _managed_pis }}"
+      loop_control:
+        loop_var: _pi
+
+- name: Fetch shared boot assets from netboot server to controller cache
+  hosts: "{{ rpi_netboot_server_group | default('netboot_server') }}"
+  become: true
+  gather_facts: false
+  vars:
+    _managed_pis: >-
+      {{ groups[rpi_group | default('rpis')]
+         | map('extract', hostvars)
+         | selectattr('rpi_netboot_managed', 'defined')
+         | selectattr('rpi_netboot_managed')
+         | map(attribute='inventory_hostname') | list }}
+    _fetch_pairs: >-
+      {%- set out = [] -%}
+      {%- for h in _managed_pis -%}
+      {%-   for a in hostvars[h].rpi_tftp_assets -%}
+      {%-     set _ = out.append({'host': h, 'asset': a}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  tasks:
+    - name: Ensure controller cache dir exists per host
+      ansible.builtin.file:
+        path: "{{ hostvars[item].rpi_tftp_cache_dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      # Force a real local connection: inventory `localhost` defaults to
+      # SSH (it is an SSH-able build host), and this devcontainer's sshd
+      # has PrivateTmp, so an SSH-delegated mkdir creates a private /tmp
+      # the fetch below (controller-side write) cannot see.
+      vars:
+        ansible_connection: local
+      become: false
+      loop: "{{ _managed_pis }}"
+
+    - name: Fetch each (host, asset) pair from netboot server
+      ansible.builtin.fetch:
+        src: "{{ rpi_image_cache }}/rpi-tftp/{{ item.host }}/{{ item.asset }}"
+        dest: "{{ hostvars[item.host].rpi_tftp_cache_dir }}/{{ item.host }}/{{ item.asset }}"
+        flat: true
+      loop: "{{ _fetch_pairs }}"
+      loop_control:
+        label: "{{ item.host }}/{{ item.asset }}"
+
+- name: Upload shared TFTP assets to router and register per-Pi rows
+  hosts: "{{ rpi_group | default('rpis') }}"
+  gather_facts: false
+  # One Pi at a time: every host's uploads delegate to the same router,
+  # and parallel net_put bursts flake RouterOS's SSH server.
+  serial: 1
+  vars:
+    _shared_dir: "{{ rpi_tftp_flash_dir }}/shared/{{ rpi_board_model }}/{{ rpi_build_id }}"
+    # Every build still referenced by a managed Pi of this model — the
+    # prune step below must not delete a sibling Pi's active build.
+    _active_builds: >-
+      {{ groups[rpi_group | default('rpis')]
+         | map('extract', hostvars)
+         | selectattr('rpi_netboot_managed', 'defined')
+         | selectattr('rpi_netboot_managed')
+         | selectattr('rpi_board_model', 'equalto', rpi_board_model)
+         | map(attribute='rpi_build_id') | unique | list }}
+  tasks:
+    - name: Stage this Pi's assets on the router
+      delegate_to: "{{ rpi_router }}"
+      when: rpi_netboot_managed
+      block:
+        - name: Assert the TFTP prefix is derivable for this host
+          ansible.builtin.assert:
+            that:
+              - rpi_tftp_prefix | length > 0
+            fail_msg: >-
+              Host {{ inventory_hostname }} has no resolvable TFTP prefix —
+              rpi_tftp_prefix_mode=serial but rpi_serial is empty. Run
+              playbooks/rpi_netboot/enroll.yml first and record the
+              captured serial in host_vars (or switch the host to
+              rpi_tftp_prefix_mode=mac).
+
+        - name: Ensure shared dir hierarchy exists on router flash
+          community.routeros.command:
+            commands:
+              - >-
+                :if ([/file find name="{{ item }}" type=directory] = "")
+                do={/file add name="{{ item }}" type=directory}
+          register: _shareddir
+          retries: 3
+          delay: 5
+          until: _shareddir is succeeded
+          changed_when: false
+          loop:
+            - "{{ rpi_tftp_flash_dir }}/shared"
+            - "{{ rpi_tftp_flash_dir }}/shared/{{ rpi_board_model }}"
+            - "{{ _shared_dir }}"
+
+        - name: Retarget this Pi's rows onto the current build dir
+          ansible.builtin.include_tasks: transport/retarget_tftp_row.yml
+          vars:
+            _retarget_req: "{{ rpi_tftp_prefix }}/{{ item }}"
+            _retarget_real: "{{ _shared_dir }}/{{ item }}"
+          loop: "{{ rpi_tftp_assets }}"
+
+        - name: Upload each shared asset + register this Pi's row
+          # Reuses the armbian domain's generic size-gated primitive —
+          # it only consumes _upload_* vars. The shared path is keyed by
+          # build_id (immutable content), so the size gate is safe and
+          # dedups the upload across Pis on the same build.
+          ansible.builtin.include_tasks: ../armbian/transport/upload_file.yml
+          vars:
+            _upload_local_src: "{{ rpi_tftp_cache_dir }}/{{ inventory_hostname }}/{{ item }}"
+            _upload_remote_path: "{{ _shared_dir }}/{{ item }}"
+            _upload_req_filename: "{{ rpi_tftp_prefix }}/{{ item }}"
+            _upload_req_filename_is_regex: false
+          loop: "{{ rpi_tftp_assets }}"
+
+        - name: Prune shared build dirs no longer referenced by any Pi of this model
+          community.routeros.command:
+            commands:
+              - >-
+                /file remove
+                [find where name~"^{{ rpi_tftp_flash_dir }}/shared/{{ rpi_board_model }}/"
+                and !(name~"({{ _active_builds | join('|') }})")]
+          register: _prune
+          retries: 3
+          delay: 5
+          until: _prune is succeeded
+          changed_when: false
+
+        - name: Verify /ip tftp rows landed (plumbing check)
+          ansible.builtin.include_tasks: transport/plumbing_check.yml

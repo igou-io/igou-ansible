@@ -1,0 +1,34 @@
+---
+# Shared primitive: PoE-cycle a single Pi's switch port.
+# Delegated to the per-Pi switch (rpi_poe_switch). Mirrors
+# playbooks/armbian/transport/poe_cycle.yml with rpi_* hostvars.
+#
+# Required hostvars:
+#   rpi_poe_switch
+#   rpi_poe_port
+# Optional:
+#   rpi_poe_cycle_delay (default 5)
+
+- name: PoE off
+  community.routeros.command:
+    commands:
+      - '/interface ethernet poe set [find name="{{ rpi_poe_port }}"] poe-out=off'
+  delegate_to: "{{ rpi_poe_switch }}"
+  register: _poe_off
+  retries: 3
+  delay: 5
+  until: _poe_off is succeeded
+
+- name: Pause for capacitor drain
+  ansible.builtin.pause:
+    seconds: "{{ rpi_poe_cycle_delay | default(5) }}"
+
+- name: PoE on
+  community.routeros.command:
+    commands:
+      - '/interface ethernet poe set [find name="{{ rpi_poe_port }}"] poe-out=auto'
+  delegate_to: "{{ rpi_poe_switch }}"
+  register: _poe_on
+  retries: 3
+  delay: 5
+  until: _poe_on is succeeded

@@ -1,0 +1,110 @@
+---
+# Converge Pi(s) to a boot mode on the ROUTER ONLY: plumbing check,
+# then render + upload the per-Pi pin files (config.txt + cmdline.txt).
+# Never touches the Pi itself — no PoE cycle, no SSH wait, no rootfs
+# verify. To actually reboot a Pi into the newly pinned mode, run
+# playbooks/rpi_netboot/cycle_pi.yml afterwards.
+#
+# cmdline.txt is the Pi analog of the armbian fleet's pxelinux 01-<mac>
+# pin: kernel + firmware come from TFTP in both modes, and only the
+# root= changes (net = NFS root, sd = local block device).
+#
+# Usage:
+#   ansible-playbook playbooks/rpi_netboot/converge_boot_mode.yml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=upsmonitor.igou.systems
+- name: Converge Pi boot mode (router state only)
+  hosts: "{{ target_hosts | default('rpis') }}"
+  gather_facts: false
+  # One Pi at a time: every host's uploads delegate to the same router,
+  # and parallel net_put bursts flake RouterOS's SSH server.
+  serial: 1
+  vars:
+    _pin_flash_dir: "{{ rpi_tftp_flash_dir | default('rpi') }}/per-host/{{ inventory_hostname }}"
+    _pin_files: [config.txt, cmdline.txt]
+  tasks:
+    - name: Resolve effective rpi config
+      ansible.builtin.include_tasks: tasks/_resolve_rpi_config.yml
+
+    - name: Skip note for unmanaged hosts
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} has rpi_boot_mode=local — not netboot
+          managed, nothing to converge.
+      when: not rpi_netboot_managed
+
+    - name: Pre-flight plumbing check on router
+      delegate_to: "{{ rpi_router }}"
+      when: rpi_netboot_managed
+      block:
+        - name: Include plumbing check tasks
+          ansible.builtin.include_tasks: transport/plumbing_check.yml
+
+    - name: Render pin files locally
+      delegate_to: localhost
+      # Force a real local connection so the rendered files land on the
+      # real controller /tmp that net_put reads (devcontainer sshd has
+      # PrivateTmp; inventory localhost defaults to SSH).
+      vars:
+        ansible_connection: local
+      become: false
+      when: rpi_netboot_managed
+      block:
+        - name: Include rpi_boot_render role
+          ansible.builtin.include_role:
+            name: rpi_boot_render
+          vars:
+            rpi_boot_render_output_dir: "{{ rpi_tftp_cache_dir }}/pins"
+            rpi_boot_render_hostname: "{{ inventory_hostname }}"
+            rpi_boot_render_boot_mode: "{{ rpi_boot_mode }}"
+            rpi_boot_render_kernel: "{{ rpi_model_config.kernel }}"
+            rpi_boot_render_nfs_server_ip: "{{ rpi_netboot_server_ip }}"
+            rpi_boot_render_nfs_root_path: "{{ rpi_nfs_rootfs_path }}"
+            rpi_boot_render_sd_root: "{{ rpi_sd_root | default('LABEL=igou_root') }}"
+            rpi_boot_render_serial_console: "{{ rpi_serial_console | default(true) }}"
+            rpi_boot_render_cmdline_extra: "{{ rpi_cmdline_extra | default('') }}"
+            rpi_boot_render_config_extra: "{{ rpi_config_extra | default([]) }}"
+
+    - name: Upload pin files to router
+      delegate_to: "{{ rpi_router }}"
+      when: rpi_netboot_managed
+      block:
+        - name: Ensure per-host dir hierarchy exists on router flash
+          community.routeros.command:
+            commands:
+              - >-
+                :if ([/file find name="{{ item }}" type=directory] = "")
+                do={/file add name="{{ item }}" type=directory}
+          register: _pindir
+          retries: 3
+          delay: 5
+          until: _pindir is succeeded
+          changed_when: false
+          loop:
+            - "{{ rpi_tftp_flash_dir }}/per-host"
+            - "{{ _pin_flash_dir }}"
+
+        # Force-remove router-side pins so net_put always pushes fresh
+        # content — the shared primitive is size-gated, and a mode flip
+        # can render a same-size cmdline.txt that would silently be
+        # skipped (the armbian stale-vmlinuz lesson).
+        - name: Force-remove router-side pin files (stale-content guard)
+          community.routeros.command:
+            commands:
+              - >-
+                /file remove
+                [find name="{{ _pin_flash_dir }}/{{ item }}"]
+          register: _pinremove
+          retries: 3
+          delay: 5
+          until: _pinremove is succeeded
+          changed_when: false
+          loop: "{{ _pin_files }}"
+
+        - name: Upload each pin file via shared primitive
+          ansible.builtin.include_tasks: ../armbian/transport/upload_file.yml
+          vars:
+            _upload_local_src: "{{ rpi_tftp_cache_dir }}/pins/{{ inventory_hostname }}/{{ item }}"
+            _upload_remote_path: "{{ _pin_flash_dir }}/{{ item }}"
+            _upload_req_filename: "{{ rpi_tftp_prefix }}/{{ item }}"
+            _upload_req_filename_is_regex: false
+          loop: "{{ _pin_files }}"

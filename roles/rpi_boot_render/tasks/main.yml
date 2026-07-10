@@ -1,0 +1,32 @@
+---
+- name: Validate NFS parameters are present when boot_mode=net
+  ansible.builtin.assert:
+    that:
+      - rpi_boot_render_nfs_server_ip is defined
+      - rpi_boot_render_nfs_server_ip | length > 0
+      - rpi_boot_render_nfs_root_path is defined
+      - rpi_boot_render_nfs_root_path | length > 0
+    fail_msg: >-
+      rpi_boot_render_boot_mode=net requires rpi_boot_render_nfs_server_ip
+      and rpi_boot_render_nfs_root_path. See meta/argument_specs.yml.
+  when: rpi_boot_render_boot_mode == 'net'
+
+- name: Ensure per-host output dir exists
+  ansible.builtin.file:
+    path: "{{ rpi_boot_render_output_dir }}/{{ rpi_boot_render_hostname }}"
+    state: directory
+    mode: "0755"
+
+- name: Render config.txt for {{ rpi_boot_render_hostname }}
+  ansible.builtin.template:
+    src: config_txt.j2
+    dest: "{{ rpi_boot_render_output_dir }}/{{ rpi_boot_render_hostname }}/config.txt"
+    mode: "0644"
+    backup: true
+
+- name: Render cmdline.txt for {{ rpi_boot_render_hostname }}
+  ansible.builtin.template:
+    src: cmdline_txt.j2
+    dest: "{{ rpi_boot_render_output_dir }}/{{ rpi_boot_render_hostname }}/cmdline.txt"
+    mode: "0644"
+    backup: true

@@ -1,0 +1,8 @@
+# roles/rpi_eeprom/defaults/main.yml
+---
+# Required from caller — no defaults:
+#   rpi_eeprom_settings
+
+rpi_eeprom_reboot: true
+rpi_eeprom_apply_path: /tmp/rpi-eeprom-bootconf.txt
+rpi_eeprom_reboot_timeout: 300

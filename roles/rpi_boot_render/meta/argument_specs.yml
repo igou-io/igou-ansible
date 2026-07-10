@@ -1,0 +1,84 @@
+---
+argument_specs:
+  main:
+    short_description: "Render one Pi's netboot pin files (config.txt + cmdline.txt) to a local directory."
+    description:
+      - >-
+        Renders the two per-host files the Raspberry Pi firmware fetches
+        from its TFTP prefix directory. cmdline.txt is the boot-mode pin
+        (root=/dev/nfs vs local root), playing the role pxelinux.cfg's
+        01-<mac> file plays for the armbian boards. Always writes —
+        never uploads. The caller is responsible for moving the rendered
+        files to the TFTP server.
+      - >-
+        Typically reached via `delegate_to: localhost` inside a
+        `hosts: rpis` play, so per-Pi hostvars are in scope and one
+        invocation per Pi renders one <hostname>/ directory.
+    options:
+      rpi_boot_render_output_dir:
+        type: path
+        required: true
+        description: >-
+          Local directory under which <hostname>/config.txt and
+          <hostname>/cmdline.txt are written.
+      rpi_boot_render_hostname:
+        type: str
+        required: true
+        description: "Inventory hostname — output subdir and per-host NFS rootfs subdir."
+      rpi_boot_render_boot_mode:
+        type: str
+        required: true
+        choices: [net, sd]
+        description: >-
+          Which root= the rendered cmdline.txt points at. net = NFS root
+          from <nfs_server_ip>:<nfs_root_path>/<hostname>; sd = local
+          block device (rpi_boot_render_sd_root). Kernel and firmware
+          come from TFTP in BOTH modes (mirrors the armbian sd label).
+      rpi_boot_render_kernel:
+        type: str
+        required: true
+        description: >-
+          Kernel filename written as config.txt kernel= (kernel8.img on
+          Pi 4, kernel_2712.img on Pi 5). Comes from rpi_model_config.
+      rpi_boot_render_nfs_server_ip:
+        type: str
+        description: "Server IP written into nfsroot=. Required when boot_mode=net."
+      rpi_boot_render_nfs_root_path:
+        type: path
+        description: >-
+          NFS export root path. Per-host directory is composed as
+          <nfs_root_path>/<hostname>. Required when boot_mode=net.
+      rpi_boot_render_nfs_options:
+        type: str
+        default: "vers=3"
+        description: >-
+          nfsroot= mount options. NFSv3 needs no initramfs on Raspberry
+          Pi OS kernels (CONFIG_ROOT_NFS built in); v4 root would.
+      rpi_boot_render_sd_root:
+        type: str
+        default: "LABEL=igou_root"
+        description: >-
+          root= kernel argument for the sd mode. Default matches the
+          ext4 label baked into rpi-image-gen builds; override per-host
+          (e.g. /dev/mmcblk0p2 or PARTUUID=...) for stock RPi OS cards.
+      rpi_boot_render_serial_console:
+        type: bool
+        default: true
+        description: >-
+          When true, adds enable_uart=1 to config.txt and
+          console=serial0,115200 to cmdline.txt so boot is debuggable
+          from the header UART (pairs with the EEPROM's BOOT_UART=1).
+      rpi_boot_render_cmdline_extra:
+        type: str
+        default: ""
+        description: "Extra kernel arguments appended to cmdline.txt."
+      rpi_boot_render_config_extra:
+        type: list
+        elements: str
+        default: []
+        description: >-
+          Extra config.txt lines (e.g. dtoverlay=disable-bt). NOTE:
+          every dtoverlay= line makes the firmware fetch
+          overlays/<name>.dtbo over TFTP — each one needs a matching
+          /ip tftp row, which stage_netboot_assets does not create.
+          Keep this empty unless you also pin the overlay rows.

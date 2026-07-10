@@ -1,0 +1,73 @@
+# roles/rpi_rootfs/tasks/_extract.yml
+#
+# Extracts a Raspberry Pi .img.xz netboot-style: partition 2 (ext4
+# root) into the per-host target_dir, partition 1 (FAT boot) into the
+# per-host TFTP staging dir. Pi images always carry exactly these two
+# partitions in this order — asserted below rather than guessed by size.
+---
+- name: Ensure mount dirs + target dirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ rpi_rootfs_mount_dir }}"
+    - "{{ rpi_rootfs_boot_mount_dir }}"
+    - "{{ rpi_rootfs_target_dir }}"
+    - "{{ rpi_rootfs_tftp_dir }}"
+
+- name: Decompress image (creates {{ __rpi_rootfs_img_raw }})
+  ansible.builtin.shell: |
+    xz -dk "{{ __rpi_rootfs_img_xz }}"
+  args:
+    creates: "{{ __rpi_rootfs_img_raw }}"
+
+- name: Attach .img to a loop device with partition scan
+  ansible.builtin.shell: |
+    losetup --find --show --partscan "{{ __rpi_rootfs_img_raw }}"
+  register: __rpi_rootfs_loop_dev
+  changed_when: true
+
+- name: Assert the image carries the expected boot+root partition pair
+  ansible.builtin.shell: |
+    set -o pipefail
+    lsblk -ln -o NAME "{{ __rpi_rootfs_loop_dev.stdout }}" | tail -n +2 | wc -l
+  args:
+    executable: /bin/bash
+  register: __rpi_rootfs_part_count
+  changed_when: false
+  failed_when: (__rpi_rootfs_part_count.stdout | trim | int) != 2
+
+# ansible.posix.mount's mounted/present states manage fstab entries —
+# wrong for a throwaway loop mount that must never survive this role.
+- name: Mount boot (p1) and root (p2) partitions
+  ansible.builtin.command: # noqa: command-instead-of-module
+    cmd: "mount {{ __rpi_rootfs_loop_dev.stdout }}p{{ item.part }} {{ item.dir }}"
+  loop:
+    - { part: 1, dir: "{{ rpi_rootfs_boot_mount_dir }}" }
+    - { part: 2, dir: "{{ rpi_rootfs_mount_dir }}" }
+  loop_control:
+    label: "p{{ item.part }} -> {{ item.dir }}"
+  changed_when: true
+
+# Both ends of the rsync are THIS host (loop mount → export dir);
+# synchronize's controller↔remote model buys nothing here.
+- name: Rsync rootfs into target_dir # noqa: command-instead-of-module
+  ansible.builtin.shell: |
+    rsync -aHAX --delete \
+      --exclude '/proc/*' --exclude '/sys/*' \
+      --exclude '/dev/*' --exclude '/run/*' \
+      --exclude '/.rpi_rootfs_provision_complete' \
+      "{{ rpi_rootfs_mount_dir }}/" "{{ rpi_rootfs_target_dir }}/"
+  changed_when: true
+
+# Full boot-partition copy: the router upload play picks the per-model
+# subset (firmware/kernel/dtb) from here, and keeping the whole FAT
+# contents makes overlays available if a host ever pins dtoverlay rows.
+# FAT carries no ownership/xattrs, so plain -rt (no -aHAX) — and the
+# image's cmdline.txt/config.txt are staged but never uploaded;
+# rpi_boot_render owns the pins.
+- name: Rsync boot partition into TFTP staging dir # noqa: command-instead-of-module
+  ansible.builtin.shell: |
+    rsync -rt --delete "{{ rpi_rootfs_boot_mount_dir }}/" "{{ rpi_rootfs_tftp_dir }}/"
+  changed_when: true

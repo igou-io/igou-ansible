@@ -1,0 +1,6 @@
+# Ansible managed — rpi_eeprom. Unmanaged keys preserved from the live
+# config; comments/sections are not.
+[all]
+{% for k, v in (__rpi_eeprom_current | combine(__rpi_eeprom_desired)).items() %}
+{{ k }}={{ v }}
+{% endfor %}

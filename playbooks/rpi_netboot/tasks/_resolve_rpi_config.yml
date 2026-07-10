@@ -1,0 +1,115 @@
+---
+# playbooks/rpi_netboot/tasks/_resolve_rpi_config.yml
+#
+# Per-host resolver for the Pi netboot contract. Validates the
+# inventory-owned per-host state, resolves the configurable TFTP prefix
+# (the request-path key the Pi firmware uses — see rpi_tftp_prefix_mode
+# below), and computes derived facts every rpi_netboot playbook shares:
+#
+#   rpi_netboot_managed         boot_mode is net|sd (local = asset-tracking only)
+#   rpi_tftp_prefix             TFTP request-path prefix ('' when not yet derivable)
+#   rpi_eeprom_prefix_settings  EEPROM keys that make the firmware request that prefix
+#   rpi_tftp_assets             per-model shared file set (firmware + kernel + dtb)
+#   rpi_tftp_flash_dir / rpi_tftp_cache_dir defaults
+
+- name: Assert per-host Pi contract vars
+  ansible.builtin.assert:
+    that:
+      - rpi_board_mac is defined
+      - rpi_board_mac | length > 0
+      - rpi_board_model is defined
+      - rpi_board_model | length > 0
+      - rpi_boot_mode is defined
+      - rpi_boot_mode in ['net', 'sd', 'local']
+      - rpi_model_config is defined
+      - rpi_model_config.kernel is defined
+      - rpi_model_config.dtb is defined
+      - rpi_model_config.firmware_files is defined
+    fail_msg: >-
+      Host {{ inventory_hostname }} is missing the Pi netboot contract:
+      rpi_board_mac, rpi_board_model, rpi_boot_mode (net|sd|local), and
+      rpi_model_config (kernel/dtb/firmware_files, from the rpi4/rpi5
+      model group_vars). See playbooks/rpi_netboot/README.md for the
+      inventory scaffolding.
+
+- name: Assert netboot topology vars are resolvable
+  ansible.builtin.assert:
+    that:
+      - rpi_router is defined
+      - rpi_netboot_server_ip is defined
+      - rpi_nfs_rootfs_path is defined
+      - rpi_image_cache is defined
+    fail_msg: >-
+      Pi netboot topology vars are unset (rpi_router,
+      rpi_netboot_server_ip, rpi_nfs_rootfs_path, rpi_image_cache).
+      These belong in inventory group_vars — see
+      playbooks/rpi_netboot/README.md.
+
+- name: Resolve flash/cache dir defaults + managed flag
+  ansible.builtin.set_fact:
+    rpi_tftp_flash_dir: "{{ rpi_tftp_flash_dir | default('rpi') }}"
+    rpi_tftp_cache_dir: "{{ rpi_tftp_cache_dir | default('/tmp/rpi-tftp') }}"
+    rpi_netboot_managed: "{{ rpi_boot_mode in ['net', 'sd'] }}"
+
+# --- Configurable TFTP prefix -------------------------------------------
+# rpi_tftp_prefix_mode selects how the firmware names its TFTP prefix
+# directory, and MUST stay in lockstep with the EEPROM TFTP_PREFIX key
+# (enroll.yml derives the EEPROM value from this same var):
+#   serial (default) TFTP_PREFIX=0 — <8-hex-serial>/  (firmware default)
+#   mac              TFTP_PREFIX=2 — <aa-bb-cc-dd-ee-ff>/ (matches the
+#                    fleet's MAC-keyed identity; usable before first boot)
+#   custom           TFTP_PREFIX=1 — TFTP_PREFIX_STR (max 32 chars; e.g.
+#                    a shared prefix for identical throwaway nodes)
+- name: Validate rpi_tftp_prefix_mode
+  ansible.builtin.assert:
+    that:
+      - (rpi_tftp_prefix_mode | default('serial')) in ['serial', 'mac', 'custom']
+    fail_msg: >-
+      rpi_tftp_prefix_mode={{ rpi_tftp_prefix_mode | default('serial') }}
+      is not valid. Must be serial, mac, or custom.
+
+- name: Validate rpi_serial format when set
+  ansible.builtin.assert:
+    that:
+      - (rpi_serial | default('')) is match('^([0-9a-f]{8})?$')
+    fail_msg: >-
+      rpi_serial='{{ rpi_serial | default('') }}' must be the LAST 8 hex
+      digits of /proc/cpuinfo Serial, lowercase (or empty until
+      enroll.yml captures it).
+
+- name: Validate rpi_tftp_prefix_str when mode=custom
+  ansible.builtin.assert:
+    that:
+      - rpi_tftp_prefix_str is defined
+      - rpi_tftp_prefix_str | regex_replace('/$', '') | length > 0
+      - rpi_tftp_prefix_str | regex_replace('/$', '') | length <= 32
+    fail_msg: >-
+      rpi_tftp_prefix_mode=custom requires rpi_tftp_prefix_str
+      (1-32 chars — the firmware's TFTP_PREFIX_STR limit).
+  when: (rpi_tftp_prefix_mode | default('serial')) == 'custom'
+
+- name: Resolve TFTP prefix + matching EEPROM settings
+  vars:
+    _prefix_mode: "{{ rpi_tftp_prefix_mode | default('serial') }}"
+    _prefix_custom: "{{ rpi_tftp_prefix_str | default('') | regex_replace('/$', '') }}"
+    _prefix_by_mode:
+      serial: "{{ rpi_serial | default('') }}"
+      mac: "{{ rpi_board_mac | lower | replace(':', '-') }}"
+      custom: "{{ _prefix_custom }}"
+    _eeprom_by_mode:
+      serial:
+        TFTP_PREFIX: "0"
+      mac:
+        TFTP_PREFIX: "2"
+      custom:
+        TFTP_PREFIX: "1"
+        TFTP_PREFIX_STR: "{{ _prefix_custom }}/"
+  ansible.builtin.set_fact:
+    rpi_tftp_prefix: "{{ _prefix_by_mode[_prefix_mode] }}"
+    rpi_eeprom_prefix_settings: "{{ _eeprom_by_mode[_prefix_mode] }}"
+
+- name: Resolve per-model shared TFTP asset set
+  ansible.builtin.set_fact:
+    rpi_tftp_assets: >-
+      {{ rpi_model_config.firmware_files
+         + [rpi_model_config.kernel, rpi_model_config.dtb] }}

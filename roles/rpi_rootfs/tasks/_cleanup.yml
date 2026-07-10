@@ -1,0 +1,44 @@
+# roles/rpi_rootfs/tasks/_cleanup.yml
+#
+# Cleanup runs in an `always` block; failures here downgrade to warnings
+# so they don't crash an otherwise-successful provision but DO surface
+# any loop-device leaks for the operator to clean up.
+---
+- name: Unmount image partitions
+  ansible.builtin.command:
+    cmd: "umount {{ item }}"
+  loop:
+    - "{{ rpi_rootfs_boot_mount_dir }}"
+    - "{{ rpi_rootfs_mount_dir }}"
+  register: __rpi_rootfs_umount
+  changed_when: __rpi_rootfs_umount.rc == 0
+  failed_when: false
+
+- name: Warn when umount failed (loop teardown may leak)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: umount {{ item.item }} returned rc={{ item.rc }}.
+      stderr: {{ item.stderr | default('') | trim }}.
+      Inspect `losetup -a` after the run.
+  loop: "{{ __rpi_rootfs_umount.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc != 0
+
+- name: Detach loop device
+  ansible.builtin.command:
+    cmd: "losetup -d {{ __rpi_rootfs_loop_dev.stdout }}"
+  when: __rpi_rootfs_loop_dev is defined and __rpi_rootfs_loop_dev.stdout is defined
+  register: __rpi_rootfs_losetup
+  changed_when: __rpi_rootfs_losetup.rc == 0
+  failed_when: false
+
+- name: Warn when losetup -d failed (loop device leaked)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: losetup -d {{ __rpi_rootfs_loop_dev.stdout }} returned
+      rc={{ __rpi_rootfs_losetup.rc }}.
+      Run `losetup -d {{ __rpi_rootfs_loop_dev.stdout }}` manually to recover.
+  when:
+    - __rpi_rootfs_loop_dev is defined and __rpi_rootfs_loop_dev.stdout is defined
+    - __rpi_rootfs_losetup.rc | default(0) != 0

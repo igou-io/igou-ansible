@@ -1,0 +1,41 @@
+# roles/rpi_rootfs/tasks/_postprocess.yml
+#
+# Make the extracted rootfs diskless-safe. cmdline.txt is rendered by
+# rpi_boot_render (no init=/firstboot), so only in-rootfs state is
+# handled here.
+---
+# Strip block-device fstab entries — the image's fstab mounts /boot and
+# / by PARTUUID (or /dev/mmcblk*), which is wrong for an NFS root and
+# harmless to drop for a TFTP-kernel SD boot (the kernel root= comes
+# from cmdline.txt, not fstab). /boot/firmware is deliberately left
+# unmounted: kernel/firmware updates flow through re-staging, exactly
+# like the armbian fleet's nfs mode.
+- name: Strip PARTUUID and /dev entries from rootfs fstab (idempotent)
+  ansible.builtin.lineinfile:
+    path: "{{ rpi_rootfs_target_dir }}/etc/fstab"
+    regexp: "{{ item }}"
+    state: absent
+  loop:
+    - '^PARTUUID='
+    - '^/dev/'
+    - '^LABEL='
+    - '^UUID='
+
+# Swap on an NFS root is a footgun (loopback swap over NFS deadlocks
+# under memory pressure). Mask the service wholesale; zram is the
+# follow-up if a host ever needs swap.
+- name: Mask dphys-swapfile in the rootfs
+  ansible.builtin.file:
+    src: /dev/null
+    dest: "{{ rpi_rootfs_target_dir }}/etc/systemd/system/dphys-swapfile.service"
+    state: link
+    force: true
+    follow: false
+
+# RPi OS ships a first-boot filesystem resize hook; with the init= arg
+# already absent from the rendered cmdline.txt this is belt-and-braces
+# for images that trigger it via systemd instead.
+- name: Disable resize2fs_once firstboot hook when present
+  ansible.builtin.file:
+    path: "{{ rpi_rootfs_target_dir }}/etc/init.d/resize2fs_once"
+    state: absent

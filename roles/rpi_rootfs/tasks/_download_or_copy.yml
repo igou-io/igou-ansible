@@ -1,0 +1,23 @@
+# roles/rpi_rootfs/tasks/_download_or_copy.yml
+---
+- name: Ensure URL-keyed cache subdir exists
+  ansible.builtin.file:
+    path: "{{ __rpi_rootfs_img_xz | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Download .img.xz from URL
+  ansible.builtin.get_url:
+    url: "{{ rpi_rootfs_src }}"
+    dest: "{{ __rpi_rootfs_img_xz }}"
+    mode: "0644"
+    timeout: 600
+  when: __rpi_rootfs_is_url
+
+- name: Copy .img.xz from local path
+  ansible.builtin.copy:
+    src: "{{ rpi_rootfs_src }}"
+    dest: "{{ __rpi_rootfs_img_xz }}"
+    remote_src: true
+    mode: "0644"
+  when: not __rpi_rootfs_is_url

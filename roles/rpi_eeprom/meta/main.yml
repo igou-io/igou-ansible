@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: David Igou
+  description: Converge Raspberry Pi EEPROM bootloader configuration
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - all
+  galaxy_tags: []
+dependencies: []

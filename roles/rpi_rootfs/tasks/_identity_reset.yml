@@ -1,0 +1,59 @@
+# roles/rpi_rootfs/tasks/_identity_reset.yml
+#
+# Resets per-host identity inside the extracted rootfs. Same rationale
+# as the armbian rootfs_provision role: host keys are generated here
+# directly rather than trusting first-boot oneshots, because a prior
+# NFS boot can leave machine-id state that makes ConditionFirstBoot
+# evaluate false and sshd end up keyless.
+---
+- name: Set per-host /etc/hostname
+  ansible.builtin.copy:
+    dest: "{{ rpi_rootfs_target_dir }}/etc/hostname"
+    content: "{{ rpi_rootfs_host }}\n"
+    mode: "0644"
+
+- name: Set per-host /etc/hosts entry
+  ansible.builtin.lineinfile:
+    path: "{{ rpi_rootfs_target_dir }}/etc/hosts"
+    regexp: '^127\.0\.1\.1\s'
+    line: "127.0.1.1\t{{ rpi_rootfs_host }}"
+    create: false
+  failed_when: false  # not all base images ship /etc/hosts pre-populated
+
+- name: Zero out machine-id files (first-boot trigger stays armed)
+  ansible.builtin.copy:
+    dest: "{{ rpi_rootfs_target_dir }}/{{ item }}"
+    content: ""
+    mode: "0444"
+    force: true
+  loop:
+    - etc/machine-id
+    - var/lib/dbus/machine-id
+
+- name: Find stale SSH host keys before regeneration
+  ansible.builtin.find:
+    paths: "{{ rpi_rootfs_target_dir }}/etc/ssh"
+    patterns: "ssh_host_*"
+    file_type: any
+  register: __rpi_rootfs_stale_hostkeys
+
+- name: Remove stale SSH host keys before regeneration
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ __rpi_rootfs_stale_hostkeys.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Generate per-host SSH host keys
+  ansible.builtin.command: >-
+    ssh-keygen -q -f {{ rpi_rootfs_target_dir }}/etc/ssh/ssh_host_{{ item.type }}_key
+    -N "" -t {{ item.type }} {{ item.extra | default('') }}
+  args:
+    creates: "{{ rpi_rootfs_target_dir }}/etc/ssh/ssh_host_{{ item.type }}_key"
+  loop:
+    - { type: rsa, extra: "-b 4096" }
+    - { type: ecdsa, extra: "-b 521" }
+    - { type: ed25519, extra: "" }
+  loop_control:
+    label: "{{ item.type }}"

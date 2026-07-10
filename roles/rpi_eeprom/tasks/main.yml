@@ -1,0 +1,121 @@
+---
+- name: Read device-tree model
+  ansible.builtin.slurp:
+    src: /proc/device-tree/model
+  register: __rpi_eeprom_dt_model
+
+- name: Assert this host is a Raspberry Pi 4-family or newer board
+  ansible.builtin.assert:
+    that:
+      - "'Raspberry Pi' in (__rpi_eeprom_dt_model.content | b64decode)"
+      - >-
+        (__rpi_eeprom_dt_model.content | b64decode)
+        is not search('Raspberry Pi (Zero|2|3) ')
+    fail_msg: >-
+      rpi_eeprom only manages the SPI-EEPROM bootloader (Pi 4/400/CM4
+      and newer). Model reported:
+      {{ __rpi_eeprom_dt_model.content | b64decode | trim }}.
+      Pi 3-era boards netboot via bootcode.bin/OTP and are out of scope.
+
+- name: Install rpi-eeprom tooling
+  ansible.builtin.apt:
+    name: rpi-eeprom
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Read live bootloader config
+  ansible.builtin.command:
+    cmd: rpi-eeprom-config
+  register: __rpi_eeprom_current_raw
+  changed_when: false
+
+- name: Parse live config and stringify desired settings
+  ansible.builtin.set_fact:
+    __rpi_eeprom_current: >-
+      {{ dict(__rpi_eeprom_current_raw.stdout | regex_findall('(?m)^([A-Z0-9_]+)=(\S*)\s*$')) }}
+    __rpi_eeprom_desired: >-
+      {{ dict(rpi_eeprom_settings.keys() | zip(rpi_eeprom_settings.values() | map('string'))) }}
+
+- name: Compute managed keys that differ from the live config
+  ansible.builtin.set_fact:
+    __rpi_eeprom_changed_keys: >-
+      {%- set out = [] -%}
+      {%- for k, v in __rpi_eeprom_desired.items() -%}
+      {%-   if __rpi_eeprom_current.get(k) != v -%}
+      {%-     set _ = out.append(k) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Apply merged config and flash via reboot
+  when: __rpi_eeprom_changed_keys | length > 0
+  block:
+    - name: Write merged bootloader config
+      ansible.builtin.template:
+        src: bootconf_txt.j2
+        dest: "{{ rpi_eeprom_apply_path }}"
+        mode: "0644"
+
+    - name: Stage EEPROM update (rpi-eeprom-config --apply)
+      ansible.builtin.command:
+        cmd: "rpi-eeprom-config --apply {{ rpi_eeprom_apply_path }}"
+      changed_when: true
+
+    - name: Reboot to flash the staged EEPROM update
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ rpi_eeprom_reboot_timeout }}"
+      when: rpi_eeprom_reboot | bool
+
+    - name: Re-read bootloader config after flash
+      ansible.builtin.command:
+        cmd: rpi-eeprom-config
+      register: __rpi_eeprom_verify_raw
+      changed_when: false
+      when: rpi_eeprom_reboot | bool
+
+    - name: Assert every managed key landed
+      ansible.builtin.assert:
+        that:
+          - >-
+            (__rpi_eeprom_verify_raw.stdout
+             | regex_findall('(?m)^' ~ item ~ '=(\S*)\s*$')
+             | first | default('<missing>')) == __rpi_eeprom_desired[item]
+        fail_msg: >-
+          EEPROM key {{ item }} did not converge to
+          {{ __rpi_eeprom_desired[item] }} after flashing. Inspect
+          `rpi-eeprom-update` output and the bootloader HDMI/UART
+          diagnostics on the Pi.
+      loop: "{{ __rpi_eeprom_changed_keys }}"
+      when: rpi_eeprom_reboot | bool
+
+- name: Capture serial (last 8 hex — the TFTP prefix directory name)
+  ansible.builtin.shell: |
+    set -o pipefail
+    awk '/^Serial/ {print $3}' /proc/cpuinfo | tail -c 9
+  args:
+    executable: /bin/bash
+  register: __rpi_eeprom_serial
+  changed_when: false
+
+- name: Capture onboard MAC
+  ansible.builtin.slurp:
+    src: /sys/class/net/eth0/address
+  register: __rpi_eeprom_mac
+
+- name: Capture bootloader version
+  ansible.builtin.shell: |
+    set -o pipefail
+    vcgencmd bootloader_version | head -1
+  args:
+    executable: /bin/bash
+  register: __rpi_eeprom_blver
+  changed_when: false
+
+- name: Publish enrollment facts
+  ansible.builtin.set_fact:
+    rpi_eeprom_facts:
+      serial8: "{{ __rpi_eeprom_serial.stdout | trim }}"
+      mac: "{{ __rpi_eeprom_mac.content | b64decode | trim | upper }}"
+      bootloader_version: "{{ __rpi_eeprom_blver.stdout | trim }}"
+      changed_keys: "{{ __rpi_eeprom_changed_keys }}"

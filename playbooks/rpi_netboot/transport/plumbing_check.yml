@@ -1,0 +1,50 @@
+---
+# Per-host plumbing check: verifies /ip tftp rows exist on the router
+# for one Pi's shared boot assets (firmware/kernel/dtb). Pin rows
+# (config.txt/cmdline.txt) are owned by converge_boot_mode itself and
+# not asserted here — this check answers "did stage_netboot_assets run
+# for this host?".
+#
+# Designed to be included with:
+#   delegate_to: "{{ rpi_router }}"
+#
+# Required vars (from _resolve_rpi_config.yml):
+#   rpi_tftp_prefix, rpi_tftp_assets
+
+- name: Assert the TFTP prefix is derivable for this host
+  ansible.builtin.assert:
+    that:
+      - rpi_tftp_prefix | length > 0
+    fail_msg: >-
+      Host {{ inventory_hostname }} has no resolvable TFTP prefix —
+      rpi_tftp_prefix_mode=serial but rpi_serial is empty. Run
+      playbooks/rpi_netboot/enroll.yml first and record the captured
+      serial in host_vars (or switch the host to rpi_tftp_prefix_mode=mac).
+
+- name: Count /ip tftp rows per shared asset for this host
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp print count-only where
+        req-filename="{{ rpi_tftp_prefix }}/{{ item }}"
+  register: _rpi_plumbing_row_count
+  retries: 3
+  delay: 5
+  until: _rpi_plumbing_row_count is succeeded
+  changed_when: false
+  loop: "{{ rpi_tftp_assets }}"
+  loop_control:
+    label: "{{ rpi_tftp_prefix }}/{{ item }}"
+
+- name: Assert each /ip tftp row exists
+  ansible.builtin.assert:
+    that:
+      - (item.stdout[0] | trim | int) >= 1
+    fail_msg: >-
+      Router has no /ip tftp row for
+      {{ rpi_tftp_prefix }}/{{ item.item }}.
+      Run playbooks/rpi_netboot/stage_netboot_assets.yml to populate
+      TFTP assets before invoking converge_boot_mode.
+  loop: "{{ _rpi_plumbing_row_count.results }}"
+  loop_control:
+    label: "{{ rpi_tftp_prefix }}/{{ item.item }}"

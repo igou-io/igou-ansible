@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: David Igou
+  description: Provision per-Pi NFS rootfs + TFTP boot artifacts from a published image
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: GenericLinux
+      versions:
+        - all
+  galaxy_tags: []
+dependencies: []

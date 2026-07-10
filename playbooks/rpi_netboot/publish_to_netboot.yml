@@ -1,0 +1,138 @@
+---
+# Publish the newest rpi-image-gen build from the builder's local
+# publish tree to the netboot server's HTTP-served assets export, plus
+# a manifest.json that _resolve_rootfs_src.yml derives image URLs from.
+# The transfer is controller-mediated (fetch → copy) — the builder and
+# the netboot server have no SSH trust between them.
+#
+#   1. rpi_image_builders: resolve <config>/latest → build_id, image,
+#      sha256; fetch the .img.xz to the controller cache.
+#   2. netboot_server: land the image under
+#      <rpi_assets_export>/images/rpi/<config>/<build_id>/, verify the
+#      checksum, write manifest.json, prune old builds.
+#
+# Usage:
+#   ansible-playbook playbooks/rpi_netboot/publish_to_netboot.yml \
+#     -i igou-inventory/inventory.yaml [-e rpi_publish_config=igou-pi-lite]
+- name: Resolve and fetch the newest published Pi image from the builder
+  hosts: "{{ rpi_builder_group | default('rpi_image_builders') }}"
+  become: true
+  gather_facts: false
+  vars:
+    _config: "{{ rpi_publish_config | default(rpi_image_default_config) }}"
+    _cache: "{{ rpi_tftp_cache_dir | default('/tmp/rpi-tftp') }}/publish"
+  tasks:
+    - name: Resolve latest build dir
+      ansible.builtin.command:
+        cmd: "readlink -f {{ rpi_image_publish_dir }}/{{ _config }}/latest"
+      register: _rpi_publish_latest
+      changed_when: false
+
+    - name: Find the published .img.xz
+      ansible.builtin.find:
+        paths: "{{ _rpi_publish_latest.stdout | trim }}"
+        patterns: "*.img.xz"
+      register: _rpi_publish_find
+    - name: Assert exactly one image in the build dir
+      ansible.builtin.assert:
+        that:
+          - _rpi_publish_find.files | length == 1
+        fail_msg: >-
+          Expected exactly one .img.xz under
+          {{ _rpi_publish_latest.stdout | trim }}, found
+          {{ _rpi_publish_find.files | length }}. Re-run the
+          rpi-image build or point rpi_publish_config elsewhere.
+
+    - name: Slurp SHA256SUMS
+      ansible.builtin.slurp:
+        src: "{{ _rpi_publish_latest.stdout | trim }}/SHA256SUMS"
+      register: _rpi_publish_sums
+
+    - name: Record publish facts
+      ansible.builtin.set_fact:
+        rpi_publish_build_id: "{{ _rpi_publish_latest.stdout | trim | basename }}"
+        rpi_publish_image: "{{ _rpi_publish_find.files[0].path | basename }}"
+        rpi_publish_config_name: "{{ _config }}"
+        rpi_publish_sha256: >-
+          {{ (_rpi_publish_sums.content | b64decode).splitlines()
+             | select('search', (_rpi_publish_find.files[0].path | basename))
+             | map('split', ' ') | map('first') | first }}
+
+    - name: Ensure controller publish cache dir exists
+      ansible.builtin.file:
+        path: "{{ _cache }}/{{ _config }}/{{ rpi_publish_build_id }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      # Real local connection — see the PrivateTmp note in
+      # stage_netboot_assets.yml.
+      vars:
+        ansible_connection: local
+      become: false
+
+    - name: Fetch the image to the controller cache
+      ansible.builtin.fetch:
+        src: "{{ _rpi_publish_find.files[0].path }}"
+        dest: "{{ _cache }}/{{ _config }}/{{ rpi_publish_build_id }}/{{ rpi_publish_image }}"
+        flat: true
+
+- name: Land the image + manifest on the netboot server
+  hosts: "{{ rpi_netboot_server_group | default('netboot_server') }}"
+  become: true
+  gather_facts: false
+  vars:
+    _builder: "{{ groups[rpi_builder_group | default('rpi_image_builders')][0] }}"
+    _config: "{{ hostvars[_builder].rpi_publish_config_name }}"
+    _build_id: "{{ hostvars[_builder].rpi_publish_build_id }}"
+    _image: "{{ hostvars[_builder].rpi_publish_image }}"
+    _sha256: "{{ hostvars[_builder].rpi_publish_sha256 }}"
+    _cache: "{{ rpi_tftp_cache_dir | default('/tmp/rpi-tftp') }}/publish"
+    _dest_dir: "{{ rpi_assets_export }}/images/rpi/{{ _config }}"
+  tasks:
+    - name: Ensure destination build dir exists
+      ansible.builtin.file:
+        path: "{{ _dest_dir }}/{{ _build_id }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy image to the assets export
+      ansible.builtin.copy:
+        src: "{{ _cache }}/{{ _config }}/{{ _build_id }}/{{ _image }}"
+        dest: "{{ _dest_dir }}/{{ _build_id }}/{{ _image }}"
+        mode: "0644"
+
+    - name: Verify landed image checksum
+      ansible.builtin.stat:
+        path: "{{ _dest_dir }}/{{ _build_id }}/{{ _image }}"
+        checksum_algorithm: sha256
+      register: _rpi_publish_landed
+    - name: Assert checksum matches the builder's SHA256SUMS
+      ansible.builtin.assert:
+        that:
+          - _rpi_publish_landed.stat.checksum == _sha256
+        fail_msg: >-
+          sha256 mismatch after publish:
+          landed {{ _rpi_publish_landed.stat.checksum }},
+          builder recorded {{ _sha256 }}. Controller cache is stale or
+          the transfer corrupted — remove
+          {{ _cache }}/{{ _config }}/{{ _build_id }} and re-run.
+
+    - name: Write manifest.json (resolver contract)
+      ansible.builtin.copy:
+        dest: "{{ _dest_dir }}/manifest.json"
+        content: |
+          {{ {
+               'image_filename': _build_id ~ '/' ~ _image,
+               'build_id': _build_id,
+               'sha256': _sha256
+             } | to_nice_json(sort_keys=true) }}
+        mode: "0644"
+
+    - name: Prune old published builds (retain newest {{ rpi_publish_retain | default(2) }})
+      ansible.builtin.shell: |
+        set -o pipefail
+        ls -1d "{{ _dest_dir }}"/*/ 2>/dev/null | sort | head -n "-{{ rpi_publish_retain | default(2) }}" | xargs -r -I{} sh -c 'rm -rf -- "{}" && echo "pruned {}"'
+      args:
+        executable: /bin/bash
+      register: _rpi_publish_prune
+      changed_when: _rpi_publish_prune.stdout | length > 0
