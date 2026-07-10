@@ -1,0 +1,70 @@
+---
+- name: Prepare molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+
+- name: Stand up a mock Grafana upstream
+  hosts: molecule
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install the mock Grafana server
+      ansible.builtin.copy:
+        dest: /usr/local/bin/mock-grafana
+        content: |
+          #!/usr/bin/env python3
+          """Mock Grafana: 200 JSON for every GET, echoing the Authorization
+          header back so verify can prove nginx injected the SA token."""
+          import json
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = json.dumps({
+                      "path": self.path,
+                      "authorization": self.headers.get("Authorization", ""),
+                  }).encode()
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def log_message(self, *args):
+                  pass
+
+
+          HTTPServer(("127.0.0.1", 3000), Handler).serve_forever()
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the mock Grafana unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/mock-grafana.service
+        content: |
+          [Unit]
+          Description=Mock Grafana for molecule verify
+
+          [Service]
+          ExecStart=/usr/local/bin/mock-grafana
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Start mock Grafana
+      ansible.builtin.systemd_service:
+        name: mock-grafana.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Wait for mock Grafana to listen
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 3000
+        timeout: 30

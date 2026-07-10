@@ -1,0 +1,14 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Chromium wrapper for grafana-kiosk (KIOSK_BROWSER_PATH): grafana-kiosk has
+# no arbitrary-flag passthrough, so the 512MB memory-diet flags live here.
+# --no-memcheck suppresses Chromium's blocking "less than 1GB RAM" dialog.
+exec {{ kiosk_chromium_bin | default('/usr/bin/chromium') }} \
+  --no-memcheck \
+  --disable-dev-shm-usage \
+  --disk-cache-size=16777216 \
+  --aggressive-cache-discard \
+  --disable-background-timer-throttling \
+  --disable-backgrounding-occluded-windows \
+  --disable-renderer-backgrounding \
+  "$@"

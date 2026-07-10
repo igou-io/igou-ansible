@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+# zstd zram swap: on a 512MB board this roughly triples usable memory and
+# keeps swap off the SD card (pairs with vm.swappiness=100).
+[zram0]
+zram-size = {{ _kiosk_zram_size }}
+compression-algorithm = zstd
+swap-priority = 100

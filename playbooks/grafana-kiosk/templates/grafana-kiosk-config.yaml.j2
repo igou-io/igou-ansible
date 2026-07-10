@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+general:
+  kiosk-mode: {{ kiosk_grafana_kiosk_mode | default('full') }}
+  autofit: {{ kiosk_autofit | default(true) | lower }}
+  lxde: false
+  page-load-delay-ms: {{ kiosk_page_load_delay_ms | default(3000) }}
+target:
+  # Auth happens in the local nginx proxy; grafana-kiosk just navigates.
+  login-method: anon
+  URL: {{ _kiosk_proxy_base }}{{ _kiosk_dashboard_path }}
+  playlist: {{ kiosk_playlist | default(false) | lower }}

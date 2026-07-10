@@ -1,0 +1,122 @@
+---
+# Chromium browser stack: minimal X11 session driven by grafana/grafana-kiosk.
+# xinit owns the X server + session; when grafana-kiosk or Chromium dies the
+# session exits and systemd restarts the whole thing - one supervision point.
+#
+# X11 rather than Wayland deliberately: grafana-kiosk's Wayland autostart is
+# broken upstream (grafana/grafana-kiosk#135) and X11 + openbox is the
+# lighter, battle-tested path on 512MB boards.
+# install_recommends off keeps the footprint 512MB-sane (chromium's
+# recommends OOM-killed dpkg under the molecule memory cap); the modesetting
+# X driver is built into xserver-xorg-core, and libinput is added explicitly
+# for emergency keyboard access.
+- name: Install Chromium and the minimal X11 stack
+  ansible.builtin.apt:
+    name: "{{ kiosk_chromium_packages | default(_kiosk_chromium_default_packages) }}"
+    state: present
+    install_recommends: false
+  vars:
+    # Raspberry Pi OS may ship the browser as 'chromium-browser'; override
+    # kiosk_chromium_packages + kiosk_chromium_bin in host_vars if so.
+    _kiosk_chromium_default_packages:
+      - chromium
+      - xserver-xorg-core
+      - xserver-xorg-input-libinput
+      - xserver-xorg-legacy
+      - xinit
+      - x11-xserver-utils
+      - openbox
+      - unclutter
+
+# xserver-xorg-legacy lets the non-root kiosk user start X from a systemd
+# service (a Lite image has no logind graphical session to delegate from).
+- name: Allow non-root X startup
+  ansible.builtin.copy:
+    dest: /etc/X11/Xwrapper.config
+    content: |
+      # Managed by playbooks/grafana-kiosk/setup-kiosk.yaml
+      allowed_users=anybody
+      needs_root_rights=yes
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Create the grafana-kiosk release cache directory
+  ansible.builtin.file:
+    path: /opt/grafana-kiosk
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Versioned filename: bumping kiosk_grafana_kiosk_version downloads the new
+# asset and refreshes /usr/local/bin on the next run.
+- name: Download the grafana-kiosk release binary (sha256-verified)
+  ansible.builtin.get_url:
+    url: "https://github.com/grafana/grafana-kiosk/releases/download/v{{ _kiosk_gk_version }}/grafana-kiosk.linux.{{ _kiosk_gk_arch }}"
+    dest: "/opt/grafana-kiosk/grafana-kiosk-v{{ _kiosk_gk_version }}.linux.{{ _kiosk_gk_arch }}"
+    checksum: "sha256:{{ _kiosk_gk_checksums[_kiosk_gk_version][_kiosk_gk_arch] }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install grafana-kiosk into /usr/local/bin
+  ansible.builtin.copy:
+    src: "/opt/grafana-kiosk/grafana-kiosk-v{{ _kiosk_gk_version }}.linux.{{ _kiosk_gk_arch }}"
+    dest: /usr/local/bin/grafana-kiosk
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart kiosk service
+
+- name: Create the grafana-kiosk config directory
+  ansible.builtin.file:
+    path: /etc/grafana-kiosk
+    state: directory
+    owner: root
+    group: "{{ _kiosk_user }}"
+    mode: "0750"
+
+- name: Template the grafana-kiosk config
+  ansible.builtin.template:
+    src: templates/grafana-kiosk-config.yaml.j2
+    dest: /etc/grafana-kiosk/config.yaml
+    owner: root
+    group: "{{ _kiosk_user }}"
+    mode: "0640"
+  notify: Restart kiosk service
+
+- name: Install the Chromium memory-diet wrapper
+  ansible.builtin.template:
+    src: templates/kiosk-browser.sh.j2
+    dest: /usr/local/bin/kiosk-browser
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart kiosk service
+
+- name: Install the X session script
+  ansible.builtin.template:
+    src: templates/kiosk-session.sh.j2
+    dest: /usr/local/bin/kiosk-session
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart kiosk service
+
+- name: Template the grafana-kiosk unit
+  ansible.builtin.template:
+    src: templates/grafana-kiosk.service.j2
+    dest: /etc/systemd/system/grafana-kiosk.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart kiosk service
+
+- name: Enable the grafana-kiosk service
+  ansible.builtin.systemd_service:
+    name: grafana-kiosk.service
+    enabled: true
+    state: "{{ 'started' if _kiosk_start_browser else omit }}"
+    daemon_reload: true

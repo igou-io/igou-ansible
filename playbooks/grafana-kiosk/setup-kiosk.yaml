@@ -1,0 +1,309 @@
+---
+# Grafana kiosk convergence - local auth proxy, memory/SD tuning, and the
+# browser/display stack. Provisions a Raspberry Pi Zero 2 W (or any
+# Debian-family host) from a stock Raspberry Pi OS Lite install into a
+# boot-to-dashboard Grafana kiosk.
+#
+# Browser stacks (kiosk_stack):
+#   cog      - WPE WebKit rendering straight to DRM/KMS; no X server, no
+#              compositor. Lightest option for a 512MB board. DEFAULT.
+#   chromium - minimal X11 (xinit + openbox) with grafana/grafana-kiosk
+#              driving Chromium. Proven fallback if WPE misrenders a
+#              dashboard. Switching kiosk_stack retires the other stack's
+#              service automatically.
+#
+# Both stacks browse http://127.0.0.1:<port>, where a local nginx injects
+# `Authorization: Bearer <service-account token>` and proxies to Grafana -
+# the token lives in exactly one root-only file and the browser stays dumb.
+# Grafana's kiosk/playlist/refresh features are all URL parameters, so no
+# client-side login automation is needed on either stack.
+#
+# Required in host_vars: kiosk_grafana_url (e.g. https://grafana.example.com)
+# Secrets: the Grafana service-account token resolves from 1Password on the
+# controller (kiosk_grafana_token_op_*); CI/molecule passes an explicit
+# kiosk_grafana_token instead.
+- name: Grafana kiosk convergence - proxy, tuning, browser stack
+  hosts: "{{ ansible_limit | default('grafana_kiosk') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    # Effective values; inventory overrides the un-prefixed names (play vars
+    # outrank inventory, hence the default() merge pattern).
+    _kiosk_stack: "{{ kiosk_stack | default('cog') }}"
+    _kiosk_user: "{{ kiosk_user | default('kiosk') }}"
+    _kiosk_proxy_listen: "{{ kiosk_proxy_listen | default('127.0.0.1:8480') }}"
+    _kiosk_proxy_base: "http://{{ _kiosk_proxy_listen }}"
+    # Dashboard or playlist path, e.g. '/playlists/play/<uid>' or
+    # '/d/<uid>/<slug>?orgId=1&refresh=30s'. The cog stack appends Grafana's
+    # kiosk URL param itself; grafana-kiosk adds it via kiosk-mode.
+    _kiosk_dashboard_path: "{{ kiosk_dashboard_path | default('/') }}"
+    _kiosk_cog_url: >-
+      {{ _kiosk_proxy_base ~ _kiosk_dashboard_path
+         ~ ('&kiosk' if '?' in _kiosk_dashboard_path else '?kiosk') }}
+    # Explicit token wins (molecule/CI); otherwise resolve from 1Password on
+    # the controller. The inline-if keeps the lookup lazy so container runs
+    # never touch 1Password.
+    _kiosk_grafana_token: >-
+      {{ kiosk_grafana_token
+         if kiosk_grafana_token is defined
+         else lookup('community.general.onepassword',
+                     kiosk_grafana_token_op_item | default('grafana-kiosk'),
+                     field=kiosk_grafana_token_op_field | default('password'),
+                     vault=kiosk_grafana_token_op_vault | default('claude')) }}
+    # Chromium leaks on live dashboards (OOM within 6-8h on 512MB boards is
+    # widely reported); RuntimeMaxSec + Restart=always recycles the whole
+    # browser session daily before it gets there.
+    _kiosk_service_max_runtime: "{{ kiosk_service_max_runtime | default('24h') }}"
+    _kiosk_zram_size: "{{ kiosk_zram_size | default('ram / 2') }}"
+    _kiosk_gpu_mem: "{{ kiosk_gpu_mem | default(96) }}"
+    _kiosk_unit: "{{ 'cog-kiosk.service' if _kiosk_stack == 'cog' else 'grafana-kiosk.service' }}"
+    _kiosk_other_unit: "{{ 'grafana-kiosk.service' if _kiosk_stack == 'cog' else 'cog-kiosk.service' }}"
+    # Containers (molecule) have no kernel knobs, DRM, or display: install
+    # and enable everything, but skip zram/sysctl and service starts.
+    _kiosk_is_container: >-
+      {{ ansible_virtualization_type | default('')
+         in ['container', 'podman', 'docker', 'lxc', 'containerd'] }}
+    # Whether to start (and verify) the browser service. Defaults to "not a
+    # container", but headless guests without DRM/display (molecule qemu VMs,
+    # a Pi staged without a monitor) set kiosk_start_browser: false - the
+    # unit stays enabled and starts on next boot with a display attached.
+    _kiosk_start_browser: "{{ kiosk_start_browser | default(not _kiosk_is_container) }}"
+    # grafana-kiosk release pinning (chromium stack). Upstream publishes no
+    # checksums file, so sha256s are computed from the release assets and
+    # pinned here per version/arch. Extend the map when bumping the version.
+    _kiosk_gk_version: "{{ kiosk_grafana_kiosk_version | default('1.0.12') }}"
+    _kiosk_gk_arch: >-
+      {{ {'x86_64': 'amd64',
+          'aarch64': 'arm64',
+          'armv7l': 'armv7'}[ansible_architecture] }}
+    _kiosk_gk_checksums:
+      "1.0.12":
+        arm64: 8a3a8553d98ac91563677b3660c4d962bb5582c5d4f9c5cb3a0742cae8e49e47
+        amd64: 3bd8f535149e98b7ef72110fa1020963d5da0b97602cd232a0766f0554905696
+        armv7: cdc139752a48d4b4e197db3fcca9ca34af6de027ed8072ca1aadeb613c2e255d
+
+  tasks:
+    - name: Validate kiosk configuration
+      ansible.builtin.assert:
+        that:
+          - kiosk_grafana_url is defined
+          - _kiosk_stack in ['cog', 'chromium']
+        fail_msg: >-
+          Set kiosk_grafana_url (e.g. https://grafana.example.com) in
+          host_vars, and kiosk_stack to 'cog' or 'chromium'.
+
+    # video/input are static base groups and render normally comes from
+    # udev, but molecule's slim containers lack it - ensure all three.
+    - name: Ensure display/input groups exist
+      ansible.builtin.group:
+        name: "{{ item }}"
+        state: present
+        system: true
+      loop:
+        - video
+        - render
+        - input
+
+    - name: Create the kiosk user
+      ansible.builtin.user:
+        name: "{{ _kiosk_user }}"
+        groups:
+          - video
+          - render
+          - input
+        append: true
+        shell: /usr/sbin/nologin
+        create_home: true
+        password_lock: true
+        system: false
+        state: present
+
+    - name: Install proxy and tuning packages
+      ansible.builtin.apt:
+        name:
+          - nginx-light
+          - systemd-zram-generator
+          - fonts-dejavu-core
+        state: present
+        install_recommends: false
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create journald drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Keep journald off the SD card (volatile, capped)
+      ansible.builtin.copy:
+        dest: /etc/systemd/journald.conf.d/50-grafana-kiosk.conf
+        content: |
+          # Managed by playbooks/grafana-kiosk/setup-kiosk.yaml
+          [Journal]
+          Storage=volatile
+          RuntimeMaxUse=32M
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart journald
+
+    - name: Configure zram swap (zstd)
+      ansible.builtin.template:
+        src: templates/zram-generator.conf.j2
+        dest: /etc/systemd/zram-generator.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart zram swap
+
+    # Activate zram now, not at end-of-play handler time: the browser stack
+    # install below unpacks Chromium-sized debs, and a first converge on a
+    # 512MB board needs the swap headroom already in place.
+    - name: Activate zram swap
+      ansible.builtin.systemd_service:
+        name: systemd-zram-setup@zram0.service
+        state: started
+        daemon_reload: true
+      when: not _kiosk_is_container
+
+    # Own sysctl file: devsec os_hardening (linux baseline) writes its own
+    # and merges baseline_sysctl_overwrite separately - no collision.
+    - name: Pair sysctls with zram (swap aggressively into compressed RAM)
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.d/85-grafana-kiosk.conf
+        sysctl_set: true
+        state: present
+      loop:
+        - name: vm.swappiness
+          value: "100"
+        - name: vm.page-cluster
+          value: "0"
+      loop_control:
+        label: "{{ item.name }}"
+      when: not _kiosk_is_container
+
+    - name: Check for Raspberry Pi firmware config
+      ansible.builtin.stat:
+        path: /boot/firmware/config.txt
+      register: _kiosk_bootconf
+
+    - name: Tune Pi boot config (gpu_mem, no splash)
+      ansible.builtin.blockinfile:
+        path: /boot/firmware/config.txt
+        marker: "# {mark} ANSIBLE MANAGED - grafana-kiosk"
+        block: |
+          gpu_mem={{ _kiosk_gpu_mem }}
+          disable_splash=1
+      when: _kiosk_bootconf.stat.exists
+
+    - name: Template the auth-injecting Grafana proxy (holds the SA token)
+      ansible.builtin.template:
+        src: templates/grafana-proxy.conf.j2
+        dest: /etc/nginx/sites-available/grafana-kiosk.conf
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Reload nginx
+
+    - name: Enable the proxy site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/grafana-kiosk.conf
+        dest: /etc/nginx/sites-enabled/grafana-kiosk.conf
+        state: link
+      notify: Reload nginx
+
+    - name: Remove the default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
+
+    - name: Enable and start nginx
+      ansible.builtin.systemd_service:
+        name: nginx.service
+        enabled: true
+        state: started
+
+    - name: Include browser stack tasks - {{ _kiosk_stack }}
+      ansible.builtin.include_tasks: "stack_tasks/_stack_{{ _kiosk_stack }}.yml"
+
+    # Clean stack switching: if the other stack was deployed before, retire
+    # its service so two browsers never fight over the display.
+    - name: Check whether the other stack was previously deployed
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ _kiosk_other_unit }}"
+      register: _kiosk_other_stat
+
+    - name: Retire the other stack's service
+      ansible.builtin.systemd_service:
+        name: "{{ _kiosk_other_unit }}"
+        enabled: false
+        state: stopped
+      when: _kiosk_other_stat.stat.exists
+
+    - name: Apply pending restarts before verifying
+      ansible.builtin.meta: flush_handlers
+
+    # Verification goes through the proxy, so a 200 proves nginx, upstream
+    # reachability, and token injection end to end. /api/search requires
+    # auth, so it fails on a bad or missing token.
+    - name: Verify the proxy reaches Grafana (/api/health)
+      ansible.builtin.uri:
+        url: "{{ _kiosk_proxy_base }}/api/health"
+        status_code: 200
+      register: _kiosk_health
+      retries: 5
+      delay: 3
+      until: _kiosk_health.status == 200
+      when: kiosk_verify_api | default(true)
+
+    - name: Verify the injected token is accepted (/api/search)
+      ansible.builtin.uri:
+        url: "{{ _kiosk_proxy_base }}/api/search?limit=1"
+        status_code: 200
+      when: kiosk_verify_api | default(true)
+
+    - name: Collect service facts
+      ansible.builtin.service_facts:
+      when: _kiosk_start_browser | bool
+
+    - name: Verify the kiosk service is active
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services[_kiosk_unit].state == 'running'
+        fail_msg: >-
+          {{ _kiosk_unit }} is not running:
+          {{ ansible_facts.services[_kiosk_unit] | default('unit not found') }}
+      when: _kiosk_start_browser | bool
+
+  handlers:
+    - name: Restart journald
+      ansible.builtin.systemd_service:
+        name: systemd-journald.service
+        state: restarted
+
+    - name: Restart zram swap
+      ansible.builtin.systemd_service:
+        name: systemd-zram-setup@zram0.service
+        state: restarted
+        daemon_reload: true
+      when: not _kiosk_is_container
+
+    - name: Reload nginx
+      ansible.builtin.systemd_service:
+        name: nginx.service
+        state: reloaded
+
+    - name: Restart kiosk service
+      ansible.builtin.systemd_service:
+        name: "{{ _kiosk_unit }}"
+        state: restarted
+        daemon_reload: true
+      when: _kiosk_start_browser | bool
