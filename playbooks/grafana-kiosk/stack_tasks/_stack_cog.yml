@@ -10,6 +10,9 @@
     name:
       - cog
       - seatd
+      # WPE's WebProcess dlopens libGLESv2 at runtime (no hard package
+      # dependency) - without it every page render crashes the renderer.
+      - libgles2
     state: present
     install_recommends: false
 

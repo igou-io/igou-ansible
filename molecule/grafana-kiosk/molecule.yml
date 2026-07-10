@@ -1,11 +1,14 @@
 ---
 # Grafana kiosk scenario: converges BOTH browser stacks (cog + chromium)
-# inside podman containers hard-capped at the Pi Zero 2 W's 512MB, then
-# smoke-tests real browser rendering inside that memory envelope.
+# inside guests capped at the Pi Zero 2 W's 512MB, then smoke-tests real
+# browser rendering inside that memory envelope.
 #
 # Provisioning is delegated to david_igou.molecule_provisioners
 # (inventory-driven; see inventory/hosts.yml for the instances and
-# inventory/group_vars/ for the memory caps and kiosk vars).
+# inventory/group_vars/ for the memory caps and kiosk vars). Backends:
+# podman (default) / docker containers, or PROVISIONER=kubevirt for real
+# 512MiB VMs on the cluster - the kubevirt path also supports no-destroy
+# render inspection (see playbooks/grafana-kiosk/README.md "Render testing").
 prerun: false
 
 ansible:

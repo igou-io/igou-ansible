@@ -38,9 +38,14 @@
     # '/d/<uid>/<slug>?orgId=1&refresh=30s'. The cog stack appends Grafana's
     # kiosk URL param itself; grafana-kiosk adds it via kiosk-mode.
     _kiosk_dashboard_path: "{{ kiosk_dashboard_path | default('/') }}"
+    # Append Grafana's kiosk param unless the query already carries a
+    # `kiosk` KEY (a value merely containing "kiosk", e.g. ?var-svc=kiosk,
+    # must not suppress it). Fragments in the path are unsupported.
+    _kiosk_dashboard_query: "{{ _kiosk_dashboard_path | urlsplit('query') }}"
     _kiosk_cog_url: >-
       {{ _kiosk_proxy_base ~ _kiosk_dashboard_path
-         ~ ('&kiosk' if '?' in _kiosk_dashboard_path else '?kiosk') }}
+         ~ ('' if _kiosk_dashboard_query is search('(^|&)kiosk(=|&|$)')
+            else ('&kiosk' if _kiosk_dashboard_query else '?kiosk')) }}
     # Explicit token wins (molecule/CI); otherwise resolve from 1Password on
     # the controller. The inline-if keeps the lookup lazy so container runs
     # never touch 1Password.
@@ -65,10 +70,13 @@
       {{ ansible_virtualization_type | default('')
          in ['container', 'podman', 'docker', 'lxc', 'containerd'] }}
     # Whether to start (and verify) the browser service. Defaults to "not a
-    # container", but headless guests without DRM/display (molecule qemu VMs,
-    # a Pi staged without a monitor) set kiosk_start_browser: false - the
-    # unit stays enabled and starts on next boot with a display attached.
+    # container", but headless guests without DRM/display (cloud-kernel
+    # molecule VMs, a Pi staged without a monitor) set kiosk_start_browser:
+    # false - the unit stays enabled and starts on next boot with a display.
     _kiosk_start_browser: "{{ kiosk_start_browser | default(not _kiosk_is_container) }}"
+    # Extra Environment= lines for the cog unit (VM render testing; empty on
+    # real hardware - see README).
+    _kiosk_cog_env: "{{ kiosk_cog_env | default({}) }}"
     # grafana-kiosk release pinning (chromium stack). Upstream publishes no
     # checksums file, so sha256s are computed from the release assets and
     # pinned here per version/arch. Extend the map when bumping the version.
@@ -89,9 +97,11 @@
         that:
           - kiosk_grafana_url is defined
           - _kiosk_stack in ['cog', 'chromium']
+          - _kiosk_cog_env is mapping
         fail_msg: >-
           Set kiosk_grafana_url (e.g. https://grafana.example.com) in
-          host_vars, and kiosk_stack to 'cog' or 'chromium'.
+          host_vars, kiosk_stack to 'cog' or 'chromium', and kiosk_cog_env
+          (if set) to a dict of VAR: value pairs.
 
     # video/input are static base groups and render normally comes from
     # udev, but molecule's slim containers lack it - ensure all three.

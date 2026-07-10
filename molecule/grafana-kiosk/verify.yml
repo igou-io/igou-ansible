@@ -49,21 +49,43 @@
     # Headless because containers have no DRM/X; the memory ceiling is what
     # is under test (an OOM kill fails the task).
 
-    - name: Render a screenshot with headless Chromium through the proxy
-      ansible.builtin.command:
-        cmd: >-
-          timeout 90 chromium --headless --no-sandbox --disable-gpu
-          --disable-dev-shm-usage --screenshot=/tmp/kiosk-smoke.png
-          --window-size=1280,720 {{ _verify_proxy }}/d/mock/dashboard
-      changed_when: false
+    - name: Chromium render smoke
       when: kiosk_stack == 'chromium'
+      vars:
+        # Opt-in render inspection: KIOSK_FETCH_SCREENSHOT=1 pulls the
+        # render back to the controller (see README "Render testing").
+        # The smoke itself always runs - the fetch is human-eyeball only.
+        _verify_fetch_screenshot: "{{ lookup('env', 'KIOSK_FETCH_SCREENSHOT') | bool }}"
+        # Falls back to the scenario dir if run outside molecule.
+        _verify_shot_dest: >-
+          {{ (lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+              or playbook_dir) ~ '/screenshots/' ~ inventory_hostname ~ '.png' }}
+      block:
+        - name: Render a screenshot with headless Chromium through the proxy
+          ansible.builtin.command:
+            cmd: >-
+              timeout 90 chromium --headless --no-sandbox --disable-gpu
+              --disable-dev-shm-usage --screenshot=/tmp/kiosk-smoke.png
+              --window-size=1280,720 {{ _verify_proxy }}/d/mock/dashboard
+          changed_when: false
 
-    - name: Assert the Chromium screenshot rendered
-      ansible.builtin.stat:
-        path: /tmp/kiosk-smoke.png
-      register: verify_shot
-      failed_when: not verify_shot.stat.exists or verify_shot.stat.size == 0
-      when: kiosk_stack == 'chromium'
+        - name: Assert the Chromium screenshot rendered
+          ansible.builtin.stat:
+            path: /tmp/kiosk-smoke.png
+          register: verify_shot
+          failed_when: not verify_shot.stat.exists or verify_shot.stat.size == 0
+
+        - name: Fetch the Chromium screenshot to the controller
+          ansible.builtin.fetch:
+            src: /tmp/kiosk-smoke.png
+            dest: "{{ _verify_shot_dest }}"
+            flat: true
+          when: _verify_fetch_screenshot
+
+        - name: Show where the screenshot landed
+          ansible.builtin.debug:
+            msg: "Screenshot fetched to {{ _verify_shot_dest }}"
+          when: _verify_fetch_screenshot
 
     - name: Run headless cog against the proxy for 20s
       ansible.builtin.command:
