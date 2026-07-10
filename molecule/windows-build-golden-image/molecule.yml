@@ -1,0 +1,85 @@
+---
+# Windows golden-image build — LIVE on-cluster scenario.
+#
+# What this proves:
+#   The playbooks/openshift_virtualization/build_windows_golden.yml pipeline
+#   installs Windows Server 2025 from an installer ISO, sysprep /generalize's
+#   it, and publishes a bootable golden DataSource that clones and boots
+#   hands-free (no ISO, no CD prompt, guest agent + virtio drivers intact).
+#
+# Where it runs:
+#   Against the LIVE cluster https://api.ocp.igou.systems:6443 as the scoped
+#   `ansible-molecule` ServiceAccount, entirely inside the `molecule`
+#   namespace. TLS verification WORKS (public cert) — K8S_AUTH_VERIFY_SSL
+#   defaults to true. The golden DataSource is published in `molecule`, NEVER
+#   in openshift-virtualization-os-images (the SA has no access there).
+#
+# Dependency:
+#   A preexisting Windows installer ISO DataVolume in the `windows-images`
+#   namespace (iso-winserver2025-eval, phase Succeeded). create.yml gates on
+#   it and fails fast if missing. This scenario NEVER creates or deletes
+#   anything in windows-images.
+#
+# Wall clock:
+#   ~60–90 minutes end to end (unattended Windows install + sysprep + clone +
+#   boot). This is NOT idempotence-testable, so the test_sequence omits the
+#   idempotence step by design.
+#
+# Env setup one-liner (run before `molecule test -s windows-build-golden-image`):
+#   export K8S_AUTH_HOST=https://api.ocp.igou.systems:6443
+#   export K8S_AUTH_API_KEY="`op read op://lab_serviceaccounts/ocp-ansible-molecule/token`"
+# (molecule interpolates dollar-placeholders across this whole file, comments
+# included, so the usual dollar-paren command substitution cannot appear here.)
+prerun: false
+
+dependency:
+  name: galaxy
+  options:
+    ignore_errors: true
+    role-file: requirements.yml
+    requirements-file: requirements.yml
+
+driver:
+  name: default
+
+platforms:
+  - name: localhost
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      host_key_checking: false
+      verbosity: 1
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
+  env:
+    # kubernetes.core reads these directly; virtctl/oc get a rendered temp
+    # kubeconfig from them inside the playbook (windows_golden_kubeconfig="").
+    K8S_AUTH_HOST: "${K8S_AUTH_HOST}"
+    K8S_AUTH_API_KEY: "${K8S_AUTH_API_KEY}"
+    K8S_AUTH_VERIFY_SSL: "${K8S_AUTH_VERIFY_SSL:-true}"
+  playbooks:
+    create: create.yml
+    converge: converge.yml
+    verify: verify.yml
+    destroy: destroy.yml
+
+lint: |
+  set -e
+  yamllint .
+  ansible-lint
+
+scenario:
+  name: windows-build-golden-image
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    # No idempotence: a 60–90 min unattended Windows install + sysprep is not
+    # a re-runnable no-op, so idempotence is deliberately excluded here.
+    - verify
+    - destroy

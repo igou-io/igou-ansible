@@ -1,0 +1,54 @@
+---
+# Destroy = best-effort teardown of ONLY the named resources this scenario
+# owns, all in the molecule namespace. `state: absent` is naturally idempotent
+# (deleting an absent object is a no-op), so no ignore_errors is needed. The
+# ansible-molecule SA cannot delete namespaces and this play NEVER touches the
+# windows-images namespace or its ISO DataVolume.
+- name: Destroy — remove golden-image build + verify artifacts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    golden_namespace: molecule
+  tasks:
+    - name: Delete the build and verify VirtualMachines
+      kubernetes.core.k8s:
+        state: absent
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        name: "{{ item }}"
+        namespace: "{{ golden_namespace }}"
+        wait: true
+      loop:
+        - golden-win2k25-build
+        - golden-verify
+
+    # golden-verify-rootdisk is garbage-collected with golden-verify (owner
+    # ref from its dataVolumeTemplate), so it is intentionally not listed here.
+    - name: Delete the installer-CD and golden DataVolumes
+      kubernetes.core.k8s:
+        state: absent
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataVolume
+        name: "{{ item }}"
+        namespace: "{{ golden_namespace }}"
+        wait: true
+      loop:
+        - golden-win2k25-installcd
+        - golden-win2k25
+
+    - name: Delete the unattend Secret
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Secret
+        name: golden-win2k25-unattend
+        namespace: "{{ golden_namespace }}"
+
+    - name: Delete the golden DataSource
+      kubernetes.core.k8s:
+        state: absent
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataSource
+        name: golden-win2k25
+        namespace: "{{ golden_namespace }}"

@@ -1,0 +1,29 @@
+---
+# Converge = run the real golden-image build playbook against the live cluster,
+# scoped to the molecule namespace. This is the ~60–90 min unattended install +
+# sysprep + publish. Every var not set here rides its playbook default.
+- name: Converge — build and publish the Windows golden DataSource
+  ansible.builtin.import_playbook: ../../playbooks/openshift_virtualization/build_windows_golden.yml
+  vars:
+    windows_golden_namespace: molecule
+    # Throwaway local-administrator password for the build VM. It is safe to
+    # generate on the fly because sysprep /generalize wipes local accounts and
+    # credentials from the published image — nothing that clones the golden
+    # DataSource inherits this password. Honor an explicit override if set.
+    # The 'zZ9!' suffix guarantees Windows' upper/lower/digit/symbol complexity.
+    windows_golden_admin_password: >-
+      {{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_ADMIN_PASSWORD')
+         | default(lookup('ansible.builtin.password',
+                          '/dev/null length=16 chars=ascii_letters,digits') ~ 'zZ9!',
+                   true) }}
+    # All other vars use playbook defaults (win2k25 / windows.2k25 / u1.medium,
+    # ISO windows-images/iso-winserver2025-eval, image_index 2, 50Gi rootdisk,
+    # freenas-nfs-cold-csi ISO storage, keep_build_artifacts false, temp
+    # kubeconfig rendered from K8S_AUTH_HOST/K8S_AUTH_API_KEY for virtctl).
+    #
+    # To build a SECOND edition instead, override the edition/preference/ISO,
+    # e.g. Windows 11 desktop:
+    #   windows_golden_edition: win11
+    #   windows_golden_preference: windows.11
+    #   windows_golden_iso_dv: iso-win11-25h2-eval
+    #   windows_golden_image_index: 6
