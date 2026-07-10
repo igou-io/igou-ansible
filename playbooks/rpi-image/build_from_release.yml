@@ -1,0 +1,283 @@
+---
+# Build a Raspberry Pi OS image from the OFFICIAL released Lite image
+# by injecting the fleet primitives directly into the image (user,
+# fleet ssh key, key-only sshd, NOPASSWD sudo, hostname, ssh enabled).
+# No Raspberry Pi Imager, no rpi-image-gen, no firstboot/userconf
+# dependency — the primitives are baked and verifiable before flash.
+#
+# Why this exists: rpi-image-gen images do not boot on a real Pi 4
+# (igou-ansible#305 — ACT LED dark, zero frames; content verified
+# fine). The working fallback was stock RasPiOS Lite + a manual
+# headless bootstrap (`ssh` sentinel + userconf.txt), which was never
+# automated or captured. This playbook is that procedure done properly:
+# start from the release image that provably boots and bake the same
+# primitives the rpi-image-gen pipeline promised.
+#
+#   ansible-playbook playbooks/rpi-image/build_from_release.yml \
+#     -i ../igou-inventory/inventory.yaml
+#
+# Required inventory var (group_vars/rpi_image_builders.yml):
+#   rpi_image_release_src     URL or builder-local path to the official
+#                             RasPiOS Lite arm64 .img.xz
+# Optional:
+#   rpi_image_release_sha256  pin the release checksum (get_url verify)
+# Useful overrides:
+#   -e rpi_image_hostname=foo        host-specific image
+#   -e rpi_image_config=bar          alternate config/publish name
+#   -e rpi_image_user1passhash=...   bake a password hash (else key-only)
+#
+# Stages: fetch release -> unpack -> customize (native arm64 chroot on
+# the builder) -> verify (content + boot-plausibility) -> publish.
+# Publish layout is identical to build.yml
+# (<publish_dir>/<config>/<build_id>/<config>.img.xz + SHA256SUMS +
+# latest symlink + retention), so flash.yml and
+# playbooks/rpi_netboot/publish_to_netboot.yml consume either pipeline
+# unchanged.
+
+- name: Build a Pi image from the official RasPiOS release
+  hosts: rpi_image_builders
+  become: true
+  gather_facts: false
+
+  vars:
+    rpi_image_config: "{{ rpi_image_default_config }}"
+    rpi_image_publish_config_dir: >-
+      {{ rpi_image_publish_dir }}/{{ rpi_image_config }}
+    _release_cache: "{{ rpi_image_root }}/releases"
+    _build_dir: "{{ rpi_image_root }}/release-work/{{ rpi_image_build_id }}"
+    _img: "{{ _build_dir }}/{{ rpi_image_config }}.img"
+    _mnt: "{{ _build_dir }}/mnt"
+
+  tasks:
+    # set_fact evaluates the lookup exactly once (lazy play vars re-run
+    # `date` per reference — the build.yml lesson, #297).
+    - name: Pin build id
+      ansible.builtin.set_fact:
+        rpi_image_build_id: >-
+          {{ lookup('ansible.builtin.pipe', 'date -u +%Y%m%dT%H%M%SZ') }}
+
+    - name: Assert the release source is pinned
+      ansible.builtin.assert:
+        that:
+          - rpi_image_release_src is defined
+          - rpi_image_release_src is search('\.img\.xz$')
+        fail_msg: >-
+          rpi_image_release_src must point at an official RasPiOS Lite
+          arm64 .img.xz (URL or builder-local path). Pin it in
+          igou-inventory group_vars/rpi_image_builders.yml, e.g.
+          https://downloads.raspberrypi.com/raspios_lite_arm64/images/
+          raspios_lite_arm64-<date>/<date>-raspios-trixie-arm64-lite.img.xz
+
+    - name: Ensure cache + build dirs exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ _release_cache }}"
+        - "{{ _build_dir }}"
+
+    - name: Download release image (URL source)
+      ansible.builtin.get_url:
+        url: "{{ rpi_image_release_src }}"
+        dest: "{{ _release_cache }}/{{ rpi_image_release_src | basename }}"
+        checksum: >-
+          {{ ('sha256:' ~ rpi_image_release_sha256)
+             if rpi_image_release_sha256 is defined else omit }}
+        mode: "0644"
+        timeout: 600
+      when: rpi_image_release_src is match('^https?://')
+
+    - name: Copy release image (builder-local source)
+      ansible.builtin.copy:
+        src: "{{ rpi_image_release_src }}"
+        dest: "{{ _release_cache }}/{{ rpi_image_release_src | basename }}"
+        remote_src: true
+        mode: "0644"
+      when: rpi_image_release_src is not match('^https?://')
+
+    - name: Unpack release into the build workspace
+      ansible.builtin.shell: |
+        set -o pipefail
+        xz -dc '{{ _release_cache }}/{{ rpi_image_release_src | basename }}' > '{{ _img }}'
+      args:
+        executable: /bin/bash
+        creates: "{{ _img }}"
+
+    - name: Attach image to a loop device with partition scan
+      ansible.builtin.shell: |
+        losetup --find --show --partscan '{{ _img }}'
+      register: _rpi_release_loop
+      changed_when: true
+
+    - name: Customize and verify (loop device attached)
+      block:
+        - name: Mount root (p2) then boot (p1) partitions
+          ansible.builtin.shell: |
+            set -euo pipefail
+            mkdir -p '{{ _mnt }}'
+            mount '{{ _rpi_release_loop.stdout }}p2' '{{ _mnt }}'
+            mount '{{ _rpi_release_loop.stdout }}p1' '{{ _mnt }}/boot/firmware'
+          args:
+            executable: /bin/bash
+          changed_when: true
+
+        # The builder is arm64 (bare-metal Pi 4), so this is a NATIVE
+        # chroot — no qemu-user-static, no binfmt. Everything the
+        # Imager/userconf firstboot path would do at first boot is done
+        # here, offline and assertable.
+        - name: Inject fleet primitives (native chroot)
+          ansible.builtin.shell: |
+            set -euo pipefail
+            mnt='{{ _mnt }}'
+            user='{{ rpi_image_user }}'
+
+            # user (idempotent for reruns against a dirty workspace)
+            if ! chroot "$mnt" id -u "$user" >/dev/null 2>&1; then
+              chroot "$mnt" useradd -m -s /bin/bash -G sudo,users,adm,video,plugdev "$user"
+            fi
+            {% if rpi_image_user1passhash is defined %}
+            chroot "$mnt" usermod -p '{{ rpi_image_user1passhash }}' "$user"
+            {% endif %}
+
+            # fleet key, key-only
+            install -d -m 700 "$mnt/home/$user/.ssh"
+            printf '%s\n' '{{ rpi_image_ssh_pubkey }}' > "$mnt/home/$user/.ssh/authorized_keys"
+            chmod 600 "$mnt/home/$user/.ssh/authorized_keys"
+            chroot "$mnt" chown -R "$user:$user" "/home/$user/.ssh"
+
+            # NOPASSWD sudo (same file the rpi-image-gen pipeline promised)
+            printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$user" > "$mnt/etc/sudoers.d/010_rpi-nopasswd"
+            chmod 440 "$mnt/etc/sudoers.d/010_rpi-nopasswd"
+            chroot "$mnt" visudo -c >/dev/null
+
+            # key-only sshd + enable ssh directly (no /boot/firmware/ssh
+            # sentinel needed)
+            printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\n' \
+              > "$mnt/etc/ssh/sshd_config.d/01pubkey-only.conf"
+            chmod 644 "$mnt/etc/ssh/sshd_config.d/01pubkey-only.conf"
+            chroot "$mnt" systemctl enable ssh >/dev/null 2>&1
+
+            # A user now exists, so neuter the firstboot user wizard and
+            # any leftover headless-bootstrap files.
+            chroot "$mnt" systemctl disable userconfig >/dev/null 2>&1 || true
+            rm -f "$mnt/boot/firmware/userconf.txt" "$mnt/boot/firmware/ssh" "$mnt/boot/firmware/ssh.txt"
+
+            # hostname
+            printf '%s\n' '{{ rpi_image_hostname }}' > "$mnt/etc/hostname"
+            sed -i 's/^127\.0\.1\.1.*/127.0.1.1\t{{ rpi_image_hostname }}/' "$mnt/etc/hosts"
+
+            # NOTE: cmdline.txt (init_resize firstboot) is deliberately
+            # untouched — SD deploys want the resize; netboot staging
+            # (roles/rpi_rootfs) strips it independently.
+            echo CUSTOMIZE_OK
+          args:
+            executable: /bin/bash
+          register: _rpi_release_customize
+          changed_when: "'CUSTOMIZE_OK' in _rpi_release_customize.stdout"
+
+        - name: Bake extra packages (chroot apt, optional)
+          ansible.builtin.shell: |
+            set -euo pipefail
+            mnt='{{ _mnt }}'
+            for d in proc sys dev dev/pts; do mount --bind "/$d" "$mnt/$d"; done
+            cp /etc/resolv.conf "$mnt/etc/resolv.conf.build"
+            mv "$mnt/etc/resolv.conf" "$mnt/etc/resolv.conf.orig" 2>/dev/null || true
+            mv "$mnt/etc/resolv.conf.build" "$mnt/etc/resolv.conf"
+            trap '
+              mv -f "$mnt/etc/resolv.conf.orig" "$mnt/etc/resolv.conf" 2>/dev/null || true
+              umount -q "$mnt/dev/pts" "$mnt/dev" "$mnt/sys" "$mnt/proc" 2>/dev/null || true
+            ' EXIT
+            chroot "$mnt" apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive chroot "$mnt" \
+              apt-get install -y --no-install-recommends {{ rpi_image_extra_packages | join(' ') }}
+            chroot "$mnt" apt-get clean
+            rm -rf "$mnt/var/lib/apt/lists/"*
+            echo PACKAGES_OK
+          args:
+            executable: /bin/bash
+          register: _rpi_release_packages
+          changed_when: "'PACKAGES_OK' in _rpi_release_packages.stdout"
+          when: rpi_image_extra_packages | default([]) | length > 0
+
+        # Content asserts match build.yml's verify stage, PLUS the
+        # boot-plausibility checks #305 exposed as missing: firmware
+        # files present and cmdline root PARTUUID consistent with the
+        # image's actual disk identifier.
+        - name: Verify image (content + boot plausibility)
+          ansible.builtin.shell: |
+            set -euo pipefail
+            mnt='{{ _mnt }}'
+            grep -qF '{{ rpi_image_ssh_pubkey }}' \
+              "$mnt/home/{{ rpi_image_user }}/.ssh/authorized_keys"
+            grep -qF '{{ rpi_image_user }} ALL=(ALL) NOPASSWD: ALL' \
+              "$mnt/etc/sudoers.d/010_rpi-nopasswd"
+            grep -q '^PasswordAuthentication no' \
+              "$mnt/etc/ssh/sshd_config.d/01pubkey-only.conf"
+            chroot "$mnt" /usr/bin/systemctl is-enabled ssh
+            grep -qx '{{ rpi_image_hostname }}' "$mnt/etc/hostname"
+
+            # boot plausibility (the gap behind igou-ansible#305)
+            for f in start4.elf fixup4.dat config.txt cmdline.txt kernel8.img; do
+              test -s "$mnt/boot/firmware/$f" || { echo "MISSING bootfs $f" >&2; exit 1; }
+            done
+            ls "$mnt"/boot/firmware/bcm2711-rpi-4-b.dtb >/dev/null
+
+            diskid=$(fdisk -l '{{ _img }}' | awk '/Disk identifier/ {print tolower($3)}' | sed 's/^0x//')
+            cmdline_uuid=$(grep -o 'root=PARTUUID=[0-9a-fA-F]*' "$mnt/boot/firmware/cmdline.txt" \
+                           | cut -d= -f3 | tr 'A-F' 'a-f')
+            [ "$cmdline_uuid" = "$diskid" ] || {
+              echo "PARTUUID mismatch: cmdline=$cmdline_uuid disk-id=$diskid" >&2; exit 1;
+            }
+            echo VERIFY_OK
+          args:
+            executable: /bin/bash
+          register: _rpi_release_verify
+          changed_when: false
+
+      always:
+        - name: Unmount image and detach loop device
+          ansible.builtin.shell: |
+            umount -q '{{ _mnt }}/boot/firmware' 2>/dev/null || true
+            umount -Rq '{{ _mnt }}' 2>/dev/null || true
+            losetup -d '{{ _rpi_release_loop.stdout }}' 2>/dev/null || true
+            exit 0
+          args:
+            executable: /bin/bash
+          changed_when: false
+
+    - name: Publish image {{ rpi_image_build_id }}
+      ansible.builtin.shell: |
+        set -euo pipefail
+        dest='{{ rpi_image_publish_config_dir }}/{{ rpi_image_build_id }}'
+        mkdir -p "$dest"
+        xz -T0 -c '{{ _img }}' > "$dest/{{ rpi_image_config }}.img.xz"
+        cd "$dest" && sha256sum ./*.img.xz > SHA256SUMS
+        ln -sfn "$dest" '{{ rpi_image_publish_config_dir }}/latest'
+        cd '{{ rpi_image_publish_config_dir }}'
+        ls -1d 20*/ | sort | head -n -{{ rpi_image_publish_retain }} \
+          | xargs -r rm -rf
+      args:
+        executable: /bin/bash
+      register: _rpi_release_publish
+      changed_when: true
+
+    - name: Remove build workspace
+      ansible.builtin.file:
+        path: "{{ _build_dir }}"
+        state: absent
+
+    - name: Record artifact location
+      ansible.builtin.set_stats:
+        data:
+          rpi_image_artifact: >-
+            {{ rpi_image_publish_config_dir }}/{{ rpi_image_build_id
+            }}/{{ rpi_image_config }}.img.xz
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          published {{ rpi_image_publish_config_dir }}/{{ rpi_image_build_id
+          }}/{{ rpi_image_config }}.img.xz from release
+          {{ rpi_image_release_src | basename }} (latest ->
+          {{ rpi_image_build_id }})
