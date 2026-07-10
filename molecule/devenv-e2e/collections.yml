@@ -1,0 +1,19 @@
+---
+# Test-only dependencies for this scenario. david_igou.molecule_provisioners
+# is deliberately kept out of the main requirements.yml so it never lands in
+# EE images; devhost is pinned here too so the scenario controls exactly what
+# it tests against.
+collections:
+  - name: david_igou.molecule_provisioners
+    version: 0.0.4-alpha
+  - name: https://github.com/david-igou/ansible-collection-devhost.git
+    type: git
+    version: 27.1.3
+  - name: kubernetes.core
+    version: ">=5.0.0"
+  - name: community.general
+    version: ">=10.0.0"
+  - name: community.docker
+    version: ">=4.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0"

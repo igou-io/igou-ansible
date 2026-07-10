@@ -1,0 +1,76 @@
+---
+# Health verification of the deployed devenv host: docker up, the code-server
+# container running, code-server answering HTTPS, devcontainer prerequisites
+# present. Deliberately deploy-and-health only for now — deeper lab-contextual
+# checks (devcontainer build, `make e2e` in the guest, ghapp mint, NodePort
+# reachability from outside the cluster) are future iterations.
+
+- name: Verify the devenv host deployment health
+  hosts: devenv-devenv
+  gather_facts: false
+  tasks:
+    - name: Collect service facts
+      ansible.builtin.service_facts:
+      become: true
+
+    - name: Assert the docker daemon is running
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['docker.service'].state == 'running'
+        fail_msg: docker.service is not running
+
+    - name: Assert the docker scratch disk is what backs /var/lib/docker
+      ansible.builtin.command:
+        cmd: findmnt -n -o SOURCE /var/lib/docker
+      register: __docker_mount
+      changed_when: false
+      failed_when: __docker_mount.rc != 0
+
+    - name: Inspect the code-server container
+      community.docker.docker_container_info:
+        name: igou-devenv-code-server
+      become: true
+      register: __cs_container
+
+    - name: Assert the code-server container is up
+      ansible.builtin.assert:
+        that:
+          - __cs_container.exists
+          - __cs_container.container.State.Running
+          - not __cs_container.container.State.Restarting
+        fail_msg: the igou-devenv-code-server container is not running
+
+    - name: Probe code-server over HTTPS (self-signed) until it answers
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        return_content: true
+      register: __cs_http
+      retries: 12
+      delay: 5
+      until: __cs_http.status == 200
+
+    - name: Assert the response is the code-server app
+      ansible.builtin.assert:
+        that:
+          - "'code-server' in __cs_http.content"
+        fail_msg: port 8080 answered but does not look like code-server
+
+    - name: Check the devcontainer CLI is installed for the login user
+      ansible.builtin.command:
+        cmd: ~/.local/bin/devcontainer --version
+      register: __devcontainer_cli
+      changed_when: false
+
+    - name: Check the igou-devenv repo clone
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir | default('/home/igou') }}/igou-devenv/.git"
+      register: __devenv_repo
+
+    - name: Assert devcontainer prerequisites are in place
+      ansible.builtin.assert:
+        that:
+          - __devcontainer_cli.rc == 0
+          - __devenv_repo.stat.exists
+          - __devenv_repo.stat.isdir
+        fail_msg: devcontainer CLI or the igou-devenv clone is missing

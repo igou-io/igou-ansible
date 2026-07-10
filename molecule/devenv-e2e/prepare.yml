@@ -1,0 +1,46 @@
+---
+- name: Prepare molecule instances
+  import_playbook: david_igou.molecule_provisioners.prepare
+
+# The centos-stream containerdisk root is ~10Gi — too tight for the multi-GB
+# devenv image pull on top of the OS. The emptyDisk declared in the inventory
+# (extra_disks/extra_volumes, serial "docker") gets a stable by-id path;
+# format and mount it before converge installs docker.
+- name: Mount the docker scratch disk
+  hosts: molecule
+  gather_facts: false
+  become: true
+  vars:
+    __docker_disk: /dev/disk/by-id/virtio-docker
+  tasks:
+    # The CentOS Stream GenericCloud image ships kernel-core/-modules only; on
+    # EL10 the netfilter modules docker's bridge network needs (xt_addrtype …)
+    # live in kernel-modules-extra, so dockerd fails to start without it.
+    # Arguably a david_igou.devhost.docker role gap — kept here until the role
+    # handles it.
+    - name: Install the netfilter kernel modules docker needs
+      ansible.builtin.dnf:
+        name: kernel-modules-extra
+        state: present
+
+    - name: Assert the docker bridge netfilter module now loads
+      community.general.modprobe:
+        name: xt_addrtype
+        state: present
+
+    - name: Wait for the scratch disk device to appear
+      ansible.builtin.wait_for:
+        path: "{{ __docker_disk }}"
+        timeout: 60
+
+    - name: Create an xfs filesystem on the scratch disk
+      community.general.filesystem:
+        fstype: xfs
+        dev: "{{ __docker_disk }}"
+
+    - name: Mount the scratch disk at /var/lib/docker
+      ansible.posix.mount:
+        path: /var/lib/docker
+        src: "{{ __docker_disk }}"
+        fstype: xfs
+        state: mounted

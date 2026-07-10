@@ -1,0 +1,8 @@
+---
+# The scenario's whole point: run the REAL phase-2 playbook, unmodified,
+# against the molecule-provisioned VM. The instance is named devenv-devenv so
+# bootstrap.yml's default hosts pattern (the AAP kubevirt.core inventory name
+# for the production VM) matches it as-is. The ghapp gate stays off by
+# default, so no 1Password access is needed during converge.
+- name: Converge via the production devenv bootstrap playbook
+  ansible.builtin.import_playbook: ../../playbooks/devenv/bootstrap.yml

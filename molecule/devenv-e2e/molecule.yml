@@ -1,0 +1,62 @@
+---
+# devenv-e2e: live end-to-end test of the devenv host lifecycle on a real
+# KubeVirt VM via david_igou.molecule_provisioners.
+#
+# The provisioner replaces phase 1 (playbooks/devenv/provision-vm.yml) with a
+# throwaway molecule VM; converge then runs the REAL phase-2 playbook
+# (playbooks/devenv/bootstrap.yml — david_igou.devhost roles, repo clone,
+# code-server container from the published image) unmodified, and verify
+# asserts deployment health: docker up, the igou-devenv-code-server container
+# running, code-server answering HTTPS on 8080, devcontainer prerequisites in
+# place.
+#
+# Scope (for now): end-to-end deploy + health. Intended to grow more
+# lab-contextual over time (devcontainer build, `make e2e` in the guest,
+# ghapp gate, NodePort reachability). `idempotence` is intentionally not in
+# the sequence yet — bootstrap's docker_container pull=true and the mise
+# bootstrap paths are not proven change-free on a second pass.
+#
+# Requirements to run:
+#   - KUBECONFIG for a principal with VM + Service CRUD and node reads in the
+#     `molecule` namespace (the `ansible-molecule` SA:
+#     op://claude/ocp-ansible-molecule/token, host api.ocp.igou.systems:6443)
+#   - a kubevirt-schedulable worker with ~8Gi free (the VM is deliberately
+#     NOT pinned to the casval burst node, so tenant workers qualify)
+#   - VM egress to github.com (repo clone) and ghcr.io (image pull)
+#   - no 1Password needed: the ghapp gate stays off (devenv_ghapp_enabled=false)
+#
+# Run:  molecule test -s devenv-e2e
+prerun: false
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: molecule/devenv-e2e/collections.yml
+    force: true
+
+ansible:
+  executor:
+    args:
+      ansible_playbook:
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  name: devenv-e2e
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy
+
+verifier:
+  name: ansible

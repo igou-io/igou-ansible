@@ -1,0 +1,5 @@
+---
+# This scenario is inherently kubevirt: it exists to validate the devenv host
+# lifecycle on a real cluster VM. No podman/docker fallback.
+mp_backend: kubevirt
+mp_kubevirt_wait_timeout: 600
