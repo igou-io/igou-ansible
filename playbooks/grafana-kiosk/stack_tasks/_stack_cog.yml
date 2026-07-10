@@ -1,0 +1,38 @@
+---
+# cog/WPE browser stack: WebKit rendering straight onto DRM/KMS. No X server
+# and no Wayland compositor - cog becomes DRM master on seat0 via seatd.
+#
+# Bench-test gate (see README): GPU acceleration through cog's DRM backend is
+# unreliable on Pi vc4/v3d (Igalia/cog#368) - expect software rendering, and
+# validate the actual dashboard renders before committing to this stack.
+- name: Install cog and seat management
+  ansible.builtin.apt:
+    name:
+      - cog
+      - seatd
+    state: present
+    install_recommends: false
+
+# Debian's seatd grants seat access to the 'video' group; the kiosk user is
+# a member (see setup-kiosk.yaml).
+- name: Enable seatd
+  ansible.builtin.systemd_service:
+    name: seatd.service
+    enabled: true
+    state: "{{ omit if _kiosk_is_container else 'started' }}"
+
+- name: Template the cog kiosk unit
+  ansible.builtin.template:
+    src: templates/cog-kiosk.service.j2
+    dest: /etc/systemd/system/cog-kiosk.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart kiosk service
+
+- name: Enable the cog kiosk service
+  ansible.builtin.systemd_service:
+    name: cog-kiosk.service
+    enabled: true
+    state: "{{ 'started' if _kiosk_start_browser else omit }}"
+    daemon_reload: true

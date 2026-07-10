@@ -1,0 +1,31 @@
+---
+# Full convergence for the grafana kiosk Pi: linux baseline + node_exporter +
+# the kiosk proxy/browser stack.
+#
+#   ansible-playbook playbooks/grafana-kiosk/converge.yaml \
+#     -i igou-inventory/inventory.yaml -l kiosk.igou.systems
+#
+# The imported linux plays target `ansible_limit | default('all')`, so an
+# unlimited run would baseline the entire fleet. The guard play below makes
+# a missing --limit a hard error instead.
+- name: Guard - refuse to run without an explicit limit
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require --limit so imported fleet-wide plays stay scoped
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          Run this playbook with an explicit limit, e.g.
+          -l kiosk.igou.systems. The imported baseline/node_exporter
+          plays default to 'all' without one.
+
+- name: Import linux baseline
+  ansible.builtin.import_playbook: ../linux/baseline.yaml
+
+- name: Import node_exporter deployment
+  ansible.builtin.import_playbook: ../linux/node_exporter.yaml
+
+- name: Import kiosk setup
+  ansible.builtin.import_playbook: setup-kiosk.yaml
