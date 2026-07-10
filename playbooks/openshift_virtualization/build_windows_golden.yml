@@ -137,7 +137,10 @@
           kubevirt release) and re-run.
 
     - name: Check python3 vncdotool module is importable
-      ansible.builtin.command: python3 -c "import vncdotool"
+      # vncdotool.api, not bare vncdotool: the api module pulls twisted's TLS
+      # stack (service_identity et al), which is exactly what autoboot.py needs
+      # and exactly what a bare `import vncdotool` fails to prove.
+      ansible.builtin.command: python3 -c "import vncdotool.api"
       changed_when: false
       failed_when: false
       register: golden_vncdotool_check
