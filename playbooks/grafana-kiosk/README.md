@@ -78,8 +78,7 @@ ansible-playbook playbooks/grafana-kiosk/converge.yaml \
 at the Pi Zero 2 W's 512MB envelope, against a mock Grafana that echoes the
 Authorization header. Verify proves end-to-end token injection, unit
 enablement, config permissions, and runs real headless browser renders
-(Chromium screenshot — fetched back to the controller — and cog 20s
-survival) inside the memory cap. Provisioning uses
+(Chromium screenshot and cog 20s survival) inside the memory cap. Provisioning uses
 `david_igou.molecule_provisioners` (see `molecule/grafana-kiosk/inventory/`);
 pick a backend with `PROVISIONER`:
 
@@ -99,11 +98,11 @@ renders:
 export PROVISIONER=kubevirt   # and a KUBECONFIG for the ansible-molecule SA
 
 molecule converge -s grafana-kiosk   # create + prepare + converge; instances stay up
-molecule verify -s grafana-kiosk     # re-runnable; regenerates the screenshot
+KIOSK_FETCH_SCREENSHOT=1 molecule verify -s grafana-kiosk   # re-runnable
 ```
 
-Each `verify` renders the dashboard with headless Chromium inside the guest
-and fetches it to
+With `KIOSK_FETCH_SCREENSHOT=1` (off by default — plain test runs leave the
+render in the guest), `verify` fetches the headless Chromium render to
 `$MOLECULE_EPHEMERAL_DIRECTORY/screenshots/kiosk-chromium.png` — verify
 prints the exact path; it lives under
 `~/.ansible/tmp/molecule.*.grafana-kiosk/`. Open it locally, tweak the play

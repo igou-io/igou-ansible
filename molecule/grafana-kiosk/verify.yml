@@ -49,9 +49,13 @@
     # Headless because containers have no DRM/X; the memory ceiling is what
     # is under test (an OOM kill fails the task).
 
-    - name: Chromium render smoke (screenshot fetched to the controller)
+    - name: Chromium render smoke
       when: kiosk_stack == 'chromium'
       vars:
+        # Opt-in render inspection: KIOSK_FETCH_SCREENSHOT=1 pulls the
+        # render back to the controller (see README "Render testing").
+        # The smoke itself always runs - the fetch is human-eyeball only.
+        _verify_fetch_screenshot: "{{ lookup('env', 'KIOSK_FETCH_SCREENSHOT') | bool }}"
         # Falls back to the scenario dir if run outside molecule.
         _verify_shot_dest: >-
           {{ (lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY')
@@ -71,16 +75,17 @@
           register: verify_shot
           failed_when: not verify_shot.stat.exists or verify_shot.stat.size == 0
 
-        # Pull the render back to the controller so a human can eyeball it.
         - name: Fetch the Chromium screenshot to the controller
           ansible.builtin.fetch:
             src: /tmp/kiosk-smoke.png
             dest: "{{ _verify_shot_dest }}"
             flat: true
+          when: _verify_fetch_screenshot
 
         - name: Show where the screenshot landed
           ansible.builtin.debug:
             msg: "Screenshot fetched to {{ _verify_shot_dest }}"
+          when: _verify_fetch_screenshot
 
     - name: Run headless cog against the proxy for 20s
       ansible.builtin.command:
