@@ -19,10 +19,22 @@ StandardOutput=journal
 StandardError=journal
 Environment=XDG_SEAT=seat0
 Environment=LIBSEAT_BACKEND=seatd
+# The PAM login session hands the unit capabilities; WPE's bwrap sandbox
+# refuses to start a capable-but-not-setuid process ("Unexpected
+# capabilities but not setuid"). The browser needs no caps - drop them all.
+CapabilityBoundingSet=
+{% for k, v in (kiosk_cog_env | default({})) | dictsort %}
+# Extra env from kiosk_cog_env (e.g. WEBKIT_DISABLE_* on virtual GPUs).
+Environment={{ k }}={{ v }}
+{% endfor %}
 {% if kiosk_drm_video_mode | default('') %}
 Environment=COG_PLATFORM_DRM_VIDEO_MODE={{ kiosk_drm_video_mode }}
 {% endif %}
-ExecStart=/usr/bin/cog --platform=drm --webprocess-failure=restart-exit "{{ _kiosk_cog_url }}"
+# --webprocess-failure=restart: 'restart-exit' is not a valid action on the
+# cog 0.16 that Bookworm/RPi OS ship (valid: error-page, exit, exit-ok,
+# restart) - the unit crash-loops with "Invalid action name". WebProcess
+# crashes restart in-place; full cog exits come back via Restart=always.
+ExecStart=/usr/bin/cog --platform=drm --webprocess-failure=restart "{{ _kiosk_cog_url }}"
 Restart=always
 RestartSec=5
 # Daily recycle: browsers leak on live dashboards; Restart=always brings the

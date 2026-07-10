@@ -40,7 +40,8 @@
     _kiosk_dashboard_path: "{{ kiosk_dashboard_path | default('/') }}"
     _kiosk_cog_url: >-
       {{ _kiosk_proxy_base ~ _kiosk_dashboard_path
-         ~ ('&kiosk' if '?' in _kiosk_dashboard_path else '?kiosk') }}
+         ~ ('' if 'kiosk' in (_kiosk_dashboard_path | urlsplit('query'))
+            else ('&kiosk' if '?' in _kiosk_dashboard_path else '?kiosk')) }}
     # Explicit token wins (molecule/CI); otherwise resolve from 1Password on
     # the controller. The inline-if keeps the lookup lazy so container runs
     # never touch 1Password.
