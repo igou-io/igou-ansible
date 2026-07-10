@@ -70,4 +70,15 @@ collections:
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
     version: 27.1.3
+  # Windows automation (playbooks/windows/)
+  - name: ansible.windows
+    version: 3.6.1
+  - name: community.windows
+    version: 3.2.0
+  - name: microsoft.ad
+    version: 1.11.0
+  - name: microsoft.iis
+    version: 1.2.0
+  - name: chocolatey.chocolatey
+    version: 1.6.0
 ...

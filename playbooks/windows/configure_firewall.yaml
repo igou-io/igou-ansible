@@ -1,0 +1,69 @@
+---
+# Configure the Windows Defender Firewall: profile state plus a declarative
+# list of rules.
+#
+# Two different modules cooperate here, and mixing them up is a classic
+# beginner trap:
+#   * ansible.windows.win_firewall        - turns whole PROFILES on or off
+#                                           (Domain / Private / Public)
+#   * community.windows.win_firewall_rule - manages INDIVIDUAL rules
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables:
+#   windows_firewall_profiles - profiles to ensure are enabled
+#                               (default: all three)
+#   windows_firewall_rules    - list of rules. Each entry:
+#                                 name:      display name        (required)
+#                                 direction: in|out              (default in)
+#                                 action:    allow|block         (default allow)
+#                                 protocol:  tcp|udp|icmpv4|...  (default tcp)
+#                                 localport: port or range       (optional;
+#                                            not used for icmp)
+#                                 profiles:  list                (optional)
+#                                 state:     present|absent      (default present)
+#                               The defaults below allow ping and WinRM over
+#                               HTTPS — the two rules a lab Windows VM
+#                               almost always needs.
+#
+# Run:
+#   ansible-navigator run playbooks/windows/configure_firewall.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<host>
+- name: Configure the Windows firewall
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    windows_firewall_profiles:
+      - Domain
+      - Private
+      - Public
+    windows_firewall_rules:
+      - name: Allow ICMP ping (managed by Ansible)
+        protocol: icmpv4
+      - name: Allow WinRM over HTTPS (managed by Ansible)
+        protocol: tcp
+        localport: "5986"
+
+  tasks:
+    # Keep the firewall ON and punch explicit holes — disabling profiles to
+    # "make things work" is the anti-pattern this playbook exists to avoid.
+    - name: Ensure firewall profiles are enabled
+      ansible.windows.win_firewall:
+        profiles: "{{ windows_firewall_profiles }}"
+        state: enabled
+
+    - name: Ensure firewall rules match the desired state
+      community.windows.win_firewall_rule:
+        name: "{{ item.name }}"
+        direction: "{{ item.direction | default('in') }}"
+        action: "{{ item.action | default('allow') }}"
+        protocol: "{{ item.protocol | default('tcp') }}"
+        localport: "{{ item.localport | default(omit) }}"
+        profiles: "{{ item.profiles | default(omit) }}"
+        state: "{{ item.state | default('present') }}"
+        enabled: true
+      loop: "{{ windows_firewall_rules }}"
+      loop_control:
+        label: "{{ item.name }}"

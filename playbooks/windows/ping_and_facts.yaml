@@ -1,0 +1,37 @@
+---
+# Verify Ansible can talk to Windows hosts and print a short system summary.
+#
+# This is the "hello world" of Windows automation — run it first to prove
+# your connection variables (WinRM or SSH, see playbooks/windows/README.md)
+# are correct before trying anything else.
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables: none.
+#
+# Run:
+#   ansible-navigator run playbooks/windows/ping_and_facts.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<host>
+- name: Check Windows connectivity and show system facts
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: true
+
+  tasks:
+    # win_ping is the Windows equivalent of ansible.builtin.ping: it performs
+    # a full round trip over the connection plugin, so a green result means
+    # authentication, the transport, and PowerShell execution all work.
+    - name: Verify the connection with a full round trip
+      ansible.windows.win_ping:
+
+    # gather_facts: true above already ran ansible.windows.setup for us, so
+    # every ansible_* fact below is free — no extra task needed to collect it.
+    - name: Show a short system summary
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS:       {{ ansible_os_name | default('unknown') | trim }}"
+          - "Build:    {{ ansible_distribution_version | default('unknown') }}"
+          - "Arch:     {{ ansible_architecture | default('unknown') }}"
+          - "Memory:   {{ ansible_memtotal_mb | default(0) }} MB"
+          - "IPs:      {{ ansible_ip_addresses | default([]) | join(', ') }}"

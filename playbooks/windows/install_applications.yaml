@@ -1,0 +1,69 @@
+---
+# Install, upgrade, or remove applications with Chocolatey.
+#
+# Chocolatey is the de-facto package manager for Windows and the easiest way
+# to keep application installs declarative. The first run bootstraps
+# Chocolatey itself from https://community.chocolatey.org, so targets need
+# outbound HTTPS (or point windows_choco_source at an internal feed).
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables:
+#   windows_apps         - list of packages. Each entry:
+#                            name:    chocolatey package id   (required)
+#                            version: exact version to pin    (optional)
+#                            state:   present|latest|absent   (optional,
+#                                     default present)
+#                          Pinning a version keeps runs deterministic;
+#                          'latest' upgrades on every run when the feed has
+#                          something newer.
+#   windows_choco_source - alternate package feed URL, e.g. an internal
+#                          Nexus/ProGet repository (optional)
+#
+# Run:
+#   ansible-navigator run playbooks/windows/install_applications.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<host> \
+#     -e '{"windows_apps": [{"name": "vlc"}, {"name": "firefox", "state": "latest"}]}'
+- name: Manage applications with Chocolatey
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    windows_apps:
+      - name: git
+      - name: 7zip
+      - name: notepadplusplus
+
+  tasks:
+    # Registering an internal feed first (when configured) means even the
+    # Chocolatey bootstrap and every package come from your own server.
+    - name: Point Chocolatey at an internal package feed
+      chocolatey.chocolatey.win_chocolatey_source:
+        name: internal
+        source: "{{ windows_choco_source }}"
+        priority: 1
+        state: present
+      when: windows_choco_source is defined
+
+    - name: Ensure each application is in its desired state
+      chocolatey.chocolatey.win_chocolatey:
+        name: "{{ item.name }}"
+        version: "{{ item.version | default(omit) }}"
+        state: "{{ item.state | default('present') }}"
+      loop: "{{ windows_apps }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.state | default('present') }})"
+
+    # win_chocolatey_facts populates ansible_facts.chocolatey with installed
+    # packages, sources, and config — handy proof of what a run left behind.
+    - name: Collect the resulting package inventory
+      chocolatey.chocolatey.win_chocolatey_facts:
+
+    - name: Show installed Chocolatey packages
+      ansible.builtin.debug:
+        msg: >-
+          {{ ansible_facts.chocolatey.packages
+             | map(attribute='package')
+             | sort
+             | join(', ') }}

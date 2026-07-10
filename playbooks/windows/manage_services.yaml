@@ -1,0 +1,56 @@
+---
+# Manage Windows services declaratively: running state and startup mode.
+#
+# The default example below shows both directions — making sure something IS
+# running (Windows Time keeps VM clocks sane) and making sure something is
+# NOT (the Print Spooler is a common hardening target on servers).
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables:
+#   windows_services - list of services. Each entry:
+#                        name:       service short name, e.g. W32Time
+#                                    (required — find it with
+#                                    'Get-Service | Select Name,DisplayName')
+#                        state:      started|stopped|restarted (optional)
+#                        start_mode: auto|manual|disabled|delayed (optional)
+#                      Omitted keys are left untouched, so an entry with only
+#                      start_mode changes boot behaviour without bouncing the
+#                      service now.
+#
+# Run:
+#   ansible-navigator run playbooks/windows/manage_services.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<host>
+- name: Manage Windows services
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    windows_services:
+      - name: W32Time
+        state: started
+        start_mode: auto
+      - name: Spooler
+        state: stopped
+        start_mode: disabled
+
+  tasks:
+    - name: Ensure services match the desired state
+      ansible.windows.win_service:
+        name: "{{ item.name }}"
+        state: "{{ item.state | default(omit) }}"
+        start_mode: "{{ item.start_mode | default(omit) }}"
+      loop: "{{ windows_services }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: windows_services_result
+
+    - name: Show the resulting service states
+      ansible.builtin.debug:
+        msg: >-
+          {{ windows_services_result.results
+             | map(attribute='item.name')
+             | zip(windows_services_result.results | map(attribute='state', default='unchanged'))
+             | map('join', ': ')
+             | join(', ') }}
