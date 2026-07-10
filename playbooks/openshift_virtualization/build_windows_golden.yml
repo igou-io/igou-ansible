@@ -31,9 +31,13 @@
     # --- Interface contract (see issue #343 phase 1, part A) ---------------
     # REQUIRED. Namespace used for BOTH the build VM and the published DataSource.
     windows_golden_namespace: ""
-    # REQUIRED. Local Administrator / auto-logon password for the throwaway build
-    # VM. generalize wipes machine identity, so this is not a durable secret;
-    # every task that renders or uses it sets no_log: true.
+    # Local Administrator / auto-logon password for the throwaway build VM.
+    # Empty -> a random throwaway is generated at runtime (see the "Generate a
+    # throwaway build-VM admin password" task). Safe to auto-generate because
+    # sysprep /generalize wipes local accounts and credentials from the published
+    # image — nothing that clones the golden disk inherits it, so there is
+    # nothing durable to protect. Honor an explicit override if set. Every task
+    # that renders or uses it sets no_log: true.
     windows_golden_admin_password: ""
     # Short edition key; drives all derived resource names.
     windows_golden_edition: win2k25
@@ -66,6 +70,29 @@
     # from K8S_AUTH_HOST / K8S_AUTH_API_KEY.
     windows_golden_kubeconfig: ""
 
+    # --- Production publish path (issue #343 phase 1, part B) --------------
+    # Empty -> publish in the build namespace exactly as today (the surviving
+    # standalone root DV IS the deliverable, no capture-clone). Non-empty ->
+    # after the build, capture-clone the golden root DV into this namespace.
+    # Production sets openshift-virtualization-os-images (where the SSP-managed
+    # os-image DataSources live) while building in windows-images (where the
+    # installer ISO DVs live).
+    windows_golden_publish_namespace: ""
+    # Name of the published DV/PVC (and DataSource, when managed) in the publish
+    # namespace. Empty -> derives to windows_golden_dv_name. Production sets
+    # "win2k25" so the PVC name matches the stock SSP DataSource's expected
+    # spec.source.pvc.name — that DataSource flips Ready=True on its own once the
+    # PVC exists, so production creates NO DataSource of its own.
+    windows_golden_publish_name: ""
+    # StorageClass for the capture-clone into the publish namespace; empty ->
+    # cluster default SC (same combine() omission pattern as the root DV).
+    windows_golden_publish_storage_class: ""
+    # true -> create/patch a DataSource pointing at the published PVC. false ->
+    # skip the DataSource task entirely: stock SSP-managed DataSources already
+    # bind to the named PVC on their own, and the AAP virtualmachine-ops service
+    # account deliberately cannot write DataSources. Production sets this false.
+    windows_golden_manage_datasource: true
+
     # --- Derived resource names (sibling molecule scenario depends on these) --
     windows_golden_vm_name: "golden-{{ windows_golden_edition }}-build"
     # Golden root DV == published PVC == DataSource name.
@@ -83,14 +110,17 @@
         fail_msg: >-
           windows_golden_namespace is required (build + publish namespace).
 
-    - name: Assert windows_golden_admin_password is set
+    # generalize wipes local accounts and credentials from the published image,
+    # so the build-VM Administrator password is throwaway — nothing durable to
+    # protect. Generate a random one when the caller did not override it. The
+    # 'zZ9!' suffix guarantees Windows' upper/lower/digit/symbol complexity.
+    - name: Generate a throwaway build-VM admin password when unset
+      when: windows_golden_admin_password | length == 0
       no_log: true
-      ansible.builtin.assert:
-        that:
-          - windows_golden_admin_password | length > 0
-        fail_msg: >-
-          windows_golden_admin_password is required
-          (build-VM Administrator / auto-logon password).
+      ansible.builtin.set_fact:
+        windows_golden_admin_password: >-
+          {{ lookup('ansible.builtin.password',
+                    '/dev/null length=16 chars=ascii_letters,digits') ~ 'zZ9!' }}
 
     - name: Check virtctl is available
       ansible.builtin.command: virtctl version --client
@@ -423,22 +453,102 @@
             namespace: "{{ windows_golden_namespace }}"
             wait: true
 
+        # --- Step 10b: resolve the publish target -----------------------
+        # Empty publish vars keep today's behavior: publish IN the build
+        # namespace under the build DV's own name (no capture-clone).
+        - name: Resolve the publish namespace and name
+          ansible.builtin.set_fact:
+            windows_golden_resolved_publish_namespace: >-
+              {{ windows_golden_publish_namespace
+                 if windows_golden_publish_namespace | length > 0
+                 else windows_golden_namespace }}
+            windows_golden_resolved_publish_name: >-
+              {{ windows_golden_publish_name
+                 if windows_golden_publish_name | length > 0
+                 else windows_golden_dv_name }}
+
+        # A capture-clone is only needed when the resolved target differs from
+        # the build DV in EITHER namespace or name; otherwise the surviving
+        # standalone root DV already IS the published PVC.
+        - name: Determine whether a capture-clone is needed
+          ansible.builtin.set_fact:
+            windows_golden_publish_is_clone: >-
+              {{ windows_golden_resolved_publish_namespace != windows_golden_namespace
+                 or windows_golden_resolved_publish_name != windows_golden_dv_name }}
+
+        # --- Step 10c: capture-clone into the publish namespace ---------
+        # Build the publish DV storage spec so storageClassName is omitted
+        # (cluster default) when windows_golden_publish_storage_class is empty.
+        - name: Build the published DV storage spec
+          when: windows_golden_publish_is_clone | bool
+          ansible.builtin.set_fact:
+            windows_golden_publish_storage: >-
+              {{
+                {'resources': {'requests': {'storage': windows_golden_disk_size}}}
+                | combine(
+                    {'storageClassName': windows_golden_publish_storage_class}
+                    if windows_golden_publish_storage_class | length > 0 else {}
+                  )
+              }}
+
+        - name: Capture-clone the golden root disk into the publish namespace
+          # CDI authorizes a cross-namespace clone against
+          # `datavolumes/source create` in the SOURCE (build) namespace, which
+          # the AAP virtualmachine-ops SA holds cluster-wide. A same-SC clone is
+          # a snapshot smart-clone (minutes); a cross-SC clone falls back to a
+          # host-assisted 50Gi copy (the slow path the wait below tolerates).
+          when: windows_golden_publish_is_clone | bool
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: cdi.kubevirt.io/v1beta1
+              kind: DataVolume
+              metadata:
+                name: "{{ windows_golden_resolved_publish_name }}"
+                namespace: "{{ windows_golden_resolved_publish_namespace }}"
+                annotations:
+                  cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+                  cdi.kubevirt.io/storage.usePopulator: "true"
+              spec:
+                source:
+                  pvc:
+                    name: "{{ windows_golden_dv_name }}"
+                    namespace: "{{ windows_golden_namespace }}"
+                storage: "{{ windows_golden_publish_storage }}"
+
+        - name: Wait for the published capture-clone to complete
+          when: windows_golden_publish_is_clone | bool
+          kubernetes.core.k8s_info:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_resolved_publish_name }}"
+            namespace: "{{ windows_golden_resolved_publish_namespace }}"
+          register: golden_publish_status
+          until:
+            - golden_publish_status.resources | length == 1
+            - golden_publish_status.resources[0].status.phase == "Succeeded"
+          retries: 60
+          delay: 30
+
+        # --- Step 10d: publish the DataSource (optional) -----------------
+        # Skipped in production: stock SSP-managed DataSources bind the named PVC
+        # on their own and the AAP SA cannot write DataSources.
         - name: Publish the golden root disk as a DataSource
+          when: windows_golden_manage_datasource | bool
           kubernetes.core.k8s:
             definition:
               apiVersion: cdi.kubevirt.io/v1beta1
               kind: DataSource
               metadata:
-                name: "{{ windows_golden_dv_name }}"
-                namespace: "{{ windows_golden_namespace }}"
+                name: "{{ windows_golden_resolved_publish_name }}"
+                namespace: "{{ windows_golden_resolved_publish_namespace }}"
                 labels:
                   instancetype.kubevirt.io/default-preference: "{{ windows_golden_preference }}"
                   instancetype.kubevirt.io/default-instancetype: "{{ windows_golden_instancetype }}"
               spec:
                 source:
                   pvc:
-                    name: "{{ windows_golden_dv_name }}"
-                    namespace: "{{ windows_golden_namespace }}"
+                    name: "{{ windows_golden_resolved_publish_name }}"
+                    namespace: "{{ windows_golden_resolved_publish_namespace }}"
 
         # --- Step 11: clean up build artifacts --------------------------
         - name: Delete the installcd clone DataVolume
@@ -459,13 +569,42 @@
             name: "{{ windows_golden_unattend_secret }}"
             namespace: "{{ windows_golden_namespace }}"
 
+        # Only an intermediate artifact when a capture-clone produced the
+        # deliverable elsewhere. In same-namespace mode this DV IS the published
+        # PVC — deleting it would destroy the build output — so gate on
+        # publish_is_clone as well as keep_build_artifacts.
+        - name: Delete the intermediate build-namespace golden DataVolume
+          when:
+            - not (windows_golden_keep_build_artifacts | bool)
+            - windows_golden_publish_is_clone | bool
+          kubernetes.core.k8s:
+            state: absent
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_dv_name }}"
+            namespace: "{{ windows_golden_namespace }}"
+
         # --- Step 12: report --------------------------------------------
-        - name: Report the published DataSource
+        - name: Report the published golden image
           ansible.builtin.debug:
             msg:
-              - "Published DataSource {{ windows_golden_dv_name }} in namespace {{ windows_golden_namespace }}."
-              - "Consume it from a VM via a dataVolumeTemplate sourceRef:"
-              - "  sourceRef: {kind: DataSource, name: {{ windows_golden_dv_name }}, namespace: {{ windows_golden_namespace }}}"
+              - >-
+                Published PVC {{ windows_golden_resolved_publish_name }} in
+                namespace {{ windows_golden_resolved_publish_namespace }}.
+              - >-
+                DataSource managed by this run:
+                {{ windows_golden_manage_datasource | bool }}.
+              - >-
+                {{
+                  'Consume it from a VM via a dataVolumeTemplate sourceRef: '
+                  ~ '{kind: DataSource, name: '
+                  ~ windows_golden_resolved_publish_name
+                  ~ ', namespace: ' ~ windows_golden_resolved_publish_namespace ~ '}'
+                  if windows_golden_manage_datasource | bool
+                  else 'No DataSource created — the stock SSP-managed DataSource '
+                       ~ windows_golden_resolved_publish_name
+                       ~ ' binds this PVC automatically and flips Ready=True.'
+                }}
 
       always:
         - name: Remove the temp kubeconfig
