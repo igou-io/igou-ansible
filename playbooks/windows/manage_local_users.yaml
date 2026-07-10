@@ -1,0 +1,75 @@
+---
+# Manage local Windows users and groups declaratively.
+#
+# Covers the everyday cases: create a group, create users with group
+# membership, and remove accounts that should no longer exist. For Active
+# Directory users see join_domain.yaml and the microsoft.ad collection —
+# these modules only touch the LOCAL account database.
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables:
+#   windows_local_groups - list of groups. Each entry:
+#                            name:        group name           (required)
+#                            description: free text            (optional)
+#                            state:       present|absent       (optional,
+#                                         default present)
+#   windows_local_users  - list of users. Each entry:
+#                            name:     username                (required)
+#                            password: initial password        (required for
+#                                      state present; only set on creation)
+#                            fullname / description            (optional)
+#                            groups:   local groups to add to  (optional)
+#                            state:    present|absent          (optional,
+#                                      default present)
+#
+# Passwords should come from extra_vars or a 1Password lookup, never from a
+# file in git, e.g.:
+#   -e '{"windows_local_users": [{"name": "svc-backup",
+#        "password": "{{ lookup(''community.general.onepassword'',
+#        ''windows-svc-backup'', field=''password'', vault=''lab_agents'') }}",
+#        "groups": ["Backup Operators"]}]}'
+#
+# Run:
+#   ansible-navigator run playbooks/windows/manage_local_users.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<host>
+- name: Manage local Windows users and groups
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    windows_local_groups:
+      - name: AppTesters
+        description: Accounts used for automated application testing
+    windows_local_users: []
+
+  tasks:
+    # Groups first, so users can reference them on creation.
+    - name: Ensure local groups exist
+      ansible.windows.win_group:
+        name: "{{ item.name }}"
+        description: "{{ item.description | default(omit) }}"
+        state: "{{ item.state | default('present') }}"
+      loop: "{{ windows_local_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # update_password: on_create means Ansible sets the password only when
+    # it creates the account — reruns never clobber a rotated password.
+    # no_log keeps the passwords in the loop items out of logs and output;
+    # the loop_control label restores per-item readability.
+    - name: Ensure local users match the desired state
+      ansible.windows.win_user:
+        name: "{{ item.name }}"
+        password: "{{ item.password | default(omit) }}"
+        update_password: on_create
+        fullname: "{{ item.fullname | default(omit) }}"
+        description: "{{ item.description | default(omit) }}"
+        groups: "{{ item.groups | default(omit) }}"
+        groups_action: add
+        state: "{{ item.state | default('present') }}"
+      loop: "{{ windows_local_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true

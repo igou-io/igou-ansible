@@ -1,0 +1,152 @@
+---
+# Provision a Windows machine as a self-contained application test bed:
+# create a dedicated test user, install a configurable set of applications,
+# and (optionally) open Remote Desktop so an interactive agent can log in
+# and drive the GUI.
+#
+# Written for — but not limited to — Windows VMs running on OpenShift
+# Virtualization, where an automation agent later signs in as the test user
+# to exercise the installed applications. See README.md for how a fresh VM
+# gets its first WinRM/SSH listener (sysprep answer file or cloudbase-init);
+# this play takes over from the moment Ansible can connect.
+#
+# This play composes the building blocks shown in manage_local_users.yaml
+# and install_applications.yaml — read those two for the full option set.
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables:
+#   windows_test_user           - test account to create (default 'apptester')
+#   windows_test_user_password  - REQUIRED. Pass via extra_vars, e.g.
+#                                 -e windows_test_user_password="{{ lookup('community.general.onepassword',
+#                                    'windows-apptester', field='password', vault='lab_agents') }}"
+#   windows_test_user_groups    - local groups for the account
+#                                 (default: Users + Remote Desktop Users)
+#   windows_test_apps           - Chocolatey packages to install; a list of
+#                                 dicts with name / version (optional) /
+#                                 state (optional, default present)
+#   windows_test_msi_packages   - extra MSI/EXE installers not available in
+#                                 Chocolatey; list of dicts with path (local
+#                                 path or URL), product_id, arguments,
+#                                 creates_path (see win_package docs).
+#                                 Default: none.
+#   windows_test_enable_rdp     - enable Remote Desktop + firewall rule so
+#                                 GUI agents can connect (default true)
+#
+# Run:
+#   ansible-navigator run playbooks/windows/provision_test_machine.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<vm-host> \
+#     -e windows_test_user_password=<secret>
+- name: Provision a Windows application test machine
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    windows_test_user: apptester
+    windows_test_user_groups:
+      - Users
+      - Remote Desktop Users
+    windows_test_apps:
+      - name: git
+      - name: 7zip
+      - name: notepadplusplus
+    windows_test_msi_packages: []
+    windows_test_enable_rdp: true
+
+  tasks:
+    # Fail fast with a clear message instead of a mid-play "undefined
+    # variable" error — passwords must come from extra_vars or a vault,
+    # never from a file checked into git.
+    - name: Make sure a password was provided for the test user
+      ansible.builtin.assert:
+        that:
+          - windows_test_user_password is defined
+        fail_msg: >-
+          Set windows_test_user_password via extra_vars (ideally from a
+          1Password lookup) — see the header of this playbook.
+
+    # --- Test user -------------------------------------------------------
+    # no_log hides the module arguments (which include the password) from
+    # logs and console output. update_password: on_create keeps the play
+    # idempotent — reruns won't reset a password the user already rotated.
+    - name: Create the application test user
+      ansible.windows.win_user:
+        name: "{{ windows_test_user }}"
+        password: "{{ windows_test_user_password }}"
+        update_password: on_create
+        password_never_expires: true
+        description: Application test account managed by Ansible
+        groups: "{{ windows_test_user_groups }}"
+        groups_action: add
+        state: present
+      no_log: true
+
+    # --- Applications ----------------------------------------------------
+    # The first win_chocolatey run bootstraps Chocolatey itself from the
+    # internet, so the VM needs outbound HTTPS (or set an internal source —
+    # see install_applications.yaml).
+    - name: Install test applications with Chocolatey
+      chocolatey.chocolatey.win_chocolatey:
+        name: "{{ item.name }}"
+        version: "{{ item.version | default(omit) }}"
+        state: "{{ item.state | default('present') }}"
+      loop: "{{ windows_test_apps }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # win_package handles anything Chocolatey can't: vendor MSIs, EXE
+    # installers from a share or URL. product_id is what makes reruns
+    # idempotent — without it (or creates_path) the installer runs again
+    # every time.
+    - name: Install extra MSI/EXE packages
+      ansible.windows.win_package:
+        path: "{{ item.path }}"
+        product_id: "{{ item.product_id | default(omit) }}"
+        arguments: "{{ item.arguments | default(omit) }}"
+        creates_path: "{{ item.creates_path | default(omit) }}"
+        state: present
+      loop: "{{ windows_test_msi_packages }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    # --- Remote Desktop (optional) ----------------------------------------
+    # Three pieces make RDP reachable: the registry switch that allows
+    # connections, the service, and a firewall rule. The test user gets in
+    # because it is a member of "Remote Desktop Users" (see vars above).
+    - name: Allow Remote Desktop connections
+      ansible.windows.win_regedit:
+        path: HKLM:\System\CurrentControlSet\Control\Terminal Server
+        name: fDenyTSConnections
+        data: 0
+        type: dword
+      when: windows_test_enable_rdp
+
+    - name: Start the Remote Desktop service
+      ansible.windows.win_service:
+        name: TermService
+        start_mode: auto
+        state: started
+      when: windows_test_enable_rdp
+
+    - name: Open the firewall for Remote Desktop
+      community.windows.win_firewall_rule:
+        name: Remote Desktop (managed by Ansible)
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "3389"
+        profiles:
+          - domain
+          - private
+        state: present
+        enabled: true
+      when: windows_test_enable_rdp
+
+    - name: Summarize what was provisioned
+      ansible.builtin.debug:
+        msg:
+          - "Test user:  {{ windows_test_user }} (groups: {{ windows_test_user_groups | join(', ') }})"
+          - "Apps:       {{ windows_test_apps | map(attribute='name') | join(', ') }}"
+          - "Extra pkgs: {{ windows_test_msi_packages | length }}"
+          - "RDP:        {{ 'enabled' if windows_test_enable_rdp else 'left as-is' }}"

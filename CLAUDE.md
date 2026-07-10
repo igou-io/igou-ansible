@@ -73,6 +73,7 @@ Playbooks are organized by infrastructure domain under `playbooks/`:
 - `truenas/` - storage configuration
 - `terraform/` - plan/apply workflows
 - `linux/`, `rhel/` - system-level operations
+- `windows/` - Windows host automation (WinRM/SSH): app provisioning, users, updates, IIS, AD join
 - `aap/`, `awx/` - automation platform configuration
 - `armbian/` - ARM SBC fleet lifecycle (image build, provisioning, boot modes)
 - Root-level playbooks for common ops (system-update, system-reboot)

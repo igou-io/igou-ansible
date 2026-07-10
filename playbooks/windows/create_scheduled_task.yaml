@@ -1,0 +1,75 @@
+---
+# Create (or remove) a Windows scheduled task — the Windows equivalent of a
+# cron job.
+#
+# The default task below runs a PowerShell one-liner every day at 03:00 as
+# SYSTEM. Swap the action and trigger via variables for your own jobs; run
+# 'Get-ScheduledTask' or check Task Scheduler under the path '\Ansible\' to
+# see the result.
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables:
+#   windows_task_name        - task name (default 'nightly-cleanup')
+#   windows_task_description - free text shown in Task Scheduler
+#   windows_task_command     - executable to run
+#                              (default: powershell.exe)
+#   windows_task_arguments   - arguments for the executable; the default
+#                              clears the user temp directory
+#   windows_task_start_time  - daily run time as an ISO date-time; only the
+#                              time-of-day part matters for a daily trigger
+#                              (default 2026-01-01T03:00:00)
+#   windows_task_state       - present|absent (default present)
+#
+# Run:
+#   ansible-navigator run playbooks/windows/create_scheduled_task.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<host>
+- name: Manage a Windows scheduled task
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    windows_task_name: nightly-cleanup
+    windows_task_description: Clear the temp directory every night (managed by Ansible)
+    windows_task_command: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+    windows_task_arguments: >-
+      -NoProfile -Command "Remove-Item -Path $env:TEMP\* -Recurse -Force
+      -ErrorAction SilentlyContinue"
+    windows_task_start_time: "2026-01-01T03:00:00"
+    windows_task_state: present
+
+  tasks:
+    # Tasks are grouped under the '\Ansible\' folder in Task Scheduler so
+    # everything Ansible manages is easy to find (and to clean up).
+    - name: Ensure the scheduled task matches the desired state
+      community.windows.win_scheduled_task:
+        name: "{{ windows_task_name }}"
+        path: \Ansible
+        description: "{{ windows_task_description }}"
+        actions:
+          - path: "{{ windows_task_command }}"
+            arguments: "{{ windows_task_arguments }}"
+        # A 'daily' trigger fires every day at the time-of-day part of
+        # start_boundary. Other trigger types: boot, logon, weekly, ...
+        triggers:
+          - type: daily
+            start_boundary: "{{ windows_task_start_time }}"
+        username: SYSTEM
+        run_level: highest
+        enabled: true
+        state: "{{ windows_task_state }}"
+
+    - name: Confirm the task is registered
+      community.windows.win_scheduled_task_stat:
+        path: \Ansible
+        name: "{{ windows_task_name }}"
+      register: windows_task_stat
+      when: windows_task_state == 'present'
+
+    - name: Show the task status
+      ansible.builtin.debug:
+        msg: >-
+          Task '{{ windows_task_name }}' exists:
+          {{ windows_task_stat.task_exists | default(false) }}
+      when: windows_task_state == 'present'

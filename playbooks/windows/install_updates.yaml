@@ -1,0 +1,63 @@
+---
+# Install Windows Updates, optionally rebooting until the host is clean.
+#
+# The canonical Windows patching pattern: win_updates searches, downloads,
+# and installs updates; with reboot: true it also reboots and re-checks in a
+# loop until no more updates apply (some updates only appear after a prior
+# one is installed and the host restarted).
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group. Reboots are OFF by default so a scheduled run never
+# surprise-restarts a machine — turn them on per run.
+#
+# Variables:
+#   windows_updates_categories - update categories to install. The default
+#                                mirrors the module default (critical +
+#                                security + rollups). Use ["*"] for
+#                                everything, including drivers and feature
+#                                packs.
+#   windows_updates_reboot     - reboot and re-check until clean
+#                                (default false)
+#   windows_updates_reboot_timeout - seconds to wait for each reboot
+#                                (default 1200)
+#
+# Run (patch + reboot cycle):
+#   ansible-navigator run playbooks/windows/install_updates.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<host> \
+#     -e windows_updates_reboot=true
+- name: Install Windows Updates
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    windows_updates_categories:
+      - CriticalUpdates
+      - SecurityUpdates
+      - UpdateRollups
+    windows_updates_reboot: false
+    windows_updates_reboot_timeout: 1200
+
+  tasks:
+    - name: Search for and install updates
+      ansible.windows.win_updates:
+        category_names: "{{ windows_updates_categories }}"
+        state: installed
+        reboot: "{{ windows_updates_reboot }}"
+        reboot_timeout: "{{ windows_updates_reboot_timeout }}"
+      register: windows_updates_result
+
+    - name: Report what happened
+      ansible.builtin.debug:
+        msg:
+          - "Updates found:     {{ windows_updates_result.found_update_count | default(0) }}"
+          - "Updates installed: {{ windows_updates_result.installed_update_count | default(0) }}"
+          - "Reboot required:   {{ windows_updates_result.reboot_required | default(false) }}"
+
+    # With windows_updates_reboot=false a run can leave the host waiting for
+    # a restart. Surface that loudly instead of leaving it to be discovered.
+    - name: Warn when a reboot is still pending
+      ansible.builtin.debug:
+        msg: >-
+          A reboot is required to finish installing updates. Re-run with
+          -e windows_updates_reboot=true, or reboot the host manually.
+      when: windows_updates_result.reboot_required | default(false)

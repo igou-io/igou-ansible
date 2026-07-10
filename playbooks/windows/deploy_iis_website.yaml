@@ -1,0 +1,102 @@
+---
+# Install IIS and deploy a simple website, end to end.
+#
+# Demonstrates the standard IIS pattern with the modern microsoft.iis
+# collection (the old community.windows win_iis_* modules are deprecated):
+#   1. install the Web-Server role (ansible.windows.win_feature)
+#   2. create an application pool    (microsoft.iis.web_app_pool)
+#   3. create the site + binding     (microsoft.iis.website)
+#   4. verify it actually serves     (ansible.windows.win_uri)
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group. NOTE: the Web-Server role only exists on Windows SERVER
+# editions — this play will fail on Windows 10/11 clients.
+#
+# Variables:
+#   windows_iis_site_name     - site name (default 'demo-site')
+#   windows_iis_site_port     - HTTP port to bind (default 8080)
+#   windows_iis_site_path     - physical path (default C:\inetpub\demo-site)
+#   windows_iis_app_pool      - application pool name (default 'demo-pool')
+#   windows_iis_index_content - HTML served as index.html; replace with
+#                               win_copy of your real content
+#
+# Run:
+#   ansible-navigator run playbooks/windows/deploy_iis_website.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<server>
+- name: Install IIS and deploy a website
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    windows_iis_site_name: demo-site
+    windows_iis_site_port: 8080
+    windows_iis_site_path: C:\inetpub\demo-site
+    windows_iis_app_pool: demo-pool
+    windows_iis_index_content: |
+      <html>
+        <head><title>Deployed by Ansible</title></head>
+        <body><h1>It works!</h1><p>Served by IIS, deployed by Ansible.</p></body>
+      </html>
+
+  tasks:
+    - name: Install the IIS Web-Server role
+      ansible.windows.win_feature:
+        name: Web-Server
+        state: present
+        include_management_tools: true
+      register: windows_iis_feature
+
+    # Role installation sometimes needs a restart before IIS is usable;
+    # win_feature tells us via reboot_required rather than rebooting itself.
+    - name: Reboot if the role installation requires it
+      ansible.windows.win_reboot:
+      when: windows_iis_feature.reboot_required
+
+    # A dedicated app pool isolates the site from everything else running
+    # in IIS — one bad app can't take down its neighbours.
+    - name: Create the application pool
+      microsoft.iis.web_app_pool:
+        name: "{{ windows_iis_app_pool }}"
+        state: started
+
+    - name: Create the site directory
+      ansible.windows.win_file:
+        path: "{{ windows_iis_site_path }}"
+        state: directory
+
+    - name: Deploy the site content
+      ansible.windows.win_copy:
+        content: "{{ windows_iis_index_content }}"
+        dest: "{{ windows_iis_site_path }}\\index.html"
+
+    # bindings.set is authoritative: the site ends up with exactly this
+    # binding list. Use bindings.add / bindings.remove for incremental edits.
+    - name: Create the website
+      microsoft.iis.website:
+        name: "{{ windows_iis_site_name }}"
+        physical_path: "{{ windows_iis_site_path }}"
+        application_pool: "{{ windows_iis_app_pool }}"
+        bindings:
+          set:
+            - ip: '*'
+              port: "{{ windows_iis_site_port | int }}"
+        state: started
+
+    # Don't just trust module green — request the page from the host itself
+    # and fail the play if IIS isn't actually serving our content.
+    - name: Verify the site responds
+      ansible.windows.win_uri:
+        url: "http://localhost:{{ windows_iis_site_port }}/"
+        return_content: true
+        status_code:
+          - 200
+      register: windows_iis_check
+      retries: 3
+      delay: 5
+      until: windows_iis_check is succeeded
+
+    - name: Show the verification result
+      ansible.builtin.debug:
+        msg: >-
+          {{ windows_iis_site_name }} is serving on port
+          {{ windows_iis_site_port }} (HTTP {{ windows_iis_check.status_code }})

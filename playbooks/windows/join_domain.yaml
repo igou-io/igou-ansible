@@ -1,0 +1,80 @@
+---
+# Join a Windows host to an Active Directory domain (or move it back to a
+# workgroup).
+#
+# Uses microsoft.ad.membership — the supported replacement for the removed
+# ansible.windows.win_domain_membership module. The same collection also
+# builds domains from scratch (microsoft.ad.domain / domain_controller) and
+# manages directory content (microsoft.ad.user / group / ou).
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables:
+#   windows_domain_state          - domain|workgroup (default domain)
+#   windows_domain_name           - DNS name of the AD domain, e.g.
+#                                   ad.igou.systems (required when joining)
+#   windows_domain_admin_user     - account allowed to join machines, e.g.
+#                                   join-svc@ad.igou.systems (required when
+#                                   joining)
+#   windows_domain_admin_password - REQUIRED when joining. Pass via
+#                                   extra_vars from a 1Password lookup —
+#                                   never from a file in git.
+#   windows_domain_ou_path        - OU for the computer object, e.g.
+#                                   OU=TestVMs,DC=ad,DC=igou,DC=systems
+#                                   (optional)
+#   windows_domain_hostname       - rename the host while joining (optional)
+#   windows_workgroup_name        - workgroup to join when leaving the
+#                                   domain (default WORKGROUP)
+#
+# The host must be able to resolve the domain's DNS records — point it at
+# the domain controller with ansible.windows.win_dns_client first if needed.
+#
+# Run:
+#   ansible-navigator run playbooks/windows/join_domain.yaml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<host> \
+#     -e windows_domain_name=ad.example.com \
+#     -e windows_domain_admin_user=join-svc@ad.example.com \
+#     -e windows_domain_admin_password=<secret>
+- name: Manage Active Directory domain membership
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    windows_domain_state: domain
+    windows_workgroup_name: WORKGROUP
+
+  tasks:
+    - name: Make sure join credentials were provided
+      ansible.builtin.assert:
+        that:
+          - windows_domain_name is defined
+          - windows_domain_admin_user is defined
+          - windows_domain_admin_password is defined
+        fail_msg: >-
+          Joining a domain needs windows_domain_name,
+          windows_domain_admin_user and windows_domain_admin_password —
+          see the header of this playbook.
+      when: windows_domain_state == 'domain'
+
+    # reboot: true lets the module handle the restart a join/leave always
+    # requires, and the play continues once the host is back.
+    - name: Join the Active Directory domain
+      microsoft.ad.membership:
+        dns_domain_name: "{{ windows_domain_name }}"
+        domain_admin_user: "{{ windows_domain_admin_user }}"
+        domain_admin_password: "{{ windows_domain_admin_password }}"
+        domain_ou_path: "{{ windows_domain_ou_path | default(omit) }}"
+        hostname: "{{ windows_domain_hostname | default(omit) }}"
+        state: domain
+        reboot: true
+      when: windows_domain_state == 'domain'
+
+    - name: Leave the domain for a workgroup
+      microsoft.ad.membership:
+        workgroup_name: "{{ windows_workgroup_name }}"
+        domain_admin_user: "{{ windows_domain_admin_user | default(omit) }}"
+        domain_admin_password: "{{ windows_domain_admin_password | default(omit) }}"
+        state: workgroup
+        reboot: true
+      when: windows_domain_state == 'workgroup'
