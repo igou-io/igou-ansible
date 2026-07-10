@@ -1,39 +1,64 @@
 # rpi-image playbooks
 
-Automated Raspberry Pi OS image builds with
-[rpi-image-gen](https://github.com/raspberrypi/rpi-image-gen), replacing
-manual Raspberry Pi Imager runs. Images come out with the `igou` user
-(fleet SSH key, passwordless sudo, key-only sshd) baked in.
+Automated Raspberry Pi OS image builds. Images come out with the `igou`
+user (fleet SSH key, passwordless sudo, key-only sshd) baked in.
+
+**Two build pipelines exist; `build_from_release.yml` is the one that
+produces boot-proven images.** `build.yml` (rpi-image-gen) is retained
+for when igou-ansible#305 is root-caused — its images have never booted
+on a real Pi 4 (ACT LED dark, zero frames; rootfs content verified
+fine, boot partition suspect).
 
 State lives in `igou-inventory`: the `rpi_image_builders` group
 (rpi-builder.igou.systems — bare-metal Pi 4 8GB, RPi OS Lite Trixie
 arm64 on USB SSD) and `group_vars/rpi_image_builders.yml` (pinned
-rpi-image-gen release, image definition, publish layout).
+release/rpi-image-gen versions, image definition, publish layout).
 
 ## Playbooks
 
 | Playbook | Purpose |
 |---|---|
+| `build_from_release.yml` | **Recommended.** Fetch the pinned official RasPiOS Lite arm64 release → inject the fleet primitives directly (native arm64 chroot on the builder: user, key, key-only sshd, NOPASSWD sudo, hostname, ssh enabled, firstboot user-wizard disabled, optional extra packages) → verify (content **and** boot plausibility) → publish. Starts from an image that provably boots. |
 | `converge.yml` | Owns the build host: prerequisites, pinned rpi-image-gen checkout + `install_deps.sh`, workspace/publish dirs. Idempotent; run after changing the pin. |
-| `build.yml` | Render config → build (async, flock-serialised, logged) → verify → publish. |
+| `build.yml` | rpi-image-gen pipeline: render config → build (async, flock-serialised, logged) → verify → publish. ⚠ Produces images that do not boot on Pi 4 — igou-ansible#305. |
 | `flash.yml` | Write a published image to a USB device plugged into the builder. Dry-run unless `-e flash_confirm=true`; structurally cannot target the builder's boot SSD or backup micro SD (device-name contract + live boot-disk / mount / transport guards). |
 
 ```sh
-ansible-playbook playbooks/rpi-image/converge.yml -i ../igou-inventory/inventory.yaml
-ansible-playbook playbooks/rpi-image/build.yml -i ../igou-inventory/inventory.yaml
+ansible-playbook playbooks/rpi-image/build_from_release.yml -i ../igou-inventory/inventory.yaml
 ansible-playbook playbooks/rpi-image/flash.yml -i ../igou-inventory/inventory.yaml \
   -e flash_device=/dev/sdb -e flash_confirm=true
+# per-host image:
+ansible-playbook playbooks/rpi-image/build_from_release.yml -i ../igou-inventory/inventory.yaml \
+  -e rpi_image_config=upsmonitor -e rpi_image_hostname=upsmonitor
 ```
+
+`build_from_release.yml` needs one extra inventory pin
+(`group_vars/rpi_image_builders.yml`):
+
+```yaml
+rpi_image_release_src: >-
+  https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-19/2026-06-18-raspios-trixie-arm64-lite.img.xz
+rpi_image_release_sha256: "<sha256 from the release notes>"
+```
+
+(A local copy also works — the 2026-06-18 release already sits at
+rpi-builder:`/srv/images/rpi/raspios-lite-test/`.)
 
 ## Verify stage
 
-The produced image is loop-mounted on the builder and the build fails
-unless all of these hold:
+The image is loop-mounted on the builder and the build fails unless all
+of these hold:
 
 - `authorized_keys` for the image user contains the fleet public key
 - `/etc/sudoers.d/010_rpi-nopasswd` grants the user NOPASSWD sudo
 - sshd drop-in disables password authentication
 - ssh.service is enabled
+
+`build_from_release.yml` additionally asserts **boot plausibility** —
+the gap that let #305 ship: `start4.elf`/`fixup4.dat`/`kernel8.img`/
+`config.txt`/`cmdline.txt`/Pi 4 DTB present in the boot partition, and
+the `cmdline.txt` `root=PARTUUID` matches the image's actual disk
+identifier. (Still content-level: the real gate is booting a Pi.)
 
 ## Publish layout
 
@@ -43,20 +68,42 @@ unless all of these hold:
 ```
 
 Retention: newest `rpi_image_publish_retain` builds per config. Flash
-with `xzcat <config>.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync`.
+with `flash.yml` (or `xzcat <config>.img.xz | sudo dd of=/dev/sdX bs=4M
+conv=fsync`). The netboot pipeline
+(`playbooks/rpi_netboot/publish_to_netboot.yml`) consumes the same
+`latest` tree.
+
+## History: how the fleet Pis actually got imaged (2026-07)
+
+Captured here because it previously lived only in session notes:
+
+1. rpi-image-gen images were built and content-verified, but **never
+   booted** on the Pi 4 (#305).
+2. Raspberry Pi **Imager was not used** — the working manual fallback
+   was: flash the stock 2026-06-18 RasPiOS Lite Trixie arm64 release,
+   then headless-bootstrap it by dropping two files on the boot
+   partition: an empty `ssh` sentinel and a `userconf.txt`
+   (`igou:<crypted temp password>`), letting raspberrypi-sys-mods
+   firstboot create the user. Hostname stayed `raspberrypi`; identity
+   came from the MAC-pinned DHCP lease. That is what upsmonitor ran.
+3. `build_from_release.yml` supersedes both: same boot-proven base
+   image, but the primitives are baked offline (no firstboot, no temp
+   password window) and verified before publish.
 
 ## Notes
 
 - rpi-image-gen images are **not** Raspberry Pi OS proper: there is no
   raspberrypi-sys-mods firstboot, so Imager customization / `custom.toml`
-  does not apply to them. Bake identity at build time
-  (`-e rpi_image_hostname=...`) or lean on MAC-pinned DHCP.
+  does not apply to them. `build_from_release.yml` images ARE RasPiOS
+  proper — firstboot's user wizard is explicitly disabled (a user
+  already exists), while the SD resize firstboot is left intact.
 - Images are key-only by default. Pass `-e rpi_image_user1passhash='...'`
   (e.g. from 1Password, `openssl passwd -6`) to also bake a password —
   needed if you want console login on a device with no network.
 - Disaster recovery for the builder itself: reflash the stock Lite image
   (or a pipeline-built one), re-pin via DHCP happens automatically, then
-  run `converge.yml`.
-- AAP wiring (converge → build workflow + monthly schedule) is a
-  follow-up; both playbooks are AAP-shaped (group-targeted, no
-  interactive input).
+  run `converge.yml` (only needed for the rpi-image-gen pipeline;
+  `build_from_release.yml` needs just xz/losetup/fdisk from the stock
+  install).
+- AAP wiring (build workflow + monthly schedule) is a follow-up; the
+  playbooks are AAP-shaped (group-targeted, no interactive input).
