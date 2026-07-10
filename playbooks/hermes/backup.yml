@@ -47,11 +47,29 @@
     hermes_s3_region: us-east-1
     hermes_s3_access_key: "{{ lookup('community.general.onepassword', 'hermes-backups-rustfs-cold', field='username', vault='lab_s3') }}"
     hermes_s3_secret_key: "{{ lookup('community.general.onepassword', 'hermes-backups-rustfs-cold', field='password', vault='lab_s3') }}"
-    # A fresh .hermes is never smaller than this; an "empty" tarball means
+    # Rebuildable artifacts are excluded: containers/ is the podman
+    # graphroot (~10G of images configure re-pulls from the pinned tags),
+    # bin/ and node/ are tooling reinstalled by setup-os/configure. Real
+    # agent state (hermes-agent, sessions, skills, cron, state-snapshots,
+    # logs, .env, dashboard-files, ...) stays in - ~1.2G raw, and the
+    # quiesce window stays under a minute instead of the 8 it takes to
+    # gzip the podman storage.
+    hermes_backup_excludes:
+      - .hermes/containers
+      - .hermes/bin
+      - .hermes/node
+    # Real state alone is tens of MB; an implausibly small tarball means
     # the state mount was not mounted - fail rather than upload garbage.
-    hermes_backup_min_bytes: 10240
+    hermes_backup_min_bytes: 1048576
 
   pre_tasks:
+    - name: Resolve the ssh login user (fetch below must read the archive without become)
+      ansible.builtin.command:
+        argv: [id, -un]
+      register: _login_user
+      become: false
+      changed_when: false
+
     - name: Resolve the hermes service user's uid (user systemd bus needs it)
       ansible.builtin.getent:
         database: passwd
@@ -105,15 +123,20 @@
 
         - name: Archive the hermes state directory
           ansible.builtin.command:
-            argv:
-              - tar
-              - czf
-              - "{{ _remote_archive.path }}"
-              - --numeric-owner
-              - -C
-              - "{{ hermes_home }}"
-              - .hermes
+            argv: >-
+              {{ ['tar', 'czf', _remote_archive.path, '--numeric-owner']
+                 + (hermes_backup_excludes | map('regex_replace', '^', '--exclude=') | list)
+                 + ['-C', hermes_home, '.hermes'] }}
           changed_when: true
+
+        - name: Hand the archive to the login user (a root-owned file forces
+            fetch into its slurp fallback - base64 through memory - instead
+            of sftp; a 4G archive OOMed that path)
+          ansible.builtin.file:
+            path: "{{ _remote_archive.path }}"
+            owner: "{{ _login_user.stdout }}"
+            mode: "0600"
+          changed_when: false
 
       always:
         - name: Restart exactly the units that were running
@@ -135,6 +158,7 @@
         src: "{{ _remote_archive.path }}"
         dest: "{{ _local_archive.path }}"
         flat: true
+      become: false
 
     - name: Remove the guest scratch file
       ansible.builtin.file:
@@ -172,6 +196,18 @@
         object: "{{ hermes_s3_object }}"
         src: "{{ _local_archive.path }}"
         mode: put
+        # No canned ACL: the hermes-backups policy grants no ACL verbs and
+        # RustFS access control is IAM-policy based - the module's default
+        # (permission: [private]) makes a separate PutObjectAcl call after
+        # a multipart upload, which 403s.
+        permission: []
+      # RustFS 1.0.0-beta.8 miscomputes CRC32 on UploadPart, so the default
+      # integrity checksums boto3 >= 1.36 sends (2025-01 behavior change)
+      # fail every multipart part with "Io error: checksum mismatch: CRC32".
+      # when_required is the documented escape hatch for third-party stores.
+      environment:
+        AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
       delegate_to: localhost
       connection: local
       become: false
