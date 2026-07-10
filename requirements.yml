@@ -81,7 +81,7 @@ collections:
     version: 1.2.0
   - name: chocolatey.chocolatey
     version: 1.6.0
-  - name: https://github.com/david-igou/ansible-collection-rustfs_configuration.git
+  - name: https://github.com/david-igou/ansible-collection-rustfs.git
     type: git
     version: main
 ...

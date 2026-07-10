@@ -5,8 +5,8 @@
 # credentials stored in 1Password actually authenticate. igou-inventory#122.
 #
 # The engine is the published collection role
-# david_igou.rustfs_configuration.rustfs_state (pinned in requirements.yml,
-# tracking main); this playbook only wires it to the inventory. It is
+# david_igou.rustfs.rustfs_state (pinned in requirements.yml, tracking
+# main); this playbook only wires it to the inventory. It is
 # invoked via include_role — a task, not a play-level `roles:` entry — so
 # ansible-lint does not try to resolve the collection's FQCN role at parse
 # time (the collection is installed into the EE / CI at runtime, not on a
@@ -15,9 +15,10 @@
 # One host = one instance: each host in the `rustfs_servers` group is a
 # connection-local stub named after the instance (see igou-inventory
 # inventory.yaml + group_vars/rustfs_servers.yml). The role reaches that
-# instance's HTTPS endpoint itself via the pinned rc CLI and reconciles the
-# host's own rustfs_state_* vars — Ansible fans the play out across
-# instances, so there is no instances list to loop.
+# instance's HTTPS endpoint directly with the collection's native modules
+# (botocore in the EE, no CLI binary) and reconciles the host's own
+# rustfs_state_* vars — Ansible fans the play out across instances, so
+# there is no instances list to loop.
 #
 # Modes:
 #   converge:  run as-is — applies drift, fails on dead credentials.
@@ -35,4 +36,4 @@
   tasks:
     - name: Reconcile RustFS in-server state
       ansible.builtin.include_role:
-        name: david_igou.rustfs_configuration.rustfs_state
+        name: david_igou.rustfs.rustfs_state
