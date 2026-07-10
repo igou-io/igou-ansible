@@ -22,11 +22,9 @@
     src: config_txt.j2
     dest: "{{ rpi_boot_render_output_dir }}/{{ rpi_boot_render_hostname }}/config.txt"
     mode: "0644"
-    backup: true
 
 - name: Render cmdline.txt for {{ rpi_boot_render_hostname }}
   ansible.builtin.template:
     src: cmdline_txt.j2
     dest: "{{ rpi_boot_render_output_dir }}/{{ rpi_boot_render_hostname }}/cmdline.txt"
     mode: "0644"
-    backup: true

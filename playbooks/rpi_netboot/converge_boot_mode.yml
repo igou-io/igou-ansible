@@ -97,7 +97,8 @@
           retries: 3
           delay: 5
           until: _pinremove is succeeded
-          changed_when: false
+          # Unconditional remove (stale-content guard) — report changed.
+          changed_when: true
           loop: "{{ _pin_files }}"
 
         - name: Upload each pin file via shared primitive

@@ -57,7 +57,7 @@
           ansible.builtin.assert:
             that:
               - _root_fstype in ['nfs', 'nfs4']
-              - _root_device is search(inventory_hostname)
+              - inventory_hostname in _root_device
             fail_msg: >-
               rpi_boot_mode[net]: expected NFS rootfs
               {{ rpi_netboot_server_ip }}:{{ rpi_nfs_rootfs_path }}/{{ inventory_hostname }}

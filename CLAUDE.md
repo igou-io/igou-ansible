@@ -81,7 +81,9 @@ Playbooks are organized by infrastructure domain under `playbooks/`:
 
 Many playbooks use `ansible_limit` variable for dynamic host targeting;
 `playbooks/armbian/` and `playbooks/rpi_netboot/` use `target_hosts`
-instead (`rpi_group` for the multi-tier staging playbook). AAP template
+instead (`rpi_group` for the multi-tier staging playbook;
+`publish_to_netboot.yml` targets the builder/netboot_server groups
+directly). AAP template
 extra_vars must match the playbook's hosts var or the play silently
 matches no hosts.
 

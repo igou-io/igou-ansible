@@ -22,6 +22,19 @@
   args:
     creates: "{{ __rpi_rootfs_img_raw }}"
 
+# Crash recovery: a prior run that died between mount and the always-
+# cleanup leaves the shared scratch dirs mounted; a bare mount would
+# stack a second layer and rsync could read the stale one.
+- name: Recover stale scratch mounts from a crashed prior run
+  ansible.builtin.shell: |
+    for d in '{{ rpi_rootfs_boot_mount_dir }}' '{{ rpi_rootfs_mount_dir }}'; do
+      while umount -q "$d" 2>/dev/null; do :; done
+    done
+    exit 0
+  args:
+    executable: /bin/bash
+  changed_when: false
+
 - name: Attach .img to a loop device with partition scan
   ansible.builtin.shell: |
     losetup --find --show --partscan "{{ __rpi_rootfs_img_raw }}"

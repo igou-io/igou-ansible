@@ -16,5 +16,9 @@ rpi_rootfs_image_cache: "{{ rpi_image_cache }}/downloads"
 rpi_rootfs_mount_dir: /mnt/rpi_rootfs_provision
 rpi_rootfs_boot_mount_dir: /mnt/rpi_rootfs_provision_boot
 
+# Optional sha256 of the source image (threaded from the publish
+# manifest by stage_netboot_assets); '' = skip download verification.
+rpi_rootfs_src_sha256: ""
+
 rpi_rootfs_force_refresh: false
 rpi_rootfs_reset_identity: true

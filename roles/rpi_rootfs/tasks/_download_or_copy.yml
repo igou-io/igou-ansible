@@ -10,6 +10,9 @@
   ansible.builtin.get_url:
     url: "{{ rpi_rootfs_src }}"
     dest: "{{ __rpi_rootfs_img_xz }}"
+    checksum: >-
+      {{ ('sha256:' ~ rpi_rootfs_src_sha256)
+         if (rpi_rootfs_src_sha256 | default('') | length > 0) else omit }}
     mode: "0644"
     timeout: 600
   when: __rpi_rootfs_is_url

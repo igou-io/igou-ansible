@@ -43,9 +43,11 @@
           playbooks/rpi_netboot/README.md.
 
     # Merge order: fleet golden < prefix-mode keys < per-host extras.
-    # Empty-string values are dropped rather than written as KEY= (the
-    # inventory uses '' for "leave unset", e.g. TFTP_IP when the router
-    # is the TFTP server via next-server).
+    # Empty-string values are dropped from the MANAGED set — the key is
+    # left unmanaged (an existing EEPROM value is NOT removed). The
+    # inventory uses '' for TFTP_IP when the router is the TFTP server
+    # via next-server; a Pi that already carries a stale TFTP_IP must
+    # have it cleared manually (rpi-eeprom-config --edit).
     - name: Compose effective EEPROM settings
       ansible.builtin.set_fact:
         _rpi_enroll_settings: >-
@@ -55,6 +57,24 @@
              | dict2items
              | rejectattr('value', 'equalto', '')
              | items2dict }}
+
+    # Enroll reboots to flash BEFORE any netboot assets are staged — a
+    # net-only BOOT_ORDER (e.g. 0x2) would strand the Pi with nothing
+    # to boot. Require an SD (1) or USB (4) fallback digit.
+    - name: Assert BOOT_ORDER keeps a local fallback
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_rpi_enroll_settings.BOOT_ORDER | string) is search('[14]')
+            or not (rpi_eeprom_reboot | default(true) | bool)
+            or (rpi_enroll_allow_no_local_fallback | default(false) | bool)
+        fail_msg: >-
+          BOOT_ORDER={{ _rpi_enroll_settings.BOOT_ORDER }} contains no SD
+          (1) or USB (4) fallback digit, and enrollment flashes it via
+          reboot before stage_netboot_assets has run — the Pi would have
+          nothing to boot. Fix rpi_eeprom_config.BOOT_ORDER (e.g. 0xf12),
+          or set rpi_enroll_allow_no_local_fallback=true if you really
+          mean it.
 
     - name: Converge EEPROM bootloader config
       ansible.builtin.include_role:

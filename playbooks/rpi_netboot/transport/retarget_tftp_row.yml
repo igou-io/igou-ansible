@@ -20,4 +20,6 @@
   retries: 3
   delay: 5
   until: _retarget_remove is succeeded
-  changed_when: false
+  # Unconditional remove — RouterOS gives no removed-count back, so
+  # report changed rather than hide real mutations.
+  changed_when: true

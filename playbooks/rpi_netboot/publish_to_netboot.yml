@@ -19,7 +19,11 @@
   become: true
   gather_facts: false
   vars:
-    _config: "{{ rpi_publish_config | default(rpi_image_default_config) }}"
+    # Same chain as _resolve_rootfs_src.yml so the manifest producer
+    # and consumer cannot disagree about the config name.
+    _config: >-
+      {{ rpi_publish_config
+         | default(rpi_image_default_config | default('igou-pi-lite')) }}
     _cache: "{{ rpi_tftp_cache_dir | default('/tmp/rpi-tftp') }}/publish"
   tasks:
     - name: Resolve latest build dir

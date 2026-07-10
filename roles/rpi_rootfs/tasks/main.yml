@@ -34,6 +34,11 @@
   register: __rpi_rootfs_sentinel_raw
   when: __rpi_rootfs_sentinel.stat.exists
 
+- name: Decode sentinel once
+  ansible.builtin.set_fact:
+    __rpi_rootfs_sentinel_json: "{{ __rpi_rootfs_sentinel_raw.content | b64decode | from_json }}"
+  when: __rpi_rootfs_sentinel.stat.exists
+
 # Skip comparison uses src (URL) and host only — not src_sha256 — same
 # trade-off as the armbian role: re-hashing on every run would defeat
 # the cache. An upstream serving new bytes at the same URL needs
@@ -43,12 +48,8 @@
     __rpi_rootfs_should_skip: >-
       {{
         __rpi_rootfs_sentinel.stat.exists
-        and (
-          (__rpi_rootfs_sentinel_raw.content | b64decode | from_json).src == rpi_rootfs_src
-        )
-        and (
-          (__rpi_rootfs_sentinel_raw.content | b64decode | from_json).host == rpi_rootfs_host
-        )
+        and __rpi_rootfs_sentinel_json.src == rpi_rootfs_src
+        and __rpi_rootfs_sentinel_json.host == rpi_rootfs_host
       }}
   when: __rpi_rootfs_sentinel.stat.exists
 

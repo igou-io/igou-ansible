@@ -42,7 +42,7 @@ inventory scope (fleet group_vars down to per-host).
 | `converge_boot_mode.yml` | Render + upload only the per-Pi pins (`config.txt`/`cmdline.txt`). Router state only. |
 | `cycle_pi.yml` | PoE cold-cycle + verify the booted rootfs matches `rpi_boot_mode`. |
 
-Roles: `rpi_boot_render`, `rpi_rootfs_provision`, `rpi_eeprom`
+Roles: `rpi_boot_render`, `rpi_rootfs`, `rpi_eeprom`
 (repo-local, pure functions with argument_specs).
 
 ## Inventory contract (lands in igou-inventory)
@@ -61,7 +61,13 @@ rpis:
           rpi_poe_port: ether5
     rpi5: {}
 
-# group_vars/rpis.yml — fleet topology + EEPROM golden config
+# Topology vars — set at a scope visible to rpis AND netboot_server AND
+# rpi_image_builders (group_vars/all.yml or a shared parent group):
+# rpi_netboot_server_ip, rpi_nfs_rootfs_path, rpi_image_cache,
+# rpi_assets_export, rpi_assets_base_url, rpi_image_default_config.
+# The netboot_server/builder plays read them too — group_vars/rpis.yml
+# alone would leave those hosts with undefined vars.
+# group_vars/all.yml (shared topology) + group_vars/rpis.yml (EEPROM golden config)
 rpi_router: rb5009.igou.systems
 rpi_netboot_server_ip: 10.10.9.213
 rpi_nfs_rootfs_path: /mnt/ssd/netboot/rootfs
@@ -75,7 +81,7 @@ rpi_eeprom_config:
   BOOT_ORDER: "0xf12"      # NET first, SD fallback, loop
   BOOT_UART: "1"
   NET_BOOT_MAX_RETRIES: "3"
-  TFTP_IP: ""              # '' = drop key; router next-server is the TFTP server
+  TFTP_IP: ""              # '' = leave key UNMANAGED (not removed); router next-server serves TFTP
 
 # group_vars/rpi4.yml
 rpi_model_config:

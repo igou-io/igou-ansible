@@ -30,6 +30,26 @@
   register: __rpi_eeprom_current_raw
   changed_when: false
 
+# The template re-renders everything flat under [all]. A live config
+# carrying conditional-filter sections ([pi4], [cm4], ...) would have
+# scoped keys silently promoted to global — refuse instead.
+- name: Assert live config has no conditional-filter sections beyond [all]
+  ansible.builtin.assert:
+    that:
+      - >-
+        __rpi_eeprom_current_raw.stdout
+        | regex_findall('(?m)^\\[([^\\]]+)\\]')
+        | reject('equalto', 'all') | list | length == 0
+    fail_msg: >-
+      Live bootloader config on {{ inventory_hostname }} contains
+      conditional-filter sections beyond [all]:
+      {{ __rpi_eeprom_current_raw.stdout
+         | regex_findall('(?m)^\\[([^\\]]+)\\]')
+         | reject('equalto', 'all') | list | join(', ') }}.
+      This role renders a flat [all] config and would change those keys'
+      scope. Converge this Pi's EEPROM manually (rpi-eeprom-config
+      --edit) or extend the role.
+
 - name: Parse live config and stringify desired settings
   ansible.builtin.set_fact:
     __rpi_eeprom_current: >-

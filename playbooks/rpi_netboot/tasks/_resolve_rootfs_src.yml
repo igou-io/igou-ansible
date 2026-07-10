@@ -1,16 +1,30 @@
 ---
 # playbooks/rpi_netboot/tasks/_resolve_rootfs_src.yml
 #
-# Per-host resolver for rpi_rootfs_src + rpi_build_id. Precedence:
-#   1. host_vars rpi_rootfs_src set → use as-is (build_id from filename
-#      unless rpi_build_id is also pinned)
+# Per-host resolver for rpi_rootfs_src + rpi_build_id (+ optional
+# rpi_rootfs_src_sha256). Precedence:
+#   1. host_vars rpi_rootfs_src set → use as-is. build_id derives from
+#      the filename unless rpi_build_id is also pinned — NOTE: two Pis
+#      pinning DIFFERENT images that share a basename would collide in
+#      the shared flash dir; pin rpi_build_id too in that case.
 #   2. published manifest at
-#      <rpi_assets_export>/images/rpi/<rpi_image_config>/manifest.json
+#      <rpi_assets_export>/images/rpi/<config>/manifest.json
 #      (written by publish_to_netboot.yml, stat'd on the first
 #      netboot_server host) → derive an HTTP URL from rpi_assets_base_url
 #   3. neither → fail with actionable message
 #
+# <config> resolves rpi_image_config (host scope) →
+# rpi_image_default_config → 'igou-pi-lite'; publish_to_netboot.yml
+# derives its target config through the same chain, so the manifest
+# producer and this consumer cannot disagree.
+#
 # Mirrors playbooks/armbian/tasks/_resolve_rootfs_src.yml.
+
+- name: Compute effective image config
+  ansible.builtin.set_fact:
+    __rpi_effective_image_config: >-
+      {{ rpi_image_config
+         | default(rpi_image_default_config | default('igou-pi-lite')) }}
 
 - name: Skip resolution when host_vars rpi_rootfs_src is already set
   ansible.builtin.set_fact:
@@ -22,97 +36,79 @@
       {{ rpi_build_id | default(rpi_rootfs_src | basename | regex_replace('\.img\.xz$', '')) }}
   when: __rpi_rootfs_src_was_set
 
-- name: Resolve netboot_server delegate target for manifest lookup
-  ansible.builtin.set_fact:
-    __rpi_netboot_delegate_host: >-
-      {{ groups[rpi_netboot_server_group | default('netboot_server')][0]
-         | default('localhost') }}
-    __rpi_netboot_delegate_become: >-
-      {{ (groups[rpi_netboot_server_group | default('netboot_server')]
-          | default([]) | length) > 0 }}
+- name: Resolve from the published manifest
   when: not __rpi_rootfs_src_was_set
+  block:
+    - name: Resolve netboot_server delegate target for manifest lookup
+      ansible.builtin.set_fact:
+        __rpi_netboot_delegate_host: >-
+          {{ groups[rpi_netboot_server_group | default('netboot_server')][0]
+             | default('localhost') }}
+        __rpi_netboot_delegate_become: >-
+          {{ (groups[rpi_netboot_server_group | default('netboot_server')]
+              | default([]) | length) > 0 }}
 
-- name: Compute published manifest path candidate
-  ansible.builtin.set_fact:
-    __rpi_manifest_path: >-
-      {{ rpi_assets_export }}/images/rpi/{{ rpi_image_config | default('igou-pi-lite') }}/manifest.json
-  when: not __rpi_rootfs_src_was_set
+    - name: Compute published manifest path candidate
+      ansible.builtin.set_fact:
+        __rpi_manifest_path: >-
+          {{ rpi_assets_export }}/images/rpi/{{ __rpi_effective_image_config }}/manifest.json
 
-- name: Stat published manifest on netboot server (delegated)
-  ansible.builtin.stat:
-    path: "{{ __rpi_manifest_path }}"
-  delegate_to: "{{ __rpi_netboot_delegate_host }}"
-  become: "{{ __rpi_netboot_delegate_become }}"
-  register: __rpi_manifest_stat
-  when: not __rpi_rootfs_src_was_set
+    - name: Stat published manifest on netboot server (delegated)
+      ansible.builtin.stat:
+        path: "{{ __rpi_manifest_path }}"
+      delegate_to: "{{ __rpi_netboot_delegate_host }}"
+      become: "{{ __rpi_netboot_delegate_become }}"
+      register: __rpi_manifest_stat
 
-- name: Slurp published manifest if present
-  ansible.builtin.slurp:
-    src: "{{ __rpi_manifest_path }}"
-  delegate_to: "{{ __rpi_netboot_delegate_host }}"
-  become: "{{ __rpi_netboot_delegate_become }}"
-  register: __rpi_manifest_raw
-  when:
-    - not __rpi_rootfs_src_was_set
-    - __rpi_manifest_stat.stat.exists | default(false)
+    - name: Fail if no source could be resolved
+      ansible.builtin.fail:
+        msg: >-
+          Host {{ inventory_hostname }}: cannot resolve rpi_rootfs_src.
+          Remediation:
+            (a) set rpi_rootfs_src in host_vars to a .img.xz URL or a
+                netboot-server-local path, OR
+            (b) run playbooks/rpi_netboot/publish_to_netboot.yml first so
+                a manifest lands at {{ __rpi_manifest_path }}.
+      when: not __rpi_manifest_stat.stat.exists
 
-- name: Extract image_filename + build_id from published manifest
-  ansible.builtin.set_fact:
-    __rpi_manifest_image_filename: >-
-      {{ (__rpi_manifest_raw.content | b64decode | from_json).image_filename | default('') }}
-    __rpi_manifest_build_id: >-
-      {{ (__rpi_manifest_raw.content | b64decode | from_json).build_id | default('') }}
-  when:
-    - not __rpi_rootfs_src_was_set
-    - __rpi_manifest_stat.stat.exists | default(false)
+    - name: Parse manifest and derive source
+      block:
+        - name: Slurp published manifest
+          ansible.builtin.slurp:
+            src: "{{ __rpi_manifest_path }}"
+          delegate_to: "{{ __rpi_netboot_delegate_host }}"
+          become: "{{ __rpi_netboot_delegate_become }}"
+          register: __rpi_manifest_raw
 
-- name: Fail when the manifest is malformed
-  ansible.builtin.fail:
-    msg: >-
-      Host {{ inventory_hostname }}: manifest at {{ __rpi_manifest_path }}
-      has no image_filename/build_id. Republish with
-      playbooks/rpi_netboot/publish_to_netboot.yml, or pin
-      rpi_rootfs_src in host_vars.
-  when:
-    - not __rpi_rootfs_src_was_set
-    - __rpi_manifest_stat.stat.exists | default(false)
-    - >-
-      (__rpi_manifest_image_filename | default('') | length) == 0
-      or (__rpi_manifest_build_id | default('') | length) == 0
+        - name: Decode manifest once
+          ansible.builtin.set_fact:
+            __rpi_manifest: "{{ __rpi_manifest_raw.content | b64decode | from_json }}"
 
-- name: Fail when a manifest exists but rpi_assets_base_url is unset
-  ansible.builtin.fail:
-    msg: >-
-      Host {{ inventory_hostname }}: a published manifest exists at
-      {{ __rpi_manifest_path }} but rpi_assets_base_url is unset, so a
-      fetchable image URL cannot be derived. Set rpi_assets_base_url
-      (e.g. https://public.example.systems/boot-files) at group_vars
-      scope, or pin rpi_rootfs_src in host_vars.
-  when:
-    - not __rpi_rootfs_src_was_set
-    - __rpi_manifest_stat.stat.exists | default(false)
-    - not (rpi_assets_base_url is defined and (rpi_assets_base_url | length > 0))
+        - name: Fail when the manifest is malformed
+          ansible.builtin.fail:
+            msg: >-
+              Host {{ inventory_hostname }}: manifest at
+              {{ __rpi_manifest_path }} has no image_filename/build_id.
+              Republish with playbooks/rpi_netboot/publish_to_netboot.yml,
+              or pin rpi_rootfs_src in host_vars.
+          when: >-
+            (__rpi_manifest.image_filename | default('') | length) == 0
+            or (__rpi_manifest.build_id | default('') | length) == 0
 
-- name: Derive rpi_rootfs_src + rpi_build_id (HTTP URL from manifest + base URL)
-  ansible.builtin.set_fact:
-    rpi_rootfs_src: >-
-      {{ rpi_assets_base_url }}/images/rpi/{{ rpi_image_config | default('igou-pi-lite')
-         }}/{{ __rpi_manifest_image_filename }}
-    rpi_build_id: "{{ __rpi_manifest_build_id }}"
-  when:
-    - not __rpi_rootfs_src_was_set
-    - __rpi_manifest_stat.stat.exists | default(false)
+        - name: Fail when a manifest exists but rpi_assets_base_url is unset
+          ansible.builtin.fail:
+            msg: >-
+              Host {{ inventory_hostname }}: a published manifest exists at
+              {{ __rpi_manifest_path }} but rpi_assets_base_url is unset, so
+              a fetchable image URL cannot be derived. Set
+              rpi_assets_base_url (e.g. https://public.example.systems/boot-files)
+              at group_vars/all scope, or pin rpi_rootfs_src in host_vars.
+          when: not (rpi_assets_base_url is defined and (rpi_assets_base_url | length > 0))
 
-- name: Fail if no source could be resolved
-  ansible.builtin.fail:
-    msg: >-
-      Host {{ inventory_hostname }}: cannot resolve rpi_rootfs_src.
-      Remediation:
-        (a) set rpi_rootfs_src in host_vars to a .img.xz URL or a
-            netboot-server-local path, OR
-        (b) run playbooks/rpi_netboot/publish_to_netboot.yml first so a
-            manifest lands at {{ rpi_assets_export | default('<rpi_assets_export>')
-            }}/images/rpi/{{ rpi_image_config | default('igou-pi-lite') }}/manifest.json.
-  when:
-    - not __rpi_rootfs_src_was_set
-    - not (__rpi_manifest_stat.stat.exists | default(false))
+        - name: Derive rpi_rootfs_src + rpi_build_id (+ sha256) from manifest
+          ansible.builtin.set_fact:
+            rpi_rootfs_src: >-
+              {{ rpi_assets_base_url }}/images/rpi/{{ __rpi_effective_image_config
+                 }}/{{ __rpi_manifest.image_filename }}
+            rpi_build_id: "{{ __rpi_manifest.build_id }}"
+            rpi_rootfs_src_sha256: "{{ __rpi_manifest.sha256 | default('') }}"
