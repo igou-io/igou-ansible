@@ -7,6 +7,149 @@
 - name: Converge via the production devenv bootstrap playbook
   ansible.builtin.import_playbook: ../../playbooks/devenv/bootstrap.yml
 
+# 1Password integration (OPTIONAL, gated) — seed the credentials and the
+# scenario-owned test env files that the verify play's use()/unuse() checks
+# consume. Runs BEFORE `make up-release` so everything is in place before the
+# container starts. With no MOLECULE_OP_* token this whole play is a single
+# skip debug and the run is byte-for-byte the baseline. See molecule.yml header.
+#
+# Why these exact paths:
+#   - Tokens go to the VM host's ~/.config/op, which the devcontainer bind-mounts
+#     read-only at /home/igou/.config/op; the container .bashrc's op-auth block
+#     reads connect-host/connect-token (Connect) or service-account-token (SA)
+#     from there. Written before `make up-release`, so they are present when the
+#     container starts — never passed via cloud-init, the VM spec, the k8s API,
+#     or the ephemeral inventory.
+#   - Env files go to ~/igou-devenv/envs, NOT ~/workspace/igou-devenv/envs. The
+#     container's use() hard-codes envdir=/workspace/igou-devenv/envs, and
+#     `make up-release` runs with --workspace-folder ~/igou-devenv, so the
+#     workspaceMount binds ~/igou-devenv -> /workspace/igou-devenv, shadowing the
+#     ~/workspace -> /workspace mount for that subtree. (Proof: the already-green
+#     `make test-tools` execs /workspace/igou-devenv/tests/... which only exists
+#     in the ~/igou-devenv bootstrap clone.) So ~/igou-devenv/envs is where use()
+#     actually looks — no second clone is needed. host_prep clones with
+#     update:false, so a second converge (idempotence) leaves these files intact.
+- name: Seed 1Password credentials and scenario test env files
+  hosts: devenv-devenv
+  gather_facts: true
+  vars:
+    devenv_e2e_op_dir: "{{ ansible_user_dir }}/.config/op"
+    devenv_e2e_envs_dir: "{{ ansible_user_dir }}/igou-devenv/envs"
+    devenv_e2e_op_env_files:
+      - molecule-simple.env
+      - molecule-kubeconfig.env
+      - molecule-k8s-token.env
+      - molecule-registry.env
+      - molecule-bad.env
+  tasks:
+    - name: Report that 1Password integration setup is skipped
+      ansible.builtin.debug:
+        msg: >-
+          1Password integration checks skipped (no token provided) — set
+          MOLECULE_OP_SERVICE_ACCOUNT_TOKEN, or MOLECULE_OP_CONNECT_HOST plus
+          MOLECULE_OP_CONNECT_TOKEN, to enable them.
+      when: not (devenv_e2e_op_enabled | bool)
+
+    # Guard the env configuration for everyone (even the disabled path catches a
+    # half-set Connect pair, which would otherwise silently disable the checks).
+    - name: Assert the MOLECULE_OP_* configuration is valid
+      ansible.builtin.assert:
+        that:
+          - not ((devenv_e2e_op_connect_enabled | bool) and (devenv_e2e_op_sa_enabled | bool))
+          - (devenv_e2e_op_connect_host | length > 0) == (devenv_e2e_op_connect_token | length > 0)
+        fail_msg: >-
+          invalid MOLECULE_OP_* configuration: set EITHER both
+          MOLECULE_OP_CONNECT_HOST and MOLECULE_OP_CONNECT_TOKEN, OR
+          MOLECULE_OP_SERVICE_ACCOUNT_TOKEN — never a half-set Connect pair, and
+          never both modes at once.
+        success_msg: >-
+          1Password auth mode:
+          {{ 'Connect' if (devenv_e2e_op_connect_enabled | bool)
+             else ('service account' if (devenv_e2e_op_sa_enabled | bool)
+             else 'none (checks disabled)') }}
+
+    - name: Seed 1Password credentials and test env files
+      when: devenv_e2e_op_enabled | bool
+      block:
+        - name: Ensure ~/.config/op exists with private permissions
+          ansible.builtin.file:
+            path: "{{ devenv_e2e_op_dir }}"
+            state: directory
+            mode: "0700"
+
+        # The op CLI must find an existing device config: ~/.config/op is
+        # bind-mounted READ-ONLY into the container, so op cannot create
+        # ~/.config/op/config itself ("open .../config: read-only file
+        # system"). On a real dev host the file already exists from first
+        # host-side op use; seed the same shape here. The device id is a
+        # client identifier (not a secret) — a fixed base32 value keeps
+        # re-runs change-free, and force:false leaves any pre-existing
+        # device identity alone.
+        - name: Seed the op device config the read-only bind keeps op from creating
+          ansible.builtin.copy:
+            content: '{"latest_signin":"","device":"moleculedevenve2edeviceidx"}'
+            dest: "{{ devenv_e2e_op_dir }}/config"
+            mode: "0600"
+            force: false
+
+        - name: Seed the 1Password Connect host
+          ansible.builtin.copy:
+            content: "{{ devenv_e2e_op_connect_host }}"
+            dest: "{{ devenv_e2e_op_dir }}/connect-host"
+            mode: "0600"
+          no_log: true
+          when: devenv_e2e_op_connect_enabled | bool
+
+        - name: Seed the 1Password Connect token
+          ansible.builtin.copy:
+            content: "{{ devenv_e2e_op_connect_token }}"
+            dest: "{{ devenv_e2e_op_dir }}/connect-token"
+            mode: "0600"
+          no_log: true
+          when: devenv_e2e_op_connect_enabled | bool
+
+        - name: Seed the 1Password service-account token
+          ansible.builtin.copy:
+            content: "{{ devenv_e2e_op_sa_token }}"
+            dest: "{{ devenv_e2e_op_dir }}/service-account-token"
+            mode: "0600"
+          no_log: true
+          when: devenv_e2e_op_sa_enabled | bool
+
+        # Keep the two modes from colliding across re-runs: the container .bashrc
+        # PREFERS Connect, so a stale Connect pair left over from a previous run
+        # would mask a fresh SA token (and vice versa). Remove whichever mode is
+        # not active. No token material here, so no no_log needed.
+        - name: Remove stale Connect credentials when using service-account mode
+          ansible.builtin.file:
+            path: "{{ devenv_e2e_op_dir }}/{{ item }}"
+            state: absent
+          loop:
+            - connect-host
+            - connect-token
+          when: devenv_e2e_op_sa_enabled | bool
+
+        - name: Remove a stale service-account token when using Connect mode
+          ansible.builtin.file:
+            path: "{{ devenv_e2e_op_dir }}/service-account-token"
+            state: absent
+          when: devenv_e2e_op_connect_enabled | bool
+
+        - name: Ensure the container's envs directory exists
+          ansible.builtin.file:
+            path: "{{ devenv_e2e_envs_dir }}"
+            state: directory
+            mode: "0755"
+
+        # Scenario-owned; deliberately NOT committed to igou-devenv. They carry
+        # only op:// references (and one literal plain value), no secrets.
+        - name: Install the scenario 1Password test env files
+          ansible.builtin.copy:
+            src: "envs/{{ item }}"
+            dest: "{{ devenv_e2e_envs_dir }}/{{ item }}"
+            mode: "0644"
+          loop: "{{ devenv_e2e_op_env_files }}"
+
 # With the host bootstrapped, bring up the REAL devcontainer from the published
 # image via the repo's own `make up-release` path (pull ghcr.io/igou-io/igou-devenv,
 # derive an image-based devcontainer.json on the fly with jq, `devcontainer up`).

@@ -39,6 +39,29 @@
 #   - VM egress to github.com (repo clone) and ghcr.io (image pull)
 #   - no 1Password needed: the ghapp gate stays off (devenv_ghapp_enabled=false)
 #
+# 1Password integration (optional):
+#   By default this scenario needs NO 1Password access and skips every use()/op
+#   check — the no-token run is byte-for-byte the baseline suite. To ALSO exercise
+#   the container's 1Password-backed environment switching (the .bashrc use() /
+#   unuse() functions), export ONE auth mode before running molecule:
+#     - service-account mode (recommended, scoped): set
+#       MOLECULE_OP_SERVICE_ACCOUNT_TOKEN to a service account scoped to just the
+#       `molecule` vault — read its credential from
+#       op://lab_serviceaccounts/op-molecule-sa/credential and export it.
+#     - Connect mode: set MOLECULE_OP_CONNECT_HOST (url) and
+#       MOLECULE_OP_CONNECT_TOKEN (token).
+#   (Env-var syntax is spelled out in words here on purpose: molecule interpolates
+#   dollar-brace placeholders in this file, so a literal shell example would break
+#   config parsing.)
+#   Set exactly one mode (both → converge fails an assert). Tokens are seeded onto
+#   the VM host's ~/.config/op (0600, no_log) and reach the container through the
+#   existing read-only bind mount — never via cloud-init, the VM spec, the k8s
+#   API, or the ephemeral inventory. The scenario-owned molecule-*.env files and
+#   their backing `molecule` vault items (use-simple / use-kubeconfig /
+#   use-k8s-token / use-registry, plus a deliberately-broken molecule-bad) drive
+#   the converge/verify 1Password plays; with no token those plays skip with an
+#   explicit "1Password integration checks skipped (no token provided)" debug.
+#
 # Run:  molecule test -s devenv-e2e
 prerun: false
 
