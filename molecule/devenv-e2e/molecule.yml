@@ -49,6 +49,14 @@ dependency:
     force: true
 
 ansible:
+  cfg:
+    defaults:
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here — otherwise the
+      # dependency step installs into ${MOLECULE_PROJECT_DIRECTORY}/.ansible
+      # while runtime resolution falls back to a stale ~/.ansible copy.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
   executor:
     args:
       ansible_playbook:
