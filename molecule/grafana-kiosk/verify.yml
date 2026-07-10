@@ -65,6 +65,21 @@
       failed_when: not verify_shot.stat.exists or verify_shot.stat.size == 0
       when: kiosk_stack == 'chromium'
 
+    # Pull the render back to the controller so a human can eyeball it.
+    - name: Fetch the Chromium screenshot to the controller
+      ansible.builtin.fetch:
+        src: /tmp/kiosk-smoke.png
+        dest: "{{ lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/screenshots/{{ inventory_hostname }}.png"
+        flat: true
+      when: kiosk_stack == 'chromium'
+
+    - name: Show where the screenshot landed
+      ansible.builtin.debug:
+        msg: >-
+          Screenshot fetched to
+          {{ lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/screenshots/{{ inventory_hostname }}.png
+      when: kiosk_stack == 'chromium'
+
     - name: Run headless cog against the proxy for 20s
       ansible.builtin.command:
         cmd: timeout 20 cog --platform=headless {{ _verify_proxy }}/d/mock/dashboard
