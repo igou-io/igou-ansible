@@ -62,6 +62,40 @@
       environment: "{{ _rootless_env }}"
       register: _checkout
 
+    # One gate shared by the wipe + build tasks below.
+    - name: Decide whether this run rebuilds the site
+      ansible.builtin.set_fact:
+        _rebuild: "{{ _checkout is changed or (site_force_build | default(false) | bool) }}"
+
+    # Start every render from an empty directory: --cleanDestinationDir only
+    # prunes paths absent from the NEW build, so files Hugo no longer emits
+    # under the same name (stale hashed assets, leftovers from older layouts,
+    # or files a previous partial build wrote with modes it can't replace)
+    # can survive across deploys. Wipe the CONTENTS only, never the directory
+    # itself: it is bind-mounted into the running igou-io nginx container, and
+    # removing/recreating it would detach the mount - nginx would keep the old
+    # (deleted) inode until a unit restart. Tradeoff: the site is empty for
+    # the few seconds the build takes, and stays empty if the build fails; a
+    # failed run is loud in AAP, and serving provably-fresh output is worth it.
+    - name: Enumerate current contents of the served directory
+      ansible.builtin.find:
+        paths: "{{ _dest }}"
+        file_type: any
+        hidden: true
+      register: _dest_contents
+      when: _rebuild
+
+    - name: Wipe the served directory contents before rendering
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _dest_contents.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path }}"
+      become: true
+      become_user: "{{ _run_user }}"
+      when: _rebuild
+
     # Same one-shot build deploy/build.sh in the site repo performs by hand.
     # The source mounts read-write: Hugo's image processing writes its
     # resources/_gen cache into the project tree (so it persists between runs),
@@ -96,7 +130,7 @@
       become: true
       become_user: "{{ _run_user }}"
       environment: "{{ _rootless_env }}"
-      when: _checkout is changed or (site_force_build | default(false) | bool)
+      when: _rebuild
       changed_when: true
       notify: Make the built site world-readable
 
