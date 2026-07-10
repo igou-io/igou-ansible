@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Grafana kiosk (grafana-kiosk + Chromium on X11)
+Wants=network-online.target
+After=network-online.target nginx.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+User={{ _kiosk_user }}
+Group={{ _kiosk_user }}
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+Environment=KIOSK_BROWSER_PATH=/usr/local/bin/kiosk-browser
+# xinit owns X + the session; when either dies systemd restarts both.
+ExecStart=/usr/bin/xinit /usr/local/bin/kiosk-session -- :0 vt1 -nocursor
+Restart=always
+RestartSec=5
+# Daily recycle: Chromium leaks on live dashboards (OOM in 6-8h on 512MB).
+RuntimeMaxSec={{ _kiosk_service_max_runtime }}
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+---
+# Pure import shim (excluded from ansible-lint: the collection playbook is
+# pinned in this scenario's collections.yml, not installed in the lint env).
+# The mock-Grafana play lives in prepare_mock.yml, which stays linted.
+- name: Prepare molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+
+- name: Stand up the mock Grafana upstream
+  ansible.builtin.import_playbook: prepare_mock.yml

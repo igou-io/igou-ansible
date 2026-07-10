@@ -20,3 +20,8 @@ exclude_paths:
   - molecule/ghapp-e2e/create.yml
   - molecule/ghapp-e2e/destroy.yml
   - molecule/ghapp-e2e/prepare.yml
+  # grafana-kiosk provisioner shims: same david_igou.molecule_provisioners
+  # situation as ghapp-e2e above. converge/verify/prepare_mock stay linted.
+  - molecule/grafana-kiosk/create.yml
+  - molecule/grafana-kiosk/destroy.yml
+  - molecule/grafana-kiosk/prepare.yml

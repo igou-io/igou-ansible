@@ -1,0 +1,33 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Grafana kiosk (cog/WPE WebKit on DRM)
+Wants=network-online.target
+After=network-online.target nginx.service seatd.service
+Requires=seatd.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+User={{ _kiosk_user }}
+Group={{ _kiosk_user }}
+SupplementaryGroups=video render input
+# PAM session on tty1 gives cog seat0 and a runtime dir; seatd hands it DRM.
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+Environment=XDG_SEAT=seat0
+Environment=LIBSEAT_BACKEND=seatd
+{% if kiosk_drm_video_mode | default('') %}
+Environment=COG_PLATFORM_DRM_VIDEO_MODE={{ kiosk_drm_video_mode }}
+{% endif %}
+ExecStart=/usr/bin/cog --platform=drm --webprocess-failure=restart-exit "{{ _kiosk_cog_url }}"
+Restart=always
+RestartSec=5
+# Daily recycle: browsers leak on live dashboards; Restart=always brings the
+# session straight back.
+RuntimeMaxSec={{ _kiosk_service_max_runtime }}
+
+[Install]
+WantedBy=multi-user.target

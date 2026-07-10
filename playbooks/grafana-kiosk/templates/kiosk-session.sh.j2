@@ -1,0 +1,10 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# X session for the chromium kiosk stack, started by xinit from
+# grafana-kiosk.service. grafana-kiosk launches Chromium via the
+# KIOSK_BROWSER_PATH wrapper (set in the unit).
+xset s off
+xset -dpms
+openbox &
+unclutter -idle 1 -root &
+exec /usr/local/bin/grafana-kiosk -c /etc/grafana-kiosk/config.yaml
