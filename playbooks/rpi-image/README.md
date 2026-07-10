@@ -32,17 +32,41 @@ ansible-playbook playbooks/rpi-image/build_from_release.yml -i ../igou-inventory
   -e rpi_image_config=upsmonitor -e rpi_image_hostname=upsmonitor
 ```
 
-`build_from_release.yml` needs one extra inventory pin
-(`group_vars/rpi_image_builders.yml`):
+`build_from_release.yml` needs release pins
+(`group_vars/rpi_image_builders.yml`) — either a single flat
+`rpi_image_release_src`(+`rpi_image_release_sha256`), or a per-config
+map so one inventory carries both architectures:
 
 ```yaml
-rpi_image_release_src: >-
-  https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-19/2026-06-18-raspios-trixie-arm64-lite.img.xz
-rpi_image_release_sha256: "<sha256 from the release notes>"
+rpi_image_release_sources:
+  igou-pi-lite:          # arm64 — Zero 2 W / Pi 3 / Pi 4 (incl. netboot Pi 4s)
+    src: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-19/2026-06-18-raspios-trixie-arm64-lite.img.xz
+    sha256: "<from the published .img.xz.sha256>"
+  igou-pi-lite-armhf:    # armhf — the ONLY option for original Zero / Zero W
+    src: https://downloads.raspberrypi.com/raspios_lite_armhf/images/raspios_lite_armhf-2026-06-19/2026-06-18-raspios-trixie-armhf-lite.img.xz
+    sha256: "<from the published .img.xz.sha256>"
 ```
 
-(A local copy also works — the 2026-06-18 release already sits at
-rpi-builder:`/srv/images/rpi/raspios-lite-test/`.)
+An explicit `-e rpi_image_release_src=...` (URL or builder-local path)
+overrides the map. Architecture is derived from the filename
+(`-arm64-`/`-armhf-`), override with `rpi_image_release_arch`.
+
+### Fleet architecture guidance
+
+- **Original Zero / Zero W (ARMv6)** cannot run the arm64 image —
+  RasPiOS **armhf** ("All Raspberry Pi models", Raspberry Pi's own
+  ARMv6 port, not Debian armhf) is their only option. armhf builds run
+  in a `setarch linux32` chroot on the arm64 builder — native AArch32
+  execution, no qemu.
+- **Zero 2 W / Pi 3 / Pi 4** use the arm64 config (keeps `kernel8.img`
+  aligned with the rpi_netboot model contract). Zero 2 W's 512 MB is
+  fine for headless Lite; add zram if a workload gets tight.
+- Both arch images multiplex every per-SoC kernel/DTB in the boot
+  partition, so one image per arch covers its whole model range; the
+  verify stage asserts the per-arch kernel/firmware/DTB set.
+- Fleet deploys are wired-Ethernet headless — **no Wi-Fi provisioning
+  is baked** by design (and note boot-partition `wpa_supplicant.conf`
+  is dead post-Bookworm should that ever change).
 
 ## Verify stage
 
