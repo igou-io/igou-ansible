@@ -4,8 +4,12 @@
 # EE images; devhost is pinned here too so the scenario controls exactly what
 # it tests against.
 collections:
-  - name: david_igou.molecule_provisioners
-    version: 0.0.4-alpha
+  # Pinned to the data_volume_source_ref squash-merge (molecule_provisioners
+  # PR #54) — the golden-image boot below needs it. Re-pin to the released
+  # 0.0.5-alpha once a release is cut.
+  - name: https://github.com/david-igou/ansible-collection-molecule_provisioners.git
+    type: git
+    version: 3ad3a091bf4687e26d8b0988c800f9cd1f8efc43
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
     version: 27.1.3
