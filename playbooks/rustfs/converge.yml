@@ -1,0 +1,39 @@
+---
+# Reconcile RustFS in-server state (IAM policies, buckets, versioning,
+# lifecycle rules, users, attachments) against the declarative per-instance
+# spec in igou-inventory (host_vars/<instance>.yml) and verify that the
+# credentials stored in 1Password actually authenticate. igou-inventory#122.
+#
+# The engine is the published collection role
+# david_igou.rustfs.rustfs_state (pinned in requirements.yml, tracking
+# main); this playbook only wires it to the inventory. It is
+# invoked via include_role — a task, not a play-level `roles:` entry — so
+# ansible-lint does not try to resolve the collection's FQCN role at parse
+# time (the collection is installed into the EE / CI at runtime, not on a
+# bare lint checkout).
+#
+# One host = one instance: each host in the `rustfs_servers` group is a
+# connection-local stub named after the instance (see igou-inventory
+# inventory.yaml + group_vars/rustfs_servers.yml). The role reaches that
+# instance's HTTPS endpoint directly with the collection's native modules
+# (botocore in the EE, no CLI binary) and reconciles the host's own
+# rustfs_state_* vars — Ansible fans the play out across instances, so
+# there is no instances list to loop.
+#
+# Modes:
+#   converge:  run as-is — applies drift, fails on dead credentials.
+#   drift:     run with --check — reads run, mutations do not; the play
+#              FAILS on any drift or dead credential (AAP job template
+#              rustfs_state_drift, nightly).
+#
+# The role is a pure function over its inputs and performs no secret lookups
+# itself; the op:// lookup expressions live in the inventory data, so the
+# run needs OP_CONNECT_HOST / OP_CONNECT_TOKEN in the environment (AAP: the
+# onepassword-connect-token credential) for those values to resolve.
+- name: Reconcile RustFS instances
+  hosts: "{{ host | default('rustfs_servers') }}"
+  gather_facts: false
+  tasks:
+    - name: Reconcile RustFS in-server state
+      ansible.builtin.include_role:
+        name: david_igou.rustfs.rustfs_state
