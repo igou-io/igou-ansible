@@ -194,6 +194,30 @@
       become: true
       when: hermes_ghapp_broker_enabled | default(false) | bool
 
+    # tirith (the pre-exec command scanner) blocks plain-HTTP URLs in terminal
+    # commands (plain_http_to_sink). The in-cluster sands-of-time API is HTTP by
+    # design (ClusterIP service, no route), so agents need a rule-scoped trust
+    # entry for that one hostname. The trust store lives in ~/.config/tirith on
+    # the ROOT disk (not the state PVC), so a rebuild wipes it — reseed here.
+    - name: Check tirith trust for the in-cluster sands-of-time entry
+      ansible.builtin.command:
+        cmd: grep -q sands-of-time.sands-of-time.svc.cluster.local /home/{{ hermes_user }}/.config/tirith/trust.json
+      become: true
+      register: hermes_tirith_sot_trust
+      changed_when: false
+      failed_when: false
+
+    - name: Trust the in-cluster sands-of-time hostname in tirith (plain-HTTP rule only)
+      ansible.builtin.command:
+        cmd: >-
+          {{ hermes_state_mount }}/bin/tirith trust add
+          sands-of-time.sands-of-time.svc.cluster.local
+          --rule plain_http_to_sink
+      become: true
+      become_user: "{{ hermes_user }}"
+      when: hermes_tirith_sot_trust.rc != 0
+      changed_when: true
+
     - name: Map legacy Hermes devenv image tag to terminal backend image tag
       ansible.builtin.set_fact:
         hermes_terminal_backend_image_tag: "{{ hermes_devenv_image_tag }}"
