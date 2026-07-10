@@ -22,9 +22,10 @@
 # up from the published image + in-container tool/podman tests + external
 # NodePort reachability + reboot resilience. Intended to grow more lab-contextual
 # over time (devcontainer build from source, full `make e2e` in the guest, ghapp
-# gate, in-container qemu once nested KVM is available). `idempotence` is
-# intentionally not in the sequence yet — bootstrap's docker_container pull=true
-# and the mise bootstrap paths are not proven change-free on a second pass.
+# gate, in-container qemu once nested KVM is available). The `idempotence` step
+# runs: a second converge is change-free except `make up-release`, which is
+# tagged molecule-idempotence-notest (devcontainer up reuses the running
+# container but offers no created-vs-reused marker to key changed_when on).
 #
 # COST: the reboot verify play adds several minutes (a full KubeVirt VM boot plus
 # code-server re-warm) on top of the already-long converge; budget accordingly.
@@ -68,6 +69,7 @@ scenario:
     - create
     - prepare
     - converge
+    - idempotence
     - verify
     - destroy
 

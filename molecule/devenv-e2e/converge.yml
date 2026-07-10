@@ -50,7 +50,14 @@
         # non-login Ansible SSH shell doesn't have on PATH; jq is in /usr/bin.
         PATH: "{{ ansible_user_dir }}/.local/bin:{{ ansible_env.PATH }}"
       register: __up_release
+      # `devcontainer up` reuses a running container, so the effect is
+      # idempotent, but its output gives no reliable created-vs-reused marker —
+      # report changed honestly and exclude it from the idempotence step
+      # (everything else in converge, bootstrap.yml included, is change-free
+      # on a second pass).
       changed_when: true
+      tags:
+        - molecule-idempotence-notest
 
 # Expose code-server externally via a NodePort service, mirroring phase 1 of the
 # production provision-vm.yml (which this scenario otherwise replaces): that
