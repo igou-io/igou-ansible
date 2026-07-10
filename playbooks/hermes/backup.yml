@@ -1,0 +1,208 @@
+---
+# Weekly hermes state backup -> rustfs-cold (igou-io/igou-inventory#155).
+#
+# Quiesces the hermes user units (only the ones actually running - a
+# deliberately-stopped dashboard stays stopped), tars ~hermes/.hermes with
+# numeric ownership (the VM uses keep-id UID mapping; restores must
+# preserve exact uids), restarts the units, then uploads the archive from
+# the EE to ONE fixed key in the versioned hermes-backups bucket on
+# rustfs-cold. Each weekly run becomes the new current version; the
+# bucket's ILM rule (NewerNoncurrentVersions: 3, declared in igou-inventory
+# host_vars/rustfs-cold.yml) retains exactly the current + 3 previous
+# copies. Until ILM enforcement is verified live (#155 checklist), old
+# versions may accumulate - harmless, revisit after ~5 runs.
+#
+# The tarball contains ~/.hermes/.env (live secrets): the bucket is
+# reachable only by the hermes-backups user (policy-scoped to this bucket)
+# and root keys. At-rest encryption of the tarball is an open question in
+# #155 - not implemented here.
+#
+# Credentials: 1Password item hermes-backups-rustfs-cold (lab_s3 vault),
+# resolved at runtime - the job template must carry the
+# onepassword-connect-token credential. The endpoint comes from the same
+# inventory host_vars the rustfs_state role reconciles against.
+#
+# Restore:
+#   1. aws s3api list-object-versions --bucket hermes-backups \
+#        --prefix hermes/dot-hermes.tar.gz   (pick a VersionId)
+#   2. aws s3api get-object --version-id <id> ... dot-hermes.tar.gz
+#   3. systemctl --user stop hermes-gateway hermes-dashboard (as hermes)
+#   4. tar xzf --numeric-owner -C /home/hermes ./.hermes ; re-assert
+#      0700 on /home/hermes ; systemctl --user start ...
+- name: Back up hermes state to rustfs-cold
+  hosts: "{{ ansible_limit | default('hermes-hermes') }}"
+  gather_facts: false
+  become: true
+  vars:
+    hermes_user: hermes
+    hermes_home: /home/hermes
+    hermes_state_mount: "{{ hermes_home }}/.hermes"
+    hermes_backup_quiesce_units:
+      - hermes-gateway.service
+      - hermes-dashboard.service
+    # Single source of truth: the rustfs-cold stub host's spec vars.
+    hermes_s3_endpoint: "{{ hostvars['rustfs-cold'].rustfs_state_endpoint }}"
+    hermes_s3_bucket: hermes-backups
+    hermes_s3_object: hermes/dot-hermes.tar.gz
+    hermes_s3_region: us-east-1
+    hermes_s3_access_key: "{{ lookup('community.general.onepassword', 'hermes-backups-rustfs-cold', field='username', vault='lab_s3') }}"
+    hermes_s3_secret_key: "{{ lookup('community.general.onepassword', 'hermes-backups-rustfs-cold', field='password', vault='lab_s3') }}"
+    # A fresh .hermes is never smaller than this; an "empty" tarball means
+    # the state mount was not mounted - fail rather than upload garbage.
+    hermes_backup_min_bytes: 10240
+
+  pre_tasks:
+    - name: Resolve the hermes service user's uid (user systemd bus needs it)
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ hermes_user }}"
+
+    - name: Stage a control-node scratch path for the fetched archive
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .tar.gz
+      register: _local_archive
+      delegate_to: localhost
+      connection: local
+      become: false
+      changed_when: false
+
+  tasks:
+    - name: Quiesce, archive, restart
+      block:
+        - name: Check which hermes user units are running
+          ansible.builtin.command: # noqa: command-instead-of-module
+            argv: [systemctl, --user, is-active, "{{ item }}"]
+          loop: "{{ hermes_backup_quiesce_units }}"
+          register: _unit_state
+          changed_when: false
+          failed_when: false
+          become: true
+          become_user: "{{ hermes_user }}"
+          environment:
+            XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
+
+        - name: Stop the running hermes user units for a consistent archive
+          ansible.builtin.systemd_service:
+            name: "{{ item.item }}"
+            state: stopped
+            scope: user
+          loop: "{{ _unit_state.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when: item.rc == 0
+          become: true
+          become_user: "{{ hermes_user }}"
+          environment:
+            XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
+
+        - name: Stage a guest scratch file for the archive
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .tar.gz
+          register: _remote_archive
+          changed_when: false
+
+        - name: Archive the hermes state directory
+          ansible.builtin.command:
+            argv:
+              - tar
+              - czf
+              - "{{ _remote_archive.path }}"
+              - --numeric-owner
+              - -C
+              - "{{ hermes_home }}"
+              - .hermes
+          changed_when: true
+
+      always:
+        - name: Restart exactly the units that were running
+          ansible.builtin.systemd_service:
+            name: "{{ item.item }}"
+            state: started
+            scope: user
+          loop: "{{ _unit_state.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when: item.rc | default(1) == 0
+          become: true
+          become_user: "{{ hermes_user }}"
+          environment:
+            XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
+
+    - name: Fetch the archive to the control node
+      ansible.builtin.fetch:
+        src: "{{ _remote_archive.path }}"
+        dest: "{{ _local_archive.path }}"
+        flat: true
+
+    - name: Remove the guest scratch file
+      ansible.builtin.file:
+        path: "{{ _remote_archive.path }}"
+        state: absent
+      changed_when: false
+
+    - name: Stat the fetched archive
+      ansible.builtin.stat:
+        path: "{{ _local_archive.path }}"
+      register: _archive_stat
+      delegate_to: localhost
+      connection: local
+      become: false
+
+    - name: Refuse to upload an implausibly small archive
+      ansible.builtin.assert:
+        that:
+          - _archive_stat.stat.size | int >= hermes_backup_min_bytes | int
+        fail_msg: >-
+          Archive is {{ _archive_stat.stat.size }} bytes (<
+          {{ hermes_backup_min_bytes }}) - was {{ hermes_state_mount }}
+          actually mounted?
+      delegate_to: localhost
+      connection: local
+      become: false
+
+    - name: Upload the archive as the new current version
+      amazon.aws.s3_object:
+        endpoint_url: "{{ hermes_s3_endpoint }}"
+        access_key: "{{ hermes_s3_access_key }}"
+        secret_key: "{{ hermes_s3_secret_key }}"
+        region: "{{ hermes_s3_region }}"
+        bucket: "{{ hermes_s3_bucket }}"
+        object: "{{ hermes_s3_object }}"
+        src: "{{ _local_archive.path }}"
+        mode: put
+      delegate_to: localhost
+      connection: local
+      become: false
+
+    - name: Read back the uploaded object's metadata
+      amazon.aws.s3_object_info:
+        endpoint_url: "{{ hermes_s3_endpoint }}"
+        access_key: "{{ hermes_s3_access_key }}"
+        secret_key: "{{ hermes_s3_secret_key }}"
+        region: "{{ hermes_s3_region }}"
+        bucket_name: "{{ hermes_s3_bucket }}"
+        object_name: "{{ hermes_s3_object }}"
+      register: _uploaded
+      delegate_to: localhost
+      connection: local
+      become: false
+
+    - name: Record the backup outcome
+      ansible.builtin.debug:
+        msg: >-
+          Uploaded {{ _archive_stat.stat.size }} bytes to
+          s3://{{ hermes_s3_bucket }}/{{ hermes_s3_object }}
+          (version {{ _uploaded.object_info[0].object_data.version_id
+                      | default('n/a') }})
+
+  post_tasks:
+    - name: Remove the control-node scratch file
+      ansible.builtin.file:
+        path: "{{ _local_archive.path }}"
+        state: absent
+      delegate_to: localhost
+      connection: local
+      become: false
+      changed_when: false
