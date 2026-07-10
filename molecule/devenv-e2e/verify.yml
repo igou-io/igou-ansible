@@ -239,6 +239,223 @@
         fail_msg: >-
           the code-server NodePort answered but did not serve the login page
 
+# 1Password environment switching (OPTIONAL, gated) — exercise the container's
+# use()/unuse() shell functions end-to-end against the `molecule` vault. Placed
+# BEFORE the reboot play so ordering stays sane (the reboot is destructive/slow
+# and stays last). With no MOLECULE_OP_* token this play is a single skip debug.
+#
+# Each check runs as ONE `bash -ic` script via `docker exec` (the same in-
+# container exec pattern the make test-* plays use). `-i` is required: use() is
+# an interactive-shell function defined by ~/.bashrc, which `docker exec` sources
+# because BASH_ENV/-i pull it in. Every invocation is a FRESH shell — no state
+# survives between tasks — so multi-step checks are each fully self-contained and
+# exit nonzero on the first failed assertion. Scripts assert by EXIT CODE and
+# file inspection and never echo a resolved secret (synthetic here, but the
+# discipline is the point). NO_AUTO_TMUX=1 belt-and-suspenders the tmux
+# auto-attach guard (already inert: it only fires when TERM_PROGRAM=vscode, which
+# a docker exec shell is not).
+#
+# The registry check covers use()'s containers-auth.json flow: REGISTRY_HOST/
+# _USERNAME/_PASSWORD are consumed (never exported as plain vars) into a temp
+# auth dir — REGISTRY_AUTH_FILE points at its config.json (0600, docker-style
+# "auths" schema shared by podman/buildah/skopeo) and DOCKER_CONFIG at the
+# directory; unuse removes the dir and unsets both. The password is only ever
+# prefix-checked through base64, never printed.
+- name: Verify the container's 1Password environment switching (use/unuse)
+  hosts: devenv-devenv
+  gather_facts: false
+  tasks:
+    - name: Report that 1Password verification is skipped
+      ansible.builtin.debug:
+        msg: 1Password integration checks skipped (no token provided)
+      when: not (devenv_e2e_op_enabled | bool)
+
+    - name: Run the in-container use()/unuse() checks
+      when: devenv_e2e_op_enabled | bool
+      become: true
+      block:
+        - name: Auth smoke — op resolves a molecule-vault reference
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - -e
+              - NO_AUTO_TMUX=1
+              - igou-devenv
+              - bash
+              - -ic
+              - |
+                op read op://molecule/use-simple/username >/dev/null \
+                  || { echo "auth smoke: op read failed" >&2; exit 1; }
+                echo "auth-smoke ok"
+          register: __op_smoke
+          changed_when: false
+
+        - name: Simple env — values export, '='-bearing host is exact, plain untouched
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - -e
+              - NO_AUTO_TMUX=1
+              - igou-devenv
+              - bash
+              - -ic
+              - |
+                fail() { echo "FAIL: $1" >&2; exit 1; }
+                use molecule-simple || fail "use molecule-simple returned nonzero"
+                [ -n "${TEST_USERNAME:-}" ] || fail "TEST_USERNAME empty"
+                [ -n "${TEST_PASSWORD:-}" ] || fail "TEST_PASSWORD empty"
+                [ "${TEST_HOST:-}" = 'https://use-simple.molecule.invalid:6443/?scope=admin&x=1' ] \
+                  || fail "TEST_HOST does not match the exact '='-bearing value"
+                [ "${TEST_PLAIN:-}" = 'plain-value-unchanged' ] || fail "TEST_PLAIN changed"
+                [ "${OP_ENV:-}" = 'molecule-simple' ] || fail "OP_ENV != molecule-simple"
+                echo "simple-env ok"
+          register: __op_simple
+          changed_when: false
+
+        - name: Stacking and selective unuse — survivors, fallback, full clear
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - -e
+              - NO_AUTO_TMUX=1
+              - igou-devenv
+              - bash
+              - -ic
+              - |
+                fail() { echo "FAIL: $1" >&2; exit 1; }
+                use molecule-simple || fail "use molecule-simple"
+                use molecule-registry || fail "use molecule-registry"
+                unuse molecule-registry || fail "unuse molecule-registry"
+                [ -n "${TEST_USERNAME:-}" ] || fail "simple vars did not survive selective unuse"
+                [ -z "${REGISTRY_AUTH_FILE:-}" ] || fail "REGISTRY_AUTH_FILE survived unuse molecule-registry"
+                [ -z "${DOCKER_CONFIG:-}" ] || fail "DOCKER_CONFIG survived unuse molecule-registry"
+                [ "${OP_ENV:-}" = 'molecule-simple' ] || fail "OP_ENV did not fall back to molecule-simple"
+                unuse || fail "unuse (all) returned nonzero"
+                [ -z "${OP_ENV:-}" ] || fail "OP_ENV set after unuse all"
+                [ -z "${OP_ENV_LIST:-}" ] || fail "OP_ENV_LIST set after unuse all"
+                [ -z "${TEST_USERNAME:-}" ] || fail "TEST_USERNAME set after unuse all"
+                echo "stack-unuse ok"
+          register: __op_stack
+          changed_when: false
+
+        - name: KUBECONFIG_DATA — file 0600 with the decoded server, cleaned on unuse
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - -e
+              - NO_AUTO_TMUX=1
+              - igou-devenv
+              - bash
+              - -ic
+              - |
+                fail() { echo "FAIL: $1" >&2; exit 1; }
+                use molecule-kubeconfig || fail "use molecule-kubeconfig"
+                [ -n "${KUBECONFIG:-}" ] || fail "KUBECONFIG not set"
+                [ -f "$KUBECONFIG" ] || fail "kubeconfig file missing"
+                m=$(stat -c %a "$KUBECONFIG"); [ "$m" = "600" ] || fail "kubeconfig mode $m != 600"
+                grep -q 'use-kubeconfig.molecule.invalid' "$KUBECONFIG" \
+                  || fail "decoded kubeconfig missing the expected server host"
+                saved="$KUBECONFIG"
+                unuse molecule-kubeconfig || fail "unuse molecule-kubeconfig"
+                [ ! -e "$saved" ] || fail "temp kubeconfig not deleted by unuse"
+                [ -z "${KUBECONFIG:-}" ] || fail "KUBECONFIG still set after unuse"
+                echo "kubeconfig-data ok"
+          register: __op_kubedata
+          changed_when: false
+
+        - name: TOKEN+HOST — rendered kubeconfig has host and insecure-skip-tls-verify
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - -e
+              - NO_AUTO_TMUX=1
+              - igou-devenv
+              - bash
+              - -ic
+              - |
+                fail() { echo "FAIL: $1" >&2; exit 1; }
+                use molecule-k8s-token || fail "use molecule-k8s-token"
+                [ -n "${KUBECONFIG:-}" ] || fail "KUBECONFIG not set"
+                [ -f "$KUBECONFIG" ] || fail "kubeconfig file missing"
+                grep -q 'use-k8s-token.molecule.invalid' "$KUBECONFIG" \
+                  || fail "rendered kubeconfig missing the token host"
+                grep -q 'insecure-skip-tls-verify: true' "$KUBECONFIG" \
+                  || fail "rendered kubeconfig missing insecure-skip-tls-verify: true"
+                saved="$KUBECONFIG"
+                unuse molecule-k8s-token || fail "unuse molecule-k8s-token"
+                [ ! -e "$saved" ] || fail "temp kubeconfig not cleaned up by unuse"
+                echo "k8s-token ok"
+          register: __op_k8stoken
+          changed_when: false
+
+        - name: Registry — containers-auth.json written 0600, cleaned up on unuse
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - -e
+              - NO_AUTO_TMUX=1
+              - igou-devenv
+              - bash
+              - -ic
+              - |
+                fail() { echo "FAIL: $1" >&2; exit 1; }
+                use molecule-registry || fail "use molecule-registry"
+                # REGISTRY_* inputs are consumed into the auth file, never
+                # exported as plain vars.
+                [ -z "${REGISTRY_HOST:-}" ] || fail "REGISTRY_HOST leaked as a plain export"
+                [ -z "${REGISTRY_PASSWORD:-}" ] || fail "REGISTRY_PASSWORD leaked as a plain export"
+                [ -n "${REGISTRY_AUTH_FILE:-}" ] || fail "REGISTRY_AUTH_FILE not set"
+                [ -f "$REGISTRY_AUTH_FILE" ] || fail "auth file missing"
+                m=$(stat -c %a "$REGISTRY_AUTH_FILE"); [ "$m" = "600" ] || fail "auth file mode $m != 600"
+                [ "${DOCKER_CONFIG:-}" = "$(dirname "$REGISTRY_AUTH_FILE")" ] \
+                  || fail "DOCKER_CONFIG is not the auth file's directory"
+                auth=$(jq -er '.auths["registry.molecule.invalid"].auth' "$REGISTRY_AUTH_FILE") \
+                  || fail "auths entry for registry.molecule.invalid missing"
+                # Prefix-check the decoded user:pass only — never print it.
+                case "$(printf '%s' "$auth" | base64 -d)" in
+                  'molecule+testrobot:'*) : ;;
+                  *) fail "decoded auth does not start with molecule+testrobot:" ;;
+                esac
+                saved_dir="$DOCKER_CONFIG"
+                unuse molecule-registry || fail "unuse molecule-registry"
+                [ ! -e "$saved_dir" ] || fail "auth dir not removed by unuse"
+                [ -z "${REGISTRY_AUTH_FILE:-}" ] || fail "REGISTRY_AUTH_FILE survived unuse"
+                [ -z "${DOCKER_CONFIG:-}" ] || fail "DOCKER_CONFIG survived unuse"
+                echo "registry ok"
+          register: __op_registry
+          changed_when: false
+
+        - name: Failure path — bad ref fails cleanly with no residue
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - -e
+              - NO_AUTO_TMUX=1
+              - igou-devenv
+              - bash
+              - -ic
+              - |
+                fail() { echo "FAIL: $1" >&2; exit 1; }
+                use molecule-bad && fail "use molecule-bad unexpectedly succeeded"
+                env | grep -q '^_USE_KEYS_molecule_bad=' && fail "_USE_KEYS residue after failed use"
+                [ "${OP_ENV:-}" != 'molecule-bad' ] || fail "OP_ENV wrongly set to molecule-bad"
+                echo "failure-path ok"
+          register: __op_badref
+          changed_when: false
+
+        - name: Summarize the 1Password checks
+          ansible.builtin.debug:
+            msg: >-
+              1Password use()/unuse() checks passed: auth-smoke, simple-env,
+              stack-unuse, kubeconfig-data, k8s-token, registry, failure-path.
+
 # Reboot resilience — LAST on purpose: a reboot is destructive and slow, so a
 # failure here must not poison the health results above. Reboot the KubeVirt VM,
 # then re-assert the core health set survives: docker back up, the scratch disk
