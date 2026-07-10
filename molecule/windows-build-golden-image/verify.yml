@@ -1,0 +1,162 @@
+---
+# Verify = definition-of-done for the golden image. Asserts the deliverable
+# exists and is Ready, then proves the generalized disk boots HANDS-FREE by
+# cloning it into a throwaway VM and waiting for the guest agent to phone home.
+# This play deletes nothing — destroy.yml owns cleanup (golden-verify and its
+# GC'd rootdisk included).
+- name: Verify — golden DataSource exists, is Ready, and boots hands-free
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    golden_namespace: molecule
+    golden_name: golden-win2k25
+    verify_vm: golden-verify
+  tasks:
+    - name: Fetch the published golden DataSource
+      kubernetes.core.k8s_info:
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataSource
+        name: "{{ golden_name }}"
+        namespace: "{{ golden_namespace }}"
+      register: _golden_ds
+
+    - name: Assert the golden DataSource exists and reports Ready == True
+      ansible.builtin.assert:
+        that:
+          - _golden_ds.resources | length == 1
+          - >-
+            _golden_ds.resources[0].status.conditions
+            | selectattr('type', 'equalto', 'Ready')
+            | selectattr('status', 'equalto', 'True')
+            | list | length == 1
+        fail_msg: >-
+          DataSource {{ golden_namespace }}/{{ golden_name }} is missing or not
+          Ready — the build did not publish a usable golden image.
+        success_msg: >-
+          Golden DataSource {{ golden_namespace }}/{{ golden_name }} is Ready.
+
+    - name: Fetch the backing golden PVC
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: "{{ golden_name }}"
+        namespace: "{{ golden_namespace }}"
+      register: _golden_pvc
+
+    - name: Assert the golden PVC exists and is Bound
+      ansible.builtin.assert:
+        that:
+          - _golden_pvc.resources | length == 1
+          - _golden_pvc.resources[0].status.phase == "Bound"
+        fail_msg: >-
+          Golden PVC {{ golden_namespace }}/{{ golden_name }} is missing or not
+          Bound — the deliverable has no backing storage.
+        success_msg: Golden PVC is Bound.
+
+    # Boot test — the real proof. Clone the golden DataSource into a fresh VM
+    # with NO installer ISO and NO sysprep/unattend volume: if it boots, the
+    # generalized disk is self-sufficient. Shape mirrors the proven build VM
+    # (EFI + SecureBoot + TPM + e1000e), which is what Windows Server 2025
+    # expects. The VM will land at interactive OOBE (cloudbase-init arrives in
+    # P2), but qemu-guest-agent runs as a Windows service regardless — so
+    # AgentConnected flipping True is a hands-free proof the image is bootable
+    # with virtio drivers + guest agent intact.
+    - name: Create the golden-verify boot-test VirtualMachine
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: kubevirt.io/v1
+          kind: VirtualMachine
+          metadata:
+            name: "{{ verify_vm }}"
+            namespace: "{{ golden_namespace }}"
+          spec:
+            runStrategy: Always
+            dataVolumeTemplates:
+              - metadata:
+                  name: "{{ verify_vm }}-rootdisk"
+                spec:
+                  sourceRef:
+                    kind: DataSource
+                    name: "{{ golden_name }}"
+                    namespace: "{{ golden_namespace }}"
+                  storage:
+                    resources:
+                      requests:
+                        storage: 50Gi
+            template:
+              metadata:
+                labels:
+                  kubevirt.io/domain: "{{ verify_vm }}"
+              spec:
+                domain:
+                  cpu:
+                    sockets: 2
+                    cores: 1
+                    threads: 1
+                  memory:
+                    guest: 6Gi
+                  firmware:
+                    bootloader:
+                      efi:
+                        secureBoot: true
+                  features:
+                    smm:
+                      enabled: true
+                    acpi: {}
+                  devices:
+                    tpm: {}
+                    disks:
+                      - name: rootdisk
+                        bootOrder: 1
+                        disk:
+                          bus: sata
+                    interfaces:
+                      - name: default
+                        model: e1000e
+                        masquerade: {}
+                networks:
+                  - name: default
+                    pod: {}
+                volumes:
+                  - name: rootdisk
+                    dataVolume:
+                      name: "{{ verify_vm }}-rootdisk"
+                # truenas-w1 is a storage-hosting VM worker; keep guest VMs off
+                # it (same rationale as the build VM). Short hostname on purpose.
+                affinity:
+                  nodeAffinity:
+                    requiredDuringSchedulingIgnoredDuringExecution:
+                      nodeSelectorTerms:
+                        - matchExpressions:
+                            - key: kubernetes.io/hostname
+                              operator: NotIn
+                              values:
+                                - truenas-w1
+
+    - name: Wait for the golden-verify guest agent to connect (clone + boot)
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachineInstance
+        name: "{{ verify_vm }}"
+        namespace: "{{ golden_namespace }}"
+      register: _verify_vmi
+      # Clone + first boot (sysprep specialize pass) + agent handshake ≈ 5–15
+      # min; 20 min cap leaves margin for a host-assisted clone fallback.
+      retries: 40
+      delay: 30
+      until:
+        - _verify_vmi.resources | length == 1
+        - >-
+          _verify_vmi.resources[0].status.conditions | default([])
+          | selectattr('type', 'equalto', 'AgentConnected')
+          | selectattr('status', 'equalto', 'True')
+          | list | length == 1
+
+    - name: Trophy — report the guest OS the golden image booted into
+      ansible.builtin.debug:
+        msg: >-
+          golden-verify booted:
+          {{ _verify_vmi.resources[0].status.guestOSInfo.prettyName
+             | default('(guestOSInfo not yet populated)') }}

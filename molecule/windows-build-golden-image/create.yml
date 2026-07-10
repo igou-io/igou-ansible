@@ -1,0 +1,92 @@
+---
+# Preflight ONLY — this play creates nothing on the cluster. It fails fast if
+# the environment or the standing windows-images ISO dependency is not ready,
+# so a 60–90 min converge never starts against a broken setup.
+- name: Create — preflight gates for the Windows golden-image build
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # Namespace everything this scenario owns lives in.
+    golden_namespace: molecule
+    # The preexisting Windows installer ISO DataVolume this build depends on.
+    # Owned by a separate process — we only read it, never create/delete it.
+    iso_namespace: windows-images
+    iso_dv_name: iso-winserver2025-eval
+  tasks:
+    - name: Assert cluster auth env vars are present
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'K8S_AUTH_HOST') | length > 0
+          - lookup('ansible.builtin.env', 'K8S_AUTH_API_KEY') | length > 0
+        fail_msg: >-
+          K8S_AUTH_HOST and K8S_AUTH_API_KEY must be set. Run:
+          export K8S_AUTH_HOST=https://api.ocp.igou.systems:6443 &&
+          export K8S_AUTH_API_KEY=$(op read "op://lab_serviceaccounts/ocp-ansible-molecule/token")
+        success_msg: Cluster auth env vars present.
+
+    - name: Prove auth works — list VirtualMachines in the molecule namespace
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        namespace: "{{ golden_namespace }}"
+      register: _molecule_vms
+
+    - name: Assert the molecule-namespace query succeeded
+      ansible.builtin.assert:
+        that:
+          - _molecule_vms is not failed
+        fail_msg: >-
+          Could not list VirtualMachines in namespace "{{ golden_namespace }}"
+          — check the ansible-molecule ServiceAccount token/RBAC.
+        success_msg: >-
+          Authenticated to the cluster as ansible-molecule; can read the
+          "{{ golden_namespace }}" namespace.
+
+    - name: Fetch the preexisting Windows installer ISO DataVolume (dependency)
+      kubernetes.core.k8s_info:
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataVolume
+        name: "{{ iso_dv_name }}"
+        namespace: "{{ iso_namespace }}"
+      register: _iso_dv
+
+    - name: Assert the ISO DataVolume exists and is fully imported (Succeeded)
+      ansible.builtin.assert:
+        that:
+          - _iso_dv.resources | length == 1
+          - _iso_dv.resources[0].status.phase == "Succeeded"
+        fail_msg: >-
+          Required installer ISO DataVolume {{ iso_namespace }}/{{ iso_dv_name }}
+          is missing or not Succeeded
+          (phase={{ (_iso_dv.resources[0].status.phase | default('absent')) }}).
+          Hydrate it before running this scenario — this build does not create it.
+        success_msg: >-
+          ISO dependency {{ iso_namespace }}/{{ iso_dv_name }} is present and
+          Succeeded.
+
+    - name: Check virtctl is on PATH (needed for the VNC CD-boot helper)
+      ansible.builtin.command: virtctl version --client
+      changed_when: false
+      register: _virtctl_check
+
+    - name: Assert virtctl is available
+      ansible.builtin.assert:
+        that:
+          - _virtctl_check.rc == 0
+        fail_msg: >-
+          virtctl not found on PATH — install it (mise/virtctl) before running.
+        success_msg: virtctl is available.
+
+    - name: Check the vncdotool python module is importable
+      ansible.builtin.command: python3 -c "import vncdotool"
+      changed_when: false
+      register: _vncdotool_check
+
+    - name: Assert vncdotool is installed
+      ansible.builtin.assert:
+        that:
+          - _vncdotool_check.rc == 0
+        fail_msg: >-
+          Python module vncdotool is missing — install it: pip install vncdotool
+        success_msg: vncdotool is importable.

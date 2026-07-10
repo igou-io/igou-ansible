@@ -1,0 +1,476 @@
+---
+# Build a Windows golden image for OpenShift Virtualization (issue #343, phase 1).
+#
+# Turns a Windows installer ISO DataVolume into a generalized (sysprepped)
+# bootable golden root disk, published as a CDI DataSource that stock KubeVirt
+# Windows templates can clone via sourceRef.
+#
+# Flow (all inside windows_golden_namespace, plus one cross-namespace ISO clone):
+#   1. preflight (tools + source ISO DataVolume)
+#   2. clone the installer ISO into the build namespace
+#   3. render the autounattend answer file into a Secret
+#   4. create a STANDALONE golden root DataVolume (not a dataVolumeTemplate, so
+#      it survives VM deletion and becomes the published disk with no capture)
+#   5. create a throwaway build VM (runStrategy Manual) and CD-boot it
+#   6. the answer file drives install -> guest tools -> sysprep /generalize
+#      /shutdown, fully unattended (no WinRM needed in phase 1); the VMI goes
+#      Succeeded on poweroff
+#   7. delete the VM, publish the surviving root DV as a DataSource, clean up
+#
+# All k8s tasks use kubernetes.core with NO explicit auth params — they honor
+# K8S_AUTH_HOST / K8S_AUTH_API_KEY / K8S_AUTH_VERIFY_SSL / KUBECONFIG from the
+# environment. boot-vm.sh drives virtctl/oc and needs a real kubeconfig FILE, so
+# one is rendered from K8S_AUTH_* when windows_golden_kubeconfig is not provided.
+- name: Build Windows golden image DataSource
+  hosts: "{{ target_hosts | default('localhost') }}"
+  # Talk to the API via env-injected K8S_AUTH_* / KUBECONFIG — no SSH needed.
+  # Force local so a bare `localhost` inventory entry does not default to ssh.
+  connection: local
+  gather_facts: false
+  vars:
+    # --- Interface contract (see issue #343 phase 1, part A) ---------------
+    # REQUIRED. Namespace used for BOTH the build VM and the published DataSource.
+    windows_golden_namespace: ""
+    # REQUIRED. Local Administrator / auto-logon password for the throwaway build
+    # VM. generalize wipes machine identity, so this is not a durable secret;
+    # every task that renders or uses it sets no_log: true.
+    windows_golden_admin_password: ""
+    # Short edition key; drives all derived resource names.
+    windows_golden_edition: win2k25
+    # virtualmachineclusterpreference applied to the build VM and stamped as the
+    # DataSource default-preference label.
+    windows_golden_preference: windows.2k25
+    # Only used as the DataSource default-instancetype label.
+    windows_golden_instancetype: u1.medium
+    # Where the source installer ISO DataVolume already lives.
+    windows_golden_iso_namespace: windows-images
+    windows_golden_iso_dv: iso-winserver2025-eval
+    # install.wim image index; 2 = Server 2025 Standard Eval (Desktop Experience).
+    windows_golden_image_index: 2
+    # ComputerName for the throwaway build VM.
+    windows_golden_hostname: goldenbuild
+    # Size of the golden root disk.
+    windows_golden_disk_size: 50Gi
+    # StorageClass for the golden root disk; empty -> cluster default SC.
+    windows_golden_storage_class: ""
+    # StorageClass for the ISO clone target; same SC as the source enables a
+    # smart (server-side) clone instead of a host-assisted copy.
+    windows_golden_iso_storage_class: freenas-nfs-cold-csi
+    # Local TCP port for the virtctl VNC proxy that autoboot.py drives.
+    windows_golden_vnc_port: 5901
+    # Cap on the install -> generalize -> shutdown wait (minutes).
+    windows_golden_install_timeout_minutes: 90
+    # Keep the installcd clone DV + unattend Secret after publishing.
+    windows_golden_keep_build_artifacts: false
+    # kubeconfig path for virtctl/oc in boot-vm.sh; empty -> render a temp one
+    # from K8S_AUTH_HOST / K8S_AUTH_API_KEY.
+    windows_golden_kubeconfig: ""
+
+    # --- Derived resource names (sibling molecule scenario depends on these) --
+    windows_golden_vm_name: "golden-{{ windows_golden_edition }}-build"
+    # Golden root DV == published PVC == DataSource name.
+    windows_golden_dv_name: "golden-{{ windows_golden_edition }}"
+    windows_golden_installcd_dv: "golden-{{ windows_golden_edition }}-installcd"
+    windows_golden_unattend_secret: "golden-{{ windows_golden_edition }}-unattend"
+
+  tasks:
+
+    # --- Step 1: assert inputs and required tooling -----------------------
+    - name: Assert windows_golden_namespace is set
+      ansible.builtin.assert:
+        that:
+          - windows_golden_namespace | length > 0
+        fail_msg: >-
+          windows_golden_namespace is required (build + publish namespace).
+
+    - name: Assert windows_golden_admin_password is set
+      no_log: true
+      ansible.builtin.assert:
+        that:
+          - windows_golden_admin_password | length > 0
+        fail_msg: >-
+          windows_golden_admin_password is required
+          (build-VM Administrator / auto-logon password).
+
+    - name: Check virtctl is available
+      ansible.builtin.command: virtctl version --client
+      changed_when: false
+      failed_when: false
+      register: golden_virtctl_check
+
+    - name: Assert virtctl is on PATH
+      ansible.builtin.assert:
+        that:
+          - golden_virtctl_check.rc == 0
+        fail_msg: >-
+          virtctl not found on PATH. Install it (e.g. `oc adm` /
+          kubevirt release) and re-run.
+
+    - name: Check python3 vncdotool module is importable
+      ansible.builtin.command: python3 -c "import vncdotool"
+      changed_when: false
+      failed_when: false
+      register: golden_vncdotool_check
+
+    - name: Assert vncdotool is importable
+      ansible.builtin.assert:
+        that:
+          - golden_vncdotool_check.rc == 0
+        fail_msg: >-
+          python3 cannot import vncdotool (needed by autoboot.py over VNC).
+          Install it: pip install vncdotool
+
+    # --- Step 2: resolve a kubeconfig FILE for boot-vm.sh -----------------
+    - name: Assert K8S_AUTH env is present when rendering a kubeconfig
+      when: windows_golden_kubeconfig | length == 0
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'K8S_AUTH_HOST') | length > 0
+          - lookup('ansible.builtin.env', 'K8S_AUTH_API_KEY') | length > 0
+        fail_msg: >-
+          windows_golden_kubeconfig is empty and K8S_AUTH_HOST /
+          K8S_AUTH_API_KEY are not set; cannot build a kubeconfig for
+          virtctl/oc.
+
+    - name: Create a temp kubeconfig file
+      when: windows_golden_kubeconfig | length == 0
+      ansible.builtin.tempfile:
+        state: file
+        suffix: kubeconfig
+      register: golden_kubeconfig_tmp
+
+    - name: Render the temp kubeconfig
+      when: windows_golden_kubeconfig | length == 0
+      no_log: true
+      ansible.builtin.copy:
+        dest: "{{ golden_kubeconfig_tmp.path }}"
+        mode: "0600"
+        content: |
+          apiVersion: v1
+          kind: Config
+          clusters:
+            - name: golden-build
+              cluster:
+                server: {{ lookup('ansible.builtin.env', 'K8S_AUTH_HOST') }}
+                insecure-skip-tls-verify: false
+          users:
+            - name: golden-build
+              user:
+                token: {{ lookup('ansible.builtin.env', 'K8S_AUTH_API_KEY') }}
+          contexts:
+            - name: golden-build
+              context:
+                cluster: golden-build
+                user: golden-build
+          current-context: golden-build
+
+    - name: Resolve the kubeconfig path for boot-vm.sh
+      ansible.builtin.set_fact:
+        windows_golden_resolved_kubeconfig: >-
+          {{ windows_golden_kubeconfig
+             if windows_golden_kubeconfig | length > 0
+             else golden_kubeconfig_tmp.path }}
+
+    - name: Build and publish the Windows golden image
+      block:
+
+        # --- Step 3: preflight the source ISO DataVolume ------------------
+        - name: Look up the source installer ISO DataVolume
+          kubernetes.core.k8s_info:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_iso_dv }}"
+            namespace: "{{ windows_golden_iso_namespace }}"
+          register: golden_iso_dv
+
+        - name: Assert the source ISO DataVolume exists and is ready
+          ansible.builtin.assert:
+            that:
+              - golden_iso_dv.resources | length == 1
+              - golden_iso_dv.resources[0].status.phase == "Succeeded"
+            fail_msg: >-
+              Source ISO DataVolume {{ windows_golden_iso_dv }} in
+              {{ windows_golden_iso_namespace }} is missing or not Succeeded.
+
+        - name: Capture the source ISO storage request (clone size)
+          ansible.builtin.set_fact:
+            windows_golden_iso_size: >-
+              {{ golden_iso_dv.resources[0].spec.storage.resources.requests.storage
+                 | default(golden_iso_dv.resources[0].spec.pvc.resources.requests.storage) }}
+
+        # --- Step 4: clone the ISO into the build namespace ---------------
+        - name: Clone the installer ISO into the build namespace
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: cdi.kubevirt.io/v1beta1
+              kind: DataVolume
+              metadata:
+                name: "{{ windows_golden_installcd_dv }}"
+                namespace: "{{ windows_golden_namespace }}"
+                annotations:
+                  cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+                  cdi.kubevirt.io/storage.usePopulator: "true"
+              spec:
+                source:
+                  pvc:
+                    name: "{{ windows_golden_iso_dv }}"
+                    namespace: "{{ windows_golden_iso_namespace }}"
+                storage:
+                  storageClassName: "{{ windows_golden_iso_storage_class }}"
+                  resources:
+                    requests:
+                      storage: "{{ windows_golden_iso_size }}"
+
+        - name: Wait for the ISO clone to complete
+          kubernetes.core.k8s_info:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_installcd_dv }}"
+            namespace: "{{ windows_golden_namespace }}"
+          register: golden_clone_status
+          until:
+            - golden_clone_status.resources | length == 1
+            - golden_clone_status.resources[0].status.phase == "Succeeded"
+          retries: 60
+          delay: 30
+
+        # --- Step 5: render the autounattend answer file into a Secret ----
+        - name: Create the unattend Secret
+          no_log: true
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: "{{ windows_golden_unattend_secret }}"
+                namespace: "{{ windows_golden_namespace }}"
+              stringData:
+                autounattend.xml: "{{ lookup('ansible.builtin.template', 'templates/autounattend-server.xml.j2') }}"
+
+        # --- Step 6: create the STANDALONE golden root DataVolume ---------
+        # Build the storage spec so storageClassName is omitted (cluster default)
+        # when windows_golden_storage_class is empty.
+        - name: Build the golden root DV storage spec
+          ansible.builtin.set_fact:
+            windows_golden_root_storage: >-
+              {{
+                {'resources': {'requests': {'storage': windows_golden_disk_size}}}
+                | combine(
+                    {'storageClassName': windows_golden_storage_class}
+                    if windows_golden_storage_class | length > 0 else {}
+                  )
+              }}
+
+        - name: Create the standalone golden root DataVolume
+          # STANDALONE (not a dataVolumeTemplate): the VM must not own it so it
+          # survives VM deletion and becomes the published disk with zero
+          # capture-clone.
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: cdi.kubevirt.io/v1beta1
+              kind: DataVolume
+              metadata:
+                name: "{{ windows_golden_dv_name }}"
+                namespace: "{{ windows_golden_namespace }}"
+                annotations:
+                  cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+              spec:
+                source:
+                  blank: {}
+                storage: "{{ windows_golden_root_storage }}"
+
+        # --- Step 7: create the throwaway build VM -----------------------
+        - name: Create the build VM (runStrategy Manual)
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: kubevirt.io/v1
+              kind: VirtualMachine
+              metadata:
+                name: "{{ windows_golden_vm_name }}"
+                namespace: "{{ windows_golden_namespace }}"
+                labels:
+                  app.kubernetes.io/part-of: windows-golden-build
+                  windows-edition: "{{ windows_golden_edition }}"
+              spec:
+                # Manual: KubeVirt never auto-restarts. Guest reboots during
+                # Setup keep the VMI Running; only sysprep's /shutdown ends it,
+                # which is exactly our "install done" signal.
+                runStrategy: Manual
+                preference:
+                  kind: virtualmachineclusterpreference
+                  name: "{{ windows_golden_preference }}"
+                template:
+                  metadata:
+                    labels:
+                      kubevirt.io/domain: "{{ windows_golden_vm_name }}"
+                  spec:
+                    # Keep Windows VMs OFF the TrueNAS-hosted worker (nested virt
+                    # unsupported). Belt-and-suspenders with the HCO workloads
+                    # nodePlacement exclusion.
+                    affinity:
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                                - key: kubernetes.io/hostname
+                                  operator: NotIn
+                                  values:
+                                    # SHORT hostname — the node's
+                                    # kubernetes.io/hostname label is
+                                    # "truenas-w1", not the FQDN (verified on the
+                                    # live cluster; every other node uses its
+                                    # FQDN). FQDN here silently never matches, so
+                                    # the exclusion is a no-op. See README / #420.
+                                    - truenas-w1
+                    domain:
+                      cpu:
+                        cores: 1
+                        sockets: 2
+                        threads: 1
+                      memory:
+                        guest: 6Gi
+                      firmware:
+                        # secureBoot required for Windows 11 client install;
+                        # harmless for Server.
+                        bootloader:
+                          efi:
+                            secureBoot: true
+                      features:
+                        smm:
+                          enabled: true
+                        acpi: {}
+                      devices:
+                        # Non-persistent vTPM (satisfies Win 11 TPM 2.0 check).
+                        tpm: {}
+                        disks:
+                          - name: rootdisk
+                            bootOrder: 1
+                            disk:
+                              bus: sata
+                          - name: installcd
+                            bootOrder: 2
+                            cdrom:
+                              bus: sata
+                          - name: virtiodrivers
+                            cdrom:
+                              bus: sata
+                          - name: sysprep
+                            cdrom:
+                              bus: sata
+                        interfaces:
+                          - name: default
+                            masquerade: {}
+                            model: e1000e
+                    networks:
+                      - name: default
+                        pod: {}
+                    volumes:
+                      - name: rootdisk
+                        dataVolume:
+                          name: "{{ windows_golden_dv_name }}"
+                      - name: installcd
+                        persistentVolumeClaim:
+                          claimName: "{{ windows_golden_installcd_dv }}"
+                      - name: virtiodrivers
+                        containerDisk:
+                          image: registry.redhat.io/container-native-virtualization/virtio-win-rhel9@sha256:cc98b37978b84b5fe7127c08d52a09c8c136c61ae51085a3f3180e3e11275497
+                      - name: sysprep
+                        sysprep:
+                          # secret (not configMap): the rendered answer file
+                          # carries the Administrator password. The field is a
+                          # LocalObjectReference — `name`, NOT `secretName`
+                          # (the API silently drops unknown fields and the VM
+                          # ends up with an empty sysprep reference).
+                          secret:
+                            name: "{{ windows_golden_unattend_secret }}"
+
+        # --- Step 8: CD-boot the VM into Windows Setup -------------------
+        - name: CD-boot the build VM into Windows Setup
+          # boot-vm.sh power-cycles + drives autoboot.py over VNC to catch the
+          # "Press any key to boot from CD" prompt; self-bounds ~6 x 4 min.
+          ansible.builtin.command:
+            argv:
+              - bash
+              - "{{ playbook_dir }}/files/boot-vm.sh"
+              - "{{ windows_golden_vm_name }}"
+              - "{{ windows_golden_vnc_port }}"
+              - "{{ windows_golden_namespace }}"
+          environment:
+            KUBECONFIG: "{{ windows_golden_resolved_kubeconfig }}"
+          changed_when: true
+
+        # --- Step 9: wait for install -> generalize -> shutdown ----------
+        - name: Wait for the build VM to finish and power off (VMI Succeeded)
+          kubernetes.core.k8s_info:
+            api_version: kubevirt.io/v1
+            kind: VirtualMachineInstance
+            name: "{{ windows_golden_vm_name }}"
+            namespace: "{{ windows_golden_namespace }}"
+          register: golden_vmi_status
+          until:
+            - golden_vmi_status.resources | length == 1
+            - golden_vmi_status.resources[0].status.phase == "Succeeded"
+          retries: "{{ windows_golden_install_timeout_minutes | int }}"
+          delay: 60
+
+        # --- Step 10: publish -------------------------------------------
+        - name: Delete the build VM (standalone root DV survives)
+          kubernetes.core.k8s:
+            state: absent
+            api_version: kubevirt.io/v1
+            kind: VirtualMachine
+            name: "{{ windows_golden_vm_name }}"
+            namespace: "{{ windows_golden_namespace }}"
+            wait: true
+
+        - name: Publish the golden root disk as a DataSource
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: cdi.kubevirt.io/v1beta1
+              kind: DataSource
+              metadata:
+                name: "{{ windows_golden_dv_name }}"
+                namespace: "{{ windows_golden_namespace }}"
+                labels:
+                  instancetype.kubevirt.io/default-preference: "{{ windows_golden_preference }}"
+                  instancetype.kubevirt.io/default-instancetype: "{{ windows_golden_instancetype }}"
+              spec:
+                source:
+                  pvc:
+                    name: "{{ windows_golden_dv_name }}"
+                    namespace: "{{ windows_golden_namespace }}"
+
+        # --- Step 11: clean up build artifacts --------------------------
+        - name: Delete the installcd clone DataVolume
+          when: not (windows_golden_keep_build_artifacts | bool)
+          kubernetes.core.k8s:
+            state: absent
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_installcd_dv }}"
+            namespace: "{{ windows_golden_namespace }}"
+
+        - name: Delete the unattend Secret
+          when: not (windows_golden_keep_build_artifacts | bool)
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Secret
+            name: "{{ windows_golden_unattend_secret }}"
+            namespace: "{{ windows_golden_namespace }}"
+
+        # --- Step 12: report --------------------------------------------
+        - name: Report the published DataSource
+          ansible.builtin.debug:
+            msg:
+              - "Published DataSource {{ windows_golden_dv_name }} in namespace {{ windows_golden_namespace }}."
+              - "Consume it from a VM via a dataVolumeTemplate sourceRef:"
+              - "  sourceRef: {kind: DataSource, name: {{ windows_golden_dv_name }}, namespace: {{ windows_golden_namespace }}}"
+
+      always:
+        - name: Remove the temp kubeconfig
+          when: windows_golden_kubeconfig | length == 0
+          ansible.builtin.file:
+            path: "{{ golden_kubeconfig_tmp.path }}"
+            state: absent
+          ignore_errors: true  # noqa: ignore-errors best-effort cleanup
