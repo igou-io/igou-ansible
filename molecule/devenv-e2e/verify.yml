@@ -1,0 +1,370 @@
+---
+# Health verification of the deployed devenv host: docker up, the code-server
+# container running and ENFORCING auth (lands on the login page, forged cookie
+# bounced), devcontainer prerequisites present, the in-container test suite, the
+# code-server NodePort reachable from OUTSIDE the cluster, and core health
+# surviving a VM reboot. Still-future lab-contextual checks: devcontainer build
+# from source, `make e2e` in the guest, ghapp mint.
+
+- name: Verify the devenv host deployment health
+  hosts: devenv-devenv
+  gather_facts: false
+  vars:
+    # Login-page markers observed in the live code-server response. code-server
+    # 302-redirects an unauthenticated GET / to ./login; uri follows it (default
+    # follow_redirects: safe) and returns the login HTML, which carries the
+    # <title>code-server login</title> and a password <input name="password">.
+    # Asserting these (not just the substring 'code-server', which the
+    # authenticated workbench also contains) proves auth is actually enforced.
+    cs_login_title: code-server login
+    cs_password_input: name="password"
+  tasks:
+    - name: Collect service facts
+      ansible.builtin.service_facts:
+      become: true
+
+    - name: Assert the docker daemon is running
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['docker.service'].state == 'running'
+        fail_msg: docker.service is not running
+
+    - name: Assert the docker scratch disk is what backs /var/lib/docker
+      ansible.builtin.command:
+        cmd: findmnt -n -o SOURCE /var/lib/docker
+      register: __docker_mount
+      changed_when: false
+      failed_when: __docker_mount.rc != 0
+
+    - name: Inspect the code-server container
+      community.docker.docker_container_info:
+        name: igou-devenv-code-server
+      become: true
+      register: __cs_container
+
+    - name: Assert the code-server container is up
+      ansible.builtin.assert:
+        that:
+          - __cs_container.exists
+          - __cs_container.container.State.Running
+          - not __cs_container.container.State.Restarting
+        fail_msg: the igou-devenv-code-server container is not running
+
+    - name: Probe code-server over HTTPS (self-signed) until it answers
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        return_content: true
+      register: __cs_http
+      retries: 12
+      delay: 5
+      until: __cs_http.status == 200
+
+    - name: Assert the unauthenticated response is the code-server LOGIN page
+      ansible.builtin.assert:
+        that:
+          - cs_login_title in __cs_http.content
+          - cs_password_input in __cs_http.content
+        fail_msg: >-
+          port 8080 answered but did not serve the code-server login page —
+          authentication does not look enforced
+
+    # A forged session cookie must NOT be accepted: code-server bounces it back
+    # to the login page rather than serving the workbench. We assert the login
+    # marker is present (equivalently: the workbench was NOT served) without ever
+    # learning the real password — the point is only that auth is enforced.
+    - name: Probe code-server with a forged session cookie
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        return_content: true
+        headers:
+          Cookie: code-server-session=forged-not-a-real-token
+      register: __cs_forged
+
+    - name: Assert the forged cookie is bounced to the login page
+      ansible.builtin.assert:
+        that:
+          - cs_password_input in __cs_forged.content
+        fail_msg: >-
+          a forged session cookie was not sent to the login page — code-server
+          is serving the workbench without valid credentials
+
+    - name: Check the devcontainer CLI is installed for the login user
+      ansible.builtin.command:
+        cmd: ~/.local/bin/devcontainer --version
+      register: __devcontainer_cli
+      changed_when: false
+
+    - name: Check the igou-devenv repo clone
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir | default('/home/igou') }}/igou-devenv/.git"
+      register: __devenv_repo
+
+    - name: Assert devcontainer prerequisites are in place
+      ansible.builtin.assert:
+        that:
+          - __devcontainer_cli.rc == 0
+          - __devenv_repo.stat.exists
+          - __devenv_repo.stat.isdir
+        fail_msg: devcontainer CLI or the igou-devenv clone is missing
+
+# In-container acceptance: run the repo's OWN checks inside the running
+# devcontainer (each make target docker-execs via `devcontainer exec`). The
+# container is named igou-devenv (its runArgs --name). test-tools proves the
+# toolchain baked into the published image; test-podman is the load-bearing one
+# — pull/run/build with nested rootless podman, the exact primitive the
+# --privileged / user-namespace host prereqs exist to enable. test-env / test-ssh
+# (need 1Password) are out of scope; test-qemu / test-sandbox-primitives (need
+# nested KVM) are not hard requirements here — test-qemu runs informational-only.
+- name: Verify the devcontainer's own test suite passes in-container
+  hosts: devenv-devenv
+  gather_facts: true
+  vars:
+    devenv_dir: "{{ ansible_user_dir }}/igou-devenv"
+    # make test-* shell out to `devcontainer exec`, which lives in ~/.local/bin;
+    # a non-login Ansible SSH shell doesn't have it on PATH. Applied per task
+    # (not play-level) so it isn't templated against the implicit fact-gathering
+    # task, which runs before ansible_env/ansible_user_dir exist.
+    devenv_path: "{{ ansible_user_dir }}/.local/bin:{{ ansible_env.PATH }}"
+  tasks:
+    - name: Inspect the devcontainer container
+      community.docker.docker_container_info:
+        name: igou-devenv
+      become: true
+      register: __devcontainer
+
+    - name: Assert the devcontainer container is running
+      ansible.builtin.assert:
+        that:
+          - __devcontainer.exists
+          - __devcontainer.container.State.Running
+          - not __devcontainer.container.State.Restarting
+        fail_msg: the igou-devenv devcontainer is not running
+
+    - name: Run the in-container tool suite (make test-tools)
+      ansible.builtin.command:
+        cmd: make test-tools
+        chdir: "{{ devenv_dir }}"
+      environment:
+        PATH: "{{ devenv_path }}"
+      register: __test_tools
+      changed_when: false
+
+    - name: Run the in-container nested-podman suite (make test-podman)
+      ansible.builtin.command:
+        cmd: make test-podman
+        chdir: "{{ devenv_dir }}"
+      environment:
+        PATH: "{{ devenv_path }}"
+      register: __test_podman
+      changed_when: false
+
+    - name: Run the in-container qemu suite (informational — kvm may be absent)
+      ansible.builtin.command:
+        cmd: make test-qemu
+        chdir: "{{ devenv_dir }}"
+      environment:
+        PATH: "{{ devenv_path }}"
+      register: __test_qemu
+      changed_when: false
+      failed_when: false
+
+    - name: Report the informational qemu result
+      ansible.builtin.debug:
+        msg: >-
+          make test-qemu rc={{ __test_qemu.rc }} (informational, non-fatal —
+          nested KVM is not required by this scenario)
+
+# External reachability: prove code-server is answering through the NodePort
+# service converge created, from OUTSIDE the VM. Runs on the controller (which
+# reaches cluster node InternalIPs directly — that is how molecule SSHes to the
+# VM). The nodePort is cluster-allocated (converge pins nothing), so discover it
+# and a node InternalIP from the API — the ansible-molecule SA can list both
+# nodes and namespaced Services — then probe and re-assert the login page.
+- name: Verify code-server is reachable from outside the cluster via NodePort
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    devenv_e2e_namespace: molecule
+    devenv_e2e_cs_service: devenv-devenv-code-server
+    cs_login_title: code-server login
+    cs_password_input: name="password"
+  tasks:
+    - name: Look up the code-server NodePort service
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: "{{ devenv_e2e_cs_service }}"
+        namespace: "{{ devenv_e2e_namespace }}"
+      register: __cs_svc
+
+    - name: Assert the NodePort service exists with an allocated nodePort
+      ansible.builtin.assert:
+        that:
+          - __cs_svc.resources | length == 1
+          - (__cs_svc.resources[0].spec.ports[0].nodePort | default(0)) | int > 0
+        fail_msg: the code-server NodePort service is missing or has no nodePort
+
+    - name: Look up cluster nodes for an InternalIP
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+      register: __cs_nodes
+
+    - name: Resolve the code-server nodePort and a reachable node InternalIP
+      ansible.builtin.set_fact:
+        __cs_nodeport: "{{ __cs_svc.resources[0].spec.ports[0].nodePort }}"
+        __cs_node_ip: >-
+          {{ (__cs_nodes.resources[0].status.addresses
+              | selectattr('type', 'equalto', 'InternalIP')
+              | map(attribute='address') | first) }}
+
+    - name: Probe code-server over the NodePort until it answers
+      ansible.builtin.uri:
+        url: "https://{{ __cs_node_ip }}:{{ __cs_nodeport }}/"
+        validate_certs: false
+        return_content: true
+      register: __cs_ext
+      retries: 12
+      delay: 5
+      until: __cs_ext.status == 200
+
+    - name: Assert the external NodePort probe lands on the login page
+      ansible.builtin.assert:
+        that:
+          - cs_login_title in __cs_ext.content
+          - cs_password_input in __cs_ext.content
+        fail_msg: >-
+          the code-server NodePort answered but did not serve the login page
+
+# Reboot resilience — LAST on purpose: a reboot is destructive and slow, so a
+# failure here must not poison the health results above. Reboot the KubeVirt VM,
+# then re-assert the core health set survives: docker back up, the scratch disk
+# still mounted at /var/lib/docker (its fstab entry, written by prepare with
+# state: mounted, must persist), and the standalone code-server container
+# (restart_policy: unless-stopped) back and enforcing auth on :8080. The
+# devcontainer (make up-release) is verified to NOT return: its restart policy
+# is 'no' (devcontainer CLI default), so a host reboot leaves it stopped —
+# restarting it is the developer's job (re-run `make up-release`, which is what
+# cursor/make do). We assert that reality rather than wishing it back, then
+# perform that exact developer step so the host is left converged and verify is
+# re-runnable end-to-end (a second `molecule verify` finds the devcontainer up).
+- name: Verify core health survives a VM reboot
+  hosts: devenv-devenv
+  # Facts feed the make up-release PATH below; gathered pre-reboot, still valid
+  # after (user home / PATH don't change across a reboot).
+  gather_facts: true
+  vars:
+    devenv_dir: "{{ ansible_user_dir }}/igou-devenv"
+    cs_login_title: code-server login
+    cs_password_input: name="password"
+  tasks:
+    # The only mutating task in verify — reboot is inherently a change, so it is
+    # honestly reported as changed rather than masked with changed_when.
+    - name: Reboot the KubeVirt VM and wait for it to come back
+      ansible.builtin.reboot:
+        # Generous: this is a full KubeVirt VM boot, not a container restart.
+        reboot_timeout: 600
+      become: true
+
+    - name: Wait for docker to be running again after the reboot
+      ansible.builtin.service_facts:
+      register: __svc_post
+      until: >-
+        __svc_post.ansible_facts.services['docker.service'].state | default('')
+        == 'running'
+      retries: 12
+      delay: 5
+      become: true
+
+    - name: Assert the scratch disk is still mounted at /var/lib/docker
+      ansible.builtin.command:
+        cmd: findmnt -n -o SOURCE /var/lib/docker
+      register: __docker_mount_post
+      changed_when: false
+      failed_when: __docker_mount_post.rc != 0
+
+    - name: Probe code-server over HTTPS after the reboot until it answers
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        return_content: true
+      register: __cs_http_post
+      retries: 24
+      delay: 5
+      until: __cs_http_post.status == 200
+
+    - name: Assert code-server serves the login page after the reboot
+      ansible.builtin.assert:
+        that:
+          - cs_login_title in __cs_http_post.content
+          - cs_password_input in __cs_http_post.content
+        fail_msg: code-server did not come back on the login page after reboot
+
+    - name: Inspect the code-server container after the reboot
+      community.docker.docker_container_info:
+        name: igou-devenv-code-server
+      become: true
+      register: __cs_container_post
+
+    - name: Assert the code-server container auto-restarted (unless-stopped)
+      ansible.builtin.assert:
+        that:
+          - __cs_container_post.exists
+          - __cs_container_post.container.State.Running
+          - not __cs_container_post.container.State.Restarting
+          - __cs_container_post.container.HostConfig.RestartPolicy.Name == 'unless-stopped'
+        fail_msg: the code-server container did not come back after reboot
+
+    - name: Inspect the devcontainer after the reboot
+      community.docker.docker_container_info:
+        name: igou-devenv
+      become: true
+      register: __devcontainer_post
+
+    # The devcontainer is deliberately NOT expected back: `devcontainer up` gives
+    # it restart policy 'no', so a host reboot leaves it stopped-but-present. The
+    # real developer workflow restarts it by re-running `make up-release` (what
+    # cursor/make do), so we assert the honest post-reboot state, not a wish.
+    - name: Assert the devcontainer did NOT auto-restart (restart policy 'no')
+      ansible.builtin.assert:
+        that:
+          - __devcontainer_post.exists
+          - not __devcontainer_post.container.State.Running
+          - __devcontainer_post.container.HostConfig.RestartPolicy.Name == 'no'
+        fail_msg: >-
+          the igou-devenv devcontainer state after reboot is unexpected — it
+          should be present but stopped (restart policy 'no'); rerun
+          `make up-release` to bring it back
+
+    # Perform the developer's own recovery step: bring the devcontainer back with
+    # make up-release (the same path converge used). This both mirrors the real
+    # workflow (a host reboot means you re-run make up-release) and leaves the VM
+    # in the converged state, so a subsequent `molecule verify` — whose earlier
+    # play asserts the devcontainer is running — passes. The post-reboot SSH
+    # session is fresh, so igou's docker group membership is already in effect
+    # (no reset_connection needed, unlike converge's mid-session group add).
+    - name: Restore the devcontainer with make up-release (developer recovery)
+      ansible.builtin.command:
+        cmd: make up-release
+        chdir: "{{ devenv_dir }}"
+      environment:
+        PATH: "{{ ansible_user_dir }}/.local/bin:{{ ansible_env.PATH }}"
+      register: __up_release_post
+      changed_when: true
+
+    - name: Inspect the restored devcontainer
+      community.docker.docker_container_info:
+        name: igou-devenv
+      become: true
+      register: __devcontainer_restored
+
+    - name: Assert the devcontainer is running again after make up-release
+      ansible.builtin.assert:
+        that:
+          - __devcontainer_restored.exists
+          - __devcontainer_restored.container.State.Running
+          - not __devcontainer_restored.container.State.Restarting
+        fail_msg: make up-release did not bring the devcontainer back after reboot

@@ -1,0 +1,85 @@
+---
+# devenv-e2e: live end-to-end test of the devenv host lifecycle on a real
+# KubeVirt VM via david_igou.molecule_provisioners.
+#
+# The provisioner replaces phase 1 (playbooks/devenv/provision-vm.yml) with a
+# throwaway molecule VM; converge then runs the REAL phase-2 playbook
+# (playbooks/devenv/bootstrap.yml — david_igou.devhost roles, repo clone,
+# code-server container from the published image) unmodified, THEN brings up the
+# real devcontainer from the published image via the repo's own `make up-release`
+# path, then exposes code-server through a NodePort service. verify asserts
+# deployment health (docker up, the igou-devenv-code-server container running,
+# code-server answering HTTPS on 8080 AND enforcing auth — lands on the login
+# page, a forged session cookie is bounced — devcontainer prerequisites in
+# place), runs the devcontainer image's OWN test suite in-container
+# (`make test-tools` and `make test-podman`, nested rootless podman), probes
+# code-server from OUTSIDE the cluster over the NodePort, and finally reboots the
+# VM to prove core health (docker, the scratch-disk mount, the auto-restarting
+# code-server container) survives — the devcontainer intentionally does not
+# auto-restart (restart policy 'no'; re-run `make up-release`).
+#
+# Scope (for now): end-to-end deploy + health + auth-enforcement + devcontainer
+# up from the published image + in-container tool/podman tests + external
+# NodePort reachability + reboot resilience. Intended to grow more lab-contextual
+# over time (devcontainer build from source, full `make e2e` in the guest, ghapp
+# gate, in-container qemu once nested KVM is available). The `idempotence` step
+# runs: a second converge is change-free except `make up-release`, which is
+# tagged molecule-idempotence-notest (devcontainer up reuses the running
+# container but offers no created-vs-reused marker to key changed_when on).
+#
+# COST: the reboot verify play adds several minutes (a full KubeVirt VM boot plus
+# code-server re-warm) on top of the already-long converge; budget accordingly.
+#
+# Requirements to run:
+#   - KUBECONFIG for a principal with VM + Service CRUD and node reads in the
+#     `molecule` namespace (the `ansible-molecule` SA:
+#     op://claude/ocp-ansible-molecule/token, host api.ocp.igou.systems:6443)
+#   - a kubevirt-schedulable worker with ~8Gi free (the VM is deliberately
+#     NOT pinned to the casval burst node, so tenant workers qualify)
+#   - VM egress to github.com (repo clone) and ghcr.io (image pull)
+#   - no 1Password needed: the ghapp gate stays off (devenv_ghapp_enabled=false)
+#
+# Run:  molecule test -s devenv-e2e
+prerun: false
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: molecule/devenv-e2e/collections.yml
+    force: true
+
+ansible:
+  cfg:
+    defaults:
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here — otherwise the
+      # dependency step installs into ${MOLECULE_PROJECT_DIRECTORY}/.ansible
+      # while runtime resolution falls back to a stale ~/.ansible copy.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
+  executor:
+    args:
+      ansible_playbook:
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  name: devenv-e2e
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy
+
+verifier:
+  name: ansible

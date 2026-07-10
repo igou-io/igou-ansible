@@ -1,0 +1,25 @@
+---
+# Scenario-local teardown FIRST: the provisioner's destroy (imported below) only
+# removes what IT created — the VM and its SSH NodePort service — so the
+# code-server NodePort that converge added is ours to clean up. state: absent is
+# idempotent: a no-op when the service (or the whole namespace) is already gone.
+# The ansible-molecule SA can delete namespaced Services but cannot read
+# namespaces, so we target the Service directly rather than the namespace.
+- name: Tear down the scenario-local code-server NodePort service
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    devenv_e2e_namespace: molecule
+    devenv_e2e_cs_service: devenv-devenv-code-server
+  tasks:
+    - name: Delete the code-server NodePort service
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Service
+        name: "{{ devenv_e2e_cs_service }}"
+        namespace: "{{ devenv_e2e_namespace }}"
+
+- name: Tear down molecule instances
+  import_playbook: david_igou.molecule_provisioners.destroy

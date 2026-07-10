@@ -1,0 +1,23 @@
+---
+# Test-only dependencies for this scenario. david_igou.molecule_provisioners
+# is deliberately kept out of the main requirements.yml so it never lands in
+# EE images; devhost is pinned here too so the scenario controls exactly what
+# it tests against.
+collections:
+  # Pinned to the data_volume_source_ref squash-merge (molecule_provisioners
+  # PR #54) — the golden-image boot below needs it. Re-pin to the released
+  # 0.0.5-alpha once a release is cut.
+  - name: https://github.com/david-igou/ansible-collection-molecule_provisioners.git
+    type: git
+    version: 3ad3a091bf4687e26d8b0988c800f9cd1f8efc43
+  - name: https://github.com/david-igou/ansible-collection-devhost.git
+    type: git
+    version: 27.1.3
+  - name: kubernetes.core
+    version: ">=5.0.0"
+  - name: community.general
+    version: ">=10.0.0"
+  - name: community.docker
+    version: ">=4.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0"
