@@ -87,7 +87,7 @@ pick a backend with `PROVISIONER`:
 |---|---|---|
 | `podman` (default) | systemd containers, cgroup-capped at 512m | Broken in the igou devcontainer (nested rootless podman has no cgroup delegation) — use `docker` there |
 | `docker` | same containers via host-side docker | Enforces the memory cap everywhere |
-| `kubevirt` | real 512MiB VMs (`quay.io/containerdisks/debian:12`) on the cluster | Needs a `KUBECONFIG` with VM + Service CRUD in the `molecule` namespace (ansible-molecule SA: `op://claude/ocp-ansible-molecule/token`). The zram/sysctl metal paths genuinely run, and the VM has a virtual display |
+| `kubevirt` | real 512MiB VMs on the cluster (`containerdisks/debian:12` for chromium, `debian:13` + virtio display for cog) | Needs a `KUBECONFIG` with VM + Service CRUD in the `molecule` namespace (ansible-molecule SA: `op://claude/ocp-ansible-molecule/token`). The zram/sysctl metal paths genuinely run, and the VMs have virtual displays |
 
 ### Render testing (run without destroy)
 

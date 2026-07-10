@@ -23,9 +23,9 @@ Environment=LIBSEAT_BACKEND=seatd
 # refuses to start a capable-but-not-setuid process ("Unexpected
 # capabilities but not setuid"). The browser needs no caps - drop them all.
 CapabilityBoundingSet=
-{% for k, v in (kiosk_cog_env | default({})) | dictsort %}
-# Extra env from kiosk_cog_env (e.g. WEBKIT_DISABLE_* on virtual GPUs).
-Environment={{ k }}={{ v }}
+{# Extra env from kiosk_cog_env (e.g. WEBKIT_DISABLE_* on virtual GPUs). #}
+{% for k, v in _kiosk_cog_env | dictsort %}
+Environment="{{ k }}={{ v }}"
 {% endfor %}
 {% if kiosk_drm_video_mode | default('') %}
 Environment=COG_PLATFORM_DRM_VIDEO_MODE={{ kiosk_drm_video_mode }}

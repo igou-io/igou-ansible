@@ -12,6 +12,7 @@ mp_backend: "{{ lookup('env', 'PROVISIONER') | default('podman', true) }}"
 # podman there has no cgroup delegation, so it cannot boot systemd containers
 # and silently ignores --memory. Docker runs host-side and enforces both.
 # PROVISIONER=kubevirt works from anywhere with a KUBECONFIG (see below).
+# Containerdisk pull + first boot can exceed the collection's 120s default.
 mp_kubevirt_wait_timeout: 600
 mp_defaults:
   podman:
@@ -41,8 +42,9 @@ mp_defaults:
   # a containerdisk (no CDI/storage needed). Needs a KUBECONFIG with VM +
   # Service CRUD in the `molecule` namespace (the ansible-molecule SA:
   # op://claude/ocp-ansible-molecule/token, host api.ocp.igou.systems:6443).
-  # Unlike containers and headless qemu, the VM gets a virtual display -
-  # `virtctl vnc -n molecule <host>` shows what actually renders.
+  # Unlike containers (and the retired headless-qemu backend), the VM gets
+  # a virtual display - `virtctl vnc -n molecule <host>` shows what
+  # actually renders.
   kubevirt:
     boot_source:
       type: container_disk
