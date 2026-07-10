@@ -74,3 +74,70 @@
           - __devenv_repo.stat.exists
           - __devenv_repo.stat.isdir
         fail_msg: devcontainer CLI or the igou-devenv clone is missing
+
+# In-container acceptance: run the repo's OWN checks inside the running
+# devcontainer (each make target docker-execs via `devcontainer exec`). The
+# container is named igou-devenv (its runArgs --name). test-tools proves the
+# toolchain baked into the published image; test-podman is the load-bearing one
+# — pull/run/build with nested rootless podman, the exact primitive the
+# --privileged / user-namespace host prereqs exist to enable. test-env / test-ssh
+# (need 1Password) are out of scope; test-qemu / test-sandbox-primitives (need
+# nested KVM) are not hard requirements here — test-qemu runs informational-only.
+- name: Verify the devcontainer's own test suite passes in-container
+  hosts: devenv-devenv
+  gather_facts: true
+  vars:
+    devenv_dir: "{{ ansible_user_dir }}/igou-devenv"
+    # make test-* shell out to `devcontainer exec`, which lives in ~/.local/bin;
+    # a non-login Ansible SSH shell doesn't have it on PATH. Applied per task
+    # (not play-level) so it isn't templated against the implicit fact-gathering
+    # task, which runs before ansible_env/ansible_user_dir exist.
+    devenv_path: "{{ ansible_user_dir }}/.local/bin:{{ ansible_env.PATH }}"
+  tasks:
+    - name: Inspect the devcontainer container
+      community.docker.docker_container_info:
+        name: igou-devenv
+      become: true
+      register: __devcontainer
+
+    - name: Assert the devcontainer container is running
+      ansible.builtin.assert:
+        that:
+          - __devcontainer.exists
+          - __devcontainer.container.State.Running
+          - not __devcontainer.container.State.Restarting
+        fail_msg: the igou-devenv devcontainer is not running
+
+    - name: Run the in-container tool suite (make test-tools)
+      ansible.builtin.command:
+        cmd: make test-tools
+        chdir: "{{ devenv_dir }}"
+      environment:
+        PATH: "{{ devenv_path }}"
+      register: __test_tools
+      changed_when: false
+
+    - name: Run the in-container nested-podman suite (make test-podman)
+      ansible.builtin.command:
+        cmd: make test-podman
+        chdir: "{{ devenv_dir }}"
+      environment:
+        PATH: "{{ devenv_path }}"
+      register: __test_podman
+      changed_when: false
+
+    - name: Run the in-container qemu suite (informational — kvm may be absent)
+      ansible.builtin.command:
+        cmd: make test-qemu
+        chdir: "{{ devenv_dir }}"
+      environment:
+        PATH: "{{ devenv_path }}"
+      register: __test_qemu
+      changed_when: false
+      failed_when: false
+
+    - name: Report the informational qemu result
+      ansible.builtin.debug:
+        msg: >-
+          make test-qemu rc={{ __test_qemu.rc }} (informational, non-fatal —
+          nested KVM is not required by this scenario)

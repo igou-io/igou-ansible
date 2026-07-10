@@ -5,16 +5,20 @@
 # The provisioner replaces phase 1 (playbooks/devenv/provision-vm.yml) with a
 # throwaway molecule VM; converge then runs the REAL phase-2 playbook
 # (playbooks/devenv/bootstrap.yml — david_igou.devhost roles, repo clone,
-# code-server container from the published image) unmodified, and verify
-# asserts deployment health: docker up, the igou-devenv-code-server container
-# running, code-server answering HTTPS on 8080, devcontainer prerequisites in
-# place.
+# code-server container from the published image) unmodified, THEN brings up the
+# real devcontainer from the published image via the repo's own `make up-release`
+# path. verify asserts deployment health (docker up, the igou-devenv-code-server
+# container running, code-server answering HTTPS on 8080, devcontainer
+# prerequisites in place) and runs the devcontainer image's OWN test suite
+# in-container: `make test-tools` and `make test-podman` (nested rootless podman).
 #
-# Scope (for now): end-to-end deploy + health. Intended to grow more
-# lab-contextual over time (devcontainer build, `make e2e` in the guest,
-# ghapp gate, NodePort reachability). `idempotence` is intentionally not in
-# the sequence yet — bootstrap's docker_container pull=true and the mise
-# bootstrap paths are not proven change-free on a second pass.
+# Scope (for now): end-to-end deploy + health + devcontainer up from the
+# published image + in-container tool/podman tests. Intended to grow more
+# lab-contextual over time (devcontainer build from source, full `make e2e` in
+# the guest, ghapp gate, in-container qemu once nested KVM is available, NodePort
+# reachability). `idempotence` is intentionally not in the sequence yet —
+# bootstrap's docker_container pull=true and the mise bootstrap paths are not
+# proven change-free on a second pass.
 #
 # Requirements to run:
 #   - KUBECONFIG for a principal with VM + Service CRUD and node reads in the

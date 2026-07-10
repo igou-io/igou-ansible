@@ -44,3 +44,61 @@
         src: "{{ __docker_disk }}"
         fstype: xfs
         state: mounted
+
+    # Devcontainer host preflight. The igou-devenv devcontainer runs --privileged
+    # with --device=/dev/fuse, --device=/dev/net/tun and --network=host (see
+    # .devcontainer/devcontainer.json), and its nested rootless podman needs
+    # unprivileged user namespaces. Fail fast on a missing host prerequisite here
+    # — otherwise it surfaces as a confusing devcontainer-up or test-podman error
+    # two plays later. /dev/kvm is only needed for the in-container qemu /
+    # molecule-provisioner path (make test-qemu), which this scenario does not
+    # hard-require, so its absence is a soft warning, not a failure.
+    - name: Load the tun module the devcontainer's --device=/dev/net/tun needs
+      community.general.modprobe:
+        name: tun
+        state: present
+
+    - name: Stat the character devices the devcontainer binds
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /dev/fuse
+        - /dev/net/tun
+      register: __devenv_chardevs
+
+    - name: Assert /dev/fuse and /dev/net/tun are present character devices
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.ischr
+        fail_msg: "{{ item.item }} is missing — the devcontainer cannot bind it"
+      loop: "{{ __devenv_chardevs.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read the user-namespace limit (nested rootless podman needs it)
+      ansible.builtin.command:
+        cmd: sysctl -n user.max_user_namespaces
+      register: __devenv_userns
+      changed_when: false
+
+    - name: Assert unprivileged user namespaces are enabled
+      ansible.builtin.assert:
+        that:
+          - __devenv_userns.stdout | int > 0
+        fail_msg: >-
+          user.max_user_namespaces is {{ __devenv_userns.stdout }} — rootless
+          podman inside the devcontainer needs unprivileged user namespaces
+
+    - name: Check for /dev/kvm (nested virt — gates the in-container qemu path)
+      ansible.builtin.stat:
+        path: /dev/kvm
+      register: __devenv_kvm
+
+    - name: Warn when /dev/kvm is absent (non-fatal)
+      ansible.builtin.debug:
+        msg: >-
+          /dev/kvm is not present on this VM — nested virtualization is off, so
+          the devcontainer's qemu / molecule-provisioner workflows (make
+          test-qemu) will not work. Non-fatal for this scenario.
+      when: not __devenv_kvm.stat.exists

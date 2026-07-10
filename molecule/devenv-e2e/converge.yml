@@ -6,3 +6,48 @@
 # default, so no 1Password access is needed during converge.
 - name: Converge via the production devenv bootstrap playbook
   ansible.builtin.import_playbook: ../../playbooks/devenv/bootstrap.yml
+
+# With the host bootstrapped, bring up the REAL devcontainer from the published
+# image via the repo's own `make up-release` path (pull ghcr.io/igou-io/igou-devenv,
+# derive an image-based devcontainer.json on the fly with jq, `devcontainer up`).
+# This is the artifact the whole scenario exists to exercise: not just a
+# standalone code-server container, but the full --privileged / --network=host
+# devcontainer with nested rootless podman. bootstrap already pulled the same
+# image for its code-server container, so up-release re-tags from docker's cache
+# rather than re-pulling.
+- name: Bring up the devcontainer from the published image
+  hosts: devenv-devenv
+  gather_facts: true
+  vars:
+    devenv_dir: "{{ ansible_user_dir }}/igou-devenv"
+  tasks:
+    # The devhost docker role adds igou to the docker group during bootstrap, but
+    # the persistent SSH connection was opened before that; reset it so this play
+    # picks up the new group and `docker`/`devcontainer` work without sudo (the
+    # Makefile drives docker as the igou user, matching the container user mapping).
+    - name: Reset the connection so the new docker group membership applies
+      ansible.builtin.meta: reset_connection
+
+    # `make up-release` runs initializeCommand (.devcontainer/init.sh) first, which
+    # pre-creates every bind-mount source under ~ — all the directory mounts plus
+    # the two FILE mounts (~/.claude.json, ~/.gitconfig) so docker doesn't
+    # materialize a missing file source as a directory and break the mount. On this
+    # VM init.sh covers every mount in devcontainer.json, so there is nothing extra
+    # to seed here; 1Password is out of scope, so init.sh's empty ~/.config/op is
+    # exactly what we want. GITHUB_TOKEN stays unset on purpose — up-release's jq
+    # drops the whole build block (`del(.build)`), so devcontainer.json's
+    # ${localEnv:GITHUB_TOKEN} build-arg is never templated and an empty token is a
+    # no-op. code-server port 8080 does NOT collide: bootstrap's standalone
+    # container already publishes 8080 on the host, and the devcontainer runs
+    # --network=host, so its post-start sees :8080 already listening (via ss) and
+    # skips launching its own code-server — the standalone container keeps 8080.
+    - name: Start the devcontainer from the published image (make up-release)
+      ansible.builtin.command:
+        cmd: make up-release
+        chdir: "{{ devenv_dir }}"
+      environment:
+        # devcontainer + npm-global binaries land in ~/.local/bin, which a
+        # non-login Ansible SSH shell doesn't have on PATH; jq is in /usr/bin.
+        PATH: "{{ ansible_user_dir }}/.local/bin:{{ ansible_env.PATH }}"
+      register: __up_release
+      changed_when: true
