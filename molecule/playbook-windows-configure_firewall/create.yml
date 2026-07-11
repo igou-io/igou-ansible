@@ -1,0 +1,61 @@
+---
+# Create = preflight gate -> render sysprep Secret -> provision the VM.
+#
+# Play 1 fails fast on a broken environment so a multi-minute Windows clone +
+# boot never starts against missing auth/creds. Play 2 (shared plumbing) renders
+# the per-host sysprep Secret BEFORE play 3 starts the VM — KubeVirt boots the
+# clone immediately and Windows OOBE consumes the sysprep media at first boot.
+- name: Create — preflight gates for the configure_firewall scenario
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    configure_firewall_namespace: molecule
+  tasks:
+    - name: Assert cluster auth env vars are present
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'K8S_AUTH_HOST') | length > 0
+          - lookup('ansible.builtin.env', 'K8S_AUTH_API_KEY') | length > 0
+        fail_msg: >-
+          K8S_AUTH_HOST and K8S_AUTH_API_KEY must be set. See the molecule.yml
+          header run recipe (export the ocp-ansible-molecule SA token).
+        success_msg: Cluster auth env vars present.
+
+    - name: Assert the Windows admin password env var is present
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') | length > 0
+        fail_msg: >-
+          MOLECULE_WINDOWS_ADMIN_PASSWORD must be set — the sysprep unattend
+          assigns it to the local admin and psrp authenticates with it.
+          Source: op read op://lab_agents/windows-administrator/password
+        success_msg: Windows admin password env var present.
+      no_log: true
+
+    - name: Prove auth works — list VirtualMachines in the molecule namespace
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        namespace: "{{ configure_firewall_namespace }}"
+      register: _molecule_vms
+
+    - name: Assert the molecule-namespace query succeeded
+      ansible.builtin.assert:
+        that:
+          - _molecule_vms is not failed
+        fail_msg: >-
+          Could not list VirtualMachines in namespace
+          "{{ configure_firewall_namespace }}" — check the ocp-ansible-molecule
+          ServiceAccount token/RBAC.
+        success_msg: >-
+          Authenticated to the cluster; can read the
+          "{{ configure_firewall_namespace }}" namespace.
+
+# Render the per-host sysprep Secret (<host>-sysprep) BEFORE the VM starts.
+- name: Create — render Windows sysprep specialization Secrets
+  ansible.builtin.import_playbook: ../shared/playbooks/windows-sysprep-secrets.yml
+
+# Provision the VM(s) + NodePort service and write the runtime psrp inventory.
+- name: Create — provision molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.create

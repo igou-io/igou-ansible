@@ -1,0 +1,47 @@
+---
+# Converge = run the REAL playbook unmodified against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: the real playbook targets
+# `{{ ansible_limit | default('windows') }}`, and a pattern that matches zero
+# hosts would "pass" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the imported playbook would
+          match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# The real playbook. It exercises all three cases:
+#   * a created group (AppTesters),
+#   * a present user (moluser) that is a member of Administrators AND AppTesters,
+#   * an absent user (molgone) that prepare pre-created, so its removal is a REAL
+#     present -> absent transition (not a no-op).
+# moluser's password is the same complexity-satisfying value the sysprep admin
+# uses; verify later logs in AS moluser to prove that password actually works.
+# The win_user task is no_log in the playbook, so the password never surfaces.
+- name: Converge — run playbooks/windows/manage_local_users.yaml unmodified
+  ansible.builtin.import_playbook: ../../playbooks/windows/manage_local_users.yaml
+  vars:
+    windows_local_groups:
+      - name: AppTesters
+        description: Accounts used for automated application testing
+    windows_local_users:
+      - name: moluser
+        password: "{{ lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') }}"
+        fullname: Molecule Test User
+        description: Molecule-managed local admin
+        groups:
+          - Administrators
+          - AppTesters
+        state: present
+      - name: molgone
+        state: absent

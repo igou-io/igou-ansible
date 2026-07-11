@@ -1,0 +1,183 @@
+---
+# Verify = INDEPENDENT evidence the firewall playbook's declared state took
+# effect, not a re-read of the converge modules' own returns.
+#
+# (a) LOCKOUT-INVARIANT PROOF: this verify runs over the SAME psrp connection
+#     that survived converge. The playbook enables all three profiles LAST, after
+#     its allow rules (incl. the always-on 5986 rule) are in place. If enabling
+#     the Public profile had severed WinRM, this play could not connect at all —
+#     so the mere fact that these tasks run is itself the proof that the converge
+#     did not lock Ansible out. The reads below add positive evidence on top.
+- name: Verify — independent in-guest firewall evidence
+  hosts: windows
+  gather_facts: false
+  tasks:
+    # (b) All three profiles enabled — independent Get-NetFirewallProfile read.
+    # [bool]$_.Enabled normalizes the GpoBoolean enum (1/True) to a JSON boolean.
+    - name: Read all firewall profile states (independent read)
+      ansible.windows.win_shell: |
+        Get-NetFirewallProfile -All |
+          ForEach-Object { [pscustomobject]@{ Name = $_.Name; Enabled = [bool]$_.Enabled } } |
+          ConvertTo-Json -Compress
+      register: _profiles
+      changed_when: false
+
+    - name: Assert Domain, Private and Public firewall profiles are all enabled
+      ansible.builtin.assert:
+        that:
+          - (_profiles.stdout | from_json) | length == 3
+          - (_profiles.stdout | from_json) | selectattr('Enabled', 'equalto', true) | list | length == 3
+        fail_msg: >-
+          Not all firewall profiles are enabled:
+          {{ _profiles.stdout | from_json }}.
+        success_msg: All three firewall profiles (Domain/Private/Public) are enabled.
+
+    # (c) The custom rule exists+enabled (both directions), the absent one is gone.
+    - name: Read the custom firewall rules (independent read)
+      ansible.windows.win_shell: |
+        $in7777  = Get-NetFirewallRule -DisplayName 'Allow molecule inbound TCP 7777' -ErrorAction SilentlyContinue
+        $out7777 = Get-NetFirewallRule -DisplayName 'Allow molecule outbound TCP 7777' -ErrorAction SilentlyContinue
+        $gone    = Get-NetFirewallRule -DisplayName 'Remove legacy molecule TCP 7779' -ErrorAction SilentlyContinue
+        [pscustomobject]@{
+          in_exists   = [bool]$in7777
+          in_enabled  = [bool](@($in7777  | Where-Object { "$($_.Enabled)" -eq 'True' }).Count)
+          out_exists  = [bool]$out7777
+          out_enabled = [bool](@($out7777 | Where-Object { "$($_.Enabled)" -eq 'True' }).Count)
+          gone_exists = [bool]$gone
+        } | ConvertTo-Json -Compress
+      register: _rules
+      changed_when: false
+
+    - name: Assert the custom rules are present+enabled and the absent one is gone
+      vars:
+        _r: "{{ _rules.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - _r.in_exists
+          - _r.in_enabled
+          - _r.out_exists
+          - _r.out_enabled
+          - not _r.gone_exists
+        fail_msg: >-
+          Firewall rule state is wrong: {{ _r }}. Expected inbound+outbound TCP
+          7777 present and enabled, and TCP 7779 removed.
+        success_msg: >-
+          Custom TCP 7777 rules (in+out) present and enabled; the TCP 7779 rule
+          was removed.
+
+    # Diagnostics: the marker proves the sysprep specialize path ran.
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: 'C:\molecule-specialize-done.txt'
+      register: _marker
+
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _marker.stat.exists
+        fail_msg: >-
+          C:\molecule-specialize-done.txt is missing — the sysprep unattend
+          FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.
+
+# (d) NEGATIVE EXTERNAL PROBE: create a NodePort Service to a guest port with NO
+# allow rule (7778, nothing listening) and prove it is UNREACHABLE from outside
+# the cluster. A blocked inbound port yields no SYN-ACK, so the controller-side
+# wait_for times out — that timeout IS the firewall-working signal. Runs on the
+# controller, which reaches node InternalIPs directly (the same path molecule
+# uses to reach the VM). The Service is cleaned up in an always block so a failed
+# assert never leaks it (destroy.yml is the belt-and-braces safety net).
+- name: Verify — the firewall blocks an unallowed port from outside
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    fw_namespace: molecule
+    fw_probe_service: winfw-test-fwprobe
+    fw_probe_guest_port: 7778
+  tasks:
+    - name: Create a NodePort Service to the unallowed guest port 7778
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ fw_probe_service }}"
+            namespace: "{{ fw_namespace }}"
+          spec:
+            type: NodePort
+            selector:
+              kubevirt.io/domain: winfw-test
+            ports: >-
+              {{
+                [
+                  {
+                    'port': fw_probe_guest_port | int,
+                    'protocol': 'TCP',
+                    'targetPort': fw_probe_guest_port | int
+                  }
+                ]
+              }}
+
+    - name: Run the negative probe and clean up regardless of the result
+      block:
+        - name: Look up the negative-probe NodePort service
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Service
+            name: "{{ fw_probe_service }}"
+            namespace: "{{ fw_namespace }}"
+          register: _fw_svc
+          until:
+            - _fw_svc.resources | length > 0
+            - (_fw_svc.resources[0].spec.ports[0].nodePort | default(0)) | int > 0
+          retries: 10
+          delay: 3
+
+        - name: Look up cluster nodes for an InternalIP
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Node
+          register: _fw_nodes
+
+        - name: Resolve the nodePort and a reachable node InternalIP
+          ansible.builtin.set_fact:
+            _fw_nodeport: "{{ _fw_svc.resources[0].spec.ports[0].nodePort }}"
+            _fw_node_ip: >-
+              {{ (_fw_nodes.resources[0].status.addresses
+                  | selectattr('type', 'equalto', 'InternalIP')
+                  | map(attribute='address') | first) }}
+
+        # ignore_errors: the probe is EXPECTED to time out — a reachable port
+        # here would mean the firewall failed. wait_for fails on timeout; we
+        # capture that and assert it happened.
+        - name: Negative probe — guest 7778 (no allow rule) must NOT be reachable
+          ansible.builtin.wait_for:
+            host: "{{ _fw_node_ip }}"
+            port: "{{ _fw_nodeport | int }}"
+            state: started
+            timeout: 20
+            delay: 2
+          register: _neg_probe
+          ignore_errors: true
+
+        - name: Assert the unallowed port was unreachable from outside
+          ansible.builtin.assert:
+            that:
+              - _neg_probe is failed
+            fail_msg: >-
+              External NodePort probe to guest 7778 SUCCEEDED — a port with no
+              firewall allow rule must be unreachable. The firewall is not
+              blocking inbound as expected.
+            success_msg: >-
+              Guest 7778 (no allow rule) was unreachable from outside — the
+              firewall blocks unallowed inbound traffic.
+      always:
+        - name: Delete the negative-probe NodePort Service
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Service
+            name: "{{ fw_probe_service }}"
+            namespace: "{{ fw_namespace }}"

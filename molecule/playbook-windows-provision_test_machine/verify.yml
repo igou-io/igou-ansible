@@ -1,0 +1,199 @@
+---
+# Verify = INDEPENDENT evidence the test-machine playbook stood up a working
+# test bed, not a re-read of its own module returns. Four angles: the test user
+# exists with a working password, RDP is reachable from OUTSIDE, the RDP registry
+# switch is set, and an installed app is on disk.
+- name: Verify — independent in-guest evidence for provision_test_machine
+  hosts: windows
+  gather_facts: false
+  vars:
+    test_user: apptester
+    seven_zip_exe: 'C:\Program Files\7-Zip\7z.exe'
+  tasks:
+    - name: Read the test user and its Remote Desktop membership (independent read)
+      ansible.windows.win_shell: |
+        $u = Get-LocalUser -Name {{ test_user }} -ErrorAction SilentlyContinue
+        $rdp = @(Get-LocalGroupMember -Group 'Remote Desktop Users' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+        [pscustomobject]@{
+          user_exists  = [bool]$u
+          user_enabled = [bool]($u -and $u.Enabled)
+          in_rdp_group = [bool](@($rdp | Where-Object { $_ -like '*\{{ test_user }}' }).Count)
+        } | ConvertTo-Json -Compress
+      register: _user
+      changed_when: false
+
+    - name: Assert the test user exists, is enabled, and can use Remote Desktop
+      vars:
+        _u: "{{ _user.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - _u.user_exists
+          - _u.user_enabled
+          - _u.in_rdp_group
+        fail_msg: >-
+          Test user state is wrong: {{ _u }}. Expected {{ test_user }}
+          present+enabled and a member of Remote Desktop Users.
+        success_msg: >-
+          {{ test_user }} exists, is enabled, and is a Remote Desktop user.
+
+    # (a) TEST-USER PASSWORD VALIDATION — in-guest, LogonUser-style.
+    # DEVIATION (documented): the spec's first choice is an EXTERNAL psrp login as
+    # the test user, or a WinRM loopback Invoke-Command. Neither works here, and
+    # not by accident: apptester is a NON-admin (Users + Remote Desktop Users),
+    # the playbook does NOT set LocalAccountTokenFilterPolicy for it, and a
+    # non-admin is not in the default WinRM RootSDDL — so BOTH an external psrp
+    # session AND a loopback Invoke-Command over WinRM would be Access-Denied,
+    # testing WinRM ACLs rather than the password. ValidateCredentials performs a
+    # real local LogonUser (network logon) with NO WinRM/UAC-policy dependency, so
+    # it validates exactly the thing under test: the password the playbook set.
+    # The password is passed via the environment (not the command line) and the
+    # task is no_log; only the VALID/INVALID verdict is registered.
+    - name: Validate the test user's password in-guest (LogonUser-style)
+      ansible.windows.win_shell: |
+        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+        $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $env:COMPUTERNAME)
+        if ($ctx.ValidateCredentials($env:MOL_TEST_USER, $env:MOL_TEST_PW)) { 'VALID' } else { 'INVALID' }
+      environment:
+        MOL_TEST_USER: "{{ test_user }}"
+        MOL_TEST_PW: "{{ lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') }}"
+      register: _cred
+      changed_when: false
+      no_log: true
+
+    - name: Assert the test user's password authenticates
+      ansible.builtin.assert:
+        that:
+          - "'VALID' in _cred.stdout"
+        fail_msg: >-
+          In-guest credential validation for {{ test_user }} did not return VALID
+          — the password the playbook set does not authenticate.
+        success_msg: >-
+          {{ test_user }}'s password validated in-guest (LogonUser) — the account
+          can actually log in.
+
+    # (c) RDP registry switch — independent read.
+    - name: Read the RDP fDenyTSConnections registry value (independent read)
+      ansible.windows.win_reg_stat:
+        path: HKLM:\System\CurrentControlSet\Control\Terminal Server
+        name: fDenyTSConnections
+      register: _rdp_reg
+
+    - name: Assert Remote Desktop connections are allowed (fDenyTSConnections=0)
+      ansible.builtin.assert:
+        that:
+          - _rdp_reg.value == 0
+        fail_msg: >-
+          fDenyTSConnections={{ _rdp_reg.value | default('absent') }}; expected 0
+          (Remote Desktop connections allowed).
+        success_msg: Remote Desktop connections are allowed (fDenyTSConnections=0).
+
+    # (d) Installed app on disk — independent read.
+    - name: Stat the 7-Zip binary on disk (independent read)
+      ansible.windows.win_stat:
+        path: "{{ seven_zip_exe }}"
+      register: _7z_stat
+
+    - name: Assert the installed app binary exists on disk
+      ansible.builtin.assert:
+        that:
+          - _7z_stat.stat.exists
+        fail_msg: "{{ seven_zip_exe }} is missing — the test app was not installed."
+        success_msg: "The 7-Zip binary is on disk ({{ seven_zip_exe }})."
+
+# (b) EXTERNAL RDP REACHABILITY: create a NodePort Service to guest 3389 and
+# prove the RDP listener answers a TCP connect from OUTSIDE the cluster. A
+# successful connect proves the three pieces together — the TermService listener
+# is up, the registry switch allowed it, and the firewall rule (incl. the Public
+# profile, the review fix) permits 3389. Runs on the controller, which reaches
+# node InternalIPs directly. The Service is cleaned up in an always block;
+# destroy.yml is the belt-and-braces safety net.
+- name: Verify — RDP is reachable from outside the cluster via NodePort
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    rdp_namespace: molecule
+    rdp_service: wintm-test-rdp
+    rdp_guest_port: 3389
+  tasks:
+    - name: Create a NodePort Service to guest RDP port 3389
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ rdp_service }}"
+            namespace: "{{ rdp_namespace }}"
+          spec:
+            type: NodePort
+            selector:
+              kubevirt.io/domain: wintm-test
+            ports: >-
+              {{
+                [
+                  {
+                    'port': rdp_guest_port | int,
+                    'protocol': 'TCP',
+                    'targetPort': rdp_guest_port | int
+                  }
+                ]
+              }}
+
+    - name: Probe RDP from outside and clean up regardless of the result
+      block:
+        - name: Look up the RDP NodePort service
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Service
+            name: "{{ rdp_service }}"
+            namespace: "{{ rdp_namespace }}"
+          register: _rdp_svc
+          until:
+            - _rdp_svc.resources | length > 0
+            - (_rdp_svc.resources[0].spec.ports[0].nodePort | default(0)) | int > 0
+          retries: 10
+          delay: 3
+
+        - name: Look up cluster nodes for an InternalIP
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Node
+          register: _rdp_nodes
+
+        - name: Resolve the nodePort and a reachable node InternalIP
+          ansible.builtin.set_fact:
+            _rdp_nodeport: "{{ _rdp_svc.resources[0].spec.ports[0].nodePort }}"
+            _rdp_node_ip: >-
+              {{ (_rdp_nodes.resources[0].status.addresses
+                  | selectattr('type', 'equalto', 'InternalIP')
+                  | map(attribute='address') | first) }}
+
+        - name: Probe RDP over the NodePort until it accepts a connection
+          ansible.builtin.wait_for:
+            host: "{{ _rdp_node_ip }}"
+            port: "{{ _rdp_nodeport | int }}"
+            state: started
+            timeout: 90
+            delay: 3
+          register: _rdp_probe
+
+        - name: Assert RDP was reachable from outside the cluster
+          ansible.builtin.assert:
+            that:
+              - _rdp_probe is not failed
+            fail_msg: >-
+              RDP (guest 3389) was not reachable from outside — the listener,
+              the fDenyTSConnections switch, or the Public-profile firewall rule
+              is not in effect.
+            success_msg: >-
+              RDP (guest 3389) accepted a TCP connection from outside the cluster
+              — listener + registry + firewall (incl. Public) are all in effect.
+      always:
+        - name: Delete the RDP NodePort Service
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Service
+            name: "{{ rdp_service }}"
+            namespace: "{{ rdp_namespace }}"

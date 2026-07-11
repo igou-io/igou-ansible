@@ -1,0 +1,11 @@
+---
+# This scenario is inherently kubevirt: it provisions a real Windows 11 client
+# VM on the live cluster. No podman/docker fallback.
+mp_backend: kubevirt
+
+# Windows first boot on a fresh clone is slow: the smart-clone must finish, then
+# the generalized image runs OOBE specialize + the unattend FirstLogonCommands
+# (self-signed cert + WinRM HTTPS listener, and — in local_account mode — the
+# LocalAccounts admin + LocalAccountTokenFilterPolicy) before psrp can answer.
+# Give the prepare wait_for_connection generous headroom over the 900s default.
+mp_kubevirt_windows_wait_timeout: 1500

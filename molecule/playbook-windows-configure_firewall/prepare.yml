@@ -1,0 +1,23 @@
+---
+# Prepare = the provisioner's wait_for_connection (psrp, honoring the longer
+# mp_kubevirt_windows_wait_timeout), THEN seed a firewall rule that converge
+# will remove.
+- name: Prepare molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+
+# Pre-create the rule converge declares state=absent, so the removal is a REAL
+# transition (present -> absent) rather than a vacuous "already gone" — verify
+# then proves the rule is truly gone. Runs after wait_for_connection.
+- name: Prepare — seed the to-be-removed firewall rule
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Create the doomed rule so converge's absent case is a real change
+      community.windows.win_firewall_rule:
+        name: Remove legacy molecule TCP 7779
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "7779"
+        state: present
+        enabled: true

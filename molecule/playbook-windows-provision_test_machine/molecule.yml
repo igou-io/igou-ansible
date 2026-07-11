@@ -1,0 +1,93 @@
+---
+# playbook-windows-provision_test_machine — Windows 11 molecule scenario.
+#
+# What this proves:
+#   playbooks/windows/provision_test_machine.yaml stands up a self-contained
+#   test bed (dedicated user + apps + Remote Desktop), provable by independent
+#   user/registry reads, an in-guest credential validation, an on-disk app
+#   check, and an EXTERNAL RDP reachability probe via NodePort.
+#
+# Where it runs:
+#   Against the LIVE cluster https://api.ocp.igou.systems:6443 as the scoped
+#   ocp-ansible-molecule ServiceAccount, entirely inside the molecule namespace.
+#   create.yml renders a per-host sysprep Secret, then
+#   david_igou.molecule_provisioners provisions ONE win11 golden clone
+#   (instancetype u1.medium, preference windows.11) and connects over psrp
+#   (WinRM-over-HTTPS 5986, NTLM, cert-ignore) as the local admin the sysprep
+#   unattend created.
+#
+# Win11 client-SKU note: client SKUs disable the built-in Administrator, so the
+#   shared unattend runs in 'local_account' mode (mp.kubevirt.unattend_admin_mode:
+#   local_account) — it creates a LocalAccounts admin (mp.kubevirt.admin_user)
+#   and sets LocalAccountTokenFilterPolicy=1 so that non-builtin local admin gets
+#   a full NTLM network token (psrp would otherwise 401 on privileged ops).
+#
+# Pattern note: this follows the LIVE-VALIDATED pilot
+#   playbook-windows-manage_services. Shared plumbing lives in molecule/shared/
+#   (the specialization unattend template + the sysprep-Secret play); everything
+#   scenario-specific lives here.
+#
+# Run recipe (from the repo root):
+#   1. unset KUBECONFIG
+#   2. export K8S_AUTH_HOST to  https://api.ocp.igou.systems:6443
+#   3. export K8S_AUTH_API_KEY to the output of:
+#        op read op://lab_serviceaccounts/ocp-ansible-molecule/token
+#   4. export MOLECULE_WINDOWS_ADMIN_PASSWORD to the output of:
+#        op read op://lab_agents/windows-administrator/password
+#   5. molecule test -s playbook-windows-provision_test_machine
+#
+# Controller deps: pypsrp (the psrp connection plugin's runtime lib) must be on
+#   the controller/EE; the galaxy dependency step installs the collections in
+#   collections.yml.
+#
+# (Env exports are described in words, not as literal shell: molecule
+# interpolates dollar-brace and dollar-paren placeholders across this whole file
+# — comments included — so a literal command-substitution example would break
+# config parsing. The MOLECULE_PROJECT_DIRECTORY / MOLECULE_EPHEMERAL_DIRECTORY
+# dollar-brace placeholders below ARE meant for molecule to expand.)
+prerun: false
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: molecule/playbook-windows-provision_test_machine/collections.yml
+    force: true
+
+ansible:
+  cfg:
+    defaults:
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here — otherwise the
+      # dependency step installs into ${MOLECULE_PROJECT_DIRECTORY}/.ansible
+      # while runtime resolution falls back to a stale ~/.ansible copy.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
+  executor:
+    args:
+      ansible_playbook:
+        # Static scenario inventory (groups + mp specs) first, then the
+        # provisioner-written runtime inventory (ansible_connection/host/port/
+        # password) overlaid on top.
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  name: playbook-windows-provision_test_machine
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy
+
+verifier:
+  name: ansible
