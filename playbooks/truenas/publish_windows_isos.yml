@@ -78,13 +78,39 @@
       # Size comparison is the idempotence guard: eval media are immutable, so a
       # matching size means the serving copy is already the published ISO and the
       # multi-GB transfer is skipped — the play is a no-op on a converged system.
+      #
+      # SAFETY (learned the hard way — a failed src stat once truncated the
+      # whole live library to zero bytes):
+      #   1. Abort BEFORE touching the destination unless the source stat
+      #      returned a plausible size (the archival host needs a working
+      #      truenas->igounas key ONLY when a transfer is actually required).
+      #   2. Stream into a .partial temp, verify the byte count, then mv —
+      #      the published file is never opened for write in place.
       ansible.builtin.shell:
         cmd: >
           set -o pipefail;
-          src_size=$(ssh -o BatchMode=yes {{ _src_host }} "stat -c%s {{ _src_dir }}/{{ item }}");
+          src_size=$(ssh -o BatchMode=yes {{ _src_host }} "stat -c%s {{ _src_dir }}/{{ item }}") || src_size="";
           dst_size=$(stat -c%s "{{ _dst_dir }}/{{ item }}" 2>/dev/null || echo 0);
+          if ! [[ "$src_size" =~ ^[0-9]+$ ]] || [ "$src_size" -eq 0 ]; then
+            if [ "$dst_size" -gt 0 ]; then
+              echo "source unreachable; serving copy present ($dst_size bytes) — left untouched" >&2;
+              echo skipped-src-unreachable;
+              exit 0;
+            fi;
+            echo "source unreachable and no serving copy exists for {{ item }}" >&2;
+            exit 1;
+          fi;
           if [ "$src_size" != "$dst_size" ]; then
-            ssh -o BatchMode=yes {{ _src_host }} "cat {{ _src_dir }}/{{ item }}" > "{{ _dst_dir }}/{{ item }}";
+            tmp="{{ _dst_dir }}/.{{ item }}.partial";
+            ssh -o BatchMode=yes {{ _src_host }} "cat {{ _src_dir }}/{{ item }}" > "$tmp";
+            got=$(stat -c%s "$tmp");
+            if [ "$got" != "$src_size" ]; then
+              echo "short transfer for {{ item }}: $got != $src_size" >&2;
+              rm -f "$tmp";
+              exit 1;
+            fi;
+            mv "$tmp" "{{ _dst_dir }}/{{ item }}";
+            chmod 0644 "{{ _dst_dir }}/{{ item }}";
             echo transferred;
           else
             echo skipped;
@@ -99,6 +125,10 @@
       tags: [transfer]
 
     - name: Fetch the upstream SHA256SUMS manifest
+      # Only needed when something was actually transferred; a converged run
+      # must not require the truenas->igounas SSH path at all. Not a handler:
+      # downstream tasks consume the registered result in-order.
+      when: _xfer is changed  # noqa: no-handler
       ansible.builtin.command:
         cmd: ssh -o BatchMode=yes {{ _src_host }} cat {{ _src_dir }}/SHA256SUMS
       register: _remote_sums
@@ -116,7 +146,7 @@
         line: "{{ item }}"
         create: true
         mode: "0644"
-      loop: "{{ _remote_sums.stdout_lines }}"
+      loop: "{{ _remote_sums.stdout_lines | default([]) }}"
       loop_control:
         label: "{{ item.split('  ')[1] | default(item) }}"
       when: (item | trim | length) > 0
