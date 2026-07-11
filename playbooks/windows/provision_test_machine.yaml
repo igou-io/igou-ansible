@@ -88,6 +88,26 @@
       no_log: true
 
     # --- Applications ----------------------------------------------------
+    # Chocolatey's bootstrap runs a downloaded .ps1, which the default
+    # execution policy on Windows CLIENT SKUs (Restricted) blocks — the
+    # bootstrap dies with "running scripts is disabled on this system".
+    # Ensure at least RemoteSigned (the Windows Server default, which
+    # permits locally-created unsigned scripts) at LocalMachine scope so
+    # the bootstrap can run. Idempotent: only writes when the policy is
+    # more restrictive than RemoteSigned/Unrestricted/Bypass. Same fix as
+    # install_applications.yaml.
+    - name: Ensure the execution policy permits the Chocolatey bootstrap
+      ansible.windows.win_shell: |
+        $ok = @('RemoteSigned', 'Unrestricted', 'Bypass')
+        if ((Get-ExecutionPolicy -Scope LocalMachine) -notin $ok) {
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
+          'changed'
+        } else {
+          'ok'
+        }
+      register: windows_test_execpolicy
+      changed_when: "'changed' in windows_test_execpolicy.stdout"
+
     # The first win_chocolatey run bootstraps Chocolatey itself from the
     # internet, so the VM needs outbound HTTPS (or set an internal source —
     # see install_applications.yaml).
