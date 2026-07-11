@@ -143,6 +143,10 @@
                     '/dev/null length=16 chars=ascii_letters,digits') ~ 'zZ9!' }}
 
     - name: Build and publish the Windows golden image
+      # Retained as a grouping block so the build/publish steps read as one unit.
+      # It previously carried an `always:` that removed the temp kubeconfig the
+      # deprecated keypress helper rendered; that cleanup (and its rescue/always
+      # surface) went with the helper, leaving a pure-kubernetes.core sequence.
       block:
 
         # --- Step 2: preflight the source ISO DataVolume ------------------
