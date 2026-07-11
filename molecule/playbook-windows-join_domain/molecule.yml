@@ -1,0 +1,96 @@
+---
+# playbook-windows-join_domain — HARDEST Windows molecule scenario (2 VMs).
+#
+# What this proves:
+#   playbooks/windows/join_domain.yaml joins a REAL Windows Server 2025 member
+#   to a REAL Active Directory domain (state: domain) and returns it to a
+#   workgroup (state: workgroup), proved by independent in-guest evidence — not
+#   by trusting the module's own return.
+#
+# Topology (two VMs, both win2k25, both in the `molecule` group):
+#   windc01  — promoted to an AD domain controller for domain molecule.test by
+#              prepare.yml. This is TEST SETUP (microsoft.ad.domain), NOT the
+#              playbook under test. NOT in the `windows` group.
+#   winmem01 — the domain member. The ONLY host in the `windows` group, so the
+#              playbook (hosts: {{ ansible_limit | default('windows') }}) joins
+#              exactly this host and leaves the DC untouched.
+#
+# Where it runs:
+#   Against the LIVE cluster https://api.ocp.igou.systems:6443 as the scoped
+#   ocp-ansible-molecule ServiceAccount, entirely inside the molecule namespace.
+#   create.yml renders a per-host sysprep Secret for each VM, then
+#   david_igou.molecule_provisioners provisions both win2k25 golden clones and
+#   connects over psrp (WinRM-over-HTTPS 5986, NTLM, cert-ignore) as the LOCAL
+#   Administrator the sysprep unattend specialized. The connection account stays
+#   local Administrator for the WHOLE lifecycle — the microsoft.ad.membership
+#   leave path (verify.yml) requires a local reconnect account after unjoin.
+#
+# VM-to-VM traffic: both VMs use the default pod network (masquerade). converge
+#   discovers the DC's pod IP from its VMI status and points the member's DNS at
+#   it before the join (windows_domain_dns_servers) — DNS is the classic
+#   first-join blocker and the reason the playbook grew that var.
+#
+# Run recipe (from the repo root):
+#   1. unset KUBECONFIG
+#   2. export K8S_AUTH_HOST to  https://api.ocp.igou.systems:6443
+#   3. export K8S_AUTH_API_KEY to the output of:
+#        op read op://lab_serviceaccounts/ocp-ansible-molecule/token
+#   4. export MOLECULE_WINDOWS_ADMIN_PASSWORD to the output of:
+#        op read op://lab_agents/windows-administrator/password
+#   5. molecule test -s playbook-windows-join_domain
+#
+# Controller deps: pypsrp (the psrp connection plugin's runtime lib) must be on
+#   the controller/EE; ansible.windows + microsoft.ad + kubernetes.core are
+#   installed by the galaxy dependency step from collections.yml.
+#
+# (Env exports are described in words, not as literal shell: molecule
+# interpolates dollar-brace and dollar-paren placeholders across this whole file
+# — comments included — so a literal command-substitution example would break
+# config parsing. The MOLECULE_PROJECT_DIRECTORY / MOLECULE_EPHEMERAL_DIRECTORY
+# dollar-brace placeholders below ARE meant for molecule to expand.)
+prerun: false
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: molecule/playbook-windows-join_domain/collections.yml
+    force: true
+
+ansible:
+  cfg:
+    defaults:
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here — otherwise the
+      # dependency step installs into ${MOLECULE_PROJECT_DIRECTORY}/.ansible
+      # while runtime resolution falls back to a stale ~/.ansible copy.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
+  executor:
+    args:
+      ansible_playbook:
+        # Static scenario inventory (groups + mp specs) first, then the
+        # provisioner-written runtime inventory (ansible_connection/host/port/
+        # password) overlaid on top.
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  name: playbook-windows-join_domain
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy
+
+verifier:
+  name: ansible

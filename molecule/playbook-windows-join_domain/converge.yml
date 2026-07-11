@@ -1,0 +1,76 @@
+---
+# Converge = run the REAL playbook unmodified to join winmem01 to molecule.test.
+#
+# Play 1 is the vacuous-pass trap: the real playbook targets
+# `{{ ansible_limit | default('windows') }}`, and a pattern that matches zero
+# hosts would "pass" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the imported playbook would
+          match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# Play 2 discovers the DC's pod IP so the member can point DNS at it before the
+# join. Both VMs are on the default pod network (masquerade); VM-to-VM pod-IP
+# traffic works in-cluster. Reading the VMI status + set_fact are both
+# changed=0-safe, so this play never breaks the idempotence run.
+- name: Converge — discover the windc01 pod IP for member DNS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    join_domain_namespace: molecule
+  tasks:
+    - name: Read the windc01 VirtualMachineInstance status
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachineInstance
+        name: windc01
+        namespace: "{{ join_domain_namespace }}"
+      register: _windc01_vmi
+
+    - name: Assert the DC VMI reported a pod IP
+      ansible.builtin.assert:
+        that:
+          - _windc01_vmi.resources | length > 0
+          - _windc01_vmi.resources[0].status.interfaces | default([]) | length > 0
+          - _windc01_vmi.resources[0].status.interfaces[0].ipAddress | default('') | length > 0
+        fail_msg: >-
+          windc01 VMI has no interface IP in status.interfaces[0].ipAddress —
+          the VM may not be fully Running yet, or the pod network is not
+          reporting. Cannot point the member's DNS at the DC.
+        success_msg: >-
+          windc01 pod IP =
+          {{ _windc01_vmi.resources[0].status.interfaces[0].ipAddress }}.
+
+    - name: Pin the DC pod IP as a fact for the import vars below
+      ansible.builtin.set_fact:
+        dc_pod_ip: "{{ _windc01_vmi.resources[0].status.interfaces[0].ipAddress }}"
+
+# Play 3 = the real playbook, unmodified. import_playbook vars override the
+# playbook's own play-var defaults (proven: they beat the shipped
+# windows_domain_dns_servers: []). windows_domain_dns_servers points the
+# member's adapters at the DC BEFORE the join — the classic first-join blocker
+# the playbook grew this var to solve. The join account is the DC's built-in
+# Administrator, whose password is unchanged by dcpromo, in down-level
+# MOLECULE\Administrator form (NetBIOS pinned in prepare.yml; microsoft.ad.
+# membership accepts down-level or UPN — down-level is unambiguous here).
+- name: Converge — run playbooks/windows/join_domain.yaml unmodified (join)
+  ansible.builtin.import_playbook: ../../playbooks/windows/join_domain.yaml
+  vars:
+    windows_domain_state: domain
+    windows_domain_name: molecule.test
+    windows_domain_admin_user: 'MOLECULE\Administrator'
+    windows_domain_admin_password: "{{ lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') }}"
+    windows_domain_dns_servers:
+      - "{{ hostvars['localhost']['dc_pod_ip'] }}"

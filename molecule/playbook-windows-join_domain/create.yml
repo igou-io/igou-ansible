@@ -1,0 +1,66 @@
+---
+# Create = preflight gate -> render per-host sysprep Secrets -> provision both
+# VMs.
+#
+# Play 1 fails fast on a broken environment so a multi-minute Windows clone +
+# boot (times two) never starts against missing auth/creds. Play 2 (shared
+# plumbing) renders a per-host sysprep Secret for EVERY host in groups['molecule']
+# — windc01 AND winmem01 — BEFORE play 3 starts the VMs; KubeVirt boots each
+# clone immediately and Windows OOBE consumes the sysprep media at first boot.
+- name: Create — preflight gates for the join_domain scenario
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    join_domain_namespace: molecule
+  tasks:
+    - name: Assert cluster auth env vars are present
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'K8S_AUTH_HOST') | length > 0
+          - lookup('ansible.builtin.env', 'K8S_AUTH_API_KEY') | length > 0
+        fail_msg: >-
+          K8S_AUTH_HOST and K8S_AUTH_API_KEY must be set. See the molecule.yml
+          header run recipe (export the ocp-ansible-molecule SA token).
+        success_msg: Cluster auth env vars present.
+
+    - name: Assert the Windows admin password env var is present
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') | length > 0
+        fail_msg: >-
+          MOLECULE_WINDOWS_ADMIN_PASSWORD must be set — the sysprep unattend
+          assigns it to each local Administrator, psrp authenticates with it,
+          and it doubles as the DC's DSRM (safe mode) password during
+          promotion. Source: op read op://lab_agents/windows-administrator/password
+        success_msg: Windows admin password env var present.
+      no_log: true
+
+    - name: Prove auth works — list VirtualMachines in the molecule namespace
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        namespace: "{{ join_domain_namespace }}"
+      register: _molecule_vms
+
+    - name: Assert the molecule-namespace query succeeded
+      ansible.builtin.assert:
+        that:
+          - _molecule_vms is not failed
+        fail_msg: >-
+          Could not list VirtualMachines in namespace
+          "{{ join_domain_namespace }}" — check the ocp-ansible-molecule
+          ServiceAccount token/RBAC.
+        success_msg: >-
+          Authenticated to the cluster; can read the
+          "{{ join_domain_namespace }}" namespace.
+
+# Render the per-host sysprep Secrets (<host>-sysprep) for BOTH VMs BEFORE they
+# start. The shared play loops groups['molecule'], so windc01 + winmem01 each
+# get their own Secret and sanitized ComputerName automatically.
+- name: Create — render Windows sysprep specialization Secrets
+  ansible.builtin.import_playbook: ../shared/playbooks/windows-sysprep-secrets.yml
+
+# Provision the VMs + NodePort services and write the runtime psrp inventory.
+- name: Create — provision molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.create

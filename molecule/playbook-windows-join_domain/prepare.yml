@@ -1,0 +1,82 @@
+---
+# Prepare = wait for psrp on BOTH VMs, THEN stand up the AD domain controller.
+#
+# Play 1 is the provisioner's wait_for_connection, which honors each host's
+# connection plugin (psrp) and uses the longer mp_kubevirt_windows_wait_timeout
+# for Windows guests — OOBE specialize + the unattend FirstLogonCommands (WinRM
+# HTTPS listener) run before psrp answers on either VM.
+- name: Prepare molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+
+# Play 2 promotes windc01 into a brand-new AD forest/domain. This is TEST SETUP
+# (the environment the playbook under test needs), NOT the playbook under test.
+# We connect as the LOCAL Administrator (inventory default) throughout.
+- name: Prepare — promote windc01 to an Active Directory domain controller
+  hosts: windc01
+  gather_facts: false
+  vars:
+    # DSRM / safe-mode password reuses the same complexity-satisfying secret as
+    # the local Administrator — one env var, never committed.
+    _windows_admin_password: "{{ lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') }}"
+    # molecule.test — RFC 6761 reserved, guaranteed non-routable, unambiguously
+    # lab-internal. NetBIOS pinned explicitly so the member's down-level
+    # MOLECULE\Administrator join account is deterministic.
+    join_domain_dns_domain: molecule.test
+    join_domain_netbios: MOLECULE
+  tasks:
+    - name: Install the AD Domain Services role and management tools
+      ansible.windows.win_feature:
+        name: AD-Domain-Services
+        include_management_tools: true
+        state: present
+      register: _adds_feature
+
+    - name: Promote windc01 into a new forest for the domain
+      microsoft.ad.domain:
+        dns_domain_name: "{{ join_domain_dns_domain }}"
+        domain_netbios_name: "{{ join_domain_netbios }}"
+        safe_mode_password: "{{ _windows_admin_password }}"
+        install_dns: true
+        # The module owns the promotion reboot; the play resumes once the host
+        # is back. A cold Server 2025 clone's post-promo boot is heavy — give it
+        # generous headroom over the 600s module default.
+        reboot: true
+        reboot_timeout: 1200
+      register: _promotion
+      no_log: true  # safe_mode_password
+
+    # Promotion "returning" is not the same as AD DS being SERVICEABLE: AD Web
+    # Services + the directory take a moment after the reboot. Block until an
+    # in-guest Get-ADDomain actually answers with our domain. ~10 min budget.
+    - name: Wait until AD DS answers Get-ADDomain in-guest
+      ansible.windows.win_shell: |
+        Import-Module ActiveDirectory -ErrorAction Stop
+        (Get-ADDomain).DNSRoot
+      register: _get_addomain
+      until: >-
+        _get_addomain.rc == 0 and
+        (_get_addomain.stdout | trim | lower) == join_domain_dns_domain
+      retries: 30
+      delay: 20
+      changed_when: false
+
+    # DNS is the classic first-join blocker, so prove the DC actually SERVES the
+    # domain locator SRV record before the member tries to join. Query the DC's
+    # own DNS (127.0.0.1) for _ldap._tcp.dc._msdcs.<domain>.
+    - name: Wait until the DC's DNS answers the domain-controller _ldap SRV query
+      ansible.windows.win_shell: >-
+        Resolve-DnsName -Type SRV
+        -Name _ldap._tcp.dc._msdcs.{{ join_domain_dns_domain }}
+        -Server 127.0.0.1 -ErrorAction Stop
+      register: _srv_lookup
+      until: _srv_lookup.rc == 0
+      retries: 30
+      delay: 20
+      changed_when: false
+
+    - name: Report the DC is up and serving the domain
+      ansible.builtin.debug:
+        msg: >-
+          windc01 is a domain controller for {{ join_domain_dns_domain }}
+          (NetBIOS {{ join_domain_netbios }}) and its DNS answers the
+          _ldap._tcp.dc._msdcs SRV locator. Ready for the member join.

@@ -1,0 +1,94 @@
+---
+# Verify = INDEPENDENT evidence the join took effect, then exercise the OTHER
+# documented state (leave -> workgroup) and prove it too. Nothing here re-reads
+# the converge module's own return.
+#
+# Connection invariant (review-flagged): winmem01 is reached as the LOCAL
+# Administrator throughout — including across the leave-path reboot below. The
+# microsoft.ad.membership docs require the connection account to be a local user
+# that can reconnect after the unjoin; the whole scenario deliberately never
+# switches to a domain/kerberos account.
+
+# ---------------------------------------------------------------------------
+# (a) Prove winmem01 really joined molecule.test — two independent angles.
+# ---------------------------------------------------------------------------
+- name: Verify — independent join proof on winmem01
+  hosts: winmem01
+  gather_facts: false
+  tasks:
+    - name: Read Win32_ComputerSystem domain membership (independent CIM read)
+      ansible.windows.win_shell: |
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem
+        [pscustomobject]@{ PartOfDomain = $cs.PartOfDomain; Domain = $cs.Domain } |
+          ConvertTo-Json -Compress
+      register: _cim_joined
+      changed_when: false
+
+    - name: Assert the member reports PartOfDomain True on molecule.test
+      ansible.builtin.assert:
+        that:
+          - (_cim_joined.stdout | from_json).PartOfDomain | bool
+          - (_cim_joined.stdout | from_json).Domain | lower == 'molecule.test'
+        fail_msg: >-
+          Win32_ComputerSystem reports {{ _cim_joined.stdout }} — expected
+          PartOfDomain true and Domain molecule.test. The join did not take.
+        success_msg: winmem01 is PartOfDomain=true on molecule.test (CIM).
+
+    # Kerberos-independent AD reality check: the DC-locator finds a live DC for
+    # the domain over DNS. Proves real directory reachability, not just a local
+    # membership flag.
+    - name: Locate a domain controller via nltest (Kerberos-independent)
+      ansible.windows.win_shell: nltest /dsgetdc:molecule.test
+      register: _nltest
+      changed_when: false
+      failed_when: false
+
+    - name: Assert nltest found a DC for molecule.test
+      ansible.builtin.assert:
+        that:
+          - _nltest.rc == 0
+        fail_msg: >-
+          nltest /dsgetdc:molecule.test failed (rc={{ _nltest.rc }}):
+          {{ _nltest.stdout }} {{ _nltest.stderr }}. No DC located for the
+          domain — the member is not truly participating in the directory.
+        success_msg: nltest located a DC for molecule.test.
+
+# ---------------------------------------------------------------------------
+# (b) THE LEAVE LEG — the playbook's other documented state. Re-import the real
+#     playbook unmodified with windows_domain_state: workgroup. No domain admin
+#     creds are passed on purpose: this exercises the playbook's documented
+#     "leave without creds orphans the computer object" path (acceptable for an
+#     ephemeral lab DC torn down at destroy). We do NOT assert DC-side cleanup.
+# ---------------------------------------------------------------------------
+- name: "Verify — leave leg: return winmem01 to a workgroup (real playbook)"
+  ansible.builtin.import_playbook: ../../playbooks/windows/join_domain.yaml
+  vars:
+    windows_domain_state: workgroup
+    windows_workgroup_name: WORKGROUP
+
+# ---------------------------------------------------------------------------
+# (c) Prove the leave took effect — PartOfDomain must now be False.
+# ---------------------------------------------------------------------------
+- name: Verify — independent leave proof on winmem01
+  hosts: winmem01
+  gather_facts: false
+  tasks:
+    - name: Read Win32_ComputerSystem domain membership after the leave (CIM)
+      ansible.windows.win_shell: |
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem
+        [pscustomobject]@{ PartOfDomain = $cs.PartOfDomain; Domain = $cs.Domain } |
+          ConvertTo-Json -Compress
+      register: _cim_left
+      changed_when: false
+
+    - name: Assert the member is no longer domain-joined
+      ansible.builtin.assert:
+        that:
+          - not ((_cim_left.stdout | from_json).PartOfDomain | bool)
+        fail_msg: >-
+          Win32_ComputerSystem still reports PartOfDomain true after the
+          workgroup leave ({{ _cim_left.stdout }}) — the leave path did not
+          take effect.
+        success_msg: >-
+          winmem01 is back in a workgroup (PartOfDomain=false); the leave leg
+          works.
