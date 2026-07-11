@@ -21,15 +21,13 @@
 #   NEVER creates or deletes anything in windows-images.
 #
 # Boot path:
-#   The default cd_boot_helper=none — pure kubernetes.core. No virtctl, no
-#   vncdotool, no rendered kubeconfig FILE: the no-prompt CD auto-boots and the
-#   disk-first bootOrder terminates the install loop. (The deprecated vnc
-#   keypress helper is not exercised here.)
+#   Pure kubernetes.core. No virtctl, no rendered kubeconfig FILE: the no-prompt
+#   CD auto-boots and the disk-first bootOrder terminates the install loop.
 #
 # Wall clock:
 #   ~60–90 minutes end to end (unattended Windows install + sysprep + clone +
-#   boot) — unchanged from the vnc path. This is NOT idempotence-testable, so
-#   the test_sequence omits the idempotence step by design.
+#   boot). This is NOT idempotence-testable, so the test_sequence omits the
+#   idempotence step by design.
 #
 # Env setup one-liner (run before `molecule test -s windows-build-golden-image`):
 #   export K8S_AUTH_HOST=https://api.ocp.igou.systems:6443
@@ -62,9 +60,8 @@ provisioner:
       roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
       collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
   env:
-    # kubernetes.core reads these directly. On the default none boot path that
-    # is all that's needed — no kubeconfig FILE is rendered (only the deprecated
-    # vnc helper would render one from these for virtctl/oc).
+    # kubernetes.core reads these directly. That is all that's needed — the
+    # build renders no kubeconfig FILE.
     K8S_AUTH_HOST: "${K8S_AUTH_HOST}"
     K8S_AUTH_API_KEY: "${K8S_AUTH_API_KEY}"
     K8S_AUTH_VERIFY_SSL: "${K8S_AUTH_VERIFY_SSL:-true}"
