@@ -4,14 +4,14 @@
 # it is pinned here as a git source so the scenario controls exactly the
 # provisioner revision it tests against.
 collections:
-  # Windows KubeVirt guest support (connection: psrp + sysprep_secret) lands on
-  # this branch. Installing it also pulls the provisioner's own galaxy deps
-  # (kubernetes.core, community.crypto, community.general, ...).
-  # TODO: re-pin to a Galaxy release once feat/kubevirt-windows-guests merges
-  # and a version is cut.
+  # Windows KubeVirt guest support (connection: psrp + sysprep_secret) merged
+  # to main in provisioner PR #55 (the feature branch was deleted). Installing
+  # it also pulls the provisioner's own galaxy deps (kubernetes.core,
+  # community.crypto, community.general, ...).
+  # TODO: re-pin to a Galaxy release once a version is cut.
   - name: https://github.com/david-igou/ansible-collection-molecule_provisioners.git
     type: git
-    version: feat/kubevirt-windows-guests
+    version: main
   - name: kubernetes.core
     version: ">=5.0.0"
   # Windows automation modules the converge/verify plays use over psrp.
