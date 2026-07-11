@@ -1,0 +1,178 @@
+---
+# Manage OS install-media / boot-source DataVolumes on OpenShift Virtualization.
+#
+# A bare-bones, data-driven manager for the STANDING install-media DataVolumes
+# that installer/build VMs attach as a cdrom (e.g. the Windows eval ISOs the
+# golden-image path consumes — see build_windows_golden.yml). CDI imports each
+# source over HTTP into its namespace once; the resulting PVC is reused across
+# VMs (deleteAfterCompletion=false). This playbook is the git-ownership home for
+# those DVs, replacing the static manifest that previously lived in
+# igou-openshift test-workloads/windows-vms/datavolumes.yaml — the specs here
+# mirror the live objects exactly so an apply ADOPTS them as a no-op.
+#
+# --- Data model (playbook vars, overridable at launch) ---------------------
+# os_datavolumes: a list of entries, one per standing DataVolume:
+#     - name: iso-winserver2025-eval-noprompt   # DV + PVC name
+#       namespace: windows-images               # target namespace
+#       url: https://.../winserver2025-...iso   # HTTP import source
+#       storage_class: freenas-nfs-cold-csi      # spec.storage.storageClassName
+#       size: 9Gi                                # requested storage
+# os_datavolume_state: present | absent
+#     present -> ensure each namespace + DV exists (adopt live objects no-op).
+#     absent  -> delete each DV and its same-named PVC.
+# os_datavolume_recreate: false | true
+#     DVs import ONCE and their spec is immutable — an apply never re-pulls a
+#     changed remote source. To pick up a REFRESHED remote ISO (same URL, new
+#     bytes), run with os_datavolume_recreate=true: it deletes each DV + PVC
+#     first, then re-creates them so CDI re-imports from the source. This
+#     DESTROYS the current media PVC, so only do it when the source truly moved.
+# os_datavolume_wait: false | true
+#     true -> block until each DV reaches status.phase == Succeeded (the CDI
+#     import finished). Default false returns as soon as the objects are applied.
+#
+# --- Auth --------------------------------------------------------------------
+# All k8s tasks use kubernetes.core with NO explicit auth params — they honor
+# K8S_AUTH_HOST / K8S_AUTH_API_KEY / K8S_AUTH_VERIFY_SSL / KUBECONFIG from the
+# environment (same pattern as virtualmachine-manage.yml / build_windows_golden.yml).
+# connection is forced local so a bare `localhost` inventory entry does not
+# default to ssh.
+#
+# --- Room to expand (documented, NOT implemented) ---------------------------
+# This is deliberately minimal. Natural per-entry extensions, added later as the
+# data model grows (the user folds in ubuntu et al. here — do not touch
+# create-ubuntu-datasource.yml):
+#   * per-entry labels / annotations (e.g. instancetype.kubevirt.io/default-*),
+#     merged into metadata so boot-source DataSources inherit VM defaults.
+#   * optional DataSource creation per entry (source.pvc -> the imported PVC),
+#     turning an install-media DV into a bootable boot-source (the ubuntu idiom).
+#   * per-entry instancetype / preference defaults stamped as those labels.
+#   * a checksum source (spec.source.http with a checksum, or a registry/S3
+#     source) to pin import integrity instead of a bare URL.
+# None of these are wired yet — add the field to os_datavolumes entries and the
+# corresponding task when needed.
+- name: Manage OS install-media DataVolumes
+  hosts: "{{ target_hosts | default('localhost') }}"
+  # Talk to the API via env-injected K8S_AUTH_* / KUBECONFIG — no SSH needed.
+  # Force local so a bare `localhost` inventory entry does not default to ssh.
+  connection: local
+  gather_facts: false
+  vars:
+    os_datavolumes:
+      - name: iso-winserver2025-eval-noprompt
+        namespace: windows-images
+        url: https://public.igou.systems/isos/windows/winserver2025-eval-en-us-noprompt.iso
+        storage_class: freenas-nfs-cold-csi
+        size: 9Gi
+      - name: iso-win11-25h2-enterprise-eval-noprompt
+        namespace: windows-images
+        url: https://public.igou.systems/isos/windows/win11-25h2-enterprise-eval-en-us-noprompt.iso
+        storage_class: freenas-nfs-cold-csi
+        size: 9Gi
+    os_datavolume_state: present
+    os_datavolume_recreate: false
+    os_datavolume_wait: false
+
+  tasks:
+
+    - name: Assert os_datavolume_state is a known value
+      ansible.builtin.assert:
+        that:
+          - os_datavolume_state in ['present', 'absent']
+        fail_msg: >-
+          os_datavolume_state must be 'present' or 'absent', got
+          "{{ os_datavolume_state }}".
+
+    # --- Ensure namespaces (present only) ---------------------------------
+    - name: Ensure each DataVolume namespace exists
+      when: os_datavolume_state == 'present'
+      kubernetes.core.k8s:
+        state: present
+        kind: Namespace
+        name: "{{ item }}"
+      loop: "{{ os_datavolumes | map(attribute='namespace') | unique | list }}"
+
+    # --- Delete (absent, or recreate to re-import a refreshed source) ------
+    # DV specs are immutable and CDI imports once, so re-pulling a changed
+    # remote requires a delete+recreate. Delete the same-named PVC too — CDI's
+    # populator PVC carries the imported bytes; leaving it would let the
+    # recreated DV adopt the STALE data instead of re-importing.
+    - name: Delete each DataVolume
+      when: >-
+        os_datavolume_state == 'absent'
+        or os_datavolume_recreate | bool
+      kubernetes.core.k8s:
+        state: absent
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataVolume
+        name: "{{ item.name }}"
+        namespace: "{{ item.namespace }}"
+        wait: true
+      loop: "{{ os_datavolumes }}"
+      loop_control:
+        label: "{{ item.namespace }}/{{ item.name }}"
+
+    - name: Delete each DataVolume's PVC
+      when: >-
+        os_datavolume_state == 'absent'
+        or os_datavolume_recreate | bool
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: "{{ item.name }}"
+        namespace: "{{ item.namespace }}"
+        wait: true
+      loop: "{{ os_datavolumes }}"
+      loop_control:
+        label: "{{ item.namespace }}/{{ item.name }}"
+
+    # --- Apply (present) ---------------------------------------------------
+    # Spec mirrors the live objects exactly (previously igou-openshift
+    # test-workloads/windows-vms/datavolumes.yaml) so this apply ADOPTS them as
+    # a no-op. DV specs are immutable — if this reports `changed` or errors on
+    # an existing DV, the data model has drifted from the live spec; that drift
+    # signal is correct, do not force.
+    - name: Apply each DataVolume
+      when: os_datavolume_state == 'present'
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: cdi.kubevirt.io/v1beta1
+          kind: DataVolume
+          metadata:
+            name: "{{ item.name }}"
+            namespace: "{{ item.namespace }}"
+            annotations:
+              cdi.kubevirt.io/storage.deleteAfterCompletion: "false"
+          spec:
+            source:
+              http:
+                url: "{{ item.url }}"
+            storage:
+              storageClassName: "{{ item.storage_class }}"
+              resources:
+                requests:
+                  storage: "{{ item.size }}"
+      loop: "{{ os_datavolumes }}"
+      loop_control:
+        label: "{{ item.namespace }}/{{ item.name }}"
+
+    # --- Wait for import (present + wait) ----------------------------------
+    - name: Wait for each DataVolume import to succeed
+      when:
+        - os_datavolume_state == 'present'
+        - os_datavolume_wait | bool
+      kubernetes.core.k8s_info:
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataVolume
+        name: "{{ item.name }}"
+        namespace: "{{ item.namespace }}"
+      register: os_dv_import
+      until:
+        - os_dv_import.resources | length == 1
+        - os_dv_import.resources[0].status.phase == "Succeeded"
+      retries: 120
+      delay: 30
+      loop: "{{ os_datavolumes }}"
+      loop_control:
+        label: "{{ item.namespace }}/{{ item.name }}"
