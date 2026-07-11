@@ -6,12 +6,15 @@
 # Windows templates can clone via sourceRef.
 #
 # Flow (all inside windows_golden_namespace, plus one cross-namespace ISO clone):
-#   1. preflight (tools + source ISO DataVolume)
+#   1. preflight (source ISO DataVolume + no-prompt feedstock; VNC tooling only
+#      on the deprecated helper path)
 #   2. clone the installer ISO into the build namespace
 #   3. render the autounattend answer file into a Secret
 #   4. create a STANDALONE golden root DataVolume (not a dataVolumeTemplate, so
 #      it survives VM deletion and becomes the published disk with no capture)
-#   5. create a throwaway build VM (runStrategy Manual) and CD-boot it
+#   5. create a throwaway build VM (runStrategy RerunOnFailure) — a remastered
+#      no-prompt ISO auto-boots the CD on every power-on, disk-first bootOrder
+#      terminates the loop, so no keypress helper is needed
 #   6. the answer file drives install -> guest tools -> sysprep /generalize
 #      /shutdown, fully unattended (no WinRM needed in phase 1); the VMI goes
 #      Succeeded on poweroff
@@ -19,8 +22,10 @@
 #
 # All k8s tasks use kubernetes.core with NO explicit auth params — they honor
 # K8S_AUTH_HOST / K8S_AUTH_API_KEY / K8S_AUTH_VERIFY_SSL / KUBECONFIG from the
-# environment. boot-vm.sh drives virtctl/oc and needs a real kubeconfig FILE, so
-# one is rendered from K8S_AUTH_* when windows_golden_kubeconfig is not provided.
+# environment. The default `none` boot path is pure kubernetes.core — no
+# virtctl, no vncdotool, no kubeconfig FILE. Only the DEPRECATED `vnc` helper
+# path drives boot-vm.sh (virtctl/oc) and needs a real kubeconfig FILE, so one
+# is rendered from K8S_AUTH_* when windows_golden_kubeconfig is not provided.
 - name: Build Windows golden image DataSource
   hosts: "{{ target_hosts | default('localhost') }}"
   # Talk to the API via env-injected K8S_AUTH_* / KUBECONFIG — no SSH needed.
@@ -48,11 +53,26 @@
     windows_golden_instancetype: u1.medium
     # Where the source installer ISO DataVolume already lives.
     windows_golden_iso_namespace: windows-images
-    windows_golden_iso_dv: iso-winserver2025-eval
+    # REMASTERED no-prompt feedstock (Design A): a `-noprompt` ISO auto-boots the
+    # CD on every power-on with no "press any key" prompt, so the build is fully
+    # declarative. The igou-openshift DV re-point lands in the same increment
+    # train. Non-remastered media would sit forever at the prompt on the `none`
+    # boot path — see windows_golden_cd_boot_helper and the feedstock preflight.
+    windows_golden_iso_dv: iso-winserver2025-eval-noprompt
     # install.wim image index; 2 = Server 2025 Standard Eval (Desktop Experience).
     windows_golden_image_index: 2
     # ComputerName for the throwaway build VM.
     windows_golden_hostname: goldenbuild
+    # How the build VM enters Windows Setup off the installer CD:
+    #   none (default) = remastered no-prompt ISO feedstock. The CD auto-boots
+    #     on every power-on and disk-first bootOrder terminates the install loop;
+    #     the whole path is declarative kubernetes.core (no virtctl, no
+    #     vncdotool, no kubeconfig FILE). Requires a `-noprompt` ISO DV.
+    #   vnc = LEGACY keypress helper (boot-vm.sh + autoboot.py over VNC) for
+    #     PRISTINE, non-remastered media that still shows "press any key to boot
+    #     from CD". DEPRECATED — kept for exactly one transitional release, then
+    #     removed with its whole surface (virtctl/vncdotool/kubeconfig).
+    windows_golden_cd_boot_helper: none
     # Size of the golden root disk.
     windows_golden_disk_size: 50Gi
     # StorageClass for the golden root disk; empty -> cluster default SC.
@@ -61,13 +81,15 @@
     # smart (server-side) clone instead of a host-assisted copy.
     windows_golden_iso_storage_class: freenas-nfs-cold-csi
     # Local TCP port for the virtctl VNC proxy that autoboot.py drives.
+    # DEPRECATED — only used on windows_golden_cd_boot_helper == vnc.
     windows_golden_vnc_port: 5901
     # Cap on the install -> generalize -> shutdown wait (minutes).
     windows_golden_install_timeout_minutes: 90
     # Keep the installcd clone DV + unattend Secret after publishing.
     windows_golden_keep_build_artifacts: false
     # kubeconfig path for virtctl/oc in boot-vm.sh; empty -> render a temp one
-    # from K8S_AUTH_HOST / K8S_AUTH_API_KEY.
+    # from K8S_AUTH_HOST / K8S_AUTH_API_KEY. DEPRECATED — only consulted on
+    # windows_golden_cd_boot_helper == vnc.
     windows_golden_kubeconfig: ""
 
     # --- Production publish path (issue #343 phase 1, part B) --------------
@@ -110,6 +132,35 @@
         fail_msg: >-
           windows_golden_namespace is required (build + publish namespace).
 
+    - name: Assert windows_golden_cd_boot_helper is a known value
+      ansible.builtin.assert:
+        that:
+          - windows_golden_cd_boot_helper in ['none', 'vnc']
+        fail_msg: >-
+          windows_golden_cd_boot_helper must be 'none' (remastered no-prompt
+          feedstock, default) or 'vnc' (deprecated keypress helper), got
+          "{{ windows_golden_cd_boot_helper }}".
+
+    # Feedstock preflight: the declarative `none` path relies on a REMASTERED
+    # no-prompt ISO. Pristine media still shows "Press any key to boot from CD"
+    # and, with no keypress helper, the build VM sits at that prompt forever
+    # (then boot-loops Setup once the prompt times out to the empty disk). Name
+    # convention (igou-openshift #418 set + publish_windows_isos.yml) marks the
+    # remastered ISO with a `-noprompt` suffix, so enforce it here.
+    - name: Assert the no-prompt boot path uses remastered feedstock
+      when: windows_golden_cd_boot_helper == 'none'
+      ansible.builtin.assert:
+        that:
+          - windows_golden_iso_dv is match('.*-noprompt$')
+        fail_msg: >-
+          windows_golden_cd_boot_helper is 'none' but
+          windows_golden_iso_dv="{{ windows_golden_iso_dv }}" is not a
+          remastered no-prompt ISO (name must end in '-noprompt'). Non-remastered
+          media sits forever at the "press any key to boot from CD" prompt on the
+          declarative path. Remaster it via playbooks/truenas/publish_windows_isos.yml
+          (emits '<base>-noprompt.iso'), or use the deprecated
+          windows_golden_cd_boot_helper=vnc keypress helper against pristine media.
+
     # generalize wipes local accounts and credentials from the published image,
     # so the build-VM Administrator password is throwaway — nothing durable to
     # protect. Generate a random one when the caller did not override it. The
@@ -122,13 +173,18 @@
           {{ lookup('ansible.builtin.password',
                     '/dev/null length=16 chars=ascii_letters,digits') ~ 'zZ9!' }}
 
+    # virtctl / vncdotool are only needed by the DEPRECATED vnc keypress helper.
+    # The default `none` path never shells out to boot-vm.sh, so it requires
+    # neither — these preflights are skipped there.
     - name: Check virtctl is available
+      when: windows_golden_cd_boot_helper == 'vnc'
       ansible.builtin.command: virtctl version --client
       changed_when: false
       failed_when: false
       register: golden_virtctl_check
 
     - name: Assert virtctl is on PATH
+      when: windows_golden_cd_boot_helper == 'vnc'
       ansible.builtin.assert:
         that:
           - golden_virtctl_check.rc == 0
@@ -137,6 +193,7 @@
           kubevirt release) and re-run.
 
     - name: Check python3 vncdotool module is importable
+      when: windows_golden_cd_boot_helper == 'vnc'
       # vncdotool.api, not bare vncdotool: the api module pulls twisted's TLS
       # stack (service_identity et al), which is exactly what autoboot.py needs
       # and exactly what a bare `import vncdotool` fails to prove.
@@ -146,6 +203,7 @@
       register: golden_vncdotool_check
 
     - name: Assert vncdotool is importable
+      when: windows_golden_cd_boot_helper == 'vnc'
       ansible.builtin.assert:
         that:
           - golden_vncdotool_check.rc == 0
@@ -153,9 +211,14 @@
           python3 cannot import vncdotool (needed by autoboot.py over VNC).
           Install it: pip install vncdotool
 
-    # --- Step 2: resolve a kubeconfig FILE for boot-vm.sh -----------------
+    # --- Step 2: resolve a kubeconfig FILE for boot-vm.sh (vnc path only) --
+    # boot-vm.sh needs a real kubeconfig FILE for virtctl/oc. The declarative
+    # `none` path uses pure kubernetes.core (env K8S_AUTH_*), so it renders no
+    # kubeconfig at all — every task in this step is gated on the vnc helper.
     - name: Assert K8S_AUTH env is present when rendering a kubeconfig
-      when: windows_golden_kubeconfig | length == 0
+      when:
+        - windows_golden_cd_boot_helper == 'vnc'
+        - windows_golden_kubeconfig | length == 0
       ansible.builtin.assert:
         that:
           - lookup('ansible.builtin.env', 'K8S_AUTH_HOST') | length > 0
@@ -166,14 +229,18 @@
           virtctl/oc.
 
     - name: Create a temp kubeconfig file
-      when: windows_golden_kubeconfig | length == 0
+      when:
+        - windows_golden_cd_boot_helper == 'vnc'
+        - windows_golden_kubeconfig | length == 0
       ansible.builtin.tempfile:
         state: file
         suffix: kubeconfig
       register: golden_kubeconfig_tmp
 
     - name: Render the temp kubeconfig
-      when: windows_golden_kubeconfig | length == 0
+      when:
+        - windows_golden_cd_boot_helper == 'vnc'
+        - windows_golden_kubeconfig | length == 0
       no_log: true
       ansible.builtin.copy:
         dest: "{{ golden_kubeconfig_tmp.path }}"
@@ -198,6 +265,7 @@
           current-context: golden-build
 
     - name: Resolve the kubeconfig path for boot-vm.sh
+      when: windows_golden_cd_boot_helper == 'vnc'
       ansible.builtin.set_fact:
         windows_golden_resolved_kubeconfig: >-
           {{ windows_golden_kubeconfig
@@ -313,9 +381,11 @@
                 storage: "{{ windows_golden_root_storage }}"
 
         # --- Step 7: create the throwaway build VM -----------------------
-        - name: Create the build VM (runStrategy Manual)
-          kubernetes.core.k8s:
-            definition:
+        # Assemble the VM definition as a fact first so the bootOrder invariant
+        # can be asserted BEFORE anything is created on the cluster.
+        - name: Assemble the build VM definition
+          ansible.builtin.set_fact:
+            windows_golden_vm_definition:
               apiVersion: kubevirt.io/v1
               kind: VirtualMachine
               metadata:
@@ -325,10 +395,16 @@
                   app.kubernetes.io/part-of: windows-golden-build
                   windows-edition: "{{ windows_golden_edition }}"
               spec:
-                # Manual: KubeVirt never auto-restarts. Guest reboots during
-                # Setup keep the VMI Running; only sysprep's /shutdown ends it,
-                # which is exactly our "install done" signal.
-                runStrategy: Manual
+                # RerunOnFailure: starts the VM on create, and guest reboots
+                # during Setup stay in-VMI (rebootPolicy nil = in-place libvirt
+                # reboot, never a VMI restart), so sysprep's poweroff drives the
+                # VMI to Succeeded and it stays stopped — same terminal signal as
+                # Manual/Once. UNLIKE Manual/Once, it auto-recreates the VMI if
+                # infra kills this non-migratable TPM+SATA VM mid-install; with
+                # no-prompt media an early re-entry into Setup just re-wipes the
+                # disk (WillWipeDisk) — the build self-heals instead of hanging
+                # stopped.
+                runStrategy: RerunOnFailure
                 preference:
                   kind: virtualmachineclusterpreference
                   name: "{{ windows_golden_preference }}"
@@ -337,6 +413,10 @@
                     labels:
                       kubevirt.io/domain: "{{ windows_golden_vm_name }}"
                   spec:
+                    # A TPM+SATA VM cannot live-migrate; LiveMigrateIfPossible
+                    # falls back to a normal shutdown+reschedule on drain, which
+                    # RerunOnFailure then recreates (see runStrategy comment).
+                    evictionStrategy: LiveMigrateIfPossible
                     # Keep Windows VMs OFF the TrueNAS-hosted worker (nested virt
                     # unsupported). Belt-and-suspenders with the HCO workloads
                     # nodePlacement exclusion.
@@ -417,8 +497,38 @@
                           secret:
                             name: "{{ windows_golden_unattend_secret }}"
 
-        # --- Step 8: CD-boot the VM into Windows Setup -------------------
+        # bootOrder invariant (MUST-2): no-prompt media auto-boots the CD on
+        # EVERY power-on. Disk-first ordering is what terminates the install
+        # loop — the empty rootdisk (bootOrder 1) is unbootable so firmware
+        # falls through to the CD (bootOrder 2) and installs; once Windows is on
+        # the disk it boots itself and never re-enters Setup. CD-first would
+        # infinite-loop. Assert it BEFORE create so a spec regression fails here,
+        # not after a wasted install.
+        - name: Assert the build VM boot order terminates the install loop
+          vars:
+            golden_disks: "{{ windows_golden_vm_definition.spec.template.spec.domain.devices.disks }}"
+          ansible.builtin.assert:
+            that:
+              - (golden_disks | selectattr('name', 'equalto', 'rootdisk')
+                 | map(attribute='bootOrder') | first) == 1
+              - (golden_disks | selectattr('name', 'equalto', 'installcd')
+                 | map(attribute='bootOrder') | first) == 2
+            fail_msg: >-
+              Build VM boot order must be rootdisk=1, installcd=2 so the empty
+              disk falls through to the CD on first boot and the installed disk
+              boots itself thereafter. Any other ordering infinite-loops Setup on
+              no-prompt media.
+
+        - name: Create the build VM (runStrategy RerunOnFailure)
+          kubernetes.core.k8s:
+            definition: "{{ windows_golden_vm_definition }}"
+
+        # --- Step 8: CD-boot the VM into Windows Setup (vnc helper only) ---
+        # The default `none` path needs no keypress helper: RerunOnFailure starts
+        # the VM on create and the remastered no-prompt CD auto-boots. Only the
+        # DEPRECATED vnc helper shells out to boot-vm.sh.
         - name: CD-boot the build VM into Windows Setup
+          when: windows_golden_cd_boot_helper == 'vnc'
           # boot-vm.sh power-cycles + drives autoboot.py over VNC to catch the
           # "Press any key to boot from CD" prompt; self-bounds ~6 x 4 min.
           ansible.builtin.command:
@@ -433,6 +543,12 @@
           changed_when: true
 
         # --- Step 9: wait for install -> generalize -> shutdown ----------
+        # Terminal signal is unchanged (VMI Succeeded on sysprep poweroff). Under
+        # RerunOnFailure the VMI can briefly NOT EXIST between failure-driven
+        # recreations (infra kill -> VM controller respawns the VMI); the until
+        # loop tolerates that because `resources | length == 1` simply stays
+        # false for those polls and it keeps retrying until Succeeded (or the
+        # timeout), never erroring on the empty window.
         - name: Wait for the build VM to finish and power off (VMI Succeeded)
           kubernetes.core.k8s_info:
             api_version: kubevirt.io/v1
@@ -610,8 +726,12 @@
                 }}
 
       always:
+        # Only the vnc helper ever renders a temp kubeconfig; on the `none` path
+        # golden_kubeconfig_tmp is never registered, so gate on the helper too.
         - name: Remove the temp kubeconfig
-          when: windows_golden_kubeconfig | length == 0
+          when:
+            - windows_golden_cd_boot_helper == 'vnc'
+            - windows_golden_kubeconfig | length == 0
           ansible.builtin.file:
             path: "{{ golden_kubeconfig_tmp.path }}"
             state: absent
