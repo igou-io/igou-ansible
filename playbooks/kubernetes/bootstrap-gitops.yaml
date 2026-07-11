@@ -1,175 +1,152 @@
 ---
 # Bootstrap a cluster from igou-kubernetes (app-of-apps layout).
 #
-# Mirrors igou-kubernetes docs/bootstrap.md, with the secret seed between
-# the two applies:
-#   1. kustomize build --enable-helm components/argocd | kubectl apply --server-side
-#   2. seed external-secrets/onepassword-connect-token with the rk8s ENTITY
-#      Connect token, read from the dedicated ocp-connect-bootstrap vault via
-#      the read-only ocp-bootstrap service-account token — same pattern as
-#      openshift/hub-cluster/bootstrap_gitops.yaml. Backs the `onepassword`
-#      ClusterSecretStores so ExternalSecrets can resolve. (Previously this
-#      seeded whatever was in $OP_CONNECT_TOKEN, which is the token used for
-#      the kubeconfig read — not necessarily the rk8s entity token.)
-#   3. kustomize build --enable-helm clusters/<cluster> | kubectl apply
+# Mirrors igou-kubernetes docs/bootstrap.md. Seeds the ESO Connect token
+# first, then installs argocd, then applies the cluster root:
+#   1. external-secrets namespace + onepassword-connect-token Secret, seeded
+#      with the rk8s ENTITY Connect token read from the dedicated
+#      ocp-connect-bootstrap vault via the read-only ocp-bootstrap service
+#      account — same pattern as playbooks/openshift/bootstrap_gitops.yaml.
+#      Backs the `onepassword` ClusterSecretStore so ExternalSecrets can resolve.
+#   2. components/argocd   -> server-side apply (installs argocd)
+#   3. clusters/<cluster>  -> apply into the argocd namespace
 # After step 3 the cluster self-manages: argocd adopts its own install and
 # reconciles everything in the repo.
 #
-# Two credentials are needed:
-#   - OP_CONNECT_HOST/OP_CONNECT_TOKEN (Connect mode) — reads the kubeconfig
-#     from lab_rk8s. Attach the AAP "Onepassword Connect" credential / export.
-#   - op_bootstrap_sa_token (ocp-bootstrap SA, ops_...) — reads the rk8s entity
-#     Connect token from ocp-connect-bootstrap. Prompted; pass -e for AAP.
-# Keep the SA token OUT of the global OP_SERVICE_ACCOUNT_TOKEN env, or the
-# `op` CLI runs the kubeconfig lookup in SA mode too (the ocp-bootstrap SA
-# has no grant on lab_rk8s) — that is why it is a play var, not an env var.
+# The two kustomize stages build straight from the remote repo via the
+# kubernetes.core.kustomize lookup (kustomize fetches the tree itself) — no
+# local clone. All cluster interaction goes through kubernetes.core.* (no
+# shell/kubectl), mirroring playbooks/openshift/bootstrap_gitops.yaml. The
+# modules talk to whatever KUBECONFIG points at, so export it for the target
+# cluster before running (e.g. `use rk8s` in the devcontainer).
 #
-# The kubeconfig comes from op://<vault>/<item>/kubeconfig (base64), as
-# published by install-k3s-cluster.yml / the k3s_publish_kubeconfig AAP
-# template. NOTE: Application CRs track targetRevision HEAD — only run this
-# against a gitops_ref whose content is (or is about to be) the repo's
-# default branch, or argocd will immediately reconcile back to master.
+# Two env vars are required:
+#   - KUBECONFIG               points the kubernetes.core.* modules at the
+#                              target cluster.
+#   - OP_SERVICE_ACCOUNT_TOKEN ocp-bootstrap SA token (ops_...); the
+#                              community.general.onepassword lookup reads the
+#                              rk8s entity Connect token from ocp-connect-bootstrap
+#                              via its env fallback. ansible-navigator.yml passes
+#                              it into the EE; AAP injects it via a credential.
 #
-#   ansible-playbook playbooks/kubernetes/bootstrap-gitops.yaml \
-#     [-e gitops_ref=master] [-e gitops_cluster=internal] \
-#     [-e kubeconfig_op_item=rk8s-kubeconfig] \
-#     [-e op_bootstrap_sa_token=ops_...] [-e connect_token_op_item=rk8s-connect-token]
+# WARNING: Application CRs track targetRevision HEAD — only run this against a
+# gitops_ref whose content is (or is about to be) the repo's default branch, or
+# argocd will immediately reconcile back to master. Pin gitops_ref to a commit
+# SHA for a fully deterministic build across both kustomize stages.
+#
+#   KUBECONFIG=... OP_SERVICE_ACCOUNT_TOKEN=ops_... \
+#     ansible-playbook playbooks/kubernetes/bootstrap-gitops.yaml \
+#     [-e gitops_ref=master] [-e gitops_cluster=internal]
 - name: Bootstrap cluster GitOps from igou-kubernetes
   hosts: localhost
   connection: local
   gather_facts: false
 
   vars:
-    gitops_repo: https://github.com/igou-io/igou-kubernetes.git
+    # Base URL for the kustomize remote-build `//<path>?ref=` form (no `.git`).
+    gitops_repo: https://github.com/igou-io/igou-kubernetes
     gitops_ref: master
     gitops_cluster: internal
-    kubeconfig_op_vault: lab_rk8s
-    kubeconfig_op_item: rk8s-kubeconfig
     connect_secret_namespace: external-secrets
     connect_secret_name: onepassword-connect-token
     # rk8s entity Connect token — read from the dedicated ocp-connect-bootstrap
-    # vault (same as openshift/hub-cluster/bootstrap_gitops.yaml), authenticating
+    # vault (same as playbooks/openshift/bootstrap_gitops.yaml), authenticating
     # as the read-only ocp-bootstrap SA. The Connect JWT lives in the item's
     # `credential` field (aud=com.1password.connect).
     connect_token_op_vault: ocp-connect-bootstrap
     connect_token_op_item: rk8s-connect-token
     connect_token_op_field: credential
 
-  vars_prompt:
-    - name: op_bootstrap_sa_token
-      prompt: "1Password ocp-bootstrap service-account token (ops_...)"
-      private: true
-
   tasks:
-    - name: Assert bootstrap credentials are present
+    - name: Assert KUBECONFIG and the bootstrap service-account token are present
+      # OP_SERVICE_ACCOUNT_TOKEN feeds the community.general.onepassword env
+      # fallback used by the token-seed task below. vars_prompt is NOT used: it
+      # silently returns empty under ansible-navigator/AAP (no interactive TTY
+      # wired to the lookup), which makes the lookup fall through to an
+      # interactive sign-in and fail with "Missing required parameters".
       ansible.builtin.assert:
         that:
-          - lookup('ansible.builtin.env', 'OP_CONNECT_HOST') | length > 0
-          - lookup('ansible.builtin.env', 'OP_CONNECT_TOKEN') | length > 0
-          - op_bootstrap_sa_token | default('') | length > 0
+          - lookup('ansible.builtin.env', 'KUBECONFIG') | length > 0
+          - lookup('ansible.builtin.env', 'OP_SERVICE_ACCOUNT_TOKEN') | length > 0
         fail_msg: >-
-          Need both: OP_CONNECT_HOST/OP_CONNECT_TOKEN (Connect mode — reads the
-          kubeconfig from {{ kubeconfig_op_vault }}; attach the AAP "Onepassword
-          Connect" credential or export the env) AND op_bootstrap_sa_token (the
-          ocp-bootstrap SA — reads the rk8s entity token from
-          {{ connect_token_op_vault }}; prompted, or pass -e for AAP).
+          KUBECONFIG and OP_SERVICE_ACCOUNT_TOKEN must be set. Point KUBECONFIG
+          at the target cluster and export the ocp-bootstrap service-account
+          token (ops_...), e.g. `export OP_SERVICE_ACCOUNT_TOKEN=ops_...` (AAP
+          injects it via a credential).
 
-    - name: Create workspace directory
-      ansible.builtin.tempfile:
-        state: directory
-        suffix: -gitops-bootstrap
-      register: _ws
+    - name: Ensure the external-secrets namespace exists
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ connect_secret_namespace }}"
 
-    - name: Bootstrap from the cloned repo
-      block:
-        - name: Clone igou-kubernetes ({{ gitops_ref }})
-          ansible.builtin.git:
-            repo: "{{ gitops_repo }}"
-            dest: "{{ _ws.path }}/igou-kubernetes"
-            version: "{{ gitops_ref }}"
-            depth: 1
+    - name: Seed the rk8s entity Connect token secret (for ESO)
+      kubernetes.core.k8s:
+        state: present
+        # force_conflicts: ESO/argocd may later own this Secret; a re-seed
+        # must win the field ownership back to reconcile the Connect token.
+        server_side_apply:
+          field_manager: ansible
+          force_conflicts: true
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ connect_secret_name }}"
+            namespace: "{{ connect_secret_namespace }}"
+            annotations:
+              managed-by: ansible
+          type: Opaque
+          stringData:
+            # rk8s ENTITY Connect token from ocp-connect-bootstrap, read via the
+            # ocp-bootstrap SA (OP_SERVICE_ACCOUNT_TOKEN env fallback) — NOT the
+            # kubeconfig-read token. Same pattern as openshift/bootstrap_gitops.yaml.
+            token: "{{ lookup('community.general.onepassword', connect_token_op_item, field=connect_token_op_field, vault=connect_token_op_vault) }}"
+      no_log: true
 
-        - name: Materialize kubeconfig from 1Password
-          ansible.builtin.copy:
-            content: "{{ lookup('community.general.onepassword', kubeconfig_op_item, field='kubeconfig', vault=kubeconfig_op_vault) | b64decode }}"
-            dest: "{{ _ws.path }}/kubeconfig"
-            mode: "0600"
-          no_log: true
+    - name: Install argocd (server-side apply)
+      # One-shot per bootstrap: no force_conflicts here (unlike the token seed
+      # above). Once argocd self-adopts its own install, a re-run conflicts on
+      # field ownership and fails loudly — safer than ansible silently
+      # reclaiming fields argocd now manages.
+      kubernetes.core.k8s:
+        state: present
+        server_side_apply:
+          field_manager: ansible
+        definition: "{{ lookup('kubernetes.core.kustomize', dir=gitops_repo ~ '//components/argocd?ref=' ~ gitops_ref, enable_helm=true) }}"
 
-        - name: Install argocd (server-side apply)
-          ansible.builtin.shell:
-            cmd: |
-              set -o pipefail
-              kustomize build --enable-helm components/argocd | kubectl apply --server-side -f -
-            chdir: "{{ _ws.path }}/igou-kubernetes"
-            executable: /bin/bash
-          environment:
-            KUBECONFIG: "{{ _ws.path }}/kubeconfig"
-          register: _argocd_apply
-          changed_when: "' configured' in _argocd_apply.stdout or ' created' in _argocd_apply.stdout"
+    - name: Wait for argocd server rollout
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: argocd-server
+        namespace: argocd
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 300
 
-        - name: Wait for argocd server rollout
-          ansible.builtin.command:
-            cmd: kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
-          environment:
-            KUBECONFIG: "{{ _ws.path }}/kubeconfig"
-          changed_when: false
+    - name: Apply the cluster root ({{ gitops_cluster }})
+      # namespace: argocd — the cluster root's Application/AppProject CRs carry
+      # no metadata.namespace (argo's own sync places them via the app-of-apps
+      # destination); without it they land in `default` where argocd never sees
+      # them.
+      kubernetes.core.k8s:
+        state: present
+        namespace: argocd
+        definition: "{{ lookup('kubernetes.core.kustomize', dir=gitops_repo ~ '//clusters/' ~ gitops_cluster ~ '?ref=' ~ gitops_ref, enable_helm=true) }}"
+      register: _root_apply
+      retries: 50
+      delay: 15
+      until: _root_apply is succeeded
 
-        - name: Ensure the external-secrets namespace exists
-          ansible.builtin.shell:
-            cmd: |
-              set -o pipefail
-              kubectl create namespace {{ connect_secret_namespace }} --dry-run=client -o yaml | kubectl apply -f -
-            executable: /bin/bash
-          environment:
-            KUBECONFIG: "{{ _ws.path }}/kubeconfig"
-          register: _ns_apply
-          changed_when: "' created' in _ns_apply.stdout"
-
-        - name: Seed the rk8s entity Connect token secret (for ESO)
-          kubernetes.core.k8s:
-            state: present
-            kubeconfig: "{{ _ws.path }}/kubeconfig"
-            definition:
-              apiVersion: v1
-              kind: Secret
-              metadata:
-                name: "{{ connect_secret_name }}"
-                namespace: "{{ connect_secret_namespace }}"
-                annotations:
-                  managed-by: ansible
-              type: Opaque
-              stringData:
-                # Read the rk8s ENTITY Connect token from ocp-connect-bootstrap via
-                # the ocp-bootstrap SA (service_account_token). Passing the token as
-                # a lookup arg — not via the OP_SERVICE_ACCOUNT_TOKEN env — keeps the
-                # kubeconfig lookup above in Connect mode.
-                token: "{{ lookup('community.general.onepassword', connect_token_op_item, field=connect_token_op_field, vault=connect_token_op_vault, service_account_token=op_bootstrap_sa_token) }}"
-          no_log: true
-
-        - name: Apply the cluster root ({{ gitops_cluster }})
-          ansible.builtin.shell:
-            cmd: |
-              set -o pipefail
-              # -n argocd: the cluster root's Application/AppProject CRs carry
-              # no metadata.namespace (argo's own sync places them via the
-              # app-of-apps destination); without it they land in `default`
-              # where argocd never sees them.
-              kustomize build --enable-helm clusters/{{ gitops_cluster }} | kubectl apply -n argocd -f -
-            chdir: "{{ _ws.path }}/igou-kubernetes"
-            executable: /bin/bash
-          environment:
-            KUBECONFIG: "{{ _ws.path }}/kubeconfig"
-          register: _root_apply
-          changed_when: "' configured' in _root_apply.stdout or ' created' in _root_apply.stdout"
-
-        - name: Report
-          ansible.builtin.debug:
-            msg: >-
-              Bootstrapped {{ gitops_cluster }} from {{ gitops_repo }}@{{ gitops_ref }};
-              argocd now self-manages the cluster.
-      always:
-        - name: Remove workspace directory
-          ansible.builtin.file:
-            path: "{{ _ws.path }}"
-            state: absent
+    - name: Report bootstrap result
+      ansible.builtin.debug:
+        verbosity: 1
+        msg: >-
+          Bootstrapped {{ gitops_cluster }} from {{ gitops_repo }}@{{ gitops_ref }};
+          argocd now self-manages the cluster.
