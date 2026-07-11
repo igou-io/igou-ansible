@@ -20,21 +20,25 @@
         state: absent
 
     # Independent read of the registered task (NOT the converge module's return).
+    # NB: never `register: _task` — ansible-core (2.19+) binds an internal
+    # `_task` object while projecting registered results (it templates
+    # `_task.polymorphic_result`), so that name self-shadows and fails with
+    # "Recursive loop detected in expression".
     - name: Read the scheduled task state (independent read)
       community.windows.win_scheduled_task_stat:
         path: \Ansible
         name: molecule-marker-task
-      register: _task
+      register: _task_stat
 
     - name: Assert the task exists and is enabled
       ansible.builtin.assert:
         that:
-          - _task.task_exists
-          - _task.settings.enabled
+          - _task_stat.task_exists
+          - _task_stat.settings.enabled
         fail_msg: >-
           Scheduled task \Ansible\molecule-marker-task exists=
-          {{ _task.task_exists | default(false) }}
-          enabled={{ _task.settings.enabled | default('unknown') }};
+          {{ _task_stat.task_exists | default(false) }}
+          enabled={{ _task_stat.settings.enabled | default('unknown') }};
           expected an enabled, registered task.
         success_msg: Scheduled task is registered under \Ansible and enabled.
 
@@ -47,23 +51,23 @@
     - name: Assert the task runs as SYSTEM at highest level with a dated daily trigger
       vars:
         _daily: >-
-          {{ _task.triggers | default([])
+          {{ _task_stat.triggers | default([])
              | selectattr('type', 'equalto', 'TASK_TRIGGER_DAILY') | list }}
       ansible.builtin.assert:
         that:
-          - "'SYSTEM' in _task.principal.user_id"
-          - _task.principal.run_level == 'TASK_RUNLEVEL_HIGHEST'
+          - "'SYSTEM' in _task_stat.principal.user_id"
+          - _task_stat.principal.run_level == 'TASK_RUNLEVEL_HIGHEST'
           - _daily | length > 0
           - (_daily[0].start_boundary | default('')) | length > 0
         fail_msg: >-
           Scheduled task principal/trigger contract not met:
-          user_id={{ _task.principal.user_id | default('?') }}
-          run_level={{ _task.principal.run_level | default('?') }}
+          user_id={{ _task_stat.principal.user_id | default('?') }}
+          run_level={{ _task_stat.principal.run_level | default('?') }}
           daily_triggers={{ _daily | length }}
           start_boundary={{ (_daily[0].start_boundary | default('')) if (_daily | length > 0) else 'n/a' }}.
         success_msg: >-
-          Task runs as SYSTEM ({{ _task.principal.user_id }}) at
-          {{ _task.principal.run_level }} with a daily trigger starting
+          Task runs as SYSTEM ({{ _task_stat.principal.user_id }}) at
+          {{ _task_stat.principal.run_level }} with a daily trigger starting
           {{ _daily[0].start_boundary }}.
 
     # Fire it now. A daily trigger will not run during the test, so the only way
