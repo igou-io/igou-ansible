@@ -21,6 +21,10 @@
 #   windows_test_user_password  - REQUIRED. Pass via extra_vars, e.g.
 #                                 -e windows_test_user_password="{{ lookup('community.general.onepassword',
 #                                    'windows-apptester', field='password', vault='lab_agents') }}"
+#                                 Must satisfy the default Windows password
+#                                 complexity policy (length + character
+#                                 classes) or win_user rejects it and the
+#                                 play fails.
 #   windows_test_user_groups    - local groups for the account
 #                                 (default: Users + Remote Desktop Users)
 #   windows_test_apps           - Chocolatey packages to install; a list of
@@ -62,6 +66,7 @@
       ansible.builtin.assert:
         that:
           - windows_test_user_password is defined
+          - windows_test_user_password | default('') | length > 0
         fail_msg: >-
           Set windows_test_user_password via extra_vars (ideally from a
           1Password lookup) — see the header of this playbook.
@@ -139,6 +144,9 @@
         profiles:
           - domain
           - private
+          # Fresh workgroup/KubeVirt VMs classify the NIC as Public, so
+          # RDP stays blocked without this (lab-only; see README).
+          - public
         state: present
         enabled: true
       when: windows_test_enable_rdp

@@ -17,7 +17,7 @@
 #   windows_iis_site_port     - HTTP port to bind (default 8080)
 #   windows_iis_site_path     - physical path (default C:\inetpub\demo-site)
 #   windows_iis_app_pool      - application pool name (default 'demo-pool')
-#   windows_iis_index_content - HTML served as index.html; replace with
+#   windows_iis_index_content - HTML served as index.htm; replace with
 #                               win_copy of your real content
 #
 # Run:
@@ -64,10 +64,13 @@
         path: "{{ windows_iis_site_path }}"
         state: directory
 
+    # Served as index.htm, not index.html: the stock IIS default-document
+    # list includes index.htm but NOT index.html, so a "GET /" probe against
+    # an index.html would 403.14 (directory listing denied).
     - name: Deploy the site content
       ansible.windows.win_copy:
         content: "{{ windows_iis_index_content }}"
-        dest: "{{ windows_iis_site_path }}\\index.html"
+        dest: "{{ windows_iis_site_path }}\\index.htm"
 
     # bindings.set is authoritative: the site ends up with exactly this
     # binding list. Use bindings.add / bindings.remove for incremental edits.
@@ -81,6 +84,24 @@
             - ip: '*'
               port: "{{ windows_iis_site_port | int }}"
         state: started
+
+    # Installing the Web-Server feature only opens port 80. The site binds
+    # windows_iis_site_port (default 8080), so without an explicit allow rule
+    # external clients can't reach it. All profiles incl. public — lab VMs
+    # classify a fresh NIC as Public (see README).
+    - name: Open the firewall for the site port
+      community.windows.win_firewall_rule:
+        name: "Allow IIS {{ windows_iis_site_name }} (managed by Ansible)"
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "{{ windows_iis_site_port }}"
+        profiles:
+          - domain
+          - private
+          - public
+        state: present
+        enabled: true
 
     # Don't just trust module green — request the page from the host itself
     # and fail the play if IIS isn't actually serving our content.

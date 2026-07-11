@@ -36,8 +36,12 @@
       - name: notepadplusplus
 
   tasks:
-    # Registering an internal feed first (when configured) means even the
-    # Chocolatey bootstrap and every package come from your own server.
+    # Register the internal feed as a named, highest-priority Chocolatey
+    # source (when configured). This does NOT redirect the Chocolatey
+    # bootstrap install (still from community.chocolatey.org unless the
+    # bootstrap is pre-seeded) and does NOT disable the community feed —
+    # it just adds another source, preferred by its priority. To actually
+    # use it for installs, pass it below via windows_choco_source.
     - name: Point Chocolatey at an internal package feed
       chocolatey.chocolatey.win_chocolatey_source:
         name: internal
@@ -51,19 +55,23 @@
         name: "{{ item.name }}"
         version: "{{ item.version | default(omit) }}"
         state: "{{ item.state | default('present') }}"
+        # Install from the internal feed when configured; omitted otherwise
+        # so default behaviour (community feed) is unchanged.
+        source: "{{ windows_choco_source | default(omit) }}"
       loop: "{{ windows_apps }}"
       loop_control:
         label: "{{ item.name }} ({{ item.state | default('present') }})"
 
-    # win_chocolatey_facts populates ansible_facts.chocolatey with installed
-    # packages, sources, and config — handy proof of what a run left behind.
+    # win_chocolatey_facts populates the ansible_chocolatey fact with
+    # installed packages, sources, and config — handy proof of what a run
+    # left behind.
     - name: Collect the resulting package inventory
       chocolatey.chocolatey.win_chocolatey_facts:
 
     - name: Show installed Chocolatey packages
       ansible.builtin.debug:
         msg: >-
-          {{ ansible_facts.chocolatey.packages
+          {{ ansible_chocolatey.packages
              | map(attribute='package')
              | sort
              | join(', ') }}

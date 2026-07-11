@@ -17,10 +17,6 @@ molecule/
 │   ├── destroy.yml
 │   ├── molecule.yml
 │   └── verify.yml
-├── kubernetes-bootstrap-kind
-│   ├── converge.yml
-│   ├── molecule.yml
-│   └── verify.yml
 ├── shared
 │   ├── base.yml
 │   ├── playbooks
