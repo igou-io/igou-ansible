@@ -105,26 +105,47 @@
         label: "{{ item.item }}"
       tags: [verify]
 
+    - name: Read the SHA256SUMS manifest
+      # Slurp once and parse in Jinja (the house idiom — Play 2 slurps its
+      # markers) instead of spawning a grep per ISO. A missing manifest fails
+      # here, loudly, before the presence assertion below.
+      ansible.builtin.slurp:
+        src: "{{ _dst_dir }}/SHA256SUMS"
+      register: _sums_raw
+      tags: [verify]
+
     - name: Assert every listed ISO has a line in SHA256SUMS
-      # `sha256sum -c SHA256SUMS` passes SILENTLY for files that have no line in
-      # the manifest, so the hard gate below is not enough on its own. Grep each
-      # filename explicitly so an ISO missing from the manifest fails loudly.
-      # -F: fixed-string match; the two-space separator mirrors the manifest.
-      ansible.builtin.command:
-        cmd: grep -F "  {{ item }}" SHA256SUMS
-        chdir: "{{ _dst_dir }}"
-      register: _sums_line
-      changed_when: false
-      failed_when: _sums_line.rc != 0
+      # `sha256sum -c SHA256SUMS` (below) passes SILENTLY for files that have no
+      # line in the manifest, so this explicit presence check is required: an ISO
+      # missing from the manifest must fail loudly. Strip the "<hash>  " prefix
+      # from each manifest line to get the filename list, then assert membership.
+      vars:
+        _sums_files: >-
+          {{ (_sums_raw.content | b64decode).splitlines()
+             | map('regex_replace', '^[0-9A-Fa-f]+ +', '')
+             | map('trim') | select | list }}
+      ansible.builtin.assert:
+        that: item in _sums_files
+        fail_msg: >-
+          {{ item }} has no line in {{ _dst_dir }}/SHA256SUMS. This play assumes
+          the vanilla ISO library is already seeded there; add its checksum line
+          via the one-time seed procedure documented in this file's header
+          (append "<sha256>  {{ item }}" to SHA256SUMS).
       loop: "{{ truenas_windows_isos }}"
       loop_control:
         label: "{{ item }}"
       tags: [verify]
 
     - name: Verify checksums on the serving copy (hard gate)
-      # Runs before the remaster play; on a fresh system the -noprompt lines are
-      # not yet in SHA256SUMS (the remaster play adds them), so this checks only
-      # the pristine ISOs. On a converged system both are present and checked.
+      # DEFENDED command (no native equivalent): this verifies EVERY line of the
+      # checksum manifest against the files on disk, including the <base>-noprompt
+      # siblings the remaster play (Play 2) appends — filenames that no play var
+      # enumerates. A native stat get_checksum comparison could only cover the
+      # ISOs listed in truenas_windows_isos and would silently ignore those
+      # appended remaster lines; no module verifies an arbitrary checksum-manifest
+      # file wholesale. Runs before the remaster play; on a fresh system the
+      # -noprompt lines are not yet present (only the pristine ISOs are checked),
+      # on a converged system both are present and checked.
       ansible.builtin.command:
         cmd: sha256sum -c SHA256SUMS
         chdir: "{{ _dst_dir }}"
@@ -262,6 +283,11 @@
       tags: [remaster]
 
     - name: Remaster ISO to no-prompt boot media (extract → preflight → swap → repack)
+      # DEFENDED command (over community.docker.docker_container): this is a
+      # one-shot `docker run --rm` whose exit code AND stdout ARE the result
+      # (changed_when keys on 'REMASTERED', PREFLIGHT_FAIL surfaces via rc/stderr);
+      # docker_container manages container lifecycle/state and does not cleanly
+      # return a throwaway run's captured output and exit status.
       # argv avoids all shell quoting: the script is passed intact, base as $1.
       # A ~8GB ISO takes a few minutes of IO — hence the generous async window.
       # rc != 0 (e.g. PREFLIGHT_FAIL, exit 3) fails the task with the stderr shown.
