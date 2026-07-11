@@ -65,6 +65,28 @@ provisioner:
     K8S_AUTH_HOST: "${K8S_AUTH_HOST}"
     K8S_AUTH_API_KEY: "${K8S_AUTH_API_KEY}"
     K8S_AUTH_VERIFY_SSL: "${K8S_AUTH_VERIFY_SSL:-true}"
+    # --- Edition selection (default = Windows Server 2025, byte-identical to
+    # the proven win2k25 path) ---------------------------------------------
+    # create/converge/verify/destroy read these so ONE scenario builds any
+    # edition. Leave them unset for the default win2k25 run. For Windows 11:
+    #   WINDOWS_GOLDEN_EDITION=win11
+    #   WINDOWS_GOLDEN_PREFERENCE=windows.11
+    #   WINDOWS_GOLDEN_INSTANCETYPE=u1.large
+    #   WINDOWS_GOLDEN_ISO_DV=iso-win11-25h2-enterprise-eval-noprompt
+    #   WINDOWS_GOLDEN_IMAGE_INDEX=1
+    #   WINDOWS_GOLDEN_UNATTEND_TEMPLATE=autounattend-client.xml.j2
+    #   WINDOWS_GOLDEN_EXPECTED_OS="Windows 11"
+    WINDOWS_GOLDEN_EDITION: "${WINDOWS_GOLDEN_EDITION:-win2k25}"
+    WINDOWS_GOLDEN_PREFERENCE: "${WINDOWS_GOLDEN_PREFERENCE:-windows.2k25}"
+    WINDOWS_GOLDEN_INSTANCETYPE: "${WINDOWS_GOLDEN_INSTANCETYPE:-u1.medium}"
+    WINDOWS_GOLDEN_ISO_DV: "${WINDOWS_GOLDEN_ISO_DV:-iso-winserver2025-eval-noprompt}"
+    WINDOWS_GOLDEN_IMAGE_INDEX: "${WINDOWS_GOLDEN_IMAGE_INDEX:-2}"
+    WINDOWS_GOLDEN_UNATTEND_TEMPLATE: "${WINDOWS_GOLDEN_UNATTEND_TEMPLATE:-autounattend-server.xml.j2}"
+    # WINDOWS_GOLDEN_EXPECTED_OS is intentionally NOT declared here: molecule's
+    # env interpolation rejects an empty default, and this var is optional.
+    # Molecule passes the parent shell environment through, so exporting
+    # WINDOWS_GOLDEN_EXPECTED_OS (e.g. "Windows 11") reaches verify.yml; when it
+    # is unset, verify.yml defaults it to '' (report only, no assertion).
   playbooks:
     create: create.yml
     converge: converge.yml

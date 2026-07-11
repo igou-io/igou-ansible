@@ -4,12 +4,24 @@
 # (deleting an absent object is a no-op), so no ignore_errors is needed. The
 # ansible-molecule SA cannot delete namespaces and this play NEVER touches the
 # windows-images namespace or its ISO DataVolume.
+#
+# Resource names DERIVE from WINDOWS_GOLDEN_EDITION (same env var the converge
+# playbook uses to name resources), so any edition tears down cleanly instead of
+# orphaning resources. Default edition win2k25 reproduces the original names.
 - name: Destroy — remove golden-image build + verify artifacts
   hosts: localhost
   connection: local
   gather_facts: false
   vars:
     golden_namespace: molecule
+    golden_edition: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_EDITION') | default('win2k25', true) }}"
+    # Mirror build_windows_golden.yml's derived-name contract exactly.
+    golden_vm_name: "golden-{{ golden_edition }}-build"
+    golden_dv_name: "golden-{{ golden_edition }}"
+    golden_installcd_dv: "golden-{{ golden_edition }}-installcd"
+    golden_unattend_secret: "golden-{{ golden_edition }}-unattend"
+    # Edition-independent verify VM name (see verify.yml).
+    verify_vm: golden-verify
   tasks:
     - name: Delete the build and verify VirtualMachines
       kubernetes.core.k8s:
@@ -20,8 +32,8 @@
         namespace: "{{ golden_namespace }}"
         wait: true
       loop:
-        - golden-win2k25-build
-        - golden-verify
+        - "{{ golden_vm_name }}"
+        - "{{ verify_vm }}"
 
     # golden-verify-rootdisk is garbage-collected with golden-verify (owner
     # ref from its dataVolumeTemplate), so it is intentionally not listed here.
@@ -34,15 +46,15 @@
         namespace: "{{ golden_namespace }}"
         wait: true
       loop:
-        - golden-win2k25-installcd
-        - golden-win2k25
+        - "{{ golden_installcd_dv }}"
+        - "{{ golden_dv_name }}"
 
     - name: Delete the unattend Secret
       kubernetes.core.k8s:
         state: absent
         api_version: v1
         kind: Secret
-        name: golden-win2k25-unattend
+        name: "{{ golden_unattend_secret }}"
         namespace: "{{ golden_namespace }}"
 
     - name: Delete the golden DataSource
@@ -50,5 +62,5 @@
         state: absent
         api_version: cdi.kubevirt.io/v1beta1
         kind: DataSource
-        name: golden-win2k25
+        name: "{{ golden_dv_name }}"
         namespace: "{{ golden_namespace }}"

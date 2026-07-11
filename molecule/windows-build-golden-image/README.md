@@ -47,6 +47,38 @@ molecule verify   -s windows-build-golden-image  # boot-test proof
 molecule destroy  -s windows-build-golden-image  # cleanup
 ```
 
+## Building a different edition
+
+The scenario is edition-parameterized via environment variables (defaulted in
+`molecule.yml`); a bare run builds **Windows Server 2025** exactly as before.
+`create` (ISO dependency), `converge` (build vars), `verify` (name + OS
+assertion), and `destroy` (resource names) all read the same vars, so no file
+edits are needed to build another edition. For **Windows 11 25H2 Enterprise**:
+
+```bash
+export WINDOWS_GOLDEN_EDITION=win11
+export WINDOWS_GOLDEN_PREFERENCE=windows.11
+export WINDOWS_GOLDEN_INSTANCETYPE=u1.large
+export WINDOWS_GOLDEN_ISO_DV=iso-win11-25h2-enterprise-eval-noprompt
+export WINDOWS_GOLDEN_IMAGE_INDEX=1          # 1 = Win11 client editions
+export WINDOWS_GOLDEN_UNATTEND_TEMPLATE=autounattend-client.xml.j2
+export WINDOWS_GOLDEN_EXPECTED_OS="Windows 11"
+molecule test -s windows-build-golden-image
+```
+
+The client answer file adds the Win11 hardware-check bypasses,
+`PreventDeviceEncryption` (BitLocker never arms in a golden image), a
+BypassNRO/local-account OOBE path, and a Store auto-update disable before
+sysprep. Device-encryption state is guaranteed at build time by
+`PreventDeviceEncryption`; there is no clean in-guest channel to run
+`manage-bde` from this pure-`kubernetes.core` scenario, so verify asserts the
+booted OS edition instead.
+
+Note: a real Windows 11 guest reports guest-agent `prettyName` "Windows 10
+Enterprise Evaluation" (Microsoft never updated the registry ProductName) but
+`version` "Microsoft Windows 11" — verify matches the expected OS against both
+fields, so `WINDOWS_GOLDEN_EXPECTED_OS="Windows 11"` works.
+
 ## Expected duration
 
 ~60–90 minutes for converge (unattended Windows install + sysprep + publish);
