@@ -38,7 +38,10 @@
     # Defaults publish the full library from igounas; override in
     # group_vars/truenas.yml as needed.
     truenas_public_pool: ssd
-    truenas_public_quota: "150G"
+    # Refquota bump is OPT-IN: the live ssd/public dataset deliberately runs
+    # refquota=none (pool has ample headroom). Set a BYTE COUNT (int, e.g.
+    # 161061273600 for 150GiB) to enforce one; empty skips the task.
+    truenas_public_quota: ""
     truenas_windows_iso_src_host: igou@igounas.igou.systems
     truenas_windows_iso_src_dir: /volume1/igoushare/Lab/isos/windows
     truenas_windows_isos:
@@ -55,11 +58,13 @@
   tasks:
 
     - name: Bump the public dataset refquota (headroom for the ISO library)
+      # arensb.truenas.filesystem takes refquota as an integer byte count.
+      when: truenas_public_quota | string | length > 0
       arensb.truenas.filesystem:
         name: "{{ truenas_public_pool }}/public"
         state: present
         type: FILESYSTEM
-        refquota: "{{ truenas_public_quota }}"
+        refquota: "{{ truenas_public_quota | int }}"
       tags: [quota]
 
     - name: Ensure the published ISO directory exists
