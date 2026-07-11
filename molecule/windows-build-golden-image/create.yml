@@ -11,8 +11,10 @@
     golden_namespace: molecule
     # The preexisting Windows installer ISO DataVolume this build depends on.
     # Owned by a separate process — we only read it, never create/delete it.
+    # REMASTERED no-prompt feedstock: the build playbook's default `none` boot
+    # path asserts this `-noprompt` name and auto-boots the CD with no keypress.
     iso_namespace: windows-images
-    iso_dv_name: iso-winserver2025-eval
+    iso_dv_name: iso-winserver2025-eval-noprompt
   tasks:
     - name: Assert cluster auth env vars are present
       ansible.builtin.assert:
@@ -65,28 +67,7 @@
           ISO dependency {{ iso_namespace }}/{{ iso_dv_name }} is present and
           Succeeded.
 
-    - name: Check virtctl is on PATH (needed for the VNC CD-boot helper)
-      ansible.builtin.command: virtctl version --client
-      changed_when: false
-      register: _virtctl_check
-
-    - name: Assert virtctl is available
-      ansible.builtin.assert:
-        that:
-          - _virtctl_check.rc == 0
-        fail_msg: >-
-          virtctl not found on PATH — install it (mise/virtctl) before running.
-        success_msg: virtctl is available.
-
-    - name: Check the vncdotool python module is importable
-      ansible.builtin.command: python3 -c "import vncdotool"
-      changed_when: false
-      register: _vncdotool_check
-
-    - name: Assert vncdotool is installed
-      ansible.builtin.assert:
-        that:
-          - _vncdotool_check.rc == 0
-        fail_msg: >-
-          Python module vncdotool is missing — install it: pip install vncdotool
-        success_msg: vncdotool is importable.
+    # No virtctl / vncdotool preflight: the build playbook's default `none` boot
+    # path is pure kubernetes.core (the remastered no-prompt CD auto-boots), so
+    # this scenario has no VNC tooling dependency to gate on. The deprecated vnc
+    # helper carries its own in-playbook preflights for the transitional release.
