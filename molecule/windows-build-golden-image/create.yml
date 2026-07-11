@@ -67,7 +67,6 @@
           ISO dependency {{ iso_namespace }}/{{ iso_dv_name }} is present and
           Succeeded.
 
-    # No virtctl / vncdotool preflight: the build playbook's default `none` boot
-    # path is pure kubernetes.core (the remastered no-prompt CD auto-boots), so
-    # this scenario has no VNC tooling dependency to gate on. The deprecated vnc
-    # helper carries its own in-playbook preflights for the transitional release.
+    # No virtctl preflight: the build playbook is pure kubernetes.core (the
+    # remastered no-prompt CD auto-boots), so this scenario has no VM-console
+    # tooling dependency to gate on.

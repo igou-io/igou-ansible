@@ -19,9 +19,9 @@
     # All other vars use playbook defaults (win2k25 / windows.2k25 / u1.medium,
     # remastered ISO windows-images/iso-winserver2025-eval-noprompt, image_index
     # 2, 50Gi rootdisk, freenas-nfs-cold-csi ISO storage, keep_build_artifacts
-    # false). cd_boot_helper defaults to `none`: pure kubernetes.core, no
-    # virtctl/vncdotool/kubeconfig — the no-prompt CD auto-boots and disk-first
-    # bootOrder terminates the install loop.
+    # false). The build is pure kubernetes.core, no virtctl/kubeconfig — the
+    # no-prompt CD auto-boots and disk-first bootOrder terminates the install
+    # loop.
     #
     # To build a SECOND edition instead, override the edition/preference/ISO,
     # e.g. Windows 11 desktop (note the remastered -noprompt feedstock name):

@@ -24,9 +24,9 @@ ServiceAccount. The golden DataSource is published in `molecule`, never in
 - A **preexisting**, **remastered no-prompt** Windows installer ISO DataVolume
   in the `windows-images` namespace — `iso-winserver2025-eval-noprompt`, phase
   `Succeeded`. This scenario reads it and gates on it; it never creates or
-  deletes anything in `windows-images`. (The default `cd_boot_helper=none` boot
-  path requires a `-noprompt` ISO — the CD auto-boots with no keypress, so
-  **no `virtctl` and no `vncdotool` are needed**.)
+  deletes anything in `windows-images`. (The build requires a `-noprompt` ISO —
+  the CD auto-boots with no keypress, and the flow is pure kubernetes.core, so
+  **no `virtctl` is needed**.)
 - Optional: `WINDOWS_GOLDEN_ADMIN_PASSWORD` to pin the throwaway build password
   (otherwise one is generated; sysprep wipes it from the published image).
 
