@@ -15,10 +15,17 @@
     # `--local-only` (bare `choco list` there hits the remote feed). Try the v1
     # form first and fall back to the v2 form if it errors, so this read reports
     # LOCALLY INSTALLED packages regardless of the golden's choco version.
+    # Resolve choco.exe by absolute path, not PATH: Chocolatey's install adds
+    # its bin dir to the MACHINE PATH, but the WinRM service's environment
+    # block was cached at service start (before the bootstrap), so a fresh
+    # psrp session does NOT see `choco` on PATH until the service restarts or
+    # the box reboots. The win_chocolatey module sidesteps this by calling
+    # choco.exe by absolute path; this independent read does the same.
     - name: List locally installed Chocolatey packages (independent read)
       ansible.windows.win_shell: |
-        $out = choco list --local-only --limit-output 2>$null
-        if ($LASTEXITCODE -ne 0) { $out = choco list --limit-output 2>$null }
+        $choco = Join-Path $env:ProgramData 'chocolatey\bin\choco.exe'
+        $out = & $choco list --local-only --limit-output 2>$null
+        if ($LASTEXITCODE -ne 0) { $out = & $choco list --limit-output 2>$null }
         $out
       register: _choco_list
       changed_when: false
