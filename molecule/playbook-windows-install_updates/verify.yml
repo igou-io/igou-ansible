@@ -9,52 +9,42 @@
   gather_facts: false
   tasks:
     # state=searched is a non-mutating report pass: it lists applicable updates
-    # for the category without downloading or installing. This is the
-    # independent probe — it does not trust the converge run's own output.
-    - name: Search the same category independently (report-only, no install)
+    # for the category without downloading or installing. This is the meaningful
+    # (non-tautological) probe: because converge just INSTALLED everything
+    # applicable in this category, a re-search MUST come back with
+    # found_update_count == 0 — that zero is the independent proof converge
+    # brought the category to a clean state. `until` retries absorb the external
+    # feed briefly publishing a new definition between converge and this search;
+    # if it is still nonzero after all retries, the feed genuinely churned (see
+    # README rerun signature) rather than converge having left work undone.
+    - name: Re-search the category — converge must have left it clean (found=0)
       ansible.windows.win_updates:
         category_names:
           - Definition Updates
         state: searched
       register: _searched
+      until: (_searched.found_update_count | default(-1) | int) == 0
+      retries: 3
+      delay: 60
 
-    - name: Assert the searched pass returned clean, structured results
+    - name: Assert the category is clean after converge and nothing failed
       ansible.builtin.assert:
         that:
-          # The module ran to completion, no crash / auth failure.
-          - _searched is not failed
-          # found_update_count is an exposed integer >= 0 (0 is a valid, clean
-          # result — it means the bounded converge already installed everything
-          # applicable in that category).
-          - _searched.found_update_count is defined
-          - (_searched.found_update_count | int) >= 0
+          # 0 applicable updates on re-search = converge installed the category
+          # to completion (the substantive contract, not a >= 0 tautology).
+          - (_searched.found_update_count | int) == 0
           # A report-only pass installs nothing and must fail nothing.
           - (_searched.failed_update_count | default(0) | int) == 0
         fail_msg: >-
-          win_updates state=searched did not return a clean result:
-          found={{ _searched.found_update_count | default('undefined') }}
-          failed={{ _searched.failed_update_count | default('undefined') }}
-          (failed={{ _searched is failed }}).
+          win_updates state=searched did not confirm a clean category after
+          converge: found={{ _searched.found_update_count | default('undefined') }}
+          failed={{ _searched.failed_update_count | default('undefined') }}. If
+          found is nonzero for a freshly published definition, the external feed
+          churned — re-run the scenario (see README).
         success_msg: >-
-          Searched pass clean: found_update_count=
-          {{ _searched.found_update_count }}, failed_update_count=
+          Category clean after converge: found_update_count=0,
+          failed_update_count=
           {{ _searched.failed_update_count | default(0) }}.
-
-    # reboot: false was requested at converge, so verify asserts the reboot
-    # STATE is exposed — NOT that it is false. A pending reboot is a legitimate
-    # outcome of a definition install; the contract is that the flag is
-    # surfaced (so an operator can act), not that no reboot is ever pending.
-    - name: Assert the reboot_required flag is exposed
-      ansible.builtin.assert:
-        that:
-          - _searched.reboot_required is defined
-        fail_msg: >-
-          win_updates did not expose reboot_required — the playbook cannot warn
-          on a pending reboot if the module never reports one.
-        success_msg: >-
-          reboot_required flag exposed (value:
-          {{ _searched.reboot_required }}) — pending reboots are surfaced, not
-          hidden.
 
     # Diagnostics: the marker proves the sysprep unattend FirstLogonCommands ran
     # (self-signed cert + WinRM listener path), i.e. the whole specialize path

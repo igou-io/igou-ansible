@@ -64,14 +64,14 @@
 {% if (windows_unattend_admin_mode | default('builtin')) == 'local_account' %}
         <LocalAccounts>
           <LocalAccount wcm:action="add">
-            <Name>{{ windows_admin_user | default('molecule') | e }}</Name>
-            <Group>Administrators</Group>
-            <DisplayName>{{ windows_admin_user | default('molecule') | e }}</DisplayName>
-            <Description>molecule-owned local admin (shared windows-unattend.xml.j2)</Description>
             <Password>
               <Value>{{ windows_admin_password | e }}</Value>
               <PlainText>true</PlainText>
             </Password>
+            <Description>molecule-owned local admin (shared windows-unattend.xml.j2)</Description>
+            <DisplayName>{{ windows_admin_user | default('molecule') | e }}</DisplayName>
+            <Group>Administrators</Group>
+            <Name>{{ windows_admin_user | default('molecule') | e }}</Name>
           </LocalAccount>
         </LocalAccounts>
 {% else %}
@@ -88,6 +88,9 @@
         </Password>
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
+{% if (windows_unattend_admin_mode | default('builtin')) == 'local_account' %}
+        <Domain>{{ (windows_computer_name | regex_replace('[^A-Za-z0-9]', ''))[:15] }}</Domain>
+{% endif %}
         <Username>{% if (windows_unattend_admin_mode | default('builtin')) == 'local_account' %}{{ windows_admin_user | default('molecule') | e }}{% else %}Administrator{% endif %}</Username>
       </AutoLogon>
       <FirstLogonCommands>

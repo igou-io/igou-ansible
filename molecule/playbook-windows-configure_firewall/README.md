@@ -57,9 +57,21 @@ Budget ~20–30 min end to end (smart-clone + OOBE specialize dominate).
 2. All three firewall **profiles are enabled** (independent `Get-NetFirewallProfile`).
 3. The custom **TCP 7777 rules (inbound + outbound) exist and are enabled**, and
    the **TCP 7779 rule was removed** (prepare had created it — a real transition).
-4. **Negative external probe**: a NodePort to guest **7778** (no allow rule) is
-   **unreachable** from the controller (wait_for times out) — the firewall blocks
-   unallowed inbound traffic.
+   These are independent in-guest `Get-NetFirewallRule` reads. There is **no**
+   external positive probe to 7777: it would only add value with a matching live
+   listener, which the scenario does not stand up for 7777 (the 7778 listener is
+   what the causation isolation below requires); the in-guest read already proves
+   the allow rule is present and enabled.
+4. **Positive control + negative external probe**: `prepare` stands up a SYSTEM
+   scheduled task running a PowerShell `TcpListener` accept-loop on
+   `0.0.0.0:7778`. Verify first proves that listener is genuinely **up** via an
+   in-guest loopback `Test-NetConnection 127.0.0.1:7778` (loopback is exempt from
+   Windows Firewall). Then a NodePort to guest **7778** (live listener, **no**
+   allow rule) is proven **unreachable** from the controller (wait_for times
+   out). Because the listener is up, the only thing that can cause the external
+   timeout is the firewall dropping the inbound SYN — so the block, not a missing
+   listener, is isolated as the cause. The listener task is torn down in verify's
+   `always` block (and VM teardown at destroy is the safety net).
 
 ## Cleanup semantics
 

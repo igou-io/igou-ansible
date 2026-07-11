@@ -33,7 +33,9 @@ in the scenario.
   block until in-guest `Get-ADDomain` answers **and** the DC's own DNS serves the
   `_ldap._tcp.dc._msdcs.molecule.test` SRV locator. Budget ~10-15 min.
 - **converge** — assert `windows` group non-empty; discover `windc01`'s pod IP
-  from its VMI status; import `join_domain.yaml` unmodified with
+  from its Running **virt-launcher Pod** `status.podIP` (not the VMI's
+  `status.interfaces[0].ipAddress`, which under masquerade reports the useless
+  in-VM 10.0.2.x address); import `join_domain.yaml` unmodified with
   `windows_domain_state: domain`, `windows_domain_name: molecule.test`,
   `windows_domain_admin_user: MOLECULE\Administrator`,
   `windows_domain_dns_servers: [<DC pod IP>]`. The playbook points the member's
@@ -92,6 +94,18 @@ including across the leave-path reboot in `verify.yml`. `microsoft.ad.membership
 requires a local reconnect account after an unjoin, so the scenario **never**
 switches the connection to a domain/kerberos account. This is a review-flagged
 requirement; keep it if you edit the scenario.
+
+The connection user is the **bare** `Administrator` (from the provisioner's
+runtime inventory), not `.\Administrator`. Post-join this is unambiguous because
+the local Administrator and any same-named domain account share the one password
+identity the psrp session already holds, so NTLM resolves it locally. This is
+**intentional**. If it ever flakes after the join (e.g. the name resolving to a
+domain principal you did not intend), qualify it as `.\Administrator` to force
+the local SAM account — but first confirm the sysprep unattend/autologon does not
+consume `admin_user` in a way a `.\ ` prefix would break (the shared template
+feeds `windows_admin_user` into `LocalAccount`/`AutoLogon` where a `.\ ` prefix
+is **not** valid), so the prefix belongs only on the runtime *connection* var,
+never on the unattend account name.
 
 ## Phase-5 debug pointers
 

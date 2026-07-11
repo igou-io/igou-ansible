@@ -78,13 +78,18 @@ ansible:
 
 scenario:
   name: playbook-windows-install_updates
+  # No `idempotence` step: 'Definition Updates' is an UNPINNED external feed that
+  # legitimately churns between passes (Microsoft can publish a new Defender
+  # signature at any moment), so a second converge can install it and report
+  # `changed` with zero playbook defect. Bounded idempotency for updates is the
+  # accept_list contract's job, not this scenario's — verify instead re-searches
+  # the category and asserts converge left it clean (see verify.yml / README).
   test_sequence:
     - dependency
     - syntax
     - create
     - prepare
     - converge
-    - idempotence
     - verify
     - destroy
 

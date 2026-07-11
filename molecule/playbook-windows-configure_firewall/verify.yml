@@ -13,11 +13,13 @@
   gather_facts: false
   tasks:
     # (b) All three profiles enabled — independent Get-NetFirewallProfile read.
-    # [bool]$_.Enabled normalizes the GpoBoolean enum (1/True) to a JSON boolean.
+    # "$($_.Enabled)" -eq 'True' is the SAME robust string compare the rules read
+    # below uses: it stringifies the GpoBoolean enum (whose members render as
+    # 'True'/'False') and compares, avoiding [bool]-cast surprises on the enum.
     - name: Read all firewall profile states (independent read)
       ansible.windows.win_shell: |
         Get-NetFirewallProfile -All |
-          ForEach-Object { [pscustomobject]@{ Name = $_.Name; Enabled = [bool]$_.Enabled } } |
+          ForEach-Object { [pscustomobject]@{ Name = $_.Name; Enabled = ("$($_.Enabled)" -eq 'True') } } |
           ConvertTo-Json -Compress
       register: _profiles
       changed_when: false
@@ -80,13 +82,45 @@
           FirstLogonCommands did not complete, so the specialize path is suspect.
         success_msg: Sysprep specialize marker present.
 
-# (d) NEGATIVE EXTERNAL PROBE: create a NodePort Service to a guest port with NO
-# allow rule (7778, nothing listening) and prove it is UNREACHABLE from outside
-# the cluster. A blocked inbound port yields no SYN-ACK, so the controller-side
-# wait_for times out — that timeout IS the firewall-working signal. Runs on the
-# controller, which reaches node InternalIPs directly (the same path molecule
-# uses to reach the VM). The Service is cleaned up in an always block so a failed
-# assert never leaks it (destroy.yml is the belt-and-braces safety net).
+    # (d) POSITIVE CONTROL for the negative external probe below: prove the 7778
+    # listener (prepare's scheduled task) is genuinely UP before we assert it is
+    # externally unreachable. Loopback (127.0.0.1) is exempt from Windows Firewall
+    # filtering, so a successful loopback connect isolates the LISTENER as up
+    # while the firewall still blocks the same port on the real interface. Retry
+    # to absorb Task Scheduler spin-up after prepare's Start-ScheduledTask.
+    - name: Positive control — the 7778 listener is up on loopback (firewall-exempt)
+      ansible.windows.win_shell: >-
+        (Test-NetConnection -ComputerName 127.0.0.1 -Port 7778
+        -WarningAction SilentlyContinue).TcpTestSucceeded
+      register: _listener_up
+      changed_when: false
+      until: (_listener_up.stdout | trim | lower) == 'true'
+      retries: 12
+      delay: 5
+
+    - name: Assert the loopback positive control succeeded
+      ansible.builtin.assert:
+        that:
+          - (_listener_up.stdout | trim | lower) == 'true'
+        fail_msg: >-
+          Loopback Test-NetConnection to 127.0.0.1:7778 did NOT succeed
+          ({{ _listener_up.stdout | trim }}) — the prepare listener task is not
+          up, so a subsequent external-probe timeout would be vacuous (no listener
+          to reach) rather than proof the firewall blocked it. Aborting.
+        success_msg: >-
+          7778 listener is up on loopback — the external probe below now isolates
+          firewall causation, not a missing listener.
+
+# (e) NEGATIVE EXTERNAL PROBE: create a NodePort Service to guest port 7778 (which
+# HAS a live listener — proven up on loopback above — but NO firewall allow rule)
+# and prove it is UNREACHABLE from outside the cluster. Because the listener is
+# genuinely up, an external SUCCESS would mean the firewall failed to block; the
+# only reason the controller-side wait_for times out is the firewall dropping the
+# inbound SYN before it reaches the listener — THAT timeout is the firewall signal.
+# Runs on the controller, which reaches node InternalIPs directly (the same path
+# molecule uses to reach the VM). The Service AND the in-guest listener task are
+# cleaned up in the always block so a failed assert never leaks them (destroy.yml
+# and VM teardown are the belt-and-braces safety net).
 - name: Verify — the firewall blocks an unallowed port from outside
   hosts: localhost
   connection: local
@@ -167,12 +201,13 @@
             that:
               - _neg_probe is failed
             fail_msg: >-
-              External NodePort probe to guest 7778 SUCCEEDED — a port with no
-              firewall allow rule must be unreachable. The firewall is not
-              blocking inbound as expected.
+              External NodePort probe to guest 7778 SUCCEEDED — it reached the
+              live TCP listener (proven up on loopback above), which means the
+              firewall FAILED to block an inbound port that has no allow rule.
             success_msg: >-
-              Guest 7778 (no allow rule) was unreachable from outside — the
-              firewall blocks unallowed inbound traffic.
+              Guest 7778 (live listener, no allow rule) was unreachable from
+              outside while reachable on loopback — the firewall blocks unallowed
+              inbound traffic, and the block (not a missing listener) is the cause.
       always:
         - name: Delete the negative-probe NodePort Service
           kubernetes.core.k8s:
@@ -181,3 +216,24 @@
             kind: Service
             name: "{{ fw_probe_service }}"
             namespace: "{{ fw_namespace }}"
+
+        # Tear down the in-guest 7778 listener now that both the loopback positive
+        # control and the external negative probe are done. delegate_to runs these
+        # over the windows host's own psrp connection (from inventory) even though
+        # this play is connection: local. Stop first to end the running accept-loop
+        # process, then unregister the task. VM teardown at destroy is the safety
+        # net; failed_when: false keeps a cleanup hiccup from masking a real result.
+        - name: Stop the in-guest 7778 listener task
+          ansible.windows.win_shell: >-
+            Stop-ScheduledTask -TaskPath \Ansible\ -TaskName molecule-fwprobe-listener
+          delegate_to: "{{ groups['windows'][0] }}"
+          changed_when: false
+          failed_when: false
+
+        - name: Delete the in-guest 7778 listener task
+          community.windows.win_scheduled_task:
+            name: molecule-fwprobe-listener
+            path: \Ansible
+            state: absent
+          delegate_to: "{{ groups['windows'][0] }}"
+          failed_when: false

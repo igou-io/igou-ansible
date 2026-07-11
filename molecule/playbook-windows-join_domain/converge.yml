@@ -21,8 +21,11 @@
           {{ groups['windows'] | join(', ') }}.
 
 # Play 2 discovers the DC's pod IP so the member can point DNS at it before the
-# join. Both VMs are on the default pod network (masquerade); VM-to-VM pod-IP
-# traffic works in-cluster. Reading the VMI status + set_fact are both
+# join. We read it from the virt-launcher POD's status.podIP — NOT the VMI's
+# status.interfaces[0].ipAddress. Under masquerade networking the VMI's first
+# interface reports the in-VM masquerade address (10.0.2.x), which is useless as
+# a DNS target for the OTHER VM; the pod IP is the real cluster-routable address
+# that VM-to-VM pod traffic uses. Reading the Pod, set_fact, and assert are all
 # changed=0-safe, so this play never breaks the idempotence run.
 - name: Converge — discover the windc01 pod IP for member DNS
   hosts: localhost
@@ -31,31 +34,46 @@
   vars:
     join_domain_namespace: molecule
   tasks:
-    - name: Read the windc01 VirtualMachineInstance status
+    - name: Read the windc01 virt-launcher Pod(s)
       kubernetes.core.k8s_info:
-        api_version: kubevirt.io/v1
-        kind: VirtualMachineInstance
-        name: windc01
+        api_version: v1
+        kind: Pod
         namespace: "{{ join_domain_namespace }}"
-      register: _windc01_vmi
+        label_selectors:
+          - kubevirt.io/domain=windc01
+      register: _windc01_pods
 
-    - name: Assert the DC VMI reported a pod IP
+    # A domain may have a stale/Completed launcher pod alongside the live one
+    # (e.g. after a restart); keep only Running so we read the current pod IP.
+    - name: Keep only the Running windc01 virt-launcher pod(s)
+      ansible.builtin.set_fact:
+        _windc01_running_pods: >-
+          {{ _windc01_pods.resources | default([])
+             | selectattr('status.phase', 'equalto', 'Running') | list }}
+
+    - name: Assert a Running DC launcher pod reported a routable podIP
+      vars:
+        _pod_ip: >-
+          {{ (_windc01_running_pods[0].status.podIP | default(''))
+             if (_windc01_running_pods | length > 0) else '' }}
       ansible.builtin.assert:
         that:
-          - _windc01_vmi.resources | length > 0
-          - _windc01_vmi.resources[0].status.interfaces | default([]) | length > 0
-          - _windc01_vmi.resources[0].status.interfaces[0].ipAddress | default('') | length > 0
+          - _windc01_running_pods | length > 0
+          - _pod_ip | length > 0
+          # The pod IP must be the cluster-routable address, never the in-VM
+          # masquerade range (10.0.2.x) — pointing member DNS at that would
+          # silently poison name resolution and the join would fail obscurely.
+          - not (_pod_ip is match('^10\.0\.2\.'))
         fail_msg: >-
-          windc01 VMI has no interface IP in status.interfaces[0].ipAddress —
-          the VM may not be fully Running yet, or the pod network is not
-          reporting. Cannot point the member's DNS at the DC.
-        success_msg: >-
-          windc01 pod IP =
-          {{ _windc01_vmi.resources[0].status.interfaces[0].ipAddress }}.
+          No Running windc01 launcher pod with a routable podIP: running_pods=
+          {{ _windc01_running_pods | length }}, podIP='{{ _pod_ip }}'. The DC VM
+          may not be fully Running, or the pod IP resolved into the masquerade
+          range (10.0.2.x). Cannot point the member's DNS at the DC.
+        success_msg: "windc01 launcher podIP = {{ _pod_ip }} (cluster-routable)."
 
     - name: Pin the DC pod IP as a fact for the import vars below
       ansible.builtin.set_fact:
-        dc_pod_ip: "{{ _windc01_vmi.resources[0].status.interfaces[0].ipAddress }}"
+        dc_pod_ip: "{{ _windc01_running_pods[0].status.podIP }}"
 
 # Play 3 = the real playbook, unmodified. import_playbook vars override the
 # playbook's own play-var defaults (proven: they beat the shipped

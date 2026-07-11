@@ -38,6 +38,34 @@
           expected an enabled, registered task.
         success_msg: Scheduled task is registered under \Ansible and enabled.
 
+    # Structural contract (independent of firing): the playbook fixes SYSTEM +
+    # highest run level and a daily trigger. Assert those from the stat return —
+    # user_id is a substring match ('SYSTEM' vs 'NT AUTHORITY\SYSTEM'), run_level
+    # is the EXACT Task Scheduler enum token (TASK_RUNLEVEL_HIGHEST, not
+    # 'highest'), and the triggers list must carry a daily trigger with a
+    # non-empty start_boundary (converge passed 2026-01-01T03:00:00).
+    - name: Assert the task runs as SYSTEM at highest level with a dated daily trigger
+      vars:
+        _daily: >-
+          {{ _task.triggers | default([])
+             | selectattr('type', 'equalto', 'TASK_TRIGGER_DAILY') | list }}
+      ansible.builtin.assert:
+        that:
+          - "'SYSTEM' in _task.principal.user_id"
+          - _task.principal.run_level == 'TASK_RUNLEVEL_HIGHEST'
+          - _daily | length > 0
+          - (_daily[0].start_boundary | default('')) | length > 0
+        fail_msg: >-
+          Scheduled task principal/trigger contract not met:
+          user_id={{ _task.principal.user_id | default('?') }}
+          run_level={{ _task.principal.run_level | default('?') }}
+          daily_triggers={{ _daily | length }}
+          start_boundary={{ (_daily[0].start_boundary | default('')) if (_daily | length > 0) else 'n/a' }}.
+        success_msg: >-
+          Task runs as SYSTEM ({{ _task.principal.user_id }}) at
+          {{ _task.principal.run_level }} with a daily trigger starting
+          {{ _daily[0].start_boundary }}.
+
     # Fire it now. A daily trigger will not run during the test, so the only way
     # the marker below appears is this on-demand run executing the task action.
     # Path/name are unquoted on purpose: a single-quoted value ending in a

@@ -46,31 +46,35 @@ molecule test -s playbook-windows-install_updates
 
 ## What verify proves
 
-1. An independent `win_updates state=searched` pass over the same
-   `Definition Updates` category returns cleanly: it did not crash,
-   `found_update_count` is an exposed integer `>= 0`, and nothing failed.
-   `found_update_count == 0` is a valid PASS — it means the bounded converge
-   already installed everything applicable.
-2. The `reboot_required` flag is **exposed** (regardless of value). The contract
-   is that a pending reboot is surfaced so the playbook can warn on it — not
-   that no reboot is ever pending.
-3. `C:\molecule-specialize-done.txt` exists — the sysprep unattend
+1. A `win_updates state=searched` re-search over the same `Definition Updates`
+   category comes back with **`found_update_count == 0`** — the substantive
+   proof that converge installed the category to completion (a re-search after a
+   full install must find nothing applicable). `failed_update_count == 0` too.
+   The search is wrapped in `until` retries (3 attempts, ~60 s apart) so a
+   momentary feed publish between converge and verify does not flake the assert.
+2. `C:\molecule-specialize-done.txt` exists — the sysprep unattend
    FirstLogonCommands ran, so the whole specialize/WinRM path executed.
 
-## Watch items (feed to Phase 5 — not pre-solved)
+## No idempotence step (by design)
 
-- **Definition-feed idempotence race.** The `idempotence` step runs converge a
-  second time and fails if any task reports `changed`. `Definition Updates` is
-  an EXTERNAL feed: Microsoft can publish a new Defender signature between the
-  two converge passes, so the second pass legitimately installs it and reports
-  `changed` — a real-world flake, not a playbook defect. There is **no
-  scenario-side mechanism** to exempt a task inside an *imported, unmodified*
-  playbook from molecule's idempotence grep (that would require editing the
-  playbook, which is out of scope here). If `idempotence` fails and the changed
-  task is the `win_updates` "Search for and install updates" task with a newly
-  published definition, the Phase-5 validator should **re-run** the scenario;
-  the failure signature is a single `changed` on the update task with a nonzero
-  `installed_update_count` for a fresh KB/definition.
+The `idempotence` step is deliberately **absent** from `test_sequence`.
+`Definition Updates` is an UNPINNED external feed: Microsoft can publish a new
+Defender signature between any two converge passes, so a second converge can
+legitimately install it and report `changed` with zero playbook defect. There
+is no scenario-side way to exempt a task inside an *imported, unmodified*
+playbook from molecule's idempotence grep, and bounded idempotency for updates
+is the **accept_list contract's** job, not this scenario's. Verify substitutes a
+stronger check: it re-searches the category and asserts converge left it clean
+(`found_update_count == 0`).
+
+## Watch item (feed to Phase 5 — not pre-solved)
+
+- **Definition-feed churn signature.** If verify's re-search still reports a
+  nonzero `found_update_count` after all `until` retries, the external feed
+  published a fresh definition after converge finished — a real-world race, not
+  a playbook defect. The failure signature is the re-search assert failing with
+  a small nonzero `found_update_count` for a just-published Defender definition;
+  the Phase-5 validator should **re-run** the scenario.
 
 ## Cleanup semantics
 
