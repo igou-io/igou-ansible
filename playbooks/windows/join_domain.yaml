@@ -26,9 +26,25 @@
 #   windows_domain_hostname       - rename the host while joining (optional)
 #   windows_workgroup_name        - workgroup to join when leaving the
 #                                   domain (default WORKGROUP)
+#   windows_domain_dns_servers    - optional list of DNS server IPs. When
+#                                   non-empty (and joining), point every
+#                                   adapter at these servers BEFORE the join
+#                                   so the host can resolve the domain — the
+#                                   classic first-join blocker. Default [].
 #
-# The host must be able to resolve the domain's DNS records — point it at
-# the domain controller with ansible.windows.win_dns_client first if needed.
+# The host must be able to resolve the domain's DNS records. Set
+# windows_domain_dns_servers to have this play point the adapters at the
+# domain controller before joining, or arrange DNS out of band.
+#
+# Caution — leaving the domain (windows_domain_state: workgroup) with
+# reboot: true: the microsoft.ad.membership docs require the Ansible
+# connection account to be a LOCAL user for the post-reboot reconnect. Do
+# not switch the connection to a domain/kerberos account between the join
+# and the later leave.
+#
+# Note: leaving without valid domain admin creds still removes the host but
+# orphans its computer object in AD (acceptable for ephemeral lab DCs that
+# get torn down anyway).
 #
 # Run:
 #   ansible-navigator run playbooks/windows/join_domain.yaml \
@@ -43,6 +59,7 @@
   vars:
     windows_domain_state: domain
     windows_workgroup_name: WORKGROUP
+    windows_domain_dns_servers: []
 
   tasks:
     - name: Make sure join credentials were provided
@@ -51,11 +68,23 @@
           - windows_domain_name is defined
           - windows_domain_admin_user is defined
           - windows_domain_admin_password is defined
+          - windows_domain_admin_password | default('') | length > 0
         fail_msg: >-
           Joining a domain needs windows_domain_name,
           windows_domain_admin_user and windows_domain_admin_password —
           see the header of this playbook.
       when: windows_domain_state == 'domain'
+
+    # DNS is the classic first-join blocker: the host can't find the domain
+    # controller unless it resolves the AD DNS records. Point every adapter
+    # at the DC before joining, when the caller supplied server IPs.
+    - name: Point DNS at the domain controller before joining
+      ansible.windows.win_dns_client:
+        adapter_names: '*'
+        dns_servers: "{{ windows_domain_dns_servers }}"
+      when:
+        - windows_domain_state == 'domain'
+        - windows_domain_dns_servers | length > 0
 
     # reboot: true lets the module handle the restart a join/leave always
     # requires, and the play continues once the host is back.
@@ -69,6 +98,7 @@
         state: domain
         reboot: true
       when: windows_domain_state == 'domain'
+      no_log: true
 
     - name: Leave the domain for a workgroup
       microsoft.ad.membership:
@@ -78,3 +108,4 @@
         state: workgroup
         reboot: true
       when: windows_domain_state == 'workgroup'
+      no_log: true
