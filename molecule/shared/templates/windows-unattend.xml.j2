@@ -11,12 +11,30 @@
 
   Rendered per host into a Secret <host>-sysprep by
   molecule/shared/playbooks/windows-sysprep-secrets.yml. Template vars:
-    windows_computer_name  - source name; sanitized to <=15 alphanumerics.
-    windows_admin_password - built-in Administrator password (XML-escaped).
+    windows_computer_name       - source name; sanitized to <=15 alphanumerics.
+    windows_admin_password      - admin password (XML-escaped).
+    windows_unattend_admin_mode - 'builtin' (default) or 'local_account'.
+    windows_admin_user          - local admin name for 'local_account' mode
+                                  (default 'molecule'; unused in 'builtin').
+
+  Admin-account modes (windows_unattend_admin_mode):
+    * builtin (DEFAULT) — server/2k25 path. Sets the built-in Administrator
+      password (UserAccounts/AdministratorPassword) and AutoLogons as
+      Administrator. This is the ORIGINAL behavior; rendering is byte-identical
+      to the pre-mode template when the var is unset, so the pilot and every
+      win2k25 scenario are unaffected.
+    * local_account — Win11 / client-SKU path. Client SKUs DISABLE the built-in
+      Administrator, so instead create a LocalAccounts admin user
+      (name = windows_admin_user, group Administrators) and AutoLogon as THAT
+      user. A FirstLogonCommand sets
+      HKLM\...\Policies\System LocalAccountTokenFilterPolicy=1 — without it a
+      non-built-in local admin receives a UAC-filtered NTLM network token and
+      psrp/WinRM authenticate but every privileged op 401s / access-denies.
 
   The oobeSystem FirstLogonCommands stand up WinRM-over-HTTPS on 5986 so the
   provisioner's psrp/NTLM connection can reach the clone. Clone NICs classify
-  as the Public network profile, so the firewall rule covers ALL profiles.
+  as the Public network profile, so the firewall rule covers ALL profiles. The
+  WinRM/cert/firewall/marker commands are identical in both modes.
 -#}
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
   <settings pass="specialize">
@@ -43,10 +61,25 @@
         <SkipUserOOBE>true</SkipUserOOBE>
       </OOBE>
       <UserAccounts>
+{% if (windows_unattend_admin_mode | default('builtin')) == 'local_account' %}
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>{{ windows_admin_user | default('molecule') | e }}</Name>
+            <Group>Administrators</Group>
+            <DisplayName>{{ windows_admin_user | default('molecule') | e }}</DisplayName>
+            <Description>molecule-owned local admin (shared windows-unattend.xml.j2)</Description>
+            <Password>
+              <Value>{{ windows_admin_password | e }}</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+{% else %}
         <AdministratorPassword>
           <Value>{{ windows_admin_password | e }}</Value>
           <PlainText>true</PlainText>
         </AdministratorPassword>
+{% endif %}
       </UserAccounts>
       <AutoLogon>
         <Password>
@@ -55,7 +88,7 @@
         </Password>
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
-        <Username>Administrator</Username>
+        <Username>{% if (windows_unattend_admin_mode | default('builtin')) == 'local_account' %}{{ windows_admin_user | default('molecule') | e }}{% else %}Administrator{% endif %}</Username>
       </AutoLogon>
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
@@ -73,8 +106,15 @@
           <Description>Firewall allow 5986 inbound on all profiles</Description>
           <CommandLine>powershell -ExecutionPolicy Bypass -Command "New-NetFirewallRule -DisplayName 'WinRM HTTPS 5986' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5986 -Profile Any"</CommandLine>
         </SynchronousCommand>
+{% if (windows_unattend_admin_mode | default('builtin')) == 'local_account' %}
         <SynchronousCommand wcm:action="add">
           <Order>4</Order>
+          <Description>LocalAccountTokenFilterPolicy=1 so the non-builtin local admin gets a full NTLM network token</Description>
+          <CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f</CommandLine>
+        </SynchronousCommand>
+{% endif %}
+        <SynchronousCommand wcm:action="add">
+          <Order>{% if (windows_unattend_admin_mode | default('builtin')) == 'local_account' %}5{% else %}4{% endif %}</Order>
           <Description>Completion marker for the specialize path</Description>
           <CommandLine>powershell -ExecutionPolicy Bypass -Command "New-Item -Path C:\molecule-specialize-done.txt -ItemType File -Force | Out-Null"</CommandLine>
         </SynchronousCommand>
