@@ -14,7 +14,10 @@
     # REMASTERED no-prompt feedstock: the build playbook's default `none` boot
     # path asserts this `-noprompt` name and auto-boots the CD with no keypress.
     iso_namespace: windows-images
-    iso_dv_name: iso-winserver2025-eval-noprompt
+    # Edition-driven (env WINDOWS_GOLDEN_ISO_DV; default = the win2k25 no-prompt
+    # ISO). Must match the ISO the converge build clones so this preflight gates
+    # on the RIGHT dependency for whichever edition is being built.
+    iso_dv_name: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_ISO_DV') | default('iso-winserver2025-eval-noprompt', true) }}"
   tasks:
     - name: Assert cluster auth env vars are present
       ansible.builtin.assert:

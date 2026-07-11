@@ -1,11 +1,23 @@
 ---
 # Converge = run the real golden-image build playbook against the live cluster,
-# scoped to the molecule namespace. This is the ~60–90 min unattended install +
-# sysprep + publish. Every var not set here rides its playbook default.
+# scoped to the molecule namespace. This is the ~45–90 min unattended install +
+# sysprep + publish. Edition selection is env-driven (see molecule.yml env
+# block); every var not set here rides its playbook default.
 - name: Converge — build and publish the Windows golden DataSource
   ansible.builtin.import_playbook: ../../playbooks/openshift_virtualization/build_windows_golden.yml
   vars:
     windows_golden_namespace: molecule
+    # --- Edition (env-driven; defaults reproduce the proven win2k25 path) ---
+    # These read the WINDOWS_GOLDEN_* env vars molecule exports (defaulted in
+    # molecule.yml), so a bare `molecule test` builds win2k25 exactly as before
+    # and setting the env vars builds another edition (e.g. win11) with no file
+    # edits. `default(..., true)` treats an empty string as unset.
+    windows_golden_edition: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_EDITION') | default('win2k25', true) }}"
+    windows_golden_preference: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_PREFERENCE') | default('windows.2k25', true) }}"
+    windows_golden_instancetype: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_INSTANCETYPE') | default('u1.medium', true) }}"
+    windows_golden_iso_dv: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_ISO_DV') | default('iso-winserver2025-eval-noprompt', true) }}"
+    windows_golden_image_index: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_IMAGE_INDEX') | default('2', true) }}"
+    windows_golden_unattend_template: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_UNATTEND_TEMPLATE') | default('autounattend-server.xml.j2', true) }}"
     # Throwaway local-administrator password for the build VM. It is safe to
     # generate on the fly because sysprep /generalize wipes local accounts and
     # credentials from the published image — nothing that clones the golden
@@ -16,16 +28,7 @@
          | default(lookup('ansible.builtin.password',
                           '/dev/null length=16 chars=ascii_letters,digits') ~ 'zZ9!',
                    true) }}
-    # All other vars use playbook defaults (win2k25 / windows.2k25 / u1.medium,
-    # remastered ISO windows-images/iso-winserver2025-eval-noprompt, image_index
-    # 2, 50Gi rootdisk, freenas-nfs-cold-csi ISO storage, keep_build_artifacts
-    # false). The build is pure kubernetes.core, no virtctl/kubeconfig — the
-    # no-prompt CD auto-boots and disk-first bootOrder terminates the install
-    # loop.
-    #
-    # To build a SECOND edition instead, override the edition/preference/ISO,
-    # e.g. Windows 11 desktop (note the remastered -noprompt feedstock name):
-    #   windows_golden_edition: win11
-    #   windows_golden_preference: windows.11
-    #   windows_golden_iso_dv: iso-win11-25h2-enterprise-eval-noprompt
-    #   windows_golden_image_index: 6
+    # All other vars use playbook defaults (50Gi rootdisk, freenas-nfs-cold-csi
+    # ISO storage, keep_build_artifacts false). The build is pure
+    # kubernetes.core, no virtctl/kubeconfig — the no-prompt CD auto-boots and
+    # disk-first bootOrder terminates the install loop.

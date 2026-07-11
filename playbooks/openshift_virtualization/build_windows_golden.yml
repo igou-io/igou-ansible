@@ -58,7 +58,17 @@
     # feedstock preflight, which enforces the `-noprompt` name suffix.
     windows_golden_iso_dv: iso-winserver2025-eval-noprompt
     # install.wim image index; 2 = Server 2025 Standard Eval (Desktop Experience).
+    # For the win11-25h2-enterprise-eval media the client index is 1.
     windows_golden_image_index: 2
+    # Answer-file (autounattend) Jinja template rendered into the sysprep Secret.
+    # Default = the proven Server template. Client editions (Windows 11) set
+    # autounattend-client.xml.j2, which adds the Win11 hardware-check bypasses,
+    # PreventDeviceEncryption (never arm BitLocker in a golden image), a
+    # BypassNRO/local-account OOBE path, and a Store-auto-update disable before
+    # sysprep. Both templates share the SAME var contract
+    # (windows_golden_image_index / windows_golden_hostname /
+    # windows_golden_admin_password) and the SAME sysprep-via-RunOnce mechanism.
+    windows_golden_unattend_template: autounattend-server.xml.j2
     # ComputerName for the throwaway build VM.
     windows_golden_hostname: goldenbuild
     # Size of the golden root disk.
@@ -220,7 +230,7 @@
                 name: "{{ windows_golden_unattend_secret }}"
                 namespace: "{{ windows_golden_namespace }}"
               stringData:
-                autounattend.xml: "{{ lookup('ansible.builtin.template', 'templates/autounattend-server.xml.j2') }}"
+                autounattend.xml: "{{ lookup('ansible.builtin.template', 'templates/' ~ windows_golden_unattend_template) }}"
 
         # --- Step 5: create the STANDALONE golden root DataVolume ---------
         # Build the storage spec so storageClassName is omitted (cluster default)

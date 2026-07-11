@@ -10,8 +10,14 @@
   gather_facts: false
   vars:
     golden_namespace: molecule
-    golden_name: golden-win2k25
+    # Edition-driven, mirroring build_windows_golden.yml's derived DV/DataSource
+    # name (golden-<edition>). Default win2k25 reproduces the original name.
+    golden_edition: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_EDITION') | default('win2k25', true) }}"
+    golden_name: "golden-{{ golden_edition }}"
     verify_vm: golden-verify
+    # When set (e.g. "Windows 11" for a client build), assert the booted guest's
+    # reported OS contains this substring. Empty -> report only (win2k25 default).
+    expected_os: "{{ lookup('ansible.builtin.env', 'WINDOWS_GOLDEN_EXPECTED_OS') | default('', true) }}"
   tasks:
     - name: Fetch the published golden DataSource
       kubernetes.core.k8s_info:
@@ -153,6 +159,57 @@
           | selectattr('type', 'equalto', 'AgentConnected')
           | selectattr('status', 'equalto', 'True')
           | list | length == 1
+
+    # guestOSInfo lags AgentConnected by a poll or two (the agent connects, then
+    # reports OS detail). When an edition asserts its OS, wait for prettyName to
+    # populate before asserting; otherwise this is skipped and the trophy debug
+    # below just reports whatever is present.
+    - name: Wait for the guest to report its OS (only when an OS is asserted)
+      when: expected_os | length > 0
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachineInstance
+        name: "{{ verify_vm }}"
+        namespace: "{{ golden_namespace }}"
+      register: _verify_os
+      retries: 20
+      delay: 15
+      until:
+        - _verify_os.resources | length == 1
+        - _verify_os.resources[0].status.guestOSInfo.prettyName | default('') | length > 0
+
+    # Match against prettyName AND version: qemu-ga derives prettyName from the
+    # registry ProductName, which Microsoft never updated for Windows 11 — a
+    # real Win11 25H2 guest reports prettyName "Windows 10 Enterprise
+    # Evaluation" but version "Microsoft Windows 11" / versionId "11"
+    # (live-cluster verified). Searching both keeps "Windows 11" assertable.
+    - name: Assert the golden image booted the expected OS (client editions)
+      when: expected_os | length > 0
+      vars:
+        guest_os_identity: >-
+          {{ _verify_os.resources[0].status.guestOSInfo.prettyName | default('') }} /
+          {{ _verify_os.resources[0].status.guestOSInfo.version | default('') }}
+      ansible.builtin.assert:
+        that:
+          - guest_os_identity is search(expected_os)
+        fail_msg: >-
+          golden-verify booted "{{ guest_os_identity }}", which does not
+          contain the expected "{{ expected_os }}". The published golden image
+          is the wrong edition (check windows_golden_image_index / ISO).
+        success_msg: >-
+          golden-verify booted an OS matching "{{ expected_os }}"
+          ({{ guest_os_identity }}).
+
+    # Device-encryption / BitLocker verification note:
+    #   The definition-of-done is "device encryption is NOT armed in the golden
+    #   image". The proof lives at BUILD time, not here: the client answer file
+    #   sets Microsoft-Windows-SecureStartup-FilterDriver/PreventDeviceEncryption
+    #   = true in the specialize pass, so encryption can never arm. There is NO
+    #   clean channel to run `manage-bde -status C:` from this scenario — it is
+    #   pure kubernetes.core with no virtctl and no in-guest exec subresource, so
+    #   a runtime manage-bde check would mean bolting on fragile console/WinRM
+    #   machinery this scenario deliberately avoids. Skipped by design; covered
+    #   by the enforced build-time PreventDeviceEncryption instead.
 
     - name: Trophy — report the guest OS the golden image booted into
       ansible.builtin.debug:
