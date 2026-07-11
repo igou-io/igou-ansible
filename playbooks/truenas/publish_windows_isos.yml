@@ -8,42 +8,52 @@
 #
 # ── Publish leg ────────────────────────────────────────────────────────────
 # The nginx-reverse-proxy container on TrueNAS serves /mnt/ssd/public read-only
-# at public.igou.systems (autoindex), so dropping the ISOs under
-# /mnt/ssd/public/isos/windows/ publishes them with zero nginx config changes:
+# at public.igou.systems (autoindex), so the ISOs under
+# /mnt/ssd/public/isos/windows/ are published with zero nginx config changes:
 #   https://public.igou.systems/isos/windows/<file>.iso   (and http:// for CDI)
 #
-# igounas (Synology) is the archival source of truth; TrueNAS holds the serving
-# copy. igounas DSM has no sftp/scp, so the transfer streams over ssh (cat).
+# ASSUMPTION (not a task): the vanilla eval ISO library and its SHA256SUMS
+# already live at /mnt/ssd/public/isos/windows/ on TrueNAS. This play does NOT
+# transfer anything — it only asserts presence + integrity of the serving copy.
+# igounas (Synology) remains the archival provenance of the media, but that is
+# background, not a runtime dependency: no igounas connectivity is needed here.
+#
+# One-time seed procedure for adding a NEW eval ISO to the library (run by hand
+# ON TrueNAS, then add the file to truenas_windows_isos below):
+#   1. Copy the ISO into the served dir. igounas DSM has no sftp/scp, so stream
+#      it over ssh (cat) from TrueNAS:
+#        ssh igou@igounas.igou.systems \
+#          "cat /volume1/igoushare/Lab/isos/windows/<file>.iso" \
+#          > /mnt/ssd/public/isos/windows/<file>.iso
+#   2. Append the upstream checksum line to the manifest:
+#        echo "<sha256>  <file>.iso" >> /mnt/ssd/public/isos/windows/SHA256SUMS
+# Thereafter this play verifies it on every run.
 #
 # ── Remaster leg (why noprompt media exists) ───────────────────────────────
 # Windows install media stops at a "Press any key to boot from CD…" prompt.
-# For a fully declarative KubeVirt build (no VNC keypress robot) the firmware
-# must NOT wait: with a no-keypress firmware the prompting cdboot.efi makes the
-# firmware SKIP the CD and boot-loop a blank disk. Microsoft ships (undocumented)
-# efisys_noprompt.bin / cdboot_noprompt.efi variants; swapping them in and
-# repacking the ISO yields media that boots straight into Setup. This is the
-# only declarative path (matches Red Hat's pipeline) — see #343 review.
-# TrueNAS SCALE has no native xorriso, so the whole remaster runs inside a
-# throwaway pinned docker container that has /isos bind-mounted.
+# For a fully declarative KubeVirt build the firmware must NOT wait: with a
+# no-keypress firmware the prompting cdboot.efi makes the firmware SKIP the CD
+# and boot-loop a blank disk. Microsoft ships (undocumented) efisys_noprompt.bin
+# / cdboot_noprompt.efi variants; swapping them in and repacking the ISO yields
+# media that boots straight into Setup. This is the only declarative path
+# (matches Red Hat's pipeline) — see #343 review. TrueNAS SCALE has no native
+# xorriso, so the whole remaster runs inside a throwaway pinned docker container
+# that has /isos bind-mounted.
 #
-# Prerequisite: the TrueNAS SSH user can reach truenas_windows_iso_src_host by
-# ssh key (igounas → truenas path is not KEX-blackholed; the devcontainer path
-# is — run this via AAP or from a host on the lab network, not the devcontainer).
+# This playbook runs fine from the devcontainer: the only network path it needs
+# is devcontainer → truenas SSH (truenas_admin@truenas.igou.systems).
 
 - name: Publish Windows eval ISOs on public.igou.systems
   hosts: truenas
   gather_facts: false
   become: false
   vars:
-    # Defaults publish the full library from igounas; override in
-    # group_vars/truenas.yml as needed.
+    # Serving location on TrueNAS; override in group_vars/truenas.yml as needed.
     truenas_public_pool: ssd
     # Refquota bump is OPT-IN: the live ssd/public dataset deliberately runs
     # refquota=none (pool has ample headroom). Set a BYTE COUNT (int, e.g.
     # 161061273600 for 150GiB) to enforce one; empty skips the task.
     truenas_public_quota: ""
-    truenas_windows_iso_src_host: igou@igounas.igou.systems
-    truenas_windows_iso_src_dir: /volume1/igoushare/Lab/isos/windows
     truenas_windows_isos:
       - winserver2025-eval-en-us.iso
       - winserver2022-eval-en-us.iso
@@ -53,8 +63,6 @@
       - win11-ltsc2024-enterprise-eval-en-us.iso
       - win11-iot-ltsc2024-enterprise-eval-en-us.iso
     _dst_dir: "/mnt/{{ truenas_public_pool }}/public/isos/windows"
-    _src_host: "{{ truenas_windows_iso_src_host }}"
-    _src_dir: "{{ truenas_windows_iso_src_dir }}"
   tasks:
 
     - name: Bump the public dataset refquota (headroom for the ISO library)
@@ -74,88 +82,70 @@
         mode: "0755"
       tags: [dir]
 
-    - name: Stream each ISO from the archival host (skip if size already matches)
-      # Size comparison is the idempotence guard: eval media are immutable, so a
-      # matching size means the serving copy is already the published ISO and the
-      # multi-GB transfer is skipped — the play is a no-op on a converged system.
-      #
-      # SAFETY (learned the hard way — a failed src stat once truncated the
-      # whole live library to zero bytes):
-      #   1. Abort BEFORE touching the destination unless the source stat
-      #      returned a plausible size (the archival host needs a working
-      #      truenas->igounas key ONLY when a transfer is actually required).
-      #   2. Stream into a .partial temp, verify the byte count, then mv —
-      #      the published file is never opened for write in place.
-      ansible.builtin.shell:
-        cmd: >
-          set -o pipefail;
-          src_size=$(ssh -o BatchMode=yes {{ _src_host }} "stat -c%s {{ _src_dir }}/{{ item }}") || src_size="";
-          dst_size=$(stat -c%s "{{ _dst_dir }}/{{ item }}" 2>/dev/null || echo 0);
-          if ! [[ "$src_size" =~ ^[0-9]+$ ]] || [ "$src_size" -eq 0 ]; then
-            if [ "$dst_size" -gt 0 ]; then
-              echo "source unreachable; serving copy present ($dst_size bytes) — left untouched" >&2;
-              echo skipped-src-unreachable;
-              exit 0;
-            fi;
-            echo "source unreachable and no serving copy exists for {{ item }}" >&2;
-            exit 1;
-          fi;
-          if [ "$src_size" != "$dst_size" ]; then
-            tmp="{{ _dst_dir }}/.{{ item }}.partial";
-            ssh -o BatchMode=yes {{ _src_host }} "cat {{ _src_dir }}/{{ item }}" > "$tmp";
-            got=$(stat -c%s "$tmp");
-            if [ "$got" != "$src_size" ]; then
-              echo "short transfer for {{ item }}: $got != $src_size" >&2;
-              rm -f "$tmp";
-              exit 1;
-            fi;
-            mv "$tmp" "{{ _dst_dir }}/{{ item }}";
-            chmod 0644 "{{ _dst_dir }}/{{ item }}";
-            echo transferred;
-          else
-            echo skipped;
-          fi
-      args:
-        executable: /bin/bash
-      register: _xfer
-      changed_when: "'transferred' in _xfer.stdout"
+    - name: Stat each published ISO
+      # Presence of the vanilla library is an assumption, not a task — assert it.
+      ansible.builtin.stat:
+        path: "{{ _dst_dir }}/{{ item }}"
+      register: _iso_stat
       loop: "{{ truenas_windows_isos }}"
       loop_control:
         label: "{{ item }}"
-      tags: [transfer]
+      tags: [verify]
 
-    - name: Fetch the upstream SHA256SUMS manifest
-      # Only needed when something was actually transferred; a converged run
-      # must not require the truenas->igounas SSH path at all. Not a handler:
-      # downstream tasks consume the registered result in-order.
-      when: _xfer is changed  # noqa: no-handler
-      ansible.builtin.command:
-        cmd: ssh -o BatchMode=yes {{ _src_host }} cat {{ _src_dir }}/SHA256SUMS
-      register: _remote_sums
-      changed_when: false
-      tags: [transfer]
-
-    - name: Publish upstream checksums (idempotent per file, preserves remastered lines)
-      # Merge each upstream "hash  file" line by filename instead of overwriting
-      # the whole manifest. A wholesale copy would clobber the <base>-noprompt.iso
-      # lines the remaster play appends below (the upstream manifest has none),
-      # and would report changed on every run.
-      ansible.builtin.lineinfile:
-        path: "{{ _dst_dir }}/SHA256SUMS"
-        regexp: "  {{ (item.split('  ')[1] | default('')) | regex_escape }}$"
-        line: "{{ item }}"
-        create: true
-        mode: "0644"
-      loop: "{{ _remote_sums.stdout_lines | default([]) }}"
+    - name: Assert every listed ISO is present in the serving directory
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: >-
+          {{ item.item }} is missing from {{ _dst_dir }}. This play assumes the
+          vanilla ISO library is already seeded there; add it via the one-time
+          seed procedure documented in this file's header (stream from igounas
+          over ssh cat, then append its line to SHA256SUMS).
+      loop: "{{ _iso_stat.results }}"
       loop_control:
-        label: "{{ item.split('  ')[1] | default(item) }}"
-      when: (item | trim | length) > 0
-      tags: [transfer]
+        label: "{{ item.item }}"
+      tags: [verify]
+
+    - name: Read the SHA256SUMS manifest
+      # Slurp once and parse in Jinja (the house idiom — Play 2 slurps its
+      # markers) instead of spawning a grep per ISO. A missing manifest fails
+      # here, loudly, before the presence assertion below.
+      ansible.builtin.slurp:
+        src: "{{ _dst_dir }}/SHA256SUMS"
+      register: _sums_raw
+      tags: [verify]
+
+    - name: Assert every listed ISO has a line in SHA256SUMS
+      # `sha256sum -c SHA256SUMS` (below) passes SILENTLY for files that have no
+      # line in the manifest, so this explicit presence check is required: an ISO
+      # missing from the manifest must fail loudly. Strip the "<hash>  " prefix
+      # from each manifest line to get the filename list, then assert membership.
+      vars:
+        _sums_files: >-
+          {{ (_sums_raw.content | b64decode).splitlines()
+             | map('regex_replace', '^[0-9A-Fa-f]+ +', '')
+             | map('trim') | select | list }}
+      ansible.builtin.assert:
+        that: item in _sums_files
+        fail_msg: >-
+          {{ item }} has no line in {{ _dst_dir }}/SHA256SUMS. This play assumes
+          the vanilla ISO library is already seeded there; add its checksum line
+          via the one-time seed procedure documented in this file's header
+          (append "<sha256>  {{ item }}" to SHA256SUMS).
+      loop: "{{ truenas_windows_isos }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [verify]
 
     - name: Verify checksums on the serving copy (hard gate)
-      # Runs before the remaster play; on a fresh system the -noprompt lines are
-      # not yet in SHA256SUMS (the remaster play adds them), so this checks only
-      # the pristine ISOs. On a converged system both are present and checked.
+      # DEFENDED command (no native equivalent): this verifies EVERY line of the
+      # checksum manifest against the files on disk, including the <base>-noprompt
+      # siblings the remaster play (Play 2) appends — filenames that no play var
+      # enumerates. A native stat get_checksum comparison could only cover the
+      # ISOs listed in truenas_windows_isos and would silently ignore those
+      # appended remaster lines; no module verifies an arbitrary checksum-manifest
+      # file wholesale. Runs before the remaster play; on a fresh system the
+      # -noprompt lines are not yet present (only the pristine ISOs are checked),
+      # on a converged system both are present and checked.
       ansible.builtin.command:
         cmd: sha256sum -c SHA256SUMS
         chdir: "{{ _dst_dir }}"
@@ -293,6 +283,11 @@
       tags: [remaster]
 
     - name: Remaster ISO to no-prompt boot media (extract → preflight → swap → repack)
+      # DEFENDED command (over community.docker.docker_container): this is a
+      # one-shot `docker run --rm` whose exit code AND stdout ARE the result
+      # (changed_when keys on 'REMASTERED', PREFLIGHT_FAIL surfaces via rc/stderr);
+      # docker_container manages container lifecycle/state and does not cleanly
+      # return a throwaway run's captured output and exit status.
       # argv avoids all shell quoting: the script is passed intact, base as $1.
       # A ~8GB ISO takes a few minutes of IO — hence the generous async window.
       # rc != 0 (e.g. PREFLIGHT_FAIL, exit 3) fails the task with the stderr shown.
