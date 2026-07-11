@@ -30,3 +30,15 @@
     windows_updates_categories:
       - Definition Updates
     windows_updates_reboot: false
+    # KB4052623 (Defender antimalware PLATFORM update) ships under this
+    # category but has CHAINED applicability: Windows Update only offers it
+    # AFTER the fresh definitions from this same pass are installed, so a
+    # single reboot-free pass can never both see and install it (reproduced
+    # deterministically on two clean golden clones: converge found=2 /
+    # installed=2, every post-converge re-search found exactly KB4052623).
+    # Chained updates are what the playbook's windows_updates_reboot=true
+    # re-check loop is for; this scenario keeps reboots off, so pin the
+    # platform KB out via the playbook's documented reject_list var.
+    # verify.yml mirrors this exact filter in its re-search — keep in sync.
+    windows_updates_reject_list:
+      - KB4052623

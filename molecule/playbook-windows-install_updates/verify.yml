@@ -21,6 +21,15 @@
       ansible.windows.win_updates:
         category_names:
           - Definition Updates
+        # Mirror converge's EXACT search parameters. KB4052623 (antimalware
+        # platform) is reject-listed in converge because its applicability
+        # chains on the definitions converge installs — Windows Update only
+        # offers it in searches run AFTER converge's install pass, so without
+        # this mirror the found==0 contract can never hold for a single
+        # reboot-free pass (rejected matches land in filtered_updates, not
+        # found_update_count).
+        reject_list:
+          - KB4052623
         state: searched
       register: _searched
       until: (_searched.found_update_count | default(-1) | int) == 0

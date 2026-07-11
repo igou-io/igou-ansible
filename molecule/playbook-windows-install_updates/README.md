@@ -67,14 +67,32 @@ is the **accept_list contract's** job, not this scenario's. Verify substitutes a
 stronger check: it re-searches the category and asserts converge left it clean
 (`found_update_count == 0`).
 
-## Watch item (feed to Phase 5 — not pre-solved)
+## KB4052623 pin (Phase-5 finding: chained applicability, not churn)
+
+The `Definition Updates` category also carries **KB4052623** — the Defender
+**antimalware platform** update (a self-servicing component, not a signature).
+Its applicability **chains** on the definitions converge installs: Windows
+Update only offers it in searches run *after* the fresh definitions are
+installed. Reproduced deterministically on two clean golden clones (converge
+found=2/installed=2 both times; every post-converge re-search found exactly
+KB4052623, `Current Channel (Broad)`). A single reboot-free pass can therefore
+never both see and install it — chained updates are what the playbook's
+`windows_updates_reboot=true` re-check loop is for, and this scenario keeps
+reboots off by design. Fix: converge passes
+`windows_updates_reject_list: [KB4052623]` (a documented playbook var) and
+verify's re-search mirrors the **exact** same `reject_list`, so rejected
+matches land in `filtered_updates` and the `found_update_count == 0` contract
+holds. Keep the two filters in sync.
+
+## Watch item (feed to Phase 5 — churn rerun signature)
 
 - **Definition-feed churn signature.** If verify's re-search still reports a
   nonzero `found_update_count` after all `until` retries, the external feed
   published a fresh definition after converge finished — a real-world race, not
   a playbook defect. The failure signature is the re-search assert failing with
   a small nonzero `found_update_count` for a just-published Defender definition;
-  the Phase-5 validator should **re-run** the scenario.
+  the Phase-5 validator should **re-run** the scenario. (A *repeating* KB across
+  reruns is NOT churn — see the KB4052623 pin above.)
 
 ## Cleanup semantics
 
