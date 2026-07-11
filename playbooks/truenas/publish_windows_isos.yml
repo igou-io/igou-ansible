@@ -196,16 +196,17 @@
     #      install.wim; do NOT add -udf)
     _remaster_script: |
       set -eu
-      apk add --no-cache xorriso >/dev/null
+      # 7zip reads the UDF tree (where Windows media stores everything but a
+      # stub README in ISO9660 — xorriso -osirrox extracts only that ISO9660
+      # view and misses efi/, sources/install.wim, boot/); xorriso does the
+      # bootable repack. Both are unprivileged, no loop mount, no KVM.
+      apk add --no-cache 7zip xorriso >/dev/null
       base="$1"
       src="/isos/${base}"
       tree="/work/${base%.iso}"
       rm -rf "$tree"
       mkdir -p "$tree"
-      # osirrox extracts the ISO filesystem to disk without a loop mount.
-      xorriso -osirrox on -indev "$src" -extract / "$tree"
-      # Extracted ISO dirs are read-only; make them writable so we can swap files.
-      chmod -R u+w "$tree"
+      7z x -bd -bso0 -bsp0 -o"$tree" "$src"
       bootdir="$tree/efi/microsoft/boot"
       # Per-ISO preflight: some media lack the shipped-but-undocumented noprompt
       # boot files. Refuse to produce a silently-still-prompting ISO.
