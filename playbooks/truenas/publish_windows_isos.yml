@@ -314,8 +314,9 @@
           - "{{ item }}"
       register: _remaster_run
       changed_when: "'REMASTERED' in _remaster_run.stdout"
-      async: 3600
-      poll: 20
+      # No async: `command` has no default timeout, so it waits out the
+      # multi-minute IO on its own. The async wrapper was swallowing the
+      # container's stdout/stderr and failing the task with an opaque rc=38.
       loop: "{{ _to_remaster | default([]) }}"
       loop_control:
         label: "{{ item }}"
