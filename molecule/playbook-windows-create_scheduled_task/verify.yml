@@ -1,0 +1,89 @@
+---
+# Verify = INDEPENDENT evidence the task exists AND actually FIRES. Existence
+# alone is a weak test (the module could report a task that never runs); the
+# real contract is that triggering the task executes its action. We read the
+# task back with win_scheduled_task_stat (independent of win_scheduled_task),
+# then Start-ScheduledTask it and prove the marker file appears.
+- name: Verify — independent evidence for create_scheduled_task
+  hosts: windows
+  gather_facts: false
+  vars:
+    task_marker_path: 'C:\molecule-task-fired.txt'
+  tasks:
+    # Clean slate: the daily-triggered task has not fired on its own during the
+    # test window, so the marker should be absent — but remove it defensively so
+    # a re-run of verify can never pass on a stale file. Its reappearance below
+    # is therefore caused ONLY by our explicit trigger.
+    - name: Remove any pre-existing task marker file
+      ansible.windows.win_file:
+        path: "{{ task_marker_path }}"
+        state: absent
+
+    # Independent read of the registered task (NOT the converge module's return).
+    - name: Read the scheduled task state (independent read)
+      community.windows.win_scheduled_task_stat:
+        path: \Ansible
+        name: molecule-marker-task
+      register: _task
+
+    - name: Assert the task exists and is enabled
+      ansible.builtin.assert:
+        that:
+          - _task.task_exists
+          - _task.settings.enabled
+        fail_msg: >-
+          Scheduled task \Ansible\molecule-marker-task exists=
+          {{ _task.task_exists | default(false) }}
+          enabled={{ _task.settings.enabled | default('unknown') }};
+          expected an enabled, registered task.
+        success_msg: Scheduled task is registered under \Ansible and enabled.
+
+    # Fire it now. A daily trigger will not run during the test, so the only way
+    # the marker below appears is this on-demand run executing the task action.
+    # Path/name are unquoted on purpose: a single-quoted value ending in a
+    # backslash (…\Ansible\') reads as an escaped quote to Ansible's argument
+    # splitter and fails syntax-check. Neither token contains spaces, so bare
+    # tokens are unambiguous to PowerShell.
+    - name: Trigger the scheduled task on demand
+      ansible.windows.win_shell: Start-ScheduledTask -TaskPath \Ansible\ -TaskName molecule-marker-task
+      changed_when: false
+
+    # The task action runs asynchronously under the Task Scheduler service, so
+    # poll for the marker rather than assuming it exists the instant we return.
+    - name: Wait for the task to write its marker file
+      ansible.windows.win_stat:
+        path: "{{ task_marker_path }}"
+      register: _marker
+      until: _marker.stat.exists
+      retries: 12
+      delay: 5
+
+    - name: Assert the task fired and wrote non-empty content
+      ansible.builtin.assert:
+        that:
+          - _marker.stat.exists
+          - _marker.stat.size | int > 0
+        fail_msg: >-
+          {{ task_marker_path }} exists={{ _marker.stat.exists | default(false) }}
+          size={{ _marker.stat.size | default(0) }} after triggering the task —
+          the scheduled task did not actually run its action.
+        success_msg: >-
+          Task fired: {{ task_marker_path }} present with
+          {{ _marker.stat.size }} bytes.
+
+    # Diagnostics: the marker proves the sysprep unattend FirstLogonCommands ran
+    # (self-signed cert + WinRM listener path), i.e. the whole specialize path
+    # that made this VM reachable actually executed.
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: 'C:\molecule-specialize-done.txt'
+      register: _specialize_marker
+
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _specialize_marker.stat.exists
+        fail_msg: >-
+          C:\molecule-specialize-done.txt is missing — the sysprep unattend
+          FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.

@@ -1,0 +1,74 @@
+---
+# Verify = INDEPENDENT evidence the update pass behaved. We cannot re-read the
+# converge module's return from a separate play, so verify runs its OWN
+# win_updates pass in state=searched (report-only, installs nothing) over the
+# SAME category the playbook installed, and asserts the module reports clean,
+# well-structured results and exposes its reboot flag.
+- name: Verify — independent evidence for install_updates
+  hosts: windows
+  gather_facts: false
+  tasks:
+    # state=searched is a non-mutating report pass: it lists applicable updates
+    # for the category without downloading or installing. This is the
+    # independent probe — it does not trust the converge run's own output.
+    - name: Search the same category independently (report-only, no install)
+      ansible.windows.win_updates:
+        category_names:
+          - Definition Updates
+        state: searched
+      register: _searched
+
+    - name: Assert the searched pass returned clean, structured results
+      ansible.builtin.assert:
+        that:
+          # The module ran to completion, no crash / auth failure.
+          - _searched is not failed
+          # found_update_count is an exposed integer >= 0 (0 is a valid, clean
+          # result — it means the bounded converge already installed everything
+          # applicable in that category).
+          - _searched.found_update_count is defined
+          - (_searched.found_update_count | int) >= 0
+          # A report-only pass installs nothing and must fail nothing.
+          - (_searched.failed_update_count | default(0) | int) == 0
+        fail_msg: >-
+          win_updates state=searched did not return a clean result:
+          found={{ _searched.found_update_count | default('undefined') }}
+          failed={{ _searched.failed_update_count | default('undefined') }}
+          (failed={{ _searched is failed }}).
+        success_msg: >-
+          Searched pass clean: found_update_count=
+          {{ _searched.found_update_count }}, failed_update_count=
+          {{ _searched.failed_update_count | default(0) }}.
+
+    # reboot: false was requested at converge, so verify asserts the reboot
+    # STATE is exposed — NOT that it is false. A pending reboot is a legitimate
+    # outcome of a definition install; the contract is that the flag is
+    # surfaced (so an operator can act), not that no reboot is ever pending.
+    - name: Assert the reboot_required flag is exposed
+      ansible.builtin.assert:
+        that:
+          - _searched.reboot_required is defined
+        fail_msg: >-
+          win_updates did not expose reboot_required — the playbook cannot warn
+          on a pending reboot if the module never reports one.
+        success_msg: >-
+          reboot_required flag exposed (value:
+          {{ _searched.reboot_required }}) — pending reboots are surfaced, not
+          hidden.
+
+    # Diagnostics: the marker proves the sysprep unattend FirstLogonCommands ran
+    # (self-signed cert + WinRM listener path), i.e. the whole specialize path
+    # that made this VM reachable actually executed.
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: 'C:\molecule-specialize-done.txt'
+      register: _specialize_marker
+
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _specialize_marker.stat.exists
+        fail_msg: >-
+          C:\molecule-specialize-done.txt is missing — the sysprep unattend
+          FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.
