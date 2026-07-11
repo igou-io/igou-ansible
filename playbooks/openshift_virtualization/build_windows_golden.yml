@@ -549,16 +549,24 @@
         # loop tolerates that because `resources | length == 1` simply stays
         # false for those polls and it keeps retrying until Succeeded (or the
         # timeout), never erroring on the empty window.
-        - name: Wait for the build VM to finish and power off (VMI Succeeded)
+        # Completion signal under runStrategy RerunOnFailure: the answer file
+        # ends with sysprep /generalize /shutdown, a CLEAN guest poweroff.
+        # RerunOnFailure treats a clean exit as success and STOPS the VM,
+        # DELETING the VMI (unlike Manual, which parked it in phase Succeeded).
+        # So we watch the VirtualMachine's printableStatus reach "Stopped",
+        # not the VMI phase. A genuine install failure keeps RerunOnFailure
+        # restarting the VMI (Starting/Running/CrashLoopBackOff), so it never
+        # reaches Stopped and this times out — which is the behavior we want.
+        - name: Wait for the build VM to finish and power off (VM Stopped)
           kubernetes.core.k8s_info:
             api_version: kubevirt.io/v1
-            kind: VirtualMachineInstance
+            kind: VirtualMachine
             name: "{{ windows_golden_vm_name }}"
             namespace: "{{ windows_golden_namespace }}"
-          register: golden_vmi_status
+          register: golden_vm_status
           until:
-            - golden_vmi_status.resources | length == 1
-            - golden_vmi_status.resources[0].status.phase == "Succeeded"
+            - golden_vm_status.resources | length == 1
+            - golden_vm_status.resources[0].status.printableStatus == "Stopped"
           retries: "{{ windows_golden_install_timeout_minutes | int }}"
           delay: 60
 
