@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+{#-
+  Per-clone SPECIALIZATION unattend for sysprep-generalized Windows goldens.
+
+  This is NOT an install-time answer file: the golden PVC is already a
+  generalized (sysprep /generalize) Windows image. On boot it runs the
+  `specialize` then `oobeSystem` passes and searches attached removable media
+  for unattend.xml. KubeVirt attaches this file (as the `unattend.xml` key of a
+  sysprep Secret) on a CD-ROM, so there is NO windowsPE pass and NO
+  DiskConfiguration / ImageInstall here — only specialize + oobeSystem.
+
+  Rendered per host into a Secret <host>-sysprep by
+  molecule/shared/playbooks/windows-sysprep-secrets.yml. Template vars:
+    windows_computer_name  - source name; sanitized to <=15 alphanumerics.
+    windows_admin_password - built-in Administrator password (XML-escaped).
+
+  The oobeSystem FirstLogonCommands stand up WinRM-over-HTTPS on 5986 so the
+  provisioner's psrp/NTLM connection can reach the clone. Clone NICs classify
+  as the Public network profile, so the firewall rule covers ALL profiles.
+-#}
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>{{ (windows_computer_name | regex_replace('[^A-Za-z0-9]', ''))[:15] }}</ComputerName>
+    </component>
+  </settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>{{ windows_admin_password | e }}</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+      <AutoLogon>
+        <Password>
+          <Value>{{ windows_admin_password | e }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Username>Administrator</Username>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>WinRM service auto-start and started</Description>
+          <CommandLine>powershell -ExecutionPolicy Bypass -Command "Set-Service -Name WinRM -StartupType Automatic; Start-Service -Name WinRM"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>Self-signed cert + WinRM HTTPS listener on 5986</Description>
+          <CommandLine>powershell -ExecutionPolicy Bypass -Command "$c = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My; New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * -CertificateThumbPrint $c.Thumbprint -Force"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Description>Firewall allow 5986 inbound on all profiles</Description>
+          <CommandLine>powershell -ExecutionPolicy Bypass -Command "New-NetFirewallRule -DisplayName 'WinRM HTTPS 5986' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5986 -Profile Any"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Description>Completion marker for the specialize path</Description>
+          <CommandLine>powershell -ExecutionPolicy Bypass -Command "New-Item -Path C:\molecule-specialize-done.txt -ItemType File -Force | Out-Null"</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>
