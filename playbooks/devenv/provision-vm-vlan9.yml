@@ -58,8 +58,12 @@
     vm_root_size: 30Gi
 
     # Compute (overridable at launch). No resources block -> Burstable QoS.
-    vm_cpu_cores: 8
-    vm_memory: 16Gi
+    # Sized for the full devhost toolset + real workloads. casval has ample
+    # headroom (192 cores / ~364Gi allocatable), so this fits comfortably with
+    # room for the burst autoscaler. A change here is a spec change: the VM must
+    # be RESTARTED to take effect (not hot-plugged).
+    vm_cpu_cores: 20
+    vm_memory: 64Gi
 
     # Pin the versioned machine type so the burst autoscaler's synthetic
     # template node (built from the casval MachineSet capacity-labels
