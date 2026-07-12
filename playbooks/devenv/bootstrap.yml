@@ -181,10 +181,31 @@
         user: igou
         env:
           HOME: /home/igou
+          # The baked ghapp CLI + git credential helper resolve their config
+          # via GHAPP_CONFIG. On the laptop-devcontainer path this export
+          # comes from dotfiles/.bashrc (seeded by post-create.sh), but this
+          # bare code-server launch never runs devcontainer lifecycle hooks,
+          # so set it at the container level — that also covers non-login
+          # contexts (the credential helper invoked by plain `git`).
+          GHAPP_CONFIG: /home/igou/.config/ghapp/config.yaml
         ports:
           - "8080:8080"
         volumes:
           - "{{ ansible_user_dir }}/igou-devenv:/workspace:Z"
+          # In-container GitHub App minting WITHOUT any 1P credential on this
+          # VM: reuse the host's file-based ghapp config (config.yaml with
+          # private_key_path + key.pem, both rendered 0600 by the devhost
+          # ghapp role — NOT the dotfiles' private_key_cmd/op variant, which
+          # would need op auth the host deliberately does not have). The same
+          # path inside and out keeps private_key_path valid verbatim, and
+          # the key is already on host disk 0600, so a read-only bind adds no
+          # new secret exposure (host + container igou are both uid 1000).
+          # SELinux is Enforcing and ~/.config/ghapp is config_home_t, which
+          # container_t cannot read — `z` (SHARED relabel, unlike the
+          # workspace's private `Z`) keeps the dir usable by the host user
+          # while letting the container read it; `ro` keeps the container
+          # from ever writing the key.
+          - "{{ ansible_user_dir }}/.config/ghapp:/home/igou/.config/ghapp:ro,z"
         # Allow bubblewrap (bwrap) — and any codex/OpenAI-style agent sandbox
         # built on it — to create UNPRIVILEGED user + mount + network
         # namespaces from inside this container. Docker's default seccomp
