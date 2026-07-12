@@ -32,6 +32,11 @@ in the scenario.
   `molecule.test`, NetBIOS `MOLECULE`, install DNS, module-managed reboot) →
   block until in-guest `Get-ADDomain` answers **and** the DC's own DNS serves the
   `_ldap._tcp.dc._msdcs.molecule.test` SRV locator. Budget ~10-15 min.
+  Then the **masquerade DNS fix-up** (required — see
+  "The masquerade self-registration trap" below): rewrite the DC's
+  self-registered `10.0.2.x` A records to its cluster-routable pod IP, disable
+  both re-registration paths, and gate on the member resolving `molecule.test`
+  against the DC pod IP (proves pod-to-pod UDP/53 + fixed zone data in one shot).
 - **converge** — assert `windows` group non-empty; discover `windc01`'s pod IP
   from its Running **virt-launcher Pod** `status.podIP` (not the VMI's
   `status.interfaces[0].ipAddress`, which under masquerade reports the useless
@@ -44,7 +49,10 @@ in the scenario.
   already joined, and the pod-IP lookup uses only `k8s_info` + `set_fact`.
 - **verify** — independent join proof (`Win32_ComputerSystem.PartOfDomain` +
   `nltest /dsgetdc`), then the **leave leg** (re-import the playbook with
-  `windows_domain_state: workgroup`), then assert `PartOfDomain` is false.
+  `windows_domain_state: workgroup` **plus domain admin creds** — Phase-5
+  finding: `microsoft.ad.membership` requires them for `state=workgroup`; a
+  creds-free leave is rejected by the module's `required_if`), then assert
+  `PartOfDomain` is false.
 - **destroy** — provisioner tears down both VMs + services; sysprep Secrets
   deleted. Namespace ends empty.
 
@@ -106,6 +114,26 @@ consume `admin_user` in a way a `.\ ` prefix would break (the shared template
 feeds `windows_admin_user` into `LocalAccount`/`AutoLogon` where a `.\ ` prefix
 is **not** valid), so the prefix belongs only on the runtime *connection* var,
 never on the unattend account name.
+
+## The masquerade self-registration trap (Phase-5 finding)
+
+Under masquerade networking **every** VM's guest NIC holds the same in-VM
+address (`10.0.2.2`). When `windc01` promotes, Windows dynamically registers
+its A records — `windc01.molecule.test` (DNS client), the domain A
+`molecule.test` and `gc._msdcs` (netlogon) — with **10.0.2.2**. The member then
+resolves the `_ldap` SRV locator fine against the DC's *pod IP*, but the SRV
+**target's** A record answers `10.0.2.2` — which from the member is its **own**
+masquerade address. The LDAP ping goes to itself and the join fails in seconds
+with *"The specified domain either does not exist or could not be contacted."*
+
+`prepare.yml` therefore repairs the zone after promotion (plays 3-5): discover
+the DC's launcher pod IP, `Set-DnsClient -RegisterThisConnectionsAddress
+$false` + netlogon `DnsAvoidRegisterRecords` (`LdapIpAddress`, `GcIpAddress`)
+to stop re-registration, rewrite every `10.0.2.*` A record to the pod IP,
+re-assert the SRV locator, and finally prove the **member** resolves
+`molecule.test` against the DC pod IP in-guest. The pod IP works for every AD
+protocol because `masquerade: {}` (no `ports:` list) forwards all ports to the
+VM.
 
 ## Phase-5 debug pointers
 

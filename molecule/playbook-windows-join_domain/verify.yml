@@ -55,16 +55,21 @@
 
 # ---------------------------------------------------------------------------
 # (b) THE LEAVE LEG — the playbook's other documented state. Re-import the real
-#     playbook unmodified with windows_domain_state: workgroup. No domain admin
-#     creds are passed on purpose: this exercises the playbook's documented
-#     "leave without creds orphans the computer object" path (acceptable for an
-#     ephemeral lab DC torn down at destroy). We do NOT assert DC-side cleanup.
+#     playbook unmodified with windows_domain_state: workgroup. Domain admin
+#     creds ARE passed — Phase-5 finding: microsoft.ad.membership's argument
+#     spec REQUIRES domain_admin_user/password for state=workgroup (required_if
+#     rejects the old "leave without creds orphans the computer object" path
+#     before the module even runs; the playbook header was corrected to match).
+#     The module uses the creds to remove the computer object during the
+#     unjoin; we still do NOT assert DC-side cleanup.
 # ---------------------------------------------------------------------------
 - name: "Verify — leave leg: return winmem01 to a workgroup (real playbook)"
   ansible.builtin.import_playbook: ../../playbooks/windows/join_domain.yaml
   vars:
     windows_domain_state: workgroup
     windows_workgroup_name: WORKGROUP
+    windows_domain_admin_user: 'MOLECULE\Administrator'
+    windows_domain_admin_password: "{{ lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') }}"
 
 # ---------------------------------------------------------------------------
 # (c) Prove the leave took effect — PartOfDomain must now be False.
