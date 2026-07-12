@@ -96,10 +96,12 @@
     devenv_ssh_authorized_key: ""
     devenv_authorized_keys: "{{ [devenv_ansible_pubkey, devenv_ssh_authorized_key] | reject('equalto', '') | list }}"
 
-    # Wait for the VM to be Ready on converge (casval scale-from-zero is slow —
-    # allow generous headroom).
+    # Wait for the VM to be Ready on converge. casval scale-from-zero (BMC
+    # power-on -> RHCOS deploy -> node join) can take ~20-25 min from cold, so
+    # allow generous headroom to avoid a false-negative wait timeout while the
+    # VM is still legitimately converging.
     vm_wait: true
-    vm_wait_timeout: 1200
+    vm_wait_timeout: 1800
 
   pre_tasks:
     - name: Render the devenv cloud-init
