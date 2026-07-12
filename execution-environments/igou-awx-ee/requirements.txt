@@ -12,5 +12,5 @@ pexpect==4.9.0
 python-daemon==3.1.2
 pyyaml==6.0.3
 six==1.17.0
-receptorctl==1.6.5
+receptorctl==1.6.6
 boto3>=1.35.0,<2.0
