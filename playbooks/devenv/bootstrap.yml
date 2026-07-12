@@ -33,8 +33,11 @@
 
     # devenv extras
     devenv_repo: https://github.com/igou-io/igou-devenv.git
-    devenv_repo_version: main
-    devenv_image: ghcr.io/igou-io/igou-devenv:latest
+    # Pinned to the igou-devenv release cut for this rebuild (git tag +
+    # container image promoted by digest from the tested :latest). Bump both
+    # together when adopting a newer release.
+    devenv_repo_version: v2026.07.12
+    devenv_image: ghcr.io/igou-io/igou-devenv:2026.07.12
     devenv_launch_devcontainer: true
 
     # GitHub App runtime tokens (ghapp, local-mint mode). Gated OFF so this is
@@ -65,6 +68,45 @@
 
     - name: Gather facts (after the connection is proven)
       ansible.builtin.setup:
+
+    # The CentOS Stream 10 golden cloud image ships kernel-modules /
+    # kernel-modules-core but NOT the legacy netfilter compat modules
+    # (xt_addrtype, iptable_nat, br_netfilter) that live in
+    # kernel-modules-extra. docker-ce 29's daemon startup programs iptables NAT
+    # rules (`-m addrtype --dst-type LOCAL`) and fails to start without them
+    # ("Extension addrtype revision 0 not supported, missing kernel module?").
+    # Install the extra modules pinned to the running kernel and load them
+    # (persisted via modules-load.d) BEFORE the docker role starts the daemon.
+    - name: Ensure Docker's netfilter kernel modules are available
+      become: true
+      block:
+        - name: Install kernel-modules-extra matching the running kernel
+          ansible.builtin.dnf:
+            name: "kernel-modules-extra-{{ ansible_kernel }}"
+            state: present
+
+        - name: Persist the netfilter modules for load at boot
+          ansible.builtin.copy:
+            dest: /etc/modules-load.d/docker-netfilter.conf
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Loaded for docker-ce's iptables/NAT bridge networking (see
+              # playbooks/devenv/bootstrap.yml). These live in
+              # kernel-modules-extra, absent from the CentOS Stream 10 golden image.
+              xt_addrtype
+              iptable_nat
+              br_netfilter
+
+        - name: Load the netfilter modules now
+          community.general.modprobe:
+            name: "{{ item }}"
+            state: present
+          loop:
+            - xt_addrtype
+            - iptable_nat
+            - br_netfilter
 
   roles:
     - role: david_igou.devhost.docker
