@@ -46,6 +46,7 @@ module reads `K8S_AUTH_*` (AAP/EE) or your kubeconfig.
 | `vm_architecture` | `""` | `spec.template.spec.architecture` (e.g. `amd64`); omitted when empty |
 | `vm_node_selector` | `{}` | `spec.template.spec.nodeSelector`; omitted when empty. Caller supplies the labels (e.g. burst: `{node-role.kubernetes.io/burst: ""}`) |
 | `vm_tolerations` | `[]` | `spec.template.spec.tolerations`; omitted when empty (e.g. burst: `[{key: workload, operator: Equal, value: burst, effect: NoSchedule}]`) |
+| `vm_eviction_strategy` | `""` | `spec.template.spec.evictionStrategy`; omitted when empty (inherits the HyperConverged cluster default). `None` \| `LiveMigrate` \| `LiveMigrateIfPossible` \| `External`. Use `None` on RWO-only clusters so node drains shut the VM down instead of blocking |
 | `vm_log_serial_console` | `true` | Enable serial-console logging (a virtio-rng device is always attached) |
 | `vm_extra_pvcs` | `[]` | Existing PVCs to attach as data disks: `[{name, claim}]` |
 | `vm_cloud_init` | `""` | cloud-init NoCloud userData string (empty → no cloud-init disk) |

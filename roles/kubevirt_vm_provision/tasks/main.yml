@@ -70,6 +70,7 @@
                     storage: "{{ vm_root_size }}"
         spec:
           architecture: "{{ vm_architecture if (vm_architecture | length > 0) else omit }}"
+          evictionStrategy: "{{ vm_eviction_strategy if (vm_eviction_strategy | length > 0) else omit }}"
           nodeSelector: "{{ vm_node_selector if (vm_node_selector | length > 0) else omit }}"
           tolerations: "{{ vm_tolerations if (vm_tolerations | length > 0) else omit }}"
           domain:
