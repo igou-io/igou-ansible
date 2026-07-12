@@ -14,17 +14,17 @@
     ghapp_client_enabled: true
     ghapp_client_user: cloud-user
     ghapp_client_id: >-
-      {{ lookup('ansible.builtin.pipe', 'op read op://claude/igou-dev-github-app/client_id') }}
+      {{ lookup('ansible.builtin.pipe', 'op read op://lab_external_api_keys/igou-dev-github-app/client_id') }}
     ghapp_client_app_slug: igou-dev
     ghapp_client_installations:
       david-igou: >-
         {{ lookup('ansible.builtin.pipe',
-                  'op read "op://claude/igou-dev-github-app/installation_id_david-igou"') }}
+                  'op read "op://lab_external_api_keys/igou-dev-github-app/installation_id_david-igou"') }}
       igou-io: >-
         {{ lookup('ansible.builtin.pipe',
-                  'op read op://claude/igou-dev-github-app/installation_id_igou-io') }}
+                  'op read op://lab_external_api_keys/igou-dev-github-app/installation_id_igou-io') }}
     ghapp_client_private_key_content: >-
-      {{ lookup('ansible.builtin.pipe', 'op read op://claude/igou-dev-github-app/private_key') }}
+      {{ lookup('ansible.builtin.pipe', 'op read op://lab_external_api_keys/igou-dev-github-app/private_key') }}
   roles:
     - role: david_igou.devhost.ghapp
       when: devenv_ghapp_enabled | bool
