@@ -159,7 +159,13 @@
                 namespace: openshift-gitops
               spec:
                 resourceTrackingMethod: annotation
-                kustomizeBuildOptions: --enable-alpha-plugins --load-restrictor LoadRestrictionsNone
+                # --helm-kube-version pins the Kubernetes version kustomize hands to
+                # `helm template` for its Capabilities.KubeVersion. Without it, helm
+                # falls back to its compiled-in default (v1.20.0), so any vendored
+                # chart with a `kubeVersion: >=1.21` (blackbox-exporter) or higher
+                # (firecrawl >=1.28) constraint fails to render and stalls the whole
+                # app's manifest generation. Track the cluster's real minor here.
+                kustomizeBuildOptions: --enable-alpha-plugins --load-restrictor LoadRestrictionsNone --helm-kube-version v1.34.0
                 extraConfig:
                   resource.compareoptions: |
                     ignoreAggregatedRoles: true
@@ -471,12 +477,25 @@
                   env:
                     - name: KUSTOMIZE_PLUGIN_HOME
                       value: /etc/kustomize/plugin
+                    # Heavy helm-in-kustomize renders (clusters/ocp/, the UWM
+                    # exporters, the blackbox chart) exceed the default 90s
+                    # manifest-generation budget on a saturated repo-server,
+                    # surfacing as ComparisonError: DeadlineExceeded and
+                    # stalling the whole app-of-apps. See the 2026-07-03 DR
+                    # post-mortem.
+                    - name: ARGOCD_EXEC_TIMEOUT
+                      value: 3m
                   resources:
+                    # cpu=2: at cpu=1 the repo-server saturates whenever the
+                    # root app-of-apps re-renders every app at once (e.g. after
+                    # a merge), tipping comparisons into DeadlineExceeded. This
+                    # is the live-only DR patch, now folded into git so a
+                    # bootstrap re-run no longer reverts it.
                     limits:
-                      cpu: "1"
+                      cpu: "2"
                       memory: 1Gi
                     requests:
-                      cpu: 250m
+                      cpu: 500m
                       memory: 256Mi
                 resourceExclusions: |
                   - apiGroups:
