@@ -59,7 +59,7 @@ collections:
   - name: david_igou.routeros_configuration
     version: 0.0.7-alpha
   - name: amazon.aws
-    version: 11.3.0
+    version: 11.4.0
   - name: prometheus.prometheus
     version: 0.30.0
   - name: onepassword.connect
