@@ -33,8 +33,11 @@
 
     # devenv extras
     devenv_repo: https://github.com/igou-io/igou-devenv.git
-    devenv_repo_version: main
-    devenv_image: ghcr.io/igou-io/igou-devenv:latest
+    # Pinned to the igou-devenv release cut for this rebuild (git tag +
+    # container image promoted by digest from the tested :latest). Bump both
+    # together when adopting a newer release.
+    devenv_repo_version: v2026.07.12
+    devenv_image: ghcr.io/igou-io/igou-devenv:2026.07.12
     devenv_launch_devcontainer: true
 
     # GitHub App runtime tokens (ghapp, local-mint mode). Gated OFF so this is
