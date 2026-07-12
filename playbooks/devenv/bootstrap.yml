@@ -155,11 +155,70 @@
       # (-e ghapp_client_id=...), which win over both.
 
   post_tasks:
-    - name: Clone the igou-devenv repo (public, HTTPS — no agent forwarding needed)
+    # ------------------------------------------------------------------
+    # Seed ~/workspace so the devcontainer's /workspace mirrors the operator's
+    # physical devhost — a directory of ALL the working repos — instead of just
+    # the igou-devenv clone. The canonical devcontainer.json already bind-mounts
+    # ${localEnv:HOME}/workspace -> /workspace, so cloning the repos here (as the
+    # igou user, before `devcontainer up`) is all it takes for them to appear in
+    # the container. igou-devenv itself lives at ~/workspace/igou-devenv (the
+    # container's workspaceFolder), exactly like the laptop/devhost layout.
+    # ------------------------------------------------------------------
+    - name: Ensure the host workspace directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/workspace"
+        state: directory
+        mode: "0755"
+
+    - name: Clone the igou-devenv repo at the pinned release (public, HTTPS)
+      # Into ~/workspace/igou-devenv (the workspaceFolder). Pinned to
+      # devenv_repo_version and updated on converge — the one repo the automation
+      # owns; the rest below are clone-if-absent only.
       ansible.builtin.git:
         repo: "{{ devenv_repo }}"
-        dest: "{{ ansible_user_dir }}/igou-devenv"
+        dest: "{{ ansible_user_dir }}/workspace/igou-devenv"
         version: "{{ devenv_repo_version }}"
+
+    - name: Pre-seed the operator's workspace repos (clone if absent; never touch WIP)  # noqa: latest[git]
+      # noqa latest[git]: these repos deliberately track their default branch and
+      # are clone-if-absent only (update:false), so there is nothing to pin — the
+      # operator's WIP branch/checkout is whatever they leave in place. The one
+      # pinned, automation-owned repo is igou-devenv, cloned above at a tag.
+      # update:false → an existing clone is left exactly as-is (work-in-progress
+      # safety); only missing repos are cloned. Runs as the igou user over HTTPS,
+      # so the ghapp git credential helper mints App tokens for private repos in
+      # the selected set; public repos clone anonymously. GIT_TERMINAL_PROMPT=0
+      # makes a repo the App can't mint for (private + unselected, or an org the
+      # App isn't installed on) fail fast instead of hanging on a credential
+      # prompt. ignore_errors keeps the play going — unreachable repos are
+      # summarized below, not fatal.
+      ansible.builtin.git:
+        repo: "{{ item }}"
+        dest: "{{ ansible_user_dir }}/workspace/{{ item | basename | regex_replace('\\.git$', '') }}"
+        update: false
+      loop: "{{ devenv_workspace_repos | default([]) }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      environment:
+        GIT_TERMINAL_PROMPT: "0"
+      register: devenv_workspace_clone
+      ignore_errors: true
+
+    - name: Summarize any workspace repos that could not be cloned
+      # Fail soft: these are almost always private repos outside the ghapp App's
+      # selected set, or orgs the App isn't installed on (e.g. third-party). The
+      # operator can add them by hand; the rest of the play proceeds.
+      ansible.builtin.debug:
+        msg: >-
+          Skipped (clone failed — private repo outside the ghapp App's selected
+          set, or an org the App isn't installed on):
+          {{ devenv_workspace_clone.results
+             | selectattr('failed', 'defined') | selectattr('failed')
+             | map(attribute='item') | list }}
+      when:
+        - devenv_workspace_clone.results is defined
+        - devenv_workspace_clone.results
+          | selectattr('failed', 'defined') | selectattr('failed') | list | length > 0
 
     - name: Install the Docker SDK for Python (the community.docker modules need it on the target)
       # python3-docker is in EPEL; enable EPEL only (from the Stream extras repo) — this
@@ -234,7 +293,7 @@
           - >-
             source={{ ansible_user_dir }}/.config/ghapp,target=/home/igou/.config/ghapp,type=bind,readonly
           - del(.build) | .image = $img | .mounts += [$ghapp_mount]
-          - "{{ ansible_user_dir }}/igou-devenv/.devcontainer/devcontainer.json"
+          - "{{ ansible_user_dir }}/workspace/igou-devenv/.devcontainer/devcontainer.json"
       register: devenv_devcontainer_render
       changed_when: false
 
@@ -244,6 +303,39 @@
         dest: "{{ ansible_user_dir }}/.local/share/igou-devenv/devcontainer-release.json"
         mode: "0644"
 
+    # ------------------------------------------------------------------
+    # code-server login password (owned by 1Password, not the random value
+    # code-server would self-generate). ~/.config/code-server is a persistent
+    # bind mount into the container, so writing the config on the host here —
+    # BEFORE `devcontainer up` — means post-create's "seed only if absent" guard
+    # and post-start's "generate only if no password" guard both no-op, and this
+    # password wins. When the value changes we recreate/restart the container
+    # below so code-server re-reads it. The file also carries the bind-addr/auth/
+    # cert keys (owned wholesale here) that code-server-config.yaml ships with.
+    # ------------------------------------------------------------------
+    - name: Ensure the host code-server config directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.config/code-server"
+        state: directory
+        mode: "0700"
+
+    - name: Write the code-server config with the 1Password-sourced password
+      ansible.builtin.copy:
+        dest: "{{ ansible_user_dir }}/.config/code-server/config.yaml"
+        mode: "0600"
+        content: |
+          # Ansible managed (igou-ansible playbooks/devenv/bootstrap.yml).
+          # Password sourced from 1Password via
+          # group_vars/devenv/code-server.yml. Bound to 0.0.0.0 (host network);
+          # password auth is mandatory — the container is privileged with /dev
+          # mounted, so this port is full host access.
+          bind-addr: 0.0.0.0:8080
+          auth: password
+          cert: true
+          password: {{ devenv_code_server_password }}
+      no_log: true
+      register: devenv_cs_config
+
     - name: Read the current devcontainer state
       community.docker.docker_container_info:
         name: igou-devenv
@@ -251,24 +343,37 @@
       become: true
       when: devenv_launch_devcontainer | bool
 
+    - name: Decide whether the devcontainer must be recreated
+      # Recreate when it is missing, running a different image than the pin, OR
+      # its workspaceFolder mount source is stale — the last catches the
+      # ~/igou-devenv -> ~/workspace/igou-devenv layout move (a running container
+      # created against the old path keeps mounting it until recreated). Mirrors
+      # the existing short-circuit so `.container` is never dereferenced when the
+      # container does not exist.
+      ansible.builtin.set_fact:
+        devenv_devcontainer_recreate: >-
+          {{ (not devenv_devcontainer_info.exists)
+             or (devenv_devcontainer_info.container.Config.Image != devenv_image)
+             or ((devenv_devcontainer_info.container.Mounts | default([]))
+                 | selectattr('Destination', 'equalto', '/workspace/igou-devenv')
+                 | selectattr('Source', 'equalto', ansible_user_dir ~ '/workspace/igou-devenv')
+                 | list | length == 0) }}
+      when: devenv_launch_devcontainer | bool
+
     - name: Launch the devcontainer from the pinned release image
       # Idempotent: `devcontainer up` reuses a running container (rerunning
       # post-start only). --remove-existing-container is added exactly when
-      # the container is missing or running a different image than the pin,
-      # so converging a new release recreates it (post-create reruns; state
-      # that must survive lives on host mounts: code-server config/password,
-      # extensions, ~/.claude, ssh known_hosts, ...).
-      vars:
-        devenv_devcontainer_recreate: >-
-          {{ not devenv_devcontainer_info.exists
-             or devenv_devcontainer_info.container.Config.Image != devenv_image }}
+      # devenv_devcontainer_recreate is true (see the fact above), so converging
+      # a new release or the workspace-layout move recreates it (post-create
+      # reruns; state that must survive lives on host mounts: code-server
+      # config/password, extensions, ~/.claude, ssh known_hosts, ...).
       ansible.builtin.command:
         argv: >-
           {{
             [
               ansible_user_dir + '/.local/bin/devcontainer',
               'up',
-              '--workspace-folder', ansible_user_dir + '/igou-devenv',
+              '--workspace-folder', ansible_user_dir + '/workspace/igou-devenv',
               '--override-config',
               ansible_user_dir + '/.local/share/igou-devenv/devcontainer-release.json',
               '--update-remote-user-uid-default', 'off'
@@ -305,7 +410,7 @@
           RemainAfterExit=yes
           User=igou
           Group=igou
-          WorkingDirectory={{ ansible_user_dir }}/igou-devenv
+          WorkingDirectory={{ ansible_user_dir }}/workspace/igou-devenv
           Environment=HOME={{ ansible_user_dir }}
           Environment=PATH={{ ansible_user_dir }}/.local/bin:/usr/local/bin:/usr/bin:/bin
           # ExecStart must go through a system interpreter: SELinux denies
@@ -316,7 +421,7 @@
           # service domain, which may then exec the user-home script.
           # Live-verified on devenv-vlan9: the direct path fails 203, the
           # wrapped one starts clean.
-          ExecStart=/usr/bin/bash -c 'exec {{ ansible_user_dir }}/.local/bin/devcontainer up --workspace-folder {{ ansible_user_dir }}/igou-devenv --override-config {{ ansible_user_dir }}/.local/share/igou-devenv/devcontainer-release.json --update-remote-user-uid-default off'
+          ExecStart=/usr/bin/bash -c 'exec {{ ansible_user_dir }}/.local/bin/devcontainer up --workspace-folder {{ ansible_user_dir }}/workspace/igou-devenv --override-config {{ ansible_user_dir }}/.local/share/igou-devenv/devcontainer-release.json --update-remote-user-uid-default off'
           TimeoutStartSec=900
 
           [Install]
@@ -331,11 +436,32 @@
         state: started
         daemon_reload: "{{ devenv_devcontainer_unit is changed }}"
 
+    - name: Restart the devcontainer to apply a changed code-server password
+      # Only needed when the config changed on an already-running container that
+      # was NOT recreated this run: `devcontainer up` on a warm container skips
+      # relaunching code-server (its port is already bound), so a plain restart
+      # is what makes code-server re-read the new password. When the container is
+      # freshly created or recreated (layout/image change), it already comes up
+      # reading the current config, so this is skipped.
+      become: true
+      ansible.builtin.command:
+        argv:
+          - docker
+          - restart
+          - igou-devenv
+      changed_when: true
+      when:
+        - devenv_launch_devcontainer | bool
+        - devenv_cs_config is changed
+        - devenv_devcontainer_info.exists
+        - not devenv_devcontainer_recreate
+
     - name: Summarize devenv access
       ansible.builtin.debug:
         msg:
           - "devenv host configured (docker-ce + node + @devcontainers/cli)."
           - "devcontainer: `igou-devenv` (host network, privileged), autostart via igou-devenv.service"
-          - "code-server:  https://<vm-ip>:8080  (self-signed TLS, password auth)"
-          - "cs password:  cat ~/.config/code-server/config.yaml   (host path, persistent mount)"
-          - "shell:        devcontainer exec --workspace-folder ~/igou-devenv bash"
+          - "/workspace:   all operator repos pre-seeded under ~/workspace (mirrors the physical devhost)"
+          - "code-server:  https://<vm-ip>:8080  (self-signed TLS, password from 1Password lab_agents/devenv-code-server)"
+          - "cs password:  op read op://lab_agents/devenv-code-server/password"
+          - "shell:        devcontainer exec --workspace-folder ~/workspace/igou-devenv bash"
