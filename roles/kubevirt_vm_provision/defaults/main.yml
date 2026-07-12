@@ -38,6 +38,13 @@ vm_architecture: ""          # spec.template.spec.architecture (e.g. amd64); omi
 vm_node_selector: {}         # spec.template.spec.nodeSelector; omitted when empty
 vm_tolerations: []           # spec.template.spec.tolerations; omitted when empty
 
+# Node-drain eviction behaviour (spec.template.spec.evictionStrategy). Empty ->
+# omitted, so the VM inherits the HyperConverged cluster default. Set to None on
+# clusters with RWO-only storage (no live migration possible) so a node drain
+# cleanly shuts the VM down instead of blocking the drain and raising the
+# VMCannotBeEvicted alert. Values: None | LiveMigrate | LiveMigrateIfPossible | External.
+vm_eviction_strategy: ""     # spec.template.spec.evictionStrategy; omitted when empty
+
 # Devices (a virtio-rng device is always attached)
 vm_log_serial_console: true
 
