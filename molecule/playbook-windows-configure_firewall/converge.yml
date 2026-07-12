@@ -1,0 +1,60 @@
+---
+# Converge = run the REAL playbook unmodified against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: the real playbook targets
+# `{{ ansible_limit | default('windows') }}`, and a pattern that matches zero
+# hosts would "pass" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the imported playbook would
+          match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# The real playbook. The rule list exercises BOTH directions (inbound + outbound
+# allows) plus a present AND an absent transition:
+#   * the default ICMP ping allow (inbound),
+#   * a custom inbound allow on TCP 7777,
+#   * a custom outbound allow on TCP 7777,
+#   * an absent rule (TCP 7779) — prepare pre-created it, so this is a real
+#     present -> absent removal, not a no-op.
+# The 5986 WinRM-HTTPS allow rule is NOT in this list — the playbook applies it
+# unconditionally in its own always-on task, which (with profiles enabled last)
+# is exactly what keeps this converge from severing its own psrp connection.
+- name: Converge — run playbooks/windows/configure_firewall.yaml unmodified
+  ansible.builtin.import_playbook: ../../playbooks/windows/configure_firewall.yaml
+  vars:
+    windows_firewall_profiles:
+      - Domain
+      - Private
+      - Public
+    windows_firewall_rules:
+      - name: Allow ICMP ping (managed by Ansible)
+        protocol: icmpv4
+      - name: Allow molecule inbound TCP 7777
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "7777"
+        state: present
+      - name: Allow molecule outbound TCP 7777
+        direction: out
+        action: allow
+        protocol: tcp
+        localport: "7777"
+        state: present
+      - name: Remove legacy molecule TCP 7779
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "7779"
+        state: absent

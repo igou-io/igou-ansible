@@ -1,0 +1,28 @@
+---
+# Converge = run the REAL playbook unmodified against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: the real playbook targets
+# `{{ ansible_limit | default('windows') }}`, and a pattern that matches zero
+# hosts would "pass" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the imported playbook would
+          match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# The real playbook, unmodified — no var overrides. Its shipped defaults deploy
+# site 'demo-site' on port 8080 (physical path C:\inetpub\demo-site, app pool
+# 'demo-pool'), open the firewall for 8080 on all profiles, and serve an
+# index.htm containing "It works!". verify.yml proves that end state externally.
+- name: Converge — run playbooks/windows/deploy_iis_website.yaml unmodified
+  ansible.builtin.import_playbook: ../../playbooks/windows/deploy_iis_website.yaml

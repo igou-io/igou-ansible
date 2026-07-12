@@ -36,6 +36,26 @@
       - name: notepadplusplus
 
   tasks:
+    # Chocolatey's bootstrap runs a downloaded .ps1, which the default
+    # execution policy on Windows CLIENT SKUs (Restricted) blocks — the
+    # bootstrap dies with "running scripts is disabled on this system". This
+    # is why Chocolatey's own install one-liner sets an execution-policy
+    # bypass first. Ensure at least RemoteSigned (the Windows Server default,
+    # which permits locally-created unsigned scripts) at LocalMachine scope so
+    # the bootstrap can run. Idempotent: only writes when the policy is more
+    # restrictive than RemoteSigned/Unrestricted/Bypass.
+    - name: Ensure the execution policy permits the Chocolatey bootstrap
+      ansible.windows.win_shell: |
+        $ok = @('RemoteSigned', 'Unrestricted', 'Bypass')
+        if ((Get-ExecutionPolicy -Scope LocalMachine) -notin $ok) {
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
+          'changed'
+        } else {
+          'ok'
+        }
+      register: windows_choco_execpolicy
+      changed_when: "'changed' in windows_choco_execpolicy.stdout"
+
     # Register the internal feed as a named, highest-priority Chocolatey
     # source (when configured). This does NOT redirect the Chocolatey
     # bootstrap install (still from community.chocolatey.org unless the

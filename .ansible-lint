@@ -31,3 +31,11 @@ exclude_paths:
   - molecule/devenv-e2e/create.yml
   - molecule/devenv-e2e/destroy.yml
   - molecule/devenv-e2e/prepare.yml
+  # playbook-windows-* provisioner shims (9 scenarios): same
+  # david_igou.molecule_provisioners situation as above. create/prepare also
+  # carry real preflight/sysprep-secret/DC-promotion plays that stay linted
+  # locally where the collection is installed (molecule dependency).
+  # converge/verify stay linted in CI.
+  - molecule/playbook-windows-*/create.yml
+  - molecule/playbook-windows-*/destroy.yml
+  - molecule/playbook-windows-*/prepare.yml

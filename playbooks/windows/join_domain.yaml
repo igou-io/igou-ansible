@@ -17,9 +17,12 @@
 #   windows_domain_admin_user     - account allowed to join machines, e.g.
 #                                   join-svc@ad.igou.systems (required when
 #                                   joining)
-#   windows_domain_admin_password - REQUIRED when joining. Pass via
-#                                   extra_vars from a 1Password lookup —
-#                                   never from a file in git.
+#   windows_domain_admin_password - REQUIRED when joining AND when leaving:
+#                                   microsoft.ad.membership enforces domain
+#                                   creds for state=workgroup too (it uses
+#                                   them to remove the computer account).
+#                                   Pass via extra_vars from a 1Password
+#                                   lookup — never from a file in git.
 #   windows_domain_ou_path        - OU for the computer object, e.g.
 #                                   OU=TestVMs,DC=ad,DC=igou,DC=systems
 #                                   (optional)
@@ -42,9 +45,11 @@
 # not switch the connection to a domain/kerberos account between the join
 # and the later leave.
 #
-# Note: leaving without valid domain admin creds still removes the host but
-# orphans its computer object in AD (acceptable for ephemeral lab DCs that
-# get torn down anyway).
+# Note: leaving the domain REQUIRES windows_domain_admin_user and
+# windows_domain_admin_password — microsoft.ad.membership rejects
+# state=workgroup without them (required_if in the module argument spec).
+# The module uses the creds to remove the host's computer object from AD
+# during the unjoin.
 #
 # Run:
 #   ansible-navigator run playbooks/windows/join_domain.yaml \

@@ -1,0 +1,37 @@
+---
+# Converge = run the REAL playbook unmodified against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: the real playbook targets
+# `{{ ansible_limit | default('windows') }}`, and a pattern that matches zero
+# hosts would "pass" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the imported playbook would
+          match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# The real playbook. Its shipped `windows_services` default already declares
+# EXACTLY the two services this scenario exercises — W32Time (started/auto) and
+# Spooler (stopped/disabled) — so it runs unmodified with no override. The vars
+# below mirror those defaults so the intent is explicit at the scenario level;
+# verify.yml is the independent contract pin regardless of playbook drift.
+- name: Converge — run playbooks/windows/manage_services.yaml unmodified
+  ansible.builtin.import_playbook: ../../playbooks/windows/manage_services.yaml
+  vars:
+    windows_services:
+      - name: W32Time
+        state: started
+        start_mode: auto
+      - name: Spooler
+        state: stopped
+        start_mode: disabled

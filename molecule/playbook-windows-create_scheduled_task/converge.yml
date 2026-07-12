@@ -1,0 +1,35 @@
+---
+# Converge = run the REAL playbook unmodified against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: the real playbook targets
+# `{{ ansible_limit | default('windows') }}`, and a pattern that matches zero
+# hosts would "pass" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the imported playbook would
+          match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# The real playbook, unmodified. The vars below define a task that is TESTABLE
+# for firing: a daily-triggered SYSTEM task (run_level highest, both fixed in
+# the playbook) whose action appends a line to a marker file. A daily trigger
+# will not auto-fire during the test window, so the marker only appears when
+# verify.yml explicitly Start-ScheduledTask's it — that is the proof-of-fire.
+- name: Converge — run playbooks/windows/create_scheduled_task.yaml unmodified
+  ansible.builtin.import_playbook: ../../playbooks/windows/create_scheduled_task.yaml
+  vars:
+    windows_task_name: molecule-marker-task
+    windows_task_description: Molecule marker task — appends to a file to prove it fires
+    windows_task_command: C:\Windows\System32\cmd.exe
+    windows_task_arguments: /c echo fired >> C:\molecule-task-fired.txt
+    windows_task_start_time: "2026-01-01T03:00:00"

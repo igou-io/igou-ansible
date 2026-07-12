@@ -1,0 +1,29 @@
+---
+# Destroy = tear down the VM + NodePort service (provisioner), remove the extra
+# site NodePort Service verify created (belt-and-braces — verify already deletes
+# it in its own `always`), then delete the per-host sysprep Secrets. state:
+# absent is idempotent, so a second destroy (or a destroy after a failed create)
+# is a safe no-op. The molecule namespace must end empty of scenario resources.
+- name: Destroy — tear down molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
+
+- name: Destroy — remove the verify-created site NodePort Service
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    iis_namespace: molecule
+    iis_nodeport_service: winiis-test-iis
+  tasks:
+    - name: Delete the site NodePort Service (idempotent backstop)
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Service
+        name: "{{ iis_nodeport_service }}"
+        namespace: "{{ iis_namespace }}"
+
+- name: Destroy — remove the per-host sysprep Secrets
+  ansible.builtin.import_playbook: ../shared/playbooks/windows-sysprep-secrets.yml
+  vars:
+    windows_sysprep_state: absent

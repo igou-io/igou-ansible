@@ -1,0 +1,92 @@
+---
+# Verify = INDEPENDENT evidence the playbook's declared state took effect, not a
+# re-read of the converge module's own return. Everything here reads the live
+# service control manager over psrp via win_service_info / win_shell.
+- name: Verify — independent evidence for manage_services
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Read the Windows Time service state (independent read)
+      ansible.windows.win_service_info:
+        name: W32Time
+      register: _w32time
+
+    - name: Assert W32Time is running with automatic start
+      ansible.builtin.assert:
+        that:
+          - _w32time.exists
+          # win_service_info reports a running service as 'started' (SCM
+          # vocabulary), NOT 'running' — live-confirmed on Server 2025.
+          - _w32time.services[0].state == 'started'
+          - _w32time.services[0].start_mode == 'auto'
+        fail_msg: >-
+          W32Time is state={{ _w32time.services[0].state | default('absent') }}
+          start_mode={{ _w32time.services[0].start_mode | default('absent') }};
+          expected started/auto.
+        success_msg: W32Time is running (started) and set to automatic start.
+
+    - name: Read the Print Spooler service state (independent read)
+      ansible.windows.win_service_info:
+        name: Spooler
+      register: _spooler
+
+    - name: Assert Spooler is stopped and disabled
+      ansible.builtin.assert:
+        that:
+          - _spooler.exists
+          - _spooler.services[0].state == 'stopped'
+          - _spooler.services[0].start_mode == 'disabled'
+        fail_msg: >-
+          Spooler is state={{ _spooler.services[0].state | default('absent') }}
+          start_mode={{ _spooler.services[0].start_mode | default('absent') }};
+          expected stopped/disabled.
+        success_msg: Spooler is stopped and disabled.
+
+    # NEGATIVE test: disabled means disabled. Starting it must fail.
+    # -ErrorAction Stop turns the non-terminating SCM error into a terminating
+    # one so win_shell returns a non-zero rc; failed_when: false lets us assert.
+    - name: Negative — attempt to start the disabled Spooler (expected to fail)
+      ansible.windows.win_shell: Start-Service -Name Spooler -ErrorAction Stop
+      register: _spooler_start
+      failed_when: false
+      changed_when: false
+
+    - name: Assert the disabled Spooler refused to start
+      ansible.builtin.assert:
+        that:
+          - _spooler_start.rc != 0
+        fail_msg: >-
+          Start-Service Spooler returned rc=0 — a disabled service must not be
+          startable. start_mode=disabled is not truly enforced.
+        success_msg: Starting the disabled Spooler failed as required.
+
+    - name: Re-read Spooler after the failed start (still stopped)
+      ansible.windows.win_service_info:
+        name: Spooler
+      register: _spooler_after
+
+    - name: Assert Spooler is still stopped after the failed start attempt
+      ansible.builtin.assert:
+        that:
+          - _spooler_after.services[0].state == 'stopped'
+        fail_msg: >-
+          Spooler is {{ _spooler_after.services[0].state | default('absent') }}
+          after a start attempt on a disabled service — expected stopped.
+        success_msg: Spooler remained stopped after the rejected start.
+
+    # Diagnostics: the marker proves the sysprep unattend FirstLogonCommands ran
+    # (self-signed cert + WinRM listener path), i.e. the whole specialize path
+    # that made this VM reachable actually executed.
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: 'C:\molecule-specialize-done.txt'
+      register: _marker
+
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _marker.stat.exists
+        fail_msg: >-
+          C:\molecule-specialize-done.txt is missing — the sysprep unattend
+          FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.

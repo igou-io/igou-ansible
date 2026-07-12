@@ -1,0 +1,97 @@
+---
+# playbook-windows-install_updates — Windows molecule scenario.
+#
+# What this proves:
+#   playbooks/windows/install_updates.yaml runs a BOUNDED Windows Update pass
+#   (category 'Definition Updates', reboot off) against a real Windows Server
+#   2025 VM without crashing, and exposes its report/reboot flags. Verify does
+#   an INDEPENDENT state=searched pass over the same category and asserts the
+#   module reports clean, structured results.
+#
+# Where it runs:
+#   Against the LIVE cluster https://api.ocp.igou.systems:6443 as the scoped
+#   ocp-ansible-molecule ServiceAccount, entirely inside the molecule namespace.
+#   create.yml renders a per-host sysprep Secret, then
+#   david_igou.molecule_provisioners provisions ONE win2k25 golden clone
+#   (instancetype u1.medium, preference windows.2k25) and connects over psrp
+#   (WinRM-over-HTTPS 5986, NTLM, cert-ignore) as the local Administrator that
+#   the sysprep unattend specialized.
+#
+# Pattern note: copied from the PILOT playbook-windows-manage_services; only the
+#   converge (which playbook) and verify (which asserts) differ. Shared plumbing
+#   lives in molecule/shared/.
+#
+# Bounded-pass note: 'Definition Updates' is chosen deliberately — it is small,
+#   fast, and reboot-free, so a full install pass completes inside the test
+#   window. It is also an EXTERNAL feed that can publish a new definition
+#   between the two converge passes; see the README for the idempotence caveat.
+#
+# Run recipe (from the repo root):
+#   1. unset KUBECONFIG
+#   2. export K8S_AUTH_HOST to  https://api.ocp.igou.systems:6443
+#   3. export K8S_AUTH_API_KEY to the output of:
+#        op read op://lab_serviceaccounts/ocp-ansible-molecule/token
+#   4. export MOLECULE_WINDOWS_ADMIN_PASSWORD to the output of:
+#        op read op://lab_agents/windows-administrator/password
+#   5. molecule test -s playbook-windows-install_updates
+#
+# Controller deps: pypsrp (the psrp connection plugin's runtime lib) must be on
+#   the controller/EE; ansible.windows is installed by the galaxy dependency
+#   step from collections.yml.
+#
+# (Env exports are described in words, not as literal shell: molecule
+# interpolates dollar-brace and dollar-paren placeholders across this whole file
+# — comments included — so a literal command-substitution example would break
+# config parsing. The MOLECULE_PROJECT_DIRECTORY / MOLECULE_EPHEMERAL_DIRECTORY
+# dollar-brace placeholders below ARE meant for molecule to expand.)
+prerun: false
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: molecule/playbook-windows-install_updates/collections.yml
+    force: true
+
+ansible:
+  cfg:
+    defaults:
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here — otherwise the
+      # dependency step installs into ${MOLECULE_PROJECT_DIRECTORY}/.ansible
+      # while runtime resolution falls back to a stale ~/.ansible copy.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
+  executor:
+    args:
+      ansible_playbook:
+        # Static scenario inventory (groups + mp specs) first, then the
+        # provisioner-written runtime inventory (ansible_connection/host/port/
+        # password) overlaid on top.
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  name: playbook-windows-install_updates
+  # No `idempotence` step: 'Definition Updates' is an UNPINNED external feed that
+  # legitimately churns between passes (Microsoft can publish a new Defender
+  # signature at any moment), so a second converge can install it and report
+  # `changed` with zero playbook defect. Bounded idempotency for updates is the
+  # accept_list contract's job, not this scenario's — verify instead re-searches
+  # the category and asserts converge left it clean (see verify.yml / README).
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy
+
+verifier:
+  name: ansible
