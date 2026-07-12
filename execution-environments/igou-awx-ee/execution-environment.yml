@@ -56,7 +56,7 @@ additional_build_steps:
 
   append_final: |
     # renovate: datasource=github-releases depName=ansible/receptor
-    ARG RECEPTOR_VERSION="v1.6.5"
+    ARG RECEPTOR_VERSION="v1.6.6"
     RUN curl -L -o /tmp/receptor.tar.gz "https://github.com/ansible/receptor/releases/download/${RECEPTOR_VERSION}/receptor_${RECEPTOR_VERSION#v}_linux_amd64.tar.gz" && \
         tar xzf /tmp/receptor.tar.gz -C /usr/bin/ receptor && \
         chmod +x /usr/bin/receptor && \
@@ -80,7 +80,7 @@ additional_build_steps:
     # virtctl for KubeVirt VM ops driven from playbooks. Version tracks the
     # cluster's OpenShift Virtualization KubeVirt release.
     # renovate: datasource=github-releases depName=kubevirt/kubevirt
-    ARG VIRTCTL_VERSION="v1.8.2"
+    ARG VIRTCTL_VERSION="v1.8.4"
     RUN curl -L -o /usr/local/bin/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-amd64" && \
         chmod +x /usr/local/bin/virtctl
     RUN oc version && virtctl version --client && python -V && ansible --version && ansible-galaxy collection list
