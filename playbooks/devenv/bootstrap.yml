@@ -308,7 +308,15 @@
           WorkingDirectory={{ ansible_user_dir }}/igou-devenv
           Environment=HOME={{ ansible_user_dir }}
           Environment=PATH={{ ansible_user_dir }}/.local/bin:/usr/local/bin:/usr/bin:/bin
-          ExecStart={{ ansible_user_dir }}/.local/bin/devcontainer up --workspace-folder {{ ansible_user_dir }}/igou-devenv --override-config {{ ansible_user_dir }}/.local/share/igou-devenv/devcontainer-release.json --update-remote-user-uid-default off
+          # ExecStart must go through a system interpreter: SELinux denies
+          # systemd (init_t) execve of a script under /home (the npm
+          # user-install lands devcontainer as gconf_home_t), failing with
+          # 203/EXEC "Permission denied". Exec'ing /usr/bin/bash
+          # (shell_exec_t) first transitions the service into an unconfined
+          # service domain, which may then exec the user-home script.
+          # Live-verified on devenv-vlan9: the direct path fails 203, the
+          # wrapped one starts clean.
+          ExecStart=/usr/bin/bash -c 'exec {{ ansible_user_dir }}/.local/bin/devcontainer up --workspace-folder {{ ansible_user_dir }}/igou-devenv --override-config {{ ansible_user_dir }}/.local/share/igou-devenv/devcontainer-release.json --update-remote-user-uid-default off'
           TimeoutStartSec=900
 
           [Install]
