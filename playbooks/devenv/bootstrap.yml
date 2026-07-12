@@ -3,30 +3,43 @@
 # Docker host capable of running the igou-devenv devcontainer, using my
 # david_igou.devhost collection, then launch code-server from the published image.
 #
-# Reached over SSH by AAP: the kubevirt.core inventory (source igou_kubevirt_ocp)
-# resolves this host's virt-launcher pod IP; the play connects as remote_user igou
-# (ansible.cfg) with the `ansible_user_ed25519` machine credential. The workflow
-# node passes ansible_limit=devenv-devenv (hosts: reads it before group_vars apply).
+# Targets the `devenv` inventory group (github.com/igou-io/igou-inventory):
+# every devenv VM is added to that group and converged against the real
+# inventory, so its per-host connection details (ansible_host) and the ghapp
+# GitHub App wiring (group_vars/devenv/ghapp.yml — 1Password lookups) attach
+# automatically. `ansible_limit` still narrows the run to a single host when
+# passed (AAP limit field or `--limit`); it defaults to the whole `devenv`
+# group. The play connects as remote_user igou (ansible.cfg) with the
+# `ansible_user_ed25519` machine credential.
 #
 # NB: intentionally NO play-level become. The david_igou.devhost roles self-elevate
 # per task, and the packages role's user-level npm / @devcontainers/cli tasks must
 # run as the igou login user (not root).
 - name: Configure the devenv host via david_igou.devhost
-  hosts: "{{ ansible_limit | default('devenv-devenv') }}"
+  hosts: "{{ ansible_limit | default('devenv') }}"
   gather_facts: false
   vars:
-    # Keep the host lean (devhost >= 27.0.0 mise interface). A devcontainer host only
-    # needs docker + a distro Node.js + @devcontainers/cli; the CLI toolset lives in
-    # the devcontainer, so mise (packages_install_cli_tools) stays OFF. cli_tools=false
-    # installs the distro Node.js fallback for @devcontainers/cli and skips the heavy
-    # CLI/pip/extra-OS-package work (incl. the dnf5-fragile CRB/EPEL step).
-    packages_install_cli_tools: false
-    packages_install_extra_packages: false
-    packages_install_pip_packages: false
-    packages_install_onepassword: false
-    packages_install_github_cli: false
-    packages_install_claude_code: false
-    packages_install_cursor_agent: false
+    # Toolset profile (devhost >= 27.0.0 mise interface). The operator wants the
+    # FULL devhost toolset on the box itself (not just inside the devcontainer):
+    # the mise-pinned CLI set (kubectl/helm/oc/... + Node.js), 1Password CLI,
+    # GitHub CLI, Claude Code, the Cursor agent, the extra OS packages, and the
+    # pip layer. `devenv_full_toolset` drives all of the packages role's feature
+    # toggles so the physical devhost rebuild gets the complete set by default;
+    # flip it off for a lean devcontainer-only host with `-e devenv_full_toolset=false`
+    # (that restores the old profile: docker + distro Node.js + @devcontainers/cli
+    # only, skipping mise and the extra-package work). On CentOS Stream 10 the
+    # extra-package step's `dnf config-manager --set-enabled crb` works with the
+    # stock dnf 4.20 — the earlier "dnf5-fragile" caveat does not manifest on this
+    # image. mise install needs a GITHUB_TOKEN in the environment (packages role
+    # default reads it from env) to avoid the 60/hr anonymous GitHub API limit.
+    devenv_full_toolset: true
+    packages_install_cli_tools: "{{ devenv_full_toolset }}"
+    packages_install_extra_packages: "{{ devenv_full_toolset }}"
+    packages_install_pip_packages: "{{ devenv_full_toolset }}"
+    packages_install_onepassword: "{{ devenv_full_toolset }}"
+    packages_install_github_cli: "{{ devenv_full_toolset }}"
+    packages_install_claude_code: "{{ devenv_full_toolset }}"
+    packages_install_cursor_agent: "{{ devenv_full_toolset }}"
 
     # docker role: install the full daemon (docker-ce + containerd.io).
     docker_install_daemon: true
@@ -40,16 +53,31 @@
     devenv_image: ghcr.io/igou-io/igou-devenv:2026.07.12
     devenv_launch_devcontainer: true
 
-    # GitHub App runtime tokens (ghapp, local-mint mode). Gated OFF so this is
-    # a no-op until launched with -e devenv_ghapp_enabled=true. When on, the
-    # igou-dev App identity/key default from 1Password (vault claude; override
-    # devenv_ghapp_op_vault/_item or pass ghapp_client_* directly). The role
-    # params below are only templated when the gated role runs.
-    devenv_ghapp_enabled: false
-    ghapp_client_enabled: true
-    ghapp_client_user: igou
-    devenv_ghapp_op_item: igou-dev-github-app
-    devenv_ghapp_op_vault: claude
+    # GitHub App runtime tokens (ghapp, local-mint mode). ON by default so the
+    # devhost mints repo-scoped ~1h GitHub tokens instead of carrying a static
+    # PAT; disable with -e devenv_ghapp_enabled=false.
+    #
+    # This is the ONLY ghapp var set here on purpose: it is a non-secret
+    # behavior toggle. The App identity, installation map, private-key source
+    # (op:// lookup), enabled flag, config user, and pinned plugin ref all live
+    # in the inventory as group_vars/devenv/ghapp.yml — the authoritative source
+    # per the roles-as-functions directive (op:// references belong in inventory
+    # data, not play vars or role tasks). Do NOT reintroduce ghapp_client_*
+    # here: play vars OUTRANK group_vars, so any ghapp_* left in this vars: block
+    # would silently shadow the inventory values.
+    #
+    # Key source note (implemented in group_vars): the op lookups resolve on the
+    # ANSIBLE CONTROLLER (the devcontainer or the AAP EE, both of which have op
+    # + 1P auth) and the PEM is written 0600 to ~/.config/ghapp/key.pem on the
+    # host via ghapp_client_private_key_content. We deliberately do NOT use
+    # private_key_cmd (`op read`) on the host: even with the 1Password CLI now
+    # installed (full toolset), the host has no 1P credential of its own (no
+    # Connect token / service account), so an on-host `op read` would have
+    # nothing to authenticate with — and seeding one would just move a
+    # long-lived secret onto the box, which is what ghapp exists to avoid.
+    # In-container we DO use private_key_cmd, because the devcontainer already
+    # has op auth bind-mounted (see igou-devenv).
+    devenv_ghapp_enabled: true
 
   pre_tasks:
     - name: Wait for the VM's SSH to come up
@@ -113,19 +141,14 @@
     - role: david_igou.devhost.packages
     - role: david_igou.devhost.ghapp
       when: devenv_ghapp_enabled | bool
-      # Override vars use a devenv_-prefixed name so the role param can't
-      # reference itself (a self-referential {{ ghapp_client_id | default(...) }}
-      # recurses at arg-spec validation). Pass devenv_ghapp_client_id/... at
-      # launch to override the 1Password default.
-      vars:
-        ghapp_client_id: >-
-          {{ devenv_ghapp_client_id | default(lookup('community.general.onepassword',
-             devenv_ghapp_op_item, field='client_id', vault=devenv_ghapp_op_vault), true) }}
-        ghapp_client_app_slug: "{{ devenv_ghapp_app_slug | default('igou-dev') }}"
-        ghapp_client_installations: "{{ devenv_ghapp_installations | default(dict([['david-igou', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_david-igou', vault=devenv_ghapp_op_vault)], ['igou-io', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_igou-io', vault=devenv_ghapp_op_vault)]]), true) }}"
-        ghapp_client_private_key_content: >-
-          {{ devenv_ghapp_private_key | default(lookup('community.general.onepassword',
-             devenv_ghapp_op_item, field='private_key', vault=devenv_ghapp_op_vault), true) }}
+      # No vars: block. The role reads its parameters (ghapp_client_id,
+      # ghapp_client_app_slug, ghapp_client_installations,
+      # ghapp_client_private_key_content, ghapp_client_enabled, ghapp_client_user,
+      # ghapp_package_git_ref) straight from the inventory group_vars/devenv/
+      # ghapp.yml — validated by the role's argument_specs. Keeping them out of
+      # the play is deliberate: play/role vars outrank group_vars, so setting
+      # them here would shadow the inventory. Override at launch with extra vars
+      # (-e ghapp_client_id=...), which win over both.
 
   post_tasks:
     - name: Clone the igou-devenv repo (public, HTTPS — no agent forwarding needed)
@@ -162,6 +185,31 @@
           - "8080:8080"
         volumes:
           - "{{ ansible_user_dir }}/igou-devenv:/workspace:Z"
+        # Allow bubblewrap (bwrap) — and any codex/OpenAI-style agent sandbox
+        # built on it — to create UNPRIVILEGED user + mount + network
+        # namespaces from inside this container. Docker's default seccomp
+        # profile blocks the userns-creating syscalls (clone/unshare with
+        # CLONE_NEWUSER), so a plain `bwrap --ro-bind / / true` fails with
+        # "No permissions to creating new namespace". seccomp=unconfined lifts
+        # only the syscall filter; it does NOT add capabilities, grant device
+        # access, or use --privileged — the container still runs as the
+        # unprivileged igou uid with the default (dropped) cap set. bwrap then
+        # RE-confines each sandbox it launches, so the net posture for agent
+        # workloads is tighter, not looser. This is strictly more minimal than
+        # the physical devhost devcontainer (rootless podman --privileged).
+        #
+        # Covers: `bwrap --ro-bind / / true`, `--unshare-user`, `--unshare-net`,
+        # and loopback bring-up inside the netns (the last via bwrap's own
+        # `--cap-add CAP_NET_ADMIN`, which needs no extra container privilege).
+        # NOT covered: mounting a FRESH procfs (`bwrap --proc /proc`) — Docker's
+        # default /proc masks trip the kernel's mount_too_revealing check.
+        # Sandboxes should bind the existing /proc (`--dev-bind /proc /proc`)
+        # instead; a fresh proc mount would need Docker's /proc masks cleared
+        # (HostConfig.MaskedPaths=[]), which community.docker 5.2.1 cannot
+        # express (systempaths=unconfined is a docker-CLI-only convenience the
+        # daemon API rejects). See the PR body for that follow-up.
+        security_opts:
+          - seccomp=unconfined
         command: code-server --bind-addr 0.0.0.0:8080 /workspace --cert
       become: true
       when: devenv_launch_devcontainer | bool
