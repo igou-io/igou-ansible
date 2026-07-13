@@ -156,6 +156,31 @@
 
   post_tasks:
     # ------------------------------------------------------------------
+    # Set the operator's global git identity on the host user's ~/.gitconfig.
+    # The david_igou.devhost.host_prep role is intentionally NOT in this play's
+    # roles (its repo-clone defaults would fight the workspace seeding below), so
+    # its git_config tasks are mirrored here as a dedicated step reading the
+    # host_prep_git_* vars from group_vars/devenv/gitconfig.yml. Applied before
+    # the clones so any commit made afterwards — on the box or in the
+    # devcontainer that inherits the bind-mounted ~/.gitconfig — is attributed
+    # correctly. The ghapp role supplies the credential helper; this supplies the
+    # author identity.
+    # ------------------------------------------------------------------
+    - name: Set global git user.name
+      community.general.git_config:
+        name: user.name
+        scope: global
+        value: "{{ host_prep_git_user_name }}"
+      when: host_prep_git_user_name | default('') | length > 0
+
+    - name: Set global git user.email
+      community.general.git_config:
+        name: user.email
+        scope: global
+        value: "{{ host_prep_git_user_email }}"
+      when: host_prep_git_user_email | default('') | length > 0
+
+    # ------------------------------------------------------------------
     # Seed ~/workspace so the devcontainer's /workspace mirrors the operator's
     # physical devhost — a directory of ALL the working repos — instead of just
     # the igou-devenv clone. The canonical devcontainer.json ALREADY bind-mounts
