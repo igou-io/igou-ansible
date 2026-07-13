@@ -29,7 +29,16 @@
     hermes_podman_subid_start: 100000
     hermes_podman_subid_count: 65536
     hermes_podman_subid_end: "{{ (hermes_podman_subid_start | int) + (hermes_podman_subid_count | int) - 1 }}"
-    hermes_podman_graphroot: "{{ hermes_state_mount }}/containers/storage"
+    # Rootless Podman graphroot lives on the ROOT disk (the rootless-podman default
+    # location), deliberately SEPARATED from the durable state PVC mounted at
+    # {{ hermes_state_mount }}. Container storage is high-churn overlayfs: a
+    # container-store/overlay fault must never be able to take down the agent's
+    # irreplaceable state (config.yaml, memory, skills, .env, the hermes-agent
+    # venv) that shares that PVC — this actually happened. Images are re-pullable
+    # (backup.yml already excludes the graphroot and treats images as re-pullable),
+    # so nothing durable is lost by keeping the store here. The one-time migration
+    # block below relocates any pre-existing on-PVC graphroot to this path.
+    hermes_podman_graphroot: "{{ hermes_home }}/.local/share/containers/storage"
     centos_stream_major: "10"
     centos_stream_repo_base: "https://mirror.stream.centos.org/{{ centos_stream_major }}-stream"
     centos_stream_repo_backup_suffix: ansible-pre-mirror-pin
@@ -437,11 +446,88 @@
       loop:
         - "{{ hermes_home }}/.config"
         - "{{ hermes_home }}/.config/containers"
-        - "{{ hermes_state_mount }}/containers"
+        # Parents for the root-disk graphroot (~/.local/share/containers/storage).
+        # The old on-PVC "{{ hermes_state_mount }}/containers" dir is intentionally
+        # no longer created here — the graphroot now lives on the root disk.
+        - "{{ hermes_home }}/.local"
+        - "{{ hermes_home }}/.local/share"
+        - "{{ hermes_home }}/.local/share/containers"
         - "{{ hermes_podman_graphroot }}"
       become: true
 
-    - name: Configure rootless Podman storage on Hermes state disk
+    # One-time migration: earlier revisions pinned the rootless Podman graphroot
+    # ONTO the durable state PVC ({{ hermes_state_mount }}/containers/storage). A
+    # container-store/overlay fault there could (and did) take the whole state
+    # filesystem — and thus the agent's brain — offline. Detect that legacy layout
+    # by stat-ing the old graphroot; the migration below only fires during the
+    # one-time transition and is skipped on fresh VMs (old dir never existed) and
+    # on already-migrated VMs (old dir removed).
+    - name: Check for a legacy rootless Podman graphroot on the state PVC
+      ansible.builtin.stat:
+        path: "{{ hermes_state_mount }}/containers/storage"
+      register: hermes_old_graphroot_stat
+      become: true
+
+    # Quiesce rootless Podman and reclaim the old on-PVC store BEFORE the template
+    # rewrites storage.conf to the new root-disk graphroot. Order matters: the
+    # running units and containers are still bound to the OLD storage.conf here, so
+    # they must be drained while it still points at the state PVC. Runs only for the
+    # one-time legacy->root-disk transition (guarded on the old dir existing).
+    - name: Migrate the legacy state-PVC graphroot off the durable state disk
+      when: hermes_old_graphroot_stat.stat.exists
+      block:
+        # Stop the rootless systemd --user units so nothing re-opens the old store
+        # mid-migration. failed_when:false because a legacy VM predating these units
+        # may lack them; the drain below still cleans up any stray podman process.
+        - name: Stop the Hermes gateway and dashboard user units before graphroot migration
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: stopped
+            scope: user
+          become: true
+          become_user: "{{ hermes_user }}"
+          environment:
+            XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid }}"
+          loop:
+            - hermes-gateway.service
+            - hermes-dashboard.service
+          failed_when: false
+
+        # Drain any remaining rootless containers via the OLD storage.conf (still in
+        # place). The terminal backend uses host bind mounts, not podman NAMED
+        # volumes, so removing containers loses no durable data.
+        - name: Drain running rootless Podman containers from the legacy store
+          ansible.builtin.command:
+            cmd: "{{ item }}"
+          become: true
+          become_user: "{{ hermes_user }}"
+          become_flags: "-i"
+          environment: "{{ hermes_podman_environment }}"
+          loop:
+            - podman stop --all --time 30
+            - podman rm --all --force
+          changed_when: false
+          failed_when: false
+
+        # Reclaim ~15G on the state PVC. Safe: no podman named volumes exist and
+        # images are re-pullable — the image-pull step later in this play repopulates
+        # the new root-disk graphroot.
+        - name: Remove the orphaned legacy graphroot from the state PVC
+          ansible.builtin.file:
+            path: "{{ hermes_state_mount }}/containers/storage"
+            state: absent
+          become: true
+
+        # Drop the now-dead SELinux file-context rule for the old on-PVC graphroot so
+        # policy carries no stale entry. Guard on SELinux being enabled.
+        - name: Remove the stale SELinux context rule for the legacy graphroot
+          community.general.sefcontext:
+            target: "{{ hermes_state_mount }}/containers/storage(/.*)?"
+            state: absent
+          become: true
+          when: ansible_facts.selinux.status == "enabled"
+
+    - name: Configure rootless Podman storage on the root disk
       ansible.builtin.template:
         src: hermes-containers-storage.conf.j2
         dest: "{{ hermes_home }}/.config/containers/storage.conf"
@@ -450,12 +536,13 @@
         mode: "0600"
       become: true
 
-    # Rootless Podman graphroot is moved from the default per-user location to the
-    # persistent Hermes state disk. On SELinux systems, relocated Podman graphroot
-    # paths need persistent file-context rules and restorecon, otherwise Podman can
-    # fail later with SELinux denials when reading/writing image and container
-    # storage. Match the distro Podman policy shape: container_var_lib_t for the
-    # graphroot and more specific labels for image storage and named volumes.
+    # The rootless Podman graphroot lives under the per-user root-disk location
+    # (~/.local/share/containers/storage). Persist the distro Podman file-context
+    # rules and restorecon so the store keeps correct labels across relabels,
+    # otherwise Podman can fail later with SELinux denials when reading/writing
+    # image and container storage. Match the distro Podman policy shape:
+    # container_var_lib_t for the graphroot and more specific labels for image
+    # storage and named volumes.
     - name: Persist SELinux context for Hermes rootless Podman graphroot
       community.general.sefcontext:
         target: "{{ hermes_podman_graphroot }}(/.*)?"
@@ -581,6 +668,37 @@
         or hermes_devenv_smoke_test.stdout_lines[0] != "igou"
         or hermes_devenv_smoke_test.stdout_lines[1] != "1000"
         or hermes_devenv_smoke_test.stdout_lines[2] != "1000"
+
+    # Bring the units we stopped for the one-time graphroot migration back up so a
+    # STANDALONE setup-os run leaves a healthy VM. Placed at play end so the new
+    # root-disk graphroot is already SELinux-labelled and the runtime image pulled.
+    # Skipped entirely on fresh/already-migrated VMs (old dir absent). The later
+    # configure play also restarts these idempotently in the full workflow.
+    - name: Restart the Hermes gateway user unit after graphroot migration
+      ansible.builtin.systemd:
+        name: hermes-gateway.service
+        state: restarted
+        scope: user
+      become: true
+      become_user: "{{ hermes_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid }}"
+      when: hermes_old_graphroot_stat.stat.exists
+      failed_when: false
+
+    # Dashboard is auth-gated (fail-closed without creds), so it may legitimately be
+    # absent/inactive; failed_when:false keeps migration success independent of it.
+    - name: Restart the Hermes dashboard user unit after graphroot migration
+      ansible.builtin.systemd:
+        name: hermes-dashboard.service
+        state: restarted
+        scope: user
+      become: true
+      become_user: "{{ hermes_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid }}"
+      when: hermes_old_graphroot_stat.stat.exists
+      failed_when: false
 
   handlers:
     - name: Clean DNF metadata
