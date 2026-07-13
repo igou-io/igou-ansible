@@ -25,12 +25,13 @@ exclude_paths:
   - molecule/grafana-kiosk/create.yml
   - molecule/grafana-kiosk/destroy.yml
   - molecule/grafana-kiosk/prepare.yml
-  # devenv-e2e: same pattern — create/destroy are pure import shims; prepare
-  # additionally carries real plays (scratch disk, host preflight) that stay
-  # linted locally where the collection is installed (molecule dependency).
-  - molecule/devenv-e2e/create.yml
-  - molecule/devenv-e2e/destroy.yml
-  - molecule/devenv-e2e/prepare.yml
+  # playbook-devenv-bootstrap: same pattern — create/destroy are pure import
+  # shims; prepare additionally carries real plays (scratch disk, host preflight,
+  # docker group) that stay linted locally where the collection is installed
+  # (molecule dependency).
+  - molecule/playbook-devenv-bootstrap/create.yml
+  - molecule/playbook-devenv-bootstrap/destroy.yml
+  - molecule/playbook-devenv-bootstrap/prepare.yml
   # playbook-windows-* provisioner shims (9 scenarios): same
   # david_igou.molecule_provisioners situation as above. create/prepare also
   # carry real preflight/sysprep-secret/DC-promotion plays that stay linted
