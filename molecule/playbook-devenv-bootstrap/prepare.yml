@@ -1,0 +1,153 @@
+---
+- name: Prepare molecule instances
+  import_playbook: david_igou.molecule_provisioners.prepare
+
+# The centos-stream containerdisk root is ~10Gi — too tight for the multi-GB
+# devenv image pull on top of the OS. The emptyDisk declared in the inventory
+# (extra_disks/extra_volumes, serial "docker") gets a stable by-id path;
+# format and mount it before converge installs docker.
+- name: Mount the docker scratch disk
+  hosts: molecule
+  gather_facts: false
+  become: true
+  vars:
+    __docker_disk: /dev/disk/by-id/virtio-docker
+  tasks:
+    # NB: docker's netfilter modules (xt_addrtype, iptable_nat, br_netfilter,
+    # from kernel-modules-extra) are NOT installed here anymore. bootstrap.yml's
+    # pre_tasks now install `kernel-modules-extra-{{ ansible_kernel }}` (pinned to
+    # the RUNNING kernel) and load them before the docker role starts dockerd —
+    # the pin matters because an unversioned `kernel-modules-extra` resolves to
+    # the latest build, whose modules land under a different /lib/modules dir than
+    # the golden image's running kernel (modprobe then FATALs "module not found").
+    # prepare only needs the scratch disk mounted before converge installs docker.
+    - name: Wait for the scratch disk device to appear
+      ansible.builtin.wait_for:
+        path: "{{ __docker_disk }}"
+        timeout: 60
+
+    - name: Create an xfs filesystem on the scratch disk
+      community.general.filesystem:
+        fstype: xfs
+        dev: "{{ __docker_disk }}"
+
+    - name: Mount the scratch disk at /var/lib/docker
+      ansible.posix.mount:
+        path: /var/lib/docker
+        src: "{{ __docker_disk }}"
+        fstype: xfs
+        state: mounted
+
+    # Devcontainer host preflight. The igou-devenv devcontainer runs --privileged
+    # with --device=/dev/fuse, --device=/dev/net/tun and --network=host (see
+    # .devcontainer/devcontainer.json), and its nested rootless podman needs
+    # unprivileged user namespaces. Fail fast on a missing host prerequisite here
+    # — otherwise it surfaces as a confusing devcontainer-up or test-podman error
+    # two plays later. /dev/kvm is only needed for the in-container qemu /
+    # molecule-provisioner path (make test-qemu), which this scenario does not
+    # hard-require, so its absence is a soft warning, not a failure.
+    - name: Load the tun module the devcontainer's --device=/dev/net/tun needs
+      community.general.modprobe:
+        name: tun
+        state: present
+
+    - name: Stat the character devices the devcontainer binds
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /dev/fuse
+        - /dev/net/tun
+      register: __devenv_chardevs
+
+    - name: Assert /dev/fuse and /dev/net/tun are present character devices
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.ischr
+        fail_msg: "{{ item.item }} is missing — the devcontainer cannot bind it"
+      loop: "{{ __devenv_chardevs.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # bootstrap.yml's jq ALWAYS appends a read-only ~/.config/ghapp bind mount to
+    # the derived devcontainer config, even when ghapp is disabled (as it is in
+    # this scenario). In production the devhost ghapp role renders
+    # ~/.config/ghapp/config.yaml on the host first, and the container's
+    # post-create.sh seeds its own copy "only if absent" — so the pre-existing
+    # host file wins and the read-only mount is never written. With ghapp
+    # disabled here that role never runs, so we stand in for it: pre-create the
+    # dir AND a placeholder config.yaml (igou-owned) so post-create's guard finds
+    # it present and skips the cp that would otherwise fail "Read-only file
+    # system" on the mount. ghapp itself is out of scope (its own e2e covers it),
+    # so the placeholder content is never used.
+    - name: Pre-create the igou-owned ~/.config/ghapp bind-mount source (ghapp disabled)
+      ansible.builtin.file:
+        path: /home/igou/.config/ghapp
+        state: directory
+        owner: igou
+        group: igou
+        mode: "0700"
+
+    - name: Seed a placeholder ghapp config so post-create's read-only-mount guard skips
+      ansible.builtin.copy:
+        dest: /home/igou/.config/ghapp/config.yaml
+        owner: igou
+        group: igou
+        mode: "0600"
+        content: |
+          # Molecule placeholder (playbook-devenv-bootstrap). ghapp is disabled in
+          # this scenario (devenv_ghapp_enabled=false), so the devhost ghapp role
+          # does not render the real host config. This file exists only to satisfy
+          # the container post-create.sh "first run only" guard, which would
+          # otherwise try to cp into the read-only ~/.config/ghapp bind mount and
+          # fail. ghapp is not exercised by this scenario.
+
+    # bootstrap.yml's docker role adds igou to the docker group mid-converge, but
+    # its own `devcontainer up` task runs as igou over the SAME SSH session — which
+    # logged in before that group existed — so it can't reach the docker socket
+    # (devcontainer up's internal `docker ps` fails). Add the membership HERE, in a
+    # prior molecule step, so it is already in /etc/group before converge; the
+    # reset_connection at the top of converge.yml then makes bootstrap's fresh
+    # login pick it up. docker-ce reuses this pre-existing group when it installs.
+    - name: Ensure the docker group exists (docker-ce reuses it on install)
+      # system:true so it lands in the low system-GID range (like docker-ce's own
+      # `groupadd -r docker`, ~992). A non-system group would take GID 1001, which
+      # the container's post-start.sh then fails to `groupmod` onto the docker
+      # group ("GID 1001 already exists") when matching the socket's GID.
+      ansible.builtin.group:
+        name: docker
+        system: true
+        state: present
+
+    - name: Add igou to the docker group so converge's fresh login can drive docker
+      ansible.builtin.user:
+        name: igou
+        groups: docker
+        append: true
+
+    - name: Read the user-namespace limit (nested rootless podman needs it)
+      ansible.builtin.command:
+        cmd: sysctl -n user.max_user_namespaces
+      register: __devenv_userns
+      changed_when: false
+
+    - name: Assert unprivileged user namespaces are enabled
+      ansible.builtin.assert:
+        that:
+          - __devenv_userns.stdout | int > 0
+        fail_msg: >-
+          user.max_user_namespaces is {{ __devenv_userns.stdout }} — rootless
+          podman inside the devcontainer needs unprivileged user namespaces
+
+    - name: Check for /dev/kvm (nested virt — gates the in-container qemu path)
+      ansible.builtin.stat:
+        path: /dev/kvm
+      register: __devenv_kvm
+
+    - name: Warn when /dev/kvm is absent (non-fatal)
+      ansible.builtin.debug:
+        msg: >-
+          /dev/kvm is not present on this VM — nested virtualization is off, so
+          the devcontainer's qemu / molecule-provisioner workflows (make
+          test-qemu) will not work. Non-fatal for this scenario.
+      when: not __devenv_kvm.stat.exists

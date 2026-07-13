@@ -1,0 +1,267 @@
+---
+# The scenario's whole point: run the REAL bootstrap playbook, unmodified,
+# against the molecule-provisioned VM. The instance is a member of the `devenv`
+# group (see inventory/hosts.yml), which bootstrap.yml's default hosts pattern
+# (`{{ ansible_limit | default('devenv') }}`) matches as-is. bootstrap.yml now
+# owns the FULL devcontainer lifecycle — the devhost roles, the pinned
+# igou-devenv clone, the jq-derived image-based devcontainer config,
+# `devcontainer up` from the published release image, and the igou-devenv.service
+# systemd unit — so there is nothing to launch after it. The ghapp gate stays off
+# and the toolset is lean (both via extra-vars in molecule.yml), so no 1Password
+# access is needed during converge.
+# Drop any SSH connection persisted from the prepare step BEFORE bootstrap runs,
+# so its `devcontainer up` task (which runs as igou, not root) logs in fresh and
+# picks up the docker group membership prepare.yml added — otherwise a reused
+# pre-group login leaves igou unable to reach the docker socket and devcontainer
+# up fails on its internal `docker ps`.
+- name: Reset the connection so bootstrap's devcontainer up sees the docker group
+  hosts: devenv
+  gather_facts: false
+  tasks:
+    - name: Reset the persistent SSH connection
+      ansible.builtin.meta: reset_connection
+
+- name: Converge via the production devenv bootstrap playbook
+  ansible.builtin.import_playbook: ../../playbooks/devenv/bootstrap.yml
+
+# Converge steady-state guard. bootstrap.yml brings the devcontainer up twice in
+# quick succession — its own `devcontainer up` task, then the igou-devenv.service
+# start (also `devcontainer up`) — and post-start launches code-server
+# asynchronously (nohup). Those two launches can race such that code-server is
+# momentarily not listening right after converge. Every real trigger (a
+# `systemctl restart`, a reboot) settles it, so this just waits for :8080 and, on
+# the off chance it did not come up, restarts the unit once — leaving the host in
+# the same steady state verify (and an operator) expect. Tagged
+# molecule-idempotence-notest: the conditional restart would otherwise report
+# changed and fail the idempotence step; the underlying bootstrap converge is
+# change-free on its own.
+- name: Ensure code-server has settled after converge
+  hosts: devenv-devenv
+  gather_facts: false
+  tags:
+    - molecule-idempotence-notest
+  tasks:
+    - name: Wait for code-server on :8080 (post-start launches it asynchronously)
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        status_code: [200]
+      register: __cs_settle
+      failed_when: false
+      retries: 12
+      delay: 5
+      until: __cs_settle.status == 200
+
+    - name: Restart the unit once if code-server did not settle (race guard)
+      ansible.builtin.systemd_service:
+        name: igou-devenv.service
+        state: restarted
+      become: true
+      when: __cs_settle.status != 200
+
+    - name: Re-confirm code-server is serving after the restart
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+      register: __cs_settle2
+      retries: 24
+      delay: 5
+      until: __cs_settle2.status == 200
+      when: __cs_settle.status != 200
+
+# 1Password integration (OPTIONAL, gated) — seed the credentials and the
+# scenario-owned test env files that the verify play's use()/unuse() checks
+# consume. bootstrap.yml (the play above) has already brought the devcontainer
+# up, so these files land in directories the running container bind-mounts LIVE:
+# ~/.config/op is bind-mounted read-only into the container, and ~/igou-devenv/envs
+# surfaces at /workspace/igou-devenv/envs via the workspaceMount — both are plain
+# directory binds, so files added here appear in the already-running container
+# with no recreate. The container's .bashrc op-auth block reads the credentials
+# per interactive shell (i.e. when verify execs `bash -ic` later), by which point
+# they are present. With no MOLECULE_OP_* token this whole play is a single skip
+# debug and the run is byte-for-byte the baseline. See molecule.yml header.
+#
+# Why these exact paths:
+#   - Tokens go to the VM host's ~/.config/op, which the devcontainer bind-mounts
+#     read-only at /home/igou/.config/op; the container .bashrc's op-auth block
+#     reads connect-host/connect-token (Connect) or service-account-token (SA)
+#     from there — never passed via cloud-init, the VM spec, the k8s API, or the
+#     ephemeral inventory.
+#   - Env files go to ~/igou-devenv/envs, NOT ~/workspace/igou-devenv/envs. The
+#     container's use() hard-codes envdir=/workspace/igou-devenv/envs, and
+#     bootstrap's `devcontainer up` runs with --workspace-folder ~/igou-devenv, so
+#     the workspaceMount binds ~/igou-devenv -> /workspace/igou-devenv, shadowing
+#     the ~/workspace -> /workspace mount for that subtree. (Proof: the already-
+#     green `make test-tools` execs /workspace/igou-devenv/tests/... which only
+#     exists in the ~/igou-devenv bootstrap clone.) So ~/igou-devenv/envs is where
+#     use() actually looks — no second clone is needed. bootstrap clones
+#     igou-devenv at a pinned tag (update on converge), which does not touch the
+#     untracked envs/ dir, so a second converge (idempotence) leaves these intact.
+- name: Seed 1Password credentials and scenario test env files
+  hosts: devenv-devenv
+  gather_facts: true
+  vars:
+    devenv_bootstrap_op_dir: "{{ ansible_user_dir }}/.config/op"
+    devenv_bootstrap_envs_dir: "{{ ansible_user_dir }}/igou-devenv/envs"
+    devenv_bootstrap_op_env_files:
+      - molecule-simple.env
+      - molecule-kubeconfig.env
+      - molecule-k8s-token.env
+      - molecule-registry.env
+      - molecule-bad.env
+  tasks:
+    - name: Report that 1Password integration setup is skipped
+      ansible.builtin.debug:
+        msg: >-
+          1Password integration checks skipped (no token provided) — set
+          MOLECULE_OP_SERVICE_ACCOUNT_TOKEN, or MOLECULE_OP_CONNECT_HOST plus
+          MOLECULE_OP_CONNECT_TOKEN, to enable them.
+      when: not (devenv_bootstrap_op_enabled | bool)
+
+    # Guard the env configuration for everyone (even the disabled path catches a
+    # half-set Connect pair, which would otherwise silently disable the checks).
+    - name: Assert the MOLECULE_OP_* configuration is valid
+      ansible.builtin.assert:
+        that:
+          - not ((devenv_bootstrap_op_connect_enabled | bool) and (devenv_bootstrap_op_sa_enabled | bool))
+          - (devenv_bootstrap_op_connect_host | length > 0) == (devenv_bootstrap_op_connect_token | length > 0)
+        fail_msg: >-
+          invalid MOLECULE_OP_* configuration: set EITHER both
+          MOLECULE_OP_CONNECT_HOST and MOLECULE_OP_CONNECT_TOKEN, OR
+          MOLECULE_OP_SERVICE_ACCOUNT_TOKEN — never a half-set Connect pair, and
+          never both modes at once.
+        success_msg: >-
+          1Password auth mode:
+          {{ 'Connect' if (devenv_bootstrap_op_connect_enabled | bool)
+             else ('service account' if (devenv_bootstrap_op_sa_enabled | bool)
+             else 'none (checks disabled)') }}
+
+    - name: Seed 1Password credentials and test env files
+      when: devenv_bootstrap_op_enabled | bool
+      block:
+        - name: Ensure ~/.config/op exists with private permissions
+          ansible.builtin.file:
+            path: "{{ devenv_bootstrap_op_dir }}"
+            state: directory
+            mode: "0700"
+
+        # The op CLI must find an existing device config: ~/.config/op is
+        # bind-mounted READ-ONLY into the container, so op cannot create
+        # ~/.config/op/config itself ("open .../config: read-only file
+        # system"). On a real dev host the file already exists from first
+        # host-side op use; seed the same shape here. The device id is a
+        # client identifier (not a secret) — a fixed base32 value keeps
+        # re-runs change-free, and force:false leaves any pre-existing
+        # device identity alone.
+        - name: Seed the op device config the read-only bind keeps op from creating
+          ansible.builtin.copy:
+            content: '{"latest_signin":"","device":"moleculedevenve2edeviceidx"}'
+            dest: "{{ devenv_bootstrap_op_dir }}/config"
+            mode: "0600"
+            force: false
+
+        - name: Seed the 1Password Connect host
+          ansible.builtin.copy:
+            content: "{{ devenv_bootstrap_op_connect_host }}"
+            dest: "{{ devenv_bootstrap_op_dir }}/connect-host"
+            mode: "0600"
+          no_log: true
+          when: devenv_bootstrap_op_connect_enabled | bool
+
+        - name: Seed the 1Password Connect token
+          ansible.builtin.copy:
+            content: "{{ devenv_bootstrap_op_connect_token }}"
+            dest: "{{ devenv_bootstrap_op_dir }}/connect-token"
+            mode: "0600"
+          no_log: true
+          when: devenv_bootstrap_op_connect_enabled | bool
+
+        - name: Seed the 1Password service-account token
+          ansible.builtin.copy:
+            content: "{{ devenv_bootstrap_op_sa_token }}"
+            dest: "{{ devenv_bootstrap_op_dir }}/service-account-token"
+            mode: "0600"
+          no_log: true
+          when: devenv_bootstrap_op_sa_enabled | bool
+
+        # Keep the two modes from colliding across re-runs: the container .bashrc
+        # PREFERS Connect, so a stale Connect pair left over from a previous run
+        # would mask a fresh SA token (and vice versa). Remove whichever mode is
+        # not active. No token material here, so no no_log needed.
+        - name: Remove stale Connect credentials when using service-account mode
+          ansible.builtin.file:
+            path: "{{ devenv_bootstrap_op_dir }}/{{ item }}"
+            state: absent
+          loop:
+            - connect-host
+            - connect-token
+          when: devenv_bootstrap_op_sa_enabled | bool
+
+        - name: Remove a stale service-account token when using Connect mode
+          ansible.builtin.file:
+            path: "{{ devenv_bootstrap_op_dir }}/service-account-token"
+            state: absent
+          when: devenv_bootstrap_op_connect_enabled | bool
+
+        - name: Ensure the container's envs directory exists
+          ansible.builtin.file:
+            path: "{{ devenv_bootstrap_envs_dir }}"
+            state: directory
+            mode: "0755"
+
+        # Scenario-owned; deliberately NOT committed to igou-devenv. They carry
+        # only op:// references (and one literal plain value), no secrets.
+        - name: Install the scenario 1Password test env files
+          ansible.builtin.copy:
+            src: "envs/{{ item }}"
+            dest: "{{ devenv_bootstrap_envs_dir }}/{{ item }}"
+            mode: "0644"
+          loop: "{{ devenv_bootstrap_op_env_files }}"
+
+# Expose code-server externally via a NodePort service, mirroring phase 1 of the
+# production provision-vm.yml (which this scenario otherwise replaces): that
+# playbook pins a devenv-code-server NodePort on 30080 so the operator reaches
+# the editor from outside the cluster. We recreate the same reachability path
+# here so verify can prove it end-to-end. The devcontainer runs --network=host,
+# so its code-server binds the VM's :8080 directly — this service just routes to
+# that port. The k8s call runs on the controller — the play targets the VM host
+# (for parity with the surrounding converge plays) but delegates to localhost,
+# where the KUBECONFIG env lives, exactly like the provisioner's own create
+# tasks talk to the cluster API.
+- name: Expose code-server externally via a NodePort service
+  hosts: devenv-devenv
+  gather_facts: false
+  vars:
+    # Namespace matches the provisioner's kubevirt role default (the shared
+    # `molecule` namespace); the SSH NodePort it creates lands here too.
+    devenv_bootstrap_namespace: molecule
+    # Instance-scoped name so it can't collide with the provisioner's own
+    # `devenv-devenv` SSH service in this shared namespace.
+    devenv_bootstrap_cs_service: devenv-devenv-code-server
+  tasks:
+    - name: Create the code-server NodePort service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ devenv_bootstrap_cs_service }}"
+            namespace: "{{ devenv_bootstrap_namespace }}"
+          spec:
+            type: NodePort
+            selector:
+              # The label the provisioner puts on the virt-launcher pod (the same
+              # one its SSH service selects on) — routes to this VM's code-server.
+              kubevirt.io/domain: devenv-devenv
+            ports:
+              - name: code-server
+                port: 8080
+                targetPort: 8080
+                protocol: TCP
+                # Deliberately NO fixed nodePort. Production pins 30080, but this
+                # scenario shares the `molecule` namespace with any other run, so
+                # squatting a fixed host port would clash; let the cluster
+                # allocate one and verify discovers it dynamically.
+      delegate_to: localhost
+      run_once: true

@@ -10,16 +10,16 @@
   connection: local
   gather_facts: false
   vars:
-    devenv_e2e_namespace: molecule
-    devenv_e2e_cs_service: devenv-devenv-code-server
+    devenv_bootstrap_namespace: molecule
+    devenv_bootstrap_cs_service: devenv-devenv-code-server
   tasks:
     - name: Delete the code-server NodePort service
       kubernetes.core.k8s:
         state: absent
         api_version: v1
         kind: Service
-        name: "{{ devenv_e2e_cs_service }}"
-        namespace: "{{ devenv_e2e_namespace }}"
+        name: "{{ devenv_bootstrap_cs_service }}"
+        namespace: "{{ devenv_bootstrap_namespace }}"
 
 - name: Tear down molecule instances
   import_playbook: david_igou.molecule_provisioners.destroy
