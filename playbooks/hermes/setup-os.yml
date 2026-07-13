@@ -644,10 +644,14 @@
     # clearly enough to assert the future runtime identity. Keep podman run here
     # so the smoke test proves whoami=igou under the planned keep-id mapping.
     # timeout keeps first-run ID-mapped layer preparation from hanging forever.
+    # 20m (not 10m): the first keep-id run cold-builds an ID-mapped copy of every
+    # layer of the multi-GB devenv image, and here it runs right after the graphroot
+    # migration's ~15G delete + fresh image pull — that IO contention pushed a cold
+    # map past 10m (measured ~4.5m unloaded). 20m gives margin for the loaded case.
     - name: Smoke test igou-devenv image with rootless Podman keep-id mapping
       ansible.builtin.command:
         cmd: >-
-          timeout --kill-after=30s 10m
+          timeout --kill-after=30s 20m
           podman run --rm
           --entrypoint /usr/bin/bash
           --userns=keep-id:uid=1000,gid=1000

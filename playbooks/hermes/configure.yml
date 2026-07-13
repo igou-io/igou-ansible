@@ -318,10 +318,13 @@
           become_flags: "-i"
           environment: "{{ hermes_podman_environment }}"
 
+        # 20m (not 10m): the first keep-id run after a fresh pull cold-builds an
+        # ID-mapped copy of every layer of the multi-GB devenv image, which can
+        # exceed 10m under IO load (see the matching note in setup-os.yml).
         - name: Pre-warm Hermes terminal backend image with rootless Podman keep-id mapping
           ansible.builtin.command:
             cmd: >-
-              timeout --kill-after=30s 10m
+              timeout --kill-after=30s 20m
               podman run --rm
               --entrypoint {{ hermes_terminal_backend_container_shell }}
               --userns=keep-id:uid={{ hermes_terminal_backend_container_uid }},gid={{ hermes_terminal_backend_container_gid }}
