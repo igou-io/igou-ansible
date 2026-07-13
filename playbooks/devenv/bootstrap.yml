@@ -414,11 +414,15 @@
       # The devcontainer CLI creates containers without a docker restart
       # policy, so after a VM reboot the container sits stopped until
       # `devcontainer up` runs again. This oneshot unit does exactly that as
-      # the igou user (docker group): on a warm container it just restarts it
-      # and reruns post-start (ssh-agent, dbus/libvirt, code-server), which is
-      # the CLI's own idempotent path. Restart= is not valid for oneshot
-      # units; recovery from a failed boot start is `systemctl restart
-      # igou-devenv`.
+      # the igou user (docker group): ExecStart is the idempotent
+      # `devcontainer up` (on a warm container it reuses it and reruns
+      # post-start — ssh-agent, dbus/libvirt, code-server — the CLI's own
+      # boot-recovery path). ExecStop mirrors the repo's `make down`: it
+      # removes the container by its devcontainer local_folder label. Restart=
+      # is not valid for oneshot, but `systemctl restart igou-devenv` is
+      # stop+start — ExecStop (down) then ExecStart (up) — so it cleanly
+      # brings the container down and back up (and `systemctl stop` now
+      # actually stops it, instead of leaving it running).
       become: true
       ansible.builtin.copy:
         dest: /etc/systemd/system/igou-devenv.service
@@ -448,6 +452,10 @@
           # Live-verified on devenv-vlan9: the direct path fails 203, the
           # wrapped one starts clean.
           ExecStart=/usr/bin/bash -c 'exec {{ ansible_user_dir }}/.local/bin/devcontainer up --workspace-folder {{ ansible_user_dir }}/igou-devenv --override-config {{ ansible_user_dir }}/.local/share/igou-devenv/devcontainer-release.json --update-remote-user-uid-default off'
+          # Down = remove the container by its devcontainer local_folder label
+          # (mirrors `make down`). Same /usr/bin/bash -c wrap as ExecStart so
+          # the SELinux init_t->shell transition applies.
+          ExecStop=/usr/bin/bash -c 'cid=$(docker ps -aq --filter "label=devcontainer.local_folder={{ ansible_user_dir }}/igou-devenv"); if [ -n "$cid" ]; then docker rm -f $cid; fi'
           TimeoutStartSec=900
 
           [Install]

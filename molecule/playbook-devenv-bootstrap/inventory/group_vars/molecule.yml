@@ -12,16 +12,16 @@ mp_kubevirt_wait_timeout: 600
 # them), which keeps the actual tokens out of any inventory dump — an
 # `ansible-inventory --list` renders these as the unresolved lookup expressions,
 # never the secret values.
-devenv_e2e_op_connect_host: "{{ lookup('ansible.builtin.env', 'MOLECULE_OP_CONNECT_HOST') }}"
-devenv_e2e_op_connect_token: "{{ lookup('ansible.builtin.env', 'MOLECULE_OP_CONNECT_TOKEN') }}"
-devenv_e2e_op_sa_token: "{{ lookup('ansible.builtin.env', 'MOLECULE_OP_SERVICE_ACCOUNT_TOKEN') }}"
+devenv_bootstrap_op_connect_host: "{{ lookup('ansible.builtin.env', 'MOLECULE_OP_CONNECT_HOST') }}"
+devenv_bootstrap_op_connect_token: "{{ lookup('ansible.builtin.env', 'MOLECULE_OP_CONNECT_TOKEN') }}"
+devenv_bootstrap_op_sa_token: "{{ lookup('ansible.builtin.env', 'MOLECULE_OP_SERVICE_ACCOUNT_TOKEN') }}"
 
 # Connect mode needs BOTH the host and the token; SA mode needs just the token.
-# devenv_e2e_op_enabled is the single master switch every 1P play/task gates on.
-devenv_e2e_op_connect_enabled: >-
-  {{ (devenv_e2e_op_connect_host | length > 0)
-     and (devenv_e2e_op_connect_token | length > 0) }}
-devenv_e2e_op_sa_enabled: "{{ devenv_e2e_op_sa_token | length > 0 }}"
-devenv_e2e_op_enabled: >-
-  {{ (devenv_e2e_op_connect_enabled | bool)
-     or (devenv_e2e_op_sa_enabled | bool) }}
+# devenv_bootstrap_op_enabled is the single master switch every 1P play/task gates on.
+devenv_bootstrap_op_connect_enabled: >-
+  {{ (devenv_bootstrap_op_connect_host | length > 0)
+     and (devenv_bootstrap_op_connect_token | length > 0) }}
+devenv_bootstrap_op_sa_enabled: "{{ devenv_bootstrap_op_sa_token | length > 0 }}"
+devenv_bootstrap_op_enabled: >-
+  {{ (devenv_bootstrap_op_connect_enabled | bool)
+     or (devenv_bootstrap_op_sa_enabled | bool) }}

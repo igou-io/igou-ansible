@@ -1,0 +1,131 @@
+---
+# playbook-devenv-bootstrap: live end-to-end test of playbooks/devenv/bootstrap.yml
+# (the devenv host "phase 2" lifecycle) on a real KubeVirt VM via
+# david_igou.molecule_provisioners.
+#
+# The provisioner stands in for phase 1 (playbooks/devenv/provision-vm.yml) with a
+# throwaway molecule VM; converge then runs the REAL bootstrap playbook UNMODIFIED
+# (david_igou.devhost docker/packages roles, the pinned igou-devenv clone, the
+# jq-derived image-based devcontainer config, `devcontainer up` from the published
+# release image, and the igou-devenv.service systemd unit), then exposes
+# code-server through a NodePort service.
+#
+# bootstrap.yml owns the whole devcontainer lifecycle now — the scenario does NOT
+# run `make up-release` itself. verify asserts:
+#   - docker up + the scratch disk backs /var/lib/docker
+#   - the igou-devenv devcontainer (host-network, privileged) is running and the
+#     legacy standalone igou-devenv-code-server container is gone
+#   - code-server answers HTTPS on :8080 AND enforces auth (login page served,
+#     forged session cookie bounced)
+#   - the igou-devenv.service unit is installed, enabled, and active
+#   - `systemctl restart igou-devenv` cleanly cycles the container (ExecStop down
+#     then ExecStart up → a NEW container id), and `systemctl stop`/`start` remove
+#     and recreate it — the behavior this unit's ExecStop exists to provide
+#   - the devcontainer image's OWN suite passes in-container (`make test-tools`,
+#     `make test-podman` with nested rootless podman; `make test-qemu` informational)
+#   - code-server is reachable from OUTSIDE the cluster over the NodePort
+#   - a VM reboot leaves the host healthy AND the devcontainer auto-restarts via
+#     igou-devenv.service (the systemd autostart this scenario exists to prove) —
+#     no manual `make up-release` recovery is needed anymore
+#
+# Scope: end-to-end deploy + health + auth-enforcement + native devcontainer +
+# systemd lifecycle (restart cycling + boot autostart) + in-container tool/podman
+# tests + external NodePort reachability + reboot resilience. Intended to grow
+# more lab-contextual over time (full toolset profile, ghapp gate, in-container
+# qemu once nested KVM is available). The `idempotence` step passes: a second
+# converge is change-free (bootstrap.yml's `devcontainer up` reuses the running
+# container, changed_when keyed on the recreate fact).
+#
+# COST: the reboot verify play adds several minutes (a full KubeVirt VM boot plus
+# devcontainer re-launch by systemd) on top of the already-long converge; budget
+# accordingly.
+#
+# Requirements to run:
+#   - KUBECONFIG for a principal with VM + Service CRUD and node reads in the
+#     `molecule` namespace (the `ansible-molecule` SA:
+#     op://claude/ocp-ansible-molecule/token, host api.ocp.igou.systems:6443)
+#   - a kubevirt-schedulable worker with ~8Gi free (the VM is deliberately
+#     NOT pinned to the casval burst node, so tenant workers qualify)
+#   - VM egress to github.com (repo clone) and ghcr.io (image pull)
+#   - no 1Password needed: the ghapp gate stays off (devenv_ghapp_enabled=false)
+#     and the code-server password is a throwaway literal (see group_vars); the
+#     host runs the lean toolset profile (devenv_full_toolset=false) so mise / the
+#     full CLI set — which would need a GITHUB_TOKEN — are skipped
+#
+# 1Password integration (optional):
+#   By default this scenario needs NO 1Password access and skips every use()/op
+#   check — the no-token run is byte-for-byte the baseline suite. To ALSO exercise
+#   the container's 1Password-backed environment switching (the .bashrc use() /
+#   unuse() functions), export ONE auth mode before running molecule:
+#     - service-account mode (recommended, scoped): set
+#       MOLECULE_OP_SERVICE_ACCOUNT_TOKEN to a service account scoped to just the
+#       `molecule` vault — read its credential from
+#       op://lab_serviceaccounts/op-molecule-sa/credential and export it.
+#     - Connect mode: set MOLECULE_OP_CONNECT_HOST (url) and
+#       MOLECULE_OP_CONNECT_TOKEN (token).
+#   (Env-var syntax is spelled out in words here on purpose: molecule interpolates
+#   dollar-brace placeholders in this file, so a literal shell example would break
+#   config parsing.)
+#   Set exactly one mode (both → converge fails an assert). Tokens are seeded onto
+#   the VM host's ~/.config/op (0600, no_log) and reach the container through the
+#   existing read-only bind mount — never via cloud-init, the VM spec, the k8s
+#   API, or the ephemeral inventory. The scenario-owned molecule-*.env files and
+#   their backing `molecule` vault items (use-simple / use-kubeconfig /
+#   use-k8s-token / use-registry, plus a deliberately-broken molecule-bad) drive
+#   the converge/verify 1Password plays; with no token those plays skip with an
+#   explicit "1Password integration checks skipped (no token provided)" debug.
+#
+# Run:  molecule test -s playbook-devenv-bootstrap
+prerun: false
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: molecule/playbook-devenv-bootstrap/collections.yml
+    force: true
+
+ansible:
+  cfg:
+    defaults:
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here — otherwise the
+      # dependency step installs into ${MOLECULE_PROJECT_DIRECTORY}/.ansible
+      # while runtime resolution falls back to a stale ~/.ansible copy.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
+  executor:
+    args:
+      ansible_playbook:
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+        # bootstrap.yml sets these as PLAY vars (defaults for production), which
+        # outrank inventory group_vars — so the scenario's leaner/gated profile
+        # can only be imposed via extra-vars. ghapp off (its own e2e covers it;
+        # no App creds needed here); lean toolset (skip mise + the full CLI set,
+        # which would need a GITHUB_TOKEN) — the devcontainer carries the tools,
+        # exercised by the in-container `make test-tools`. Passed as JSON so they
+        # are real booleans: the devhost packages role gates on `when:
+        # packages_install_*` without `| bool`, and ansible-core 2.21 rejects a
+        # bare string ("false") in a conditional.
+        - '--extra-vars={"devenv_ghapp_enabled": false, "devenv_full_toolset": false}'
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  name: playbook-devenv-bootstrap
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy
+
+verifier:
+  name: ansible

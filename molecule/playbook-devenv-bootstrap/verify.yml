@@ -1,10 +1,15 @@
 ---
-# Health verification of the deployed devenv host: docker up, the code-server
-# container running and ENFORCING auth (lands on the login page, forged cookie
-# bounced), devcontainer prerequisites present, the in-container test suite, the
-# code-server NodePort reachable from OUTSIDE the cluster, and core health
-# surviving a VM reboot. Still-future lab-contextual checks: devcontainer build
-# from source, `make e2e` in the guest, ghapp mint.
+# Health verification of the deployed devenv host. bootstrap.yml now runs the
+# igou-devenv devcontainer NATIVELY (`devcontainer up`, host-network + privileged)
+# under a systemd unit — there is no standalone code-server container anymore.
+# This verify asserts: docker up + the scratch disk backs /var/lib/docker; the
+# legacy standalone container is gone; the igou-devenv devcontainer is running and
+# serving code-server on :8080 with auth ENFORCED (login page served, forged
+# cookie bounced); the igou-devenv.service unit is enabled + active; the
+# in-container test suite passes; code-server is reachable from OUTSIDE the
+# cluster via the NodePort; the systemd unit cleanly cycles the container on
+# restart/stop/start; and core health + the devcontainer's systemd autostart both
+# survive a VM reboot.
 
 - name: Verify the devenv host deployment health
   hosts: devenv-devenv
@@ -36,19 +41,55 @@
       changed_when: false
       failed_when: __docker_mount.rc != 0
 
-    - name: Inspect the code-server container
+    # bootstrap.yml removes the pre-devcontainer standalone container; assert it
+    # is actually gone so a stale one can't mask the native devcontainer on :8080.
+    - name: Inspect the legacy standalone code-server container
       community.docker.docker_container_info:
         name: igou-devenv-code-server
       become: true
-      register: __cs_container
+      register: __legacy_cs
 
-    - name: Assert the code-server container is up
+    - name: Assert the legacy standalone code-server container is absent
       ansible.builtin.assert:
         that:
-          - __cs_container.exists
-          - __cs_container.container.State.Running
-          - not __cs_container.container.State.Restarting
-        fail_msg: the igou-devenv-code-server container is not running
+          - not __legacy_cs.exists
+        fail_msg: >-
+          the legacy igou-devenv-code-server container still exists — bootstrap
+          should have removed it in favor of the native devcontainer
+
+    - name: Inspect the igou-devenv devcontainer
+      community.docker.docker_container_info:
+        name: igou-devenv
+      become: true
+      register: __devcontainer
+
+    - name: Assert the igou-devenv devcontainer is running
+      ansible.builtin.assert:
+        that:
+          - __devcontainer.exists
+          - __devcontainer.container.State.Running
+          - not __devcontainer.container.State.Restarting
+        fail_msg: the igou-devenv devcontainer is not running
+
+    # The autostart unit (#380) — its presence + enabled + active state is what
+    # makes the reboot resilience play below meaningful; assert it up front.
+    # noqa command-instead-of-module: systemd_service requires an action
+    # (required_one_of state/enabled/...), so it can't do a pure status query;
+    # `systemctl show --value` returns exactly the two property values to assert.
+    - name: Read the igou-devenv.service enabled + active state  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: systemctl show igou-devenv.service --property=UnitFileState,ActiveState --value
+      register: __unit_state
+      changed_when: false
+
+    - name: Assert the igou-devenv.service unit is enabled and active
+      ansible.builtin.assert:
+        that:
+          - "'enabled' in __unit_state.stdout_lines"
+          - "'active' in __unit_state.stdout_lines"
+        fail_msg: >-
+          igou-devenv.service is not enabled+active
+          (UnitFileState/ActiveState = {{ __unit_state.stdout_lines }})
 
     - name: Probe code-server over HTTPS (self-signed) until it answers
       ansible.builtin.uri:
@@ -187,8 +228,8 @@
   connection: local
   gather_facts: false
   vars:
-    devenv_e2e_namespace: molecule
-    devenv_e2e_cs_service: devenv-devenv-code-server
+    devenv_bootstrap_namespace: molecule
+    devenv_bootstrap_cs_service: devenv-devenv-code-server
     cs_login_title: code-server login
     cs_password_input: name="password"
   tasks:
@@ -196,8 +237,8 @@
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Service
-        name: "{{ devenv_e2e_cs_service }}"
-        namespace: "{{ devenv_e2e_namespace }}"
+        name: "{{ devenv_bootstrap_cs_service }}"
+        namespace: "{{ devenv_bootstrap_namespace }}"
       register: __cs_svc
 
     - name: Assert the NodePort service exists with an allocated nodePort
@@ -240,9 +281,8 @@
           the code-server NodePort answered but did not serve the login page
 
 # 1Password environment switching (OPTIONAL, gated) — exercise the container's
-# use()/unuse() shell functions end-to-end against the `molecule` vault. Placed
-# BEFORE the reboot play so ordering stays sane (the reboot is destructive/slow
-# and stays last). With no MOLECULE_OP_* token this play is a single skip debug.
+# use()/unuse() shell functions end-to-end against the `molecule` vault. With no
+# MOLECULE_OP_* token this play is a single skip debug.
 #
 # Each check runs as ONE `bash -ic` script via `docker exec` (the same in-
 # container exec pattern the make test-* plays use). `-i` is required: use() is
@@ -268,10 +308,10 @@
     - name: Report that 1Password verification is skipped
       ansible.builtin.debug:
         msg: 1Password integration checks skipped (no token provided)
-      when: not (devenv_e2e_op_enabled | bool)
+      when: not (devenv_bootstrap_op_enabled | bool)
 
     - name: Run the in-container use()/unuse() checks
-      when: devenv_e2e_op_enabled | bool
+      when: devenv_bootstrap_op_enabled | bool
       become: true
       block:
         - name: Auth smoke — op resolves a molecule-vault reference
@@ -456,35 +496,145 @@
               1Password use()/unuse() checks passed: auth-smoke, simple-env,
               stack-unuse, kubeconfig-data, k8s-token, registry, failure-path.
 
-# Reboot resilience — LAST on purpose: a reboot is destructive and slow, so a
-# failure here must not poison the health results above. Reboot the KubeVirt VM,
-# then re-assert the core health set survives: docker back up, the scratch disk
-# still mounted at /var/lib/docker (its fstab entry, written by prepare with
-# state: mounted, must persist), and the standalone code-server container
-# (restart_policy: unless-stopped) back and enforcing auth on :8080. The
-# devcontainer (make up-release) is verified to NOT return: its restart policy
-# is 'no' (devcontainer CLI default), so a host reboot leaves it stopped —
-# restarting it is the developer's job (re-run `make up-release`, which is what
-# cursor/make do). We assert that reality rather than wishing it back, then
-# perform that exact developer step so the host is left converged and verify is
-# re-runnable end-to-end (a second `molecule verify` finds the devcontainer up).
-- name: Verify core health survives a VM reboot
+# The devcontainer's systemd lifecycle: `systemctl restart igou-devenv` must
+# cleanly cycle the container (ExecStop removes it — the repo's `make down` — then
+# ExecStart's `devcontainer up` brings a fresh one back), `systemctl stop` must
+# actually stop/remove it, and `systemctl start` must recreate it. The container
+# is matched by the devcontainer CLI's local_folder label (same key ExecStop
+# filters on). State that must survive lives on host bind mounts, so cycling the
+# container is non-destructive; code-server comes back on :8080 each time.
+- name: Verify the igou-devenv.service restart/stop/start lifecycle
   hosts: devenv-devenv
-  # Facts feed the make up-release PATH below; gathered pre-reboot, still valid
-  # after (user home / PATH don't change across a reboot).
-  gather_facts: true
+  gather_facts: false
+  become: true
   vars:
-    devenv_dir: "{{ ansible_user_dir }}/igou-devenv"
+    cs_login_title: code-server login
+    devenv_bootstrap_label: label=devcontainer.local_folder=/home/igou/igou-devenv
+  tasks:
+    - name: Capture the devcontainer id before the restart
+      ansible.builtin.command:
+        cmd: docker ps -q --filter "{{ devenv_bootstrap_label }}"
+      register: __cid_before
+      changed_when: false
+
+    - name: Assert a devcontainer is running before the restart
+      ansible.builtin.assert:
+        that:
+          - __cid_before.stdout | length > 0
+        fail_msg: no igou-devenv container was running before the restart test
+
+    - name: Restart the unit (ExecStop down -> ExecStart up)
+      ansible.builtin.systemd_service:
+        name: igou-devenv.service
+        state: restarted
+
+    - name: Capture the devcontainer id after the restart
+      ansible.builtin.command:
+        cmd: docker ps -q --filter "{{ devenv_bootstrap_label }}"
+      register: __cid_after
+      changed_when: false
+
+    - name: Assert the restart RECREATED the container (new id, still running)
+      ansible.builtin.assert:
+        that:
+          - __cid_after.stdout | length > 0
+          - __cid_after.stdout != __cid_before.stdout
+        fail_msg: >-
+          systemctl restart did not cycle the container (id unchanged) — ExecStop
+          did not bring it down before ExecStart brought it back up
+
+    - name: Probe code-server after the restart until it answers
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        return_content: true
+      register: __cs_restart
+      retries: 36
+      delay: 5
+      until: __cs_restart.status == 200
+
+    - name: Assert code-server serves the login page after the restart
+      ansible.builtin.assert:
+        that:
+          - cs_login_title in __cs_restart.content
+        fail_msg: code-server did not return to the login page after the restart
+
+    - name: Stop the unit (ExecStop = the repo's `make down`)
+      ansible.builtin.systemd_service:
+        name: igou-devenv.service
+        state: stopped
+
+    - name: Look for any container matching the label after stop
+      ansible.builtin.command:
+        cmd: docker ps -aq --filter "{{ devenv_bootstrap_label }}"
+      register: __cid_stopped
+      changed_when: false
+
+    - name: Assert stop REMOVED the container (not merely left it running)
+      ansible.builtin.assert:
+        that:
+          - __cid_stopped.stdout | length == 0
+        fail_msg: >-
+          systemctl stop left a container behind — ExecStop did not remove it
+
+    - name: Start the unit again (ExecStart)
+      ansible.builtin.systemd_service:
+        name: igou-devenv.service
+        state: started
+
+    - name: Capture the devcontainer id after the start
+      ansible.builtin.command:
+        cmd: docker ps -q --filter "{{ devenv_bootstrap_label }}"
+      register: __cid_restarted
+      changed_when: false
+
+    - name: Assert start brought a fresh container back up
+      ansible.builtin.assert:
+        that:
+          - __cid_restarted.stdout | length > 0
+        fail_msg: systemctl start did not bring the devcontainer back up
+
+    - name: Probe code-server after the start until it answers
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        return_content: true
+      register: __cs_started
+      retries: 36
+      delay: 5
+      until: __cs_started.status == 200
+
+    - name: Assert code-server serves the login page after the start
+      ansible.builtin.assert:
+        that:
+          - cs_login_title in __cs_started.content
+        fail_msg: code-server did not return to the login page after start
+
+# Reboot resilience — LAST on purpose: a reboot is destructive and slow, so a
+# failure here must not poison the results above. Reboot the KubeVirt VM, then
+# re-assert the core health set survives AND that the devcontainer AUTO-RESTARTS
+# via igou-devenv.service — the whole reason the unit exists. Unlike the
+# pre-systemd design (devcontainer restart policy 'no', operator reran
+# `make up-release`), no manual recovery step is needed now: systemd brings the
+# container back on boot. We assert that reality: docker back up, the scratch
+# disk still mounted (its fstab entry, written by prepare with state: mounted,
+# persists), the unit active again, the container running, and code-server
+# enforcing auth on :8080.
+- name: Verify core health + devcontainer autostart survive a VM reboot
+  hosts: devenv-devenv
+  gather_facts: false
+  become: true
+  vars:
     cs_login_title: code-server login
     cs_password_input: name="password"
+    devenv_bootstrap_label: label=devcontainer.local_folder=/home/igou/igou-devenv
   tasks:
-    # The only mutating task in verify — reboot is inherently a change, so it is
-    # honestly reported as changed rather than masked with changed_when.
+    # The only mutating task in verify beyond the lifecycle play — reboot is
+    # inherently a change, honestly reported as changed rather than masked.
     - name: Reboot the KubeVirt VM and wait for it to come back
       ansible.builtin.reboot:
         # Generous: this is a full KubeVirt VM boot, not a container restart.
         reboot_timeout: 600
-      become: true
 
     - name: Wait for docker to be running again after the reboot
       ansible.builtin.service_facts:
@@ -494,7 +644,6 @@
         == 'running'
       retries: 12
       delay: 5
-      become: true
 
     - name: Assert the scratch disk is still mounted at /var/lib/docker
       ansible.builtin.command:
@@ -503,13 +652,40 @@
       changed_when: false
       failed_when: __docker_mount_post.rc != 0
 
+    # igou-devenv.service is a oneshot that runs `devcontainer up` on boot; give
+    # it time to pull-through/relaunch and settle to active (exited).
+    # noqa command-instead-of-module: polling ActiveState in an until loop —
+    # systemd_service requires an action param and can't be used as a query.
+    - name: Wait for igou-devenv.service to autostart the devcontainer  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: systemctl show igou-devenv.service --property=ActiveState --value
+      register: __unit_post
+      changed_when: false
+      until: __unit_post.stdout == 'active'
+      retries: 60
+      delay: 5
+
+    - name: Capture the devcontainer id after the reboot
+      ansible.builtin.command:
+        cmd: docker ps -q --filter "{{ devenv_bootstrap_label }}"
+      register: __cid_post
+      changed_when: false
+
+    - name: Assert the devcontainer auto-restarted via systemd (no manual step)
+      ansible.builtin.assert:
+        that:
+          - __cid_post.stdout | length > 0
+        fail_msg: >-
+          the igou-devenv devcontainer did not come back after reboot —
+          igou-devenv.service should have autostarted it (`devcontainer up`)
+
     - name: Probe code-server over HTTPS after the reboot until it answers
       ansible.builtin.uri:
         url: https://localhost:8080/
         validate_certs: false
         return_content: true
       register: __cs_http_post
-      retries: 24
+      retries: 36
       delay: 5
       until: __cs_http_post.status == 200
 
@@ -519,69 +695,3 @@
           - cs_login_title in __cs_http_post.content
           - cs_password_input in __cs_http_post.content
         fail_msg: code-server did not come back on the login page after reboot
-
-    - name: Inspect the code-server container after the reboot
-      community.docker.docker_container_info:
-        name: igou-devenv-code-server
-      become: true
-      register: __cs_container_post
-
-    - name: Assert the code-server container auto-restarted (unless-stopped)
-      ansible.builtin.assert:
-        that:
-          - __cs_container_post.exists
-          - __cs_container_post.container.State.Running
-          - not __cs_container_post.container.State.Restarting
-          - __cs_container_post.container.HostConfig.RestartPolicy.Name == 'unless-stopped'
-        fail_msg: the code-server container did not come back after reboot
-
-    - name: Inspect the devcontainer after the reboot
-      community.docker.docker_container_info:
-        name: igou-devenv
-      become: true
-      register: __devcontainer_post
-
-    # The devcontainer is deliberately NOT expected back: `devcontainer up` gives
-    # it restart policy 'no', so a host reboot leaves it stopped-but-present. The
-    # real developer workflow restarts it by re-running `make up-release` (what
-    # cursor/make do), so we assert the honest post-reboot state, not a wish.
-    - name: Assert the devcontainer did NOT auto-restart (restart policy 'no')
-      ansible.builtin.assert:
-        that:
-          - __devcontainer_post.exists
-          - not __devcontainer_post.container.State.Running
-          - __devcontainer_post.container.HostConfig.RestartPolicy.Name == 'no'
-        fail_msg: >-
-          the igou-devenv devcontainer state after reboot is unexpected — it
-          should be present but stopped (restart policy 'no'); rerun
-          `make up-release` to bring it back
-
-    # Perform the developer's own recovery step: bring the devcontainer back with
-    # make up-release (the same path converge used). This both mirrors the real
-    # workflow (a host reboot means you re-run make up-release) and leaves the VM
-    # in the converged state, so a subsequent `molecule verify` — whose earlier
-    # play asserts the devcontainer is running — passes. The post-reboot SSH
-    # session is fresh, so igou's docker group membership is already in effect
-    # (no reset_connection needed, unlike converge's mid-session group add).
-    - name: Restore the devcontainer with make up-release (developer recovery)
-      ansible.builtin.command:
-        cmd: make up-release
-        chdir: "{{ devenv_dir }}"
-      environment:
-        PATH: "{{ ansible_user_dir }}/.local/bin:{{ ansible_env.PATH }}"
-      register: __up_release_post
-      changed_when: true
-
-    - name: Inspect the restored devcontainer
-      community.docker.docker_container_info:
-        name: igou-devenv
-      become: true
-      register: __devcontainer_restored
-
-    - name: Assert the devcontainer is running again after make up-release
-      ansible.builtin.assert:
-        that:
-          - __devcontainer_restored.exists
-          - __devcontainer_restored.container.State.Running
-          - not __devcontainer_restored.container.State.Restarting
-        fail_msg: make up-release did not bring the devcontainer back after reboot
