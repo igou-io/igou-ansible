@@ -12,6 +12,9 @@
     timeout: 10
     validate_certs: true
   delegate_to: localhost
+  # become: false on all localhost-delegated tasks — the AAP EE has no
+  # sudo; controller-side HTTPS probes never need privilege.
+  become: false
   run_once: true
   changed_when: false
 
@@ -22,6 +25,7 @@
     timeout: 10
     validate_certs: true
   delegate_to: localhost
+  become: false
   loop: "{{ netboot_entries | default([]) }}"
   loop_control:
     label: "{{ item.id }}"
@@ -106,6 +110,7 @@
     status_code: [200, 206, 302]
     timeout: 15
   delegate_to: localhost
+  become: false
   loop: "{{ netboot_entries | default([]) | selectattr('kind', 'equalto', 'iso') | list }}"
   loop_control:
     label: "{{ item.id }}"
