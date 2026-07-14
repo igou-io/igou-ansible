@@ -1,6 +1,8 @@
 ---
 # Rendered by playbooks/routeros/tasks/netboot_build.yml from
-# group_vars/routeros.yml at build time. This file is mounted into the
+# group_vars/all/netboot.yml (the `all` scope: the build play runs on the
+# armbian_builders host, outside the routeros group) at build time. This
+# file is mounted into the
 # netboot.xyz builder container at /ansible/user_overrides.yml and
 # consumed by the upstream site.yml -> netbootxyz role.
 #
@@ -12,6 +14,15 @@
 #
 # Documentation of every key:
 #   https://github.com/netbootxyz/netboot.xyz/blob/master/user_overrides.yml
+
+# Pin the iPXE source revision. Upstream defaults ipxe_branch to
+# `master` (floating), so every rebuild silently tracks iPXE
+# master-of-the-day regardless of the netboot_xyz_ref tag pinned above.
+# We pin a full commit SHA; upstream checks it out with ansible.builtin.git
+# `version:`, which accepts a SHA. Bumping netboot_ipxe_ref changes this
+# rendered file, which feeds the build-input hash in netboot_build.yml,
+# so a bump automatically triggers a rebuild.
+ipxe_branch: "{{ netboot_ipxe_ref }}"
 
 boot_domain: "{{ netboot_chainload_host }}"
 bootloader_default: "{{ netboot_chainload_proto }}"
