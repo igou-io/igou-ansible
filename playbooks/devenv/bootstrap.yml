@@ -181,6 +181,29 @@
       when: host_prep_git_user_email | default('') | length > 0
 
     # ------------------------------------------------------------------
+    # Write the operator's ~/.ssh/config on the host user. Like the git identity
+    # above, this mirrors a david_igou.devhost.host_prep task (its "Write SSH
+    # config" step) that this play deliberately does not run, reading the same
+    # host_prep_ssh_config var from group_vars/devenv/ssh.yml. host_prep normally
+    # also creates ~/.ssh via host_prep_directories, so the dir is ensured here
+    # first (cloud-init may not have created it). Skipped when the var is empty.
+    # Bind-mounted into the devcontainer, so the container inherits it too.
+    # ------------------------------------------------------------------
+    - name: Ensure the host ~/.ssh directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.ssh"
+        state: directory
+        mode: "0700"
+      when: host_prep_ssh_config | default('') | length > 0
+
+    - name: Write the host SSH config
+      ansible.builtin.copy:
+        content: "{{ host_prep_ssh_config }}"
+        dest: "{{ ansible_user_dir }}/.ssh/config"
+        mode: "0600"
+      when: host_prep_ssh_config | default('') | length > 0
+
+    # ------------------------------------------------------------------
     # Seed ~/workspace so the devcontainer's /workspace mirrors the operator's
     # physical devhost — a directory of ALL the working repos — instead of just
     # the igou-devenv clone. The canonical devcontainer.json ALREADY bind-mounts
