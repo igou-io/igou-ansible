@@ -2,18 +2,23 @@
 # Weekly devenv agent-state backup -> rustfs-cold.
 #
 # Tars the agent/tooling state (Claude/Codex/opencode config + sessions,
-# tmux, the scratch workspace) out of the devenv VM's host home with
-# numeric ownership, then uploads the archive from the EE to ONE fixed key
-# in the versioned devenv-backups bucket on rustfs-cold. Each weekly run
-# becomes the new current version; the bucket's ILM rule
+# tmux, the scratch workspace) out of the vscode.igou.systems devhost's
+# host home with numeric ownership, then uploads the archive from the EE
+# to ONE fixed key in the versioned devenv-backups bucket on rustfs-cold.
+# Each weekly run becomes the new current version; the bucket's ILM rule
 # (NoncurrentDays: 30, declared in igou-inventory host_vars/rustfs-cold.yml)
 # expires superseded versions after a month, so at a weekly cadence the
 # bucket retains roughly the current copy plus the last four.
 #
-# The devcontainer bind-mounts these paths straight out of the VM host
-# home, so the host-side view captured here IS the container's ~/.claude,
-# ~/.codex, /workspace/scratch, and so on - backing up the host is backing
-# up the live agent state the container sees.
+# Target is the vscode.igou.systems devhost - the physical machine that runs
+# the devcontainer. (devenv-vlan9 is a near-empty test rebuild VM and can
+# still be targeted explicitly via `-e ansible_limit=devenv-vlan9`; its
+# devcontainer layout maps the same way.)
+#
+# Container<->host path mapping: the devcontainer binds host ~/.claude-container
+# -> container ~/.claude, and host ~/workspace -> container /workspace. This
+# play SSHes to the HOST, so it archives the HOST-side bind sources (e.g.
+# .claude-container, workspace/scratch), NOT the in-container paths.
 #
 # HOT backup by design: nothing is quiesced. The state is dotfiles and
 # session scratch, so a crash-consistent snapshot is fine and the agents
@@ -29,26 +34,28 @@
 # onepassword-connect-token credential. The endpoint comes from the same
 # inventory host_vars the rustfs_state role reconciles against.
 #
-# Restore:
+# Restore (paths in the archive are host-side, relative to /home/igou):
 #   1. aws s3api list-object-versions --bucket devenv-backups \
 #        --prefix devenv/agent-state.tar.gz   (pick a VersionId)
 #   2. aws s3api get-object --version-id <id> ... agent-state.tar.gz
 #   3. tar xzf agent-state.tar.gz --numeric-owner -C /home/igou
 - name: Back up devenv agent state to rustfs-cold
-  hosts: "{{ ansible_limit | default('devenv') }}"
+  hosts: "{{ ansible_limit | default('vscode.igou.systems') }}"
   gather_facts: false
   vars:
     devenv_backup_home: /home/igou
-    devenv_backup_paths: # relative to devenv_backup_home
+    devenv_backup_paths: # host-side, relative to devenv_backup_home
       - .claude.json
-      - .claude
+      - .claude-container # host-side bind source of the container's ~/.claude (the primary agent state)
+      - .claude # the host's own native claude state, if any
       - .tmux.conf
       - .codex
-      - .opencode
+      - .opencode # host-native opencode dir if present (the container ~/.opencode is overlay-ephemeral)
       - .config/opencode
+      - .local/share/opencode # durable opencode data (bind-mounted into the container)
       - workspace/scratch # host-side bind source of the devcontainer's /workspace/scratch
     devenv_backup_required_paths: # absent => wrong host/unprovisioned home => fail
-      - .claude
+      - .claude-container
     # Single source of truth: the rustfs-cold stub host's spec vars.
     devenv_s3_endpoint: "{{ hostvars['rustfs-cold'].rustfs_state_endpoint }}"
     devenv_s3_bucket: devenv-backups
