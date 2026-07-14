@@ -8,8 +8,19 @@
 ### Choices are deliberately minimal -- pinned hosts should be the norm;
 ### this menu is for one-off interactive selection on the rare host
 ### that boots without a pin.
+###
+### pin_local_exit sentinel contract (with netboot_host_pins in
+### igou-inventory): the binary's autoexec chains this menu
+### UNCONDITIONALLY after a pin returns -- a pin's `exit 1` returns to
+### the autoexec's :tftpmenu ladder, never straight to firmware. iPXE
+### variables persist across chains within a boot session, so a pin's
+### :local path sets `set pin_local_exit 1` before exiting; the check
+### below then exits this menu instantly (and every retry of it in the
+### autoexec's :menu ladder) so the host lands on the binary's
+### :localboot exit to firmware without showing the generic 30s menu.
 
 :start
+isset ${pin_local_exit} && echo Pin requested local boot -- passing through to firmware ... && exit 0 ||
 menu netboot.igou.systems - default Boot from local disk in 30s
 item local       Boot from local disk
 item ocp-add     Boot OCP add-node ISO (installs an OCP worker)
