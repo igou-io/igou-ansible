@@ -292,8 +292,20 @@ ansible-playbook playbooks/openshift/add_node_iso.yml \
 
 The binaries' embedded autoexec ALSO has a hardcoded `:tftpmenu` per-host MAC/HOSTNAME chain against `${tftp-server}` (= rb5009) — this is what makes pinned-host routing work without a custom menu.ipxe.
 
+### UEFI x64 serves the `snponly` flavor
+
+For UEFI x64 the build emits and serves `netboot.xyz-snponly.efi` (renamed to the public `netboot.xyz.efi` on rb5009 — the DHCP boot-file-name and `/ip tftp` request name are unchanged), **not** the full-driver `ipxe.efi`. Since iPXE commit [`2161e976`](https://github.com/ipxe/ipxe/commit/2161e976cdf78d0b26687e14f2cdc14008a99c83) ("[build] Include USB drivers in the all-drivers build by default", 2026-02-13) the full-driver `.efi` attaches native USB host-controller drivers, which disconnect the less-compliant USB keyboard drivers of AMI/HP UEFI firmware — the keyboard goes dead in the iPXE menu. `snponly` carries no native drivers at all (it uses the firmware's SNP, always present on a PXE chainload), so the keyboard keeps working. See the netboot.xyz KB: <https://netboot.xyz/docs/kb/hardware/usb-keyboard>. The map that selects the local flavor per arch lives in `tasks/netboot_build.yml` (and is mirrored in `netboot_upload.yml` / `netboot_verify.yml` for standalone `--tags` runs).
+
+### iPXE revision is pinned
+
+Upstream netboot.xyz defaults `ipxe_branch: master`, so without a pin every rebuild floats on iPXE master-of-the-day regardless of the `netboot_xyz_ref` tag. The build pins iPXE via `netboot_ipxe_ref` in `igou-inventory/group_vars/routeros.yml` (a full commit SHA; rendered into `ipxe_branch` in `user_overrides.yml.j2`, which upstream checks out with `ansible.builtin.git version:`). To bump it, change `netboot_ipxe_ref` in inventory and re-run `--tags build,upload,verify` — the rendered override feeds the build-input hash, so a changed SHA automatically triggers a rebuild.
+
+### The build runs on a docker-capable builder host
+
+The build stage runs the netbootxyz builder container, so it needs a real container runtime. The AAP execution environment only ships podman-remote and cannot run a builder container on its own localhost, so the build runs over SSH on the `armbian_builders` host (docker required; `ansible_user` in the docker group, no become) — mirroring `playbooks/armbian/build_and_publish.yaml`. The built binaries are fetched back to the controller's `.cache/netboot-build/` and the upload/DHCP/verify stages run against rb5009 as before. This makes the playbook AAP-runnable via the `netboot_deploy_binaries` job template (added in igou-inventory).
+
 ```bash
-# Build, upload, wire DHCP, verify — full pipeline:
+# Build, upload, wire DHCP, verify — full pipeline (local fallback):
 ansible-playbook playbooks/routeros/deploy_netboot_binaries.yml \
   -i 'localhost ansible_connection=local,' \
   -i igou-inventory/inventory.yaml
@@ -305,7 +317,10 @@ ansible-playbook playbooks/routeros/deploy_netboot_binaries.yml \
   --tags build,upload,verify
 ```
 
+The build no longer runs on localhost: play 1 targets `armbian_builders` (override with `netboot_builders_group`) and the local `-i 'localhost ...'` entry only serves the rb5009 play's `delegate_to: localhost` tasks. Prefer the `netboot_deploy_binaries` AAP job template for routine runs; the local invocation above is the fallback.
+
 Rebuild when:
+- `netboot_ipxe_ref` is bumped (pinning iPXE to a newer/older revision).
 - `netboot_chainload_host` or `netboot_chainload_proto` changes (rare).
 - Upstream netboot.xyz publishes a security fix to the iPXE bundle.
 - A new arch is added.

@@ -13,7 +13,14 @@
         local_name: netboot.xyz.kpxe
         public_name: netboot.xyz.kpxe
       uefi-x64:
-        local_name: netboot.xyz.efi
+        # snponly flavor: the full-driver ipxe.efi attaches native USB
+        # host-controller drivers (iPXE 2161e976) that kill USB keyboards
+        # on AMI-based UEFI firmware; snponly carries no native drivers.
+        # local_name drives the controller-side size compare below, so it
+        # must match the fetched artifact name. public_name (the TFTP
+        # request name) stays netboot.xyz.efi. Must match the map in
+        # tasks/netboot_build.yml.
+        local_name: netboot.xyz-snponly.efi
         public_name: netboot.xyz.efi
       uefi-arm64:
         local_name: netboot.xyz-arm64.efi

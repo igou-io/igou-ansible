@@ -1,11 +1,13 @@
 ---
-# Build custom netboot.xyz iPXE binaries on the control node, ship them
-# to the rb5009 for TFTP serving, and wire RouterOS DHCP so PXE clients
-# land on the binaries (which then chainload to the existing TrueNAS
-# netbootxyz container at tftp://10.10.45.242/menu.ipxe).
+# Build custom netboot.xyz iPXE binaries on a docker-capable builder
+# host, ship them to the rb5009 for TFTP serving, and wire RouterOS DHCP
+# so PXE clients land on the binaries (which then chainload to the
+# public nginx netboot.xyz menu at https://public.igou.systems/boot-files/menu.ipxe).
 #
 # Stages (each backed by a tag):
-#   build   -- podman run nbxyz/builder against our user_overrides.yml
+#   build   -- run the nbxyz builder container ON a builder host against
+#              our user_overrides.yml, then fetch the artifacts back to
+#              the controller's build cache
 #   upload  -- net_put binaries to flash:/netboot/, register /ip tftp
 #   dhcp    -- /ip dhcp-server network/option/option-set/matcher
 #   verify  -- TFTP fetch checks + DHCP state assertion
@@ -18,21 +20,43 @@
 # follow the manual cleanup steps in:
 #   playbooks/routeros/files/netboot/cleanup-old-container.md
 
-- name: Build and deploy custom netboot.xyz iPXE binaries
-  hosts: "{{ host | default('rb5009.igou.systems') }}"
-  gather_facts: false
-  serial: 1
-  # Play-level connection: local serves as the fallback for delegate_to
-  # localhost tasks (stat, render). rb5009 has its own ansible_connection
-  # in group_vars/routeros.yml so its tasks still use network_cli.
-  # Inventory's localhost entry has no explicit connection so it would
-  # otherwise default to ssh, which fails in the claude-run container.
-  connection: local
+# --- Play 1: build on a docker-capable builder host -------------------------
+# The build stage runs a builder container, so it needs a real container
+# runtime. The AAP execution environment only has podman-remote, so the
+# build cannot run on the EE localhost; it runs on the armbian_builders
+# host (docker-capable, ansible_user in the docker group, no become),
+# mirroring playbooks/armbian/build_and_publish.yaml. The last task in
+# netboot_build.yml fetches the artifacts back to the controller so the
+# rb5009 play (below) can upload them.
+- name: Build custom netboot.xyz iPXE binaries on the builder host
+  hosts: "{{ netboot_builders_group | default('armbian_builders') }}"
+  # gather_facts required: netboot_build.yml resolves the build dir from
+  # ansible_env.HOME and stamps the MANIFEST with ansible_date_time.
+  gather_facts: true
   tasks:
 
     - name: Build stage
       ansible.builtin.import_tasks: tasks/netboot_build.yml
       tags: [build]
+
+# --- Play 2: upload / DHCP / verify against rb5009 --------------------------
+# netboot_arches_resolved is a per-host fact set on the builder in play 1;
+# it is NOT visible here (different host), so the upload and verify stages
+# recompute it from the static arches map via their
+# `when: netboot_arches_resolved is not defined` guards. This is also what
+# makes `--tags upload` (or `--tags verify`) work as a standalone run.
+- name: Deploy custom netboot.xyz iPXE binaries to rb5009
+  hosts: "{{ host | default('rb5009.igou.systems') }}"
+  gather_facts: false
+  serial: 1
+  # Play-level connection: local serves as the fallback for delegate_to
+  # localhost tasks (stat, render, TFTP fetch). rb5009 has its own
+  # ansible_connection in group_vars/routeros.yml so its tasks still use
+  # network_cli. Inventory's localhost entry has no explicit connection
+  # so it would otherwise default to ssh, which fails in the claude-run
+  # container.
+  connection: local
+  tasks:
 
     - name: Upload stage
       ansible.builtin.import_tasks: tasks/netboot_upload.yml

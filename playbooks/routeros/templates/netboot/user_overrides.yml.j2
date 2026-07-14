@@ -13,6 +13,15 @@
 # Documentation of every key:
 #   https://github.com/netbootxyz/netboot.xyz/blob/master/user_overrides.yml
 
+# Pin the iPXE source revision. Upstream defaults ipxe_branch to
+# `master` (floating), so every rebuild silently tracks iPXE
+# master-of-the-day regardless of the netboot_xyz_ref tag pinned above.
+# We pin a full commit SHA; upstream checks it out with ansible.builtin.git
+# `version:`, which accepts a SHA. Bumping netboot_ipxe_ref changes this
+# rendered file, which feeds the build-input hash in netboot_build.yml,
+# so a bump automatically triggers a rebuild.
+ipxe_branch: "{{ netboot_ipxe_ref }}"
+
 boot_domain: "{{ netboot_chainload_host }}"
 bootloader_default: "{{ netboot_chainload_proto }}"
 site_name: "igou homelab"
