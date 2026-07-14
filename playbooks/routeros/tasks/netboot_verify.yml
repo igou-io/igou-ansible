@@ -3,8 +3,9 @@
 #   1. Fetch each binary from rb5009 over TFTP (sha256 compare against
 #      the controller build cache). Runs from the builder host — see
 #      the comment block above the fetch tasks for why.
-#   2. Fetch menu.ipxe from the TrueNAS netbootxyz container over TFTP
-#      and assert it begins with #!ipxe (chainload target alive).
+#   2. Fetch menu.ipxe from the chainload host over HTTPS — the
+#      binaries' actual fallback transport — and assert it begins with
+#      #!ipxe (chainload target alive).
 #   3. Read /ip dhcp-server network and matcher rows, assert that
 #      next-server, boot-file-name, and the expected matchers exist.
 
@@ -160,40 +161,38 @@
       doesn't chain to tftp://{{ netboot_chainload_host }}/menu.ipxe.
       Re-run --tags upload to refresh the redirect file.
 
-- name: Fetch menu.ipxe from TrueNAS netbootxyz over TFTP (from the builder)
-  # netboot_chainload_host may carry a path prefix ("host/prefix");
-  # tftp_get.py splits it and prepends the prefix to the filename,
-  # matching curl's tftp://host/prefix/menu.ipxe semantics.
-  ansible.builtin.script:
-    cmd: >-
-      {{ playbook_dir }}/files/tftp_get.py
-      {{ netboot_chainload_host }}
-      menu.ipxe
-      {{ _netboot_verify_dir }}/menu.ipxe
-  delegate_to: "{{ _netboot_verify_host }}"
-  vars:
-    ansible_connection: ssh
-  changed_when: false
+# Probe the chainload menu the way the binaries actually fetch it:
+# over HTTPS from the public nginx. The old check here TFTP-fetched
+# menu.ipxe from the TrueNAS netbootxyz container, but that container
+# was retired 2026-05-11 (assets moved to public.igou.systems, which
+# serves HTTP/HTTPS only — no TFTP listener), so the check probed a
+# dead service the boot chain no longer touches. The embedded autoexec
+# falls back to ${conn_type}://${boot_domain}/menu.ipxe, so an HTTPS
+# probe from the controller is the faithful e2e check (and works from
+# the AAP EE, unlike TFTP).
 
-- name: Read fetched menu.ipxe
-  # slurp instead of `head -c 32` via command: the command module does
-  # not shell-expand the ~ in the default scratch dir; slurp's path
-  # argument does. menu.ipxe is a few KB, so whole-file slurp is fine.
-  ansible.builtin.slurp:
-    src: "{{ _netboot_verify_dir }}/menu.ipxe"
-  delegate_to: "{{ _netboot_verify_host }}"
-  vars:
-    ansible_connection: ssh
-  register: _netboot_menu_slurp
+- name: Fetch menu.ipxe from the chainload host over HTTPS
+  ansible.builtin.uri:
+    url: "{{ netboot_chainload_proto }}://{{ netboot_chainload_host }}/menu.ipxe"
+    status_code: 200
+    timeout: 10
+    validate_certs: true
+    return_content: true
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  register: _netboot_menu_probe
 
 - name: Assert menu.ipxe begins with the iPXE shebang
   ansible.builtin.assert:
     that:
-      - "'#!ipxe' in (_netboot_menu_slurp.content | b64decode)[:32]"
+      - "'#!ipxe' in (_netboot_menu_probe.content | default(''))[:32]"
     fail_msg: >-
-      Fetched {{ netboot_chainload_host }}/menu.ipxe but it does not
-      begin with #!ipxe. The TrueNAS netbootxyz container is likely
-      down or its dnsmasq is not serving menu.ipxe.
+      Fetched
+      {{ netboot_chainload_proto }}://{{ netboot_chainload_host }}/menu.ipxe
+      but it does not begin with #!ipxe. The public nginx is likely
+      serving the wrong file at /boot-files/menu.ipxe — re-run
+      playbooks/netboot/deploy_assets.yml --tags render,push.
 
 - name: Read DHCP network rows for assertion
   community.routeros.command:
