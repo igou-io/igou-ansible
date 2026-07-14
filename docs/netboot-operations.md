@@ -298,7 +298,7 @@ For UEFI x64 the build emits and serves `netboot.xyz-snponly.efi` (renamed to th
 
 ### iPXE revision is pinned
 
-Upstream netboot.xyz defaults `ipxe_branch: master`, so without a pin every rebuild floats on iPXE master-of-the-day regardless of the `netboot_xyz_ref` tag. The build pins iPXE via `netboot_ipxe_ref` in `igou-inventory/group_vars/routeros.yml` (a full commit SHA; rendered into `ipxe_branch` in `user_overrides.yml.j2`, which upstream checks out with `ansible.builtin.git version:`). To bump it, change `netboot_ipxe_ref` in inventory and re-run `--tags build,upload,verify` — the rendered override feeds the build-input hash, so a changed SHA automatically triggers a rebuild.
+Upstream netboot.xyz defaults `ipxe_branch: master`, so without a pin every rebuild floats on iPXE master-of-the-day regardless of the `netboot_xyz_ref` tag. The build pins iPXE via `netboot_ipxe_ref` in `igou-inventory/group_vars/all/netboot.yml` — the `netboot_*` build vars live at the `all` scope (not `group_vars/routeros.yml`) because the build play runs on the `armbian_builders` host, which is outside the routeros group. It's a full commit SHA, rendered into `ipxe_branch` in `user_overrides.yml.j2`, which upstream checks out with `ansible.builtin.git version:`. To bump it, change `netboot_ipxe_ref` in inventory and re-run `--tags build,upload,verify` — the rendered override feeds the build-input hash, so a changed SHA automatically triggers a rebuild.
 
 ### The build runs on a docker-capable builder host
 

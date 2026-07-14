@@ -28,6 +28,9 @@
 # mirroring playbooks/armbian/build_and_publish.yaml. The last task in
 # netboot_build.yml fetches the artifacts back to the controller so the
 # rb5009 play (below) can upload them.
+# The netboot_* build vars come from igou-inventory group_vars/all/netboot.yml:
+# the builder host is outside the routeros group, so group_vars/routeros.yml
+# would be invisible here.
 - name: Build custom netboot.xyz iPXE binaries on the builder host
   hosts: "{{ netboot_builders_group | default('armbian_builders') }}"
   # gather_facts required: netboot_build.yml resolves the build dir from
