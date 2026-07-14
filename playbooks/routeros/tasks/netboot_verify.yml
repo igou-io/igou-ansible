@@ -51,12 +51,20 @@
     mode: "0755"
   delegate_to: localhost
 
-- name: Fetch each binary from rb5009 over TFTP  # noqa: command-instead-of-module
+# TFTP fetches use the bundled files/tftp_get.py, not curl: the
+# igou-awx-ee execution environment and the devcontainer both ship
+# curl-minimal, which is built without TFTP protocol support (curl
+# exits 1 instantly with CURLE_UNSUPPORTED_PROTOCOL), so a curl-based
+# check can never pass from AAP. The script is a self-contained
+# stdlib RFC 1350 client (octet mode, 512-byte blocks).
+
+- name: Fetch each binary from rb5009 over TFTP
   ansible.builtin.command:
     cmd: >-
-      curl -sf
-      -o {{ netboot_local_build_dir }}/verify/{{ item.public_name }}
-      tftp://{{ netboot_subnets[0].rb5009_ip }}/{{ item.public_name }}
+      python3 {{ playbook_dir }}/files/tftp_get.py
+      {{ netboot_subnets[0].rb5009_ip }}
+      {{ item.public_name }}
+      {{ netboot_local_build_dir }}/verify/{{ item.public_name }}
   delegate_to: localhost
   changed_when: false
   loop: "{{ netboot_arches_resolved }}"
@@ -85,12 +93,13 @@
   loop_control:
     label: "{{ item.0.item.public_name }}"
 
-- name: Fetch menu.ipxe redirect from rb5009 over TFTP  # noqa: command-instead-of-module
+- name: Fetch menu.ipxe redirect from rb5009 over TFTP
   ansible.builtin.command:
     cmd: >-
-      curl -sf
-      -o {{ netboot_local_build_dir }}/verify/menu-redirect.ipxe
-      tftp://{{ netboot_subnets[0].rb5009_ip }}/menu.ipxe
+      python3 {{ playbook_dir }}/files/tftp_get.py
+      {{ netboot_subnets[0].rb5009_ip }}
+      menu.ipxe
+      {{ netboot_local_build_dir }}/verify/menu-redirect.ipxe
   delegate_to: localhost
   changed_when: false
 
@@ -110,12 +119,16 @@
       doesn't chain to tftp://{{ netboot_chainload_host }}/menu.ipxe.
       Re-run --tags upload to refresh the redirect file.
 
-- name: Fetch menu.ipxe from TrueNAS netbootxyz over TFTP  # noqa: command-instead-of-module
+- name: Fetch menu.ipxe from TrueNAS netbootxyz over TFTP
+  # netboot_chainload_host may carry a path prefix ("host/prefix");
+  # tftp_get.py splits it and prepends the prefix to the filename,
+  # matching curl's tftp://host/prefix/menu.ipxe semantics.
   ansible.builtin.command:
     cmd: >-
-      curl -sf
-      -o {{ netboot_local_build_dir }}/verify/menu.ipxe
-      tftp://{{ netboot_chainload_host }}/menu.ipxe
+      python3 {{ playbook_dir }}/files/tftp_get.py
+      {{ netboot_chainload_host }}
+      menu.ipxe
+      {{ netboot_local_build_dir }}/verify/menu.ipxe
   delegate_to: localhost
   changed_when: false
 
