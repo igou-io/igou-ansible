@@ -154,6 +154,19 @@
       # them here would shadow the inventory. Override at launch with extra vars
       # (-e ghapp_client_id=...), which win over both.
 
+    # Prometheus node_exporter as a host systemd service (downloads the binary,
+    # creates a system user + hardened unit, enables the service) so the devenv
+    # VM's host metrics are scrapeable — mirrors playbooks/linux/node_exporter.yaml.
+    # This play has no play-level become (the devhost roles self-elevate and the
+    # packages role's user-level tasks must run as the igou login user), so
+    # become is set on the role itself. Binds all interfaces (0.0.0.0:9100) by
+    # default so the exporter is reachable on the VM's LAN address; override
+    # node_exporter_listen_address per host/group in inventory to narrow it.
+    - role: prometheus.prometheus.node_exporter
+      become: true
+      vars:
+        node_exporter_web_listen_address: "{{ node_exporter_listen_address | default('0.0.0.0:9100') }}"
+
   post_tasks:
     # ------------------------------------------------------------------
     # Set the operator's global git identity on the host user's ~/.gitconfig.
