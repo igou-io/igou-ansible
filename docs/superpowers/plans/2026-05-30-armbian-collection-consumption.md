@@ -1371,7 +1371,7 @@ ansible-galaxy collection list | grep -i armbian
 ```
 Expected: `david_igou.armbian 0.0.3-alpha`.
 
-- [ ] **Push branch + open PR** (only when the user asks). The `igou-awx-ee` / `igou-awx-ee-fedora` / `igou-networking-ee` build workflows trigger automatically on the `requirements.yml` change.
+- [ ] **Push branch + open PR** (only when the user asks). The `igou-awx-ee` build workflow triggers automatically on the `requirements.yml` change.
 
 - [ ] **Inventory workstream reminder:** the boot-mode + e2e flows cannot run end-to-end until `igou-inventory` carries the per-board contract (`armbian_board_config_*`, `armbian_build_defaults`, `armbian_rootfs_src`/`armbian_assets_base_url`, `armbian_local_disks`, `armbian_router`, `armbian_poe_switch`/`armbian_poe_port`, `armbian_tftp_*`, `armbian_default_password`, group names). Track separately.
 

@@ -11,17 +11,16 @@ Defined under `execution-environments/<name>/execution-environment.yml`.
 | EE | Base image | Use case |
 |---|---|---|
 | `igou-awx-ee` | `quay.io/centos/centos:stream10-minimal` | **Default** for AWX. Bundles `terraform`, `1password-cli`, `oc`, `helm`, `kustomize`, the full `requirements.yml` (community.docker, community.routeros, kubernetes.core, etc.). Use for nearly everything. |
-| `igou-awx-ee-fedora` | `quay.io/fedora/fedora:44` | Fedora-base variant of the above. Tracks bleeding-edge Python (3.14) and system libs. Used when CentOS Stream lags upstream. |
 | `igou-aap-ee-rhel9` | `registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9` | For Red Hat AAP / Controller (subscription required to pull). Smallest, most upstream-faithful. |
-| `igou-networking-ee` | `quay.io/centos/centos:stream9-minimal` | **Legacy-friendly**. Pinned `community.general@10.2.0` and `ansible.netcommon@7.1.0`; legacy SSH crypto enabled to talk to old switches/routers. Use when a device refuses modern KEX or cipher algos. |
 
 ## When to rebuild
 
 - A pinned package in `execution-environment.yml` updated (renovate-bot opens
-  a PR — `quay.io/fedora`, `centos`, `ansible-core==X.Y.Z`, etc.).
+  a PR — `centos`, `ansible-core==X.Y.Z`, etc.).
 - `requirements.yml` at repo root changed (galaxy roles/collections).
 - A new tool needs to be available system-wide inside the EE.
-- Periodically — the GitHub Actions workflow rebuilds them weekly on Sunday.
+- Periodically — the `igou-awx-ee` GitHub Actions workflow rebuilds it weekly
+  on Sunday.
 
 ## Rebuild manually (locally)
 
@@ -36,19 +35,16 @@ The base image must be available — for `igou-aap-ee-rhel9`, you'll need
 
 ## Rebuild via CI
 
-The reusable workflow at `.github/workflows/ee-build.yml` is invoked by per-EE
-workflows:
+The reusable workflow at `.github/workflows/ee-build.yml` is invoked by:
 
 - `igou-awx-ee-build.yml`
-- `igou-awx-ee-fedora-build.yml`
-- `igou-networking-ee-build.yml`
 
-Each runs on push to `execution-environments/<ee>/**` and on a weekly cron.
+It runs on pushes to `execution-environments/igou-awx-ee/**` and on a weekly cron.
 Push to quay requires the `QUAY_PASSWORD` and `QUAY_USERNAME` secrets and the
 `AH_TOKEN` secret (Ansible Automation Hub for `redhat.*` collections).
 
-The AAP EE doesn't have a CI workflow because the base image requires a
-subscription that GitHub Actions runners don't have.
+The AAP EE is built by `.tekton/igou-aap-ee-rhel9-push.yml` on OpenShift, where
+the entitled base image and Automation Hub collections are available.
 
 ## Pointing ansible-navigator at a specific EE
 
@@ -56,7 +52,7 @@ subscription that GitHub Actions runners don't have.
 
 ```bash
 ansible-navigator run playbooks/foo.yml \
-  --execution-environment-image quay.io/igou/igou-networking-ee:latest \
+  --execution-environment-image quay.io/igou/igou-awx-ee:latest \
   -i igou-inventory/inventory.yaml
 ```
 
