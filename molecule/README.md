@@ -40,23 +40,27 @@ group with `mp.<backend>` host blocks and `mp_backend`/`mp_defaults` in
 ```
 molecule/
 ├── README.md
-├── _windows_common/                 # non-scenario support (no molecule.yml)
-│   ├── playbooks/
-│   │   └── windows-sysprep-secrets.yml   # imported by every playbook-windows-* create/destroy
-│   └── templates/
-│       └── windows-unattend.xml.j2       # rendered per-host into a KubeVirt sysprep Secret
 ├── default/                         # scaffold stub
 ├── logic-kubevirt-vm-snapshot/      # localhost-only logic test
 ├── playbook-devenv-bootstrap/
 ├── playbook-grafana-kiosk/
 ├── playbook-windows-build_golden_image/
-├── playbook-windows-<use_case>/     # nine Windows playbook scenarios
+├── playbook-windows-<use_case>/     # Windows playbook scenarios (see below)
+│   ├── molecule.yml
+│   ├── create.yml / destroy.yml / prepare.yml / converge.yml / verify.yml
+│   ├── windows-sysprep-secrets.yml  # sysprep-Secret play, imported by create/destroy
+│   ├── templates/
+│   │   └── windows-unattend.xml.j2  # rendered per-host into a KubeVirt sysprep Secret
+│   └── inventory/
 └── role-ghapp-e2e/
 ```
 
-Leading-underscore directories (e.g. `_windows_common/`) hold reusable plumbing
-imported by scenarios; Molecule only treats a directory as a scenario when it
-contains a `molecule.yml`, so these are never discovered as scenarios.
+Each scenario is **self-contained** — no cross-scenario shared plumbing. The
+nine sysprep-based Windows scenarios each carry their own copy of
+`windows-sysprep-secrets.yml` + `templates/windows-unattend.xml.j2`. This is
+deliberately un-DRY: a scenario is easier to read and modify when everything it
+needs lives in its own directory. The sysprep play resolves its template via
+`MOLECULE_SCENARIO_DIRECTORY`, so each copy is independent.
 
 ## Environment variable templating
 

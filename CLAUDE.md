@@ -85,7 +85,7 @@ Mix of community galaxy roles (pinned versions in `requirements.yml`) and custom
 
 ### Molecule testing
 
-Scenarios in `molecule/` follow a `<type>-<subject>[-<qualifier>]` naming scheme — `playbook-`, `role-`, or `logic-` (localhost-only) prefixes. Backends are never encoded in the name; they are selected at runtime via `mp_backend`/`PROVISIONER` and matrixed in CI. Provisioning is delegated to the `david_igou.molecule_provisioners` collection; shared Windows sysprep plumbing (the `windows-sysprep-secrets.yml` play + `windows-unattend.xml.j2`) lives in the non-scenario support dir `molecule/_windows_common/`. Environment variable templating is used extensively for flexibility.
+Scenarios in `molecule/` follow a `<type>-<subject>[-<qualifier>]` naming scheme — `playbook-`, `role-`, or `logic-` (localhost-only) prefixes. Backends are never encoded in the name; they are selected at runtime via `mp_backend`/`PROVISIONER` and matrixed in CI. Provisioning is delegated to the `david_igou.molecule_provisioners` collection. Each scenario is self-contained (no cross-scenario shared plumbing): the sysprep-based Windows scenarios each carry their own copy of `windows-sysprep-secrets.yml` + `templates/windows-unattend.xml.j2`, deliberately un-DRY so a scenario is easy to follow in isolation. Environment variable templating is used extensively for flexibility.
 
 ### Inventory (separate repo)
 

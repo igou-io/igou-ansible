@@ -10,7 +10,7 @@
   DiskConfiguration / ImageInstall here — only specialize + oobeSystem.
 
   Rendered per host into a Secret <host>-sysprep by
-  molecule/_windows_common/playbooks/windows-sysprep-secrets.yml. Template vars:
+  the sibling windows-sysprep-secrets.yml play in this scenario dir. Template vars:
     windows_computer_name       - source name; sanitized to <=15 alphanumerics.
     windows_admin_password      - admin password (XML-escaped).
     windows_unattend_admin_mode - 'builtin' (default) or 'local_account'.

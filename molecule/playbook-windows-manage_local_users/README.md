@@ -17,7 +17,7 @@ The shared sysprep unattend runs in **`local_account`** mode: it creates a
 policy is load-bearing here — verify logs in a second psrp session AS the
 created `moluser` (a local Administrator), which only succeeds because
 non-builtin local admins receive a full NTLM network token under that policy.
-See `molecule/_windows_common/templates/windows-unattend.xml.j2`.
+See `templates/windows-unattend.xml.j2`.
 
 ## What converge/verify do
 

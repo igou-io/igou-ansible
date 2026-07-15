@@ -18,8 +18,8 @@
 #   the sysprep unattend specialized.
 #
 # Pattern note: copied from the PILOT playbook-windows-manage_services; only the
-#   converge (which playbook) and verify (which asserts) differ. Shared plumbing
-#   lives in molecule/_windows_common/.
+#   converge (which playbook) and verify (which asserts) differ. Sysprep plumbing
+#   lives in this scenario dir (windows-sysprep-secrets.yml + templates/).
 #
 # Bounded-pass note: 'Definition Updates' is chosen deliberately — it is small,
 #   fast, and reboot-free, so a full install pass completes inside the test
