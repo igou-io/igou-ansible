@@ -1,10 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI Agents when working with code in this repository.
 
 ## Project Overview
 
-Ansible automation framework for homelab and production infrastructure. Playbooks are primarily executed via AAP/AWX or ansible-navigator with containerized execution environments (EEs). Inventory lives in a separate repo (`igou-inventory`, symlinked).
+Ansible automation framework for homelab and production infrastructure. Playbooks are primarily executed via AAP or ansible-navigator with containerized execution environments (EEs). Inventory lives in a separate repo (`igou-inventory`, symlinked).
 
 ## Common Commands
 
@@ -13,22 +13,14 @@ Ansible automation framework for homelab and production infrastructure. Playbook
 ```bash
 # Via ansible-navigator (uses podman + EE container)
 ansible-navigator run playbooks/<domain>/<playbook>.yaml -i igou-inventory/inventory.yaml
-
-# Direct ansible-playbook (when not using EE)
-ansible-playbook playbooks/<domain>/<playbook>.yaml -i igou-inventory/inventory.yaml
 ```
 
 ### Linting
 
 ```bash
-# Ansible-lint with production profile (same as pre-commit)
-ansible-lint --profile=production
-
-# YAML lint
-yamllint .
-
-# Pre-commit (runs both)
-pre-commit run --all-files
+make lint
+make yamllint
+make syntax-check
 ```
 
 ### Molecule testing
@@ -36,31 +28,21 @@ pre-commit run --all-files
 ```bash
 # Run a specific scenario
 molecule test -s <scenario-name>
-
-# Run with custom distro image (molecule >= 25 resolves -s by directory name)
-MOLECULE_DISTRO_IMAGE="ubuntu:20.04" molecule test -s system-update-matrix
-
-# Step-by-step debugging
-molecule create -s <scenario-name>
-molecule converge -s <scenario-name>
-molecule verify -s <scenario-name>
-molecule destroy -s <scenario-name>
-```
-
-### Installing dependencies
-
-```bash
-ansible-galaxy install -r requirements.yml        # roles + collections
-ansible-galaxy collection install -r requirements.yml
-ansible-galaxy role install -r requirements.yml
 ```
 
 ### Building execution environments
 
 ```bash
-# From an EE directory (e.g., execution-environments/igou-awx-ee/)
-ansible-builder build --tag quay.io/igou/igou-awx-ee:latest
+make ee
 ```
+
+## Development
+
+When writing a new role, use the skill `ansible-scaffold-role`
+
+When creating a new playbook or other content, use the skill `write-content` and `write-content-tests`
+
+If you are being building a new collection, that will live as its own project under the david-igou github account. Scaffold it into the /workspace directory using the skill
 
 ## Architecture
 
@@ -74,7 +56,7 @@ Playbooks are organized by infrastructure domain under `playbooks/`:
 - `terraform/` - plan/apply workflows
 - `linux/`, `rhel/` - system-level operations
 - `windows/` - Windows host automation (WinRM/SSH): app provisioning, users, updates, IIS, AD join
-- `aap/`, `awx/` - automation platform configuration
+- `aap/` - automation platform configuration
 - `armbian/` - ARM SBC fleet lifecycle (image build, provisioning, boot modes)
 - Root-level playbooks for common ops (system-update, system-reboot)
 
