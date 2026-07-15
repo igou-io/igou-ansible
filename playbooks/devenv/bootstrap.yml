@@ -168,6 +168,15 @@
         node_exporter_web_listen_address: "{{ node_exporter_listen_address | default('0.0.0.0:9100') }}"
 
   post_tasks:
+    - name: Reset the connection so the docker group grant takes effect
+      # Group membership is evaluated at login; the ControlPersist session was
+      # opened before the docker role added the user to the docker group, so
+      # the unprivileged `devcontainer up` below would hit docker.sock EACCES
+      # on a fresh host's first bootstrap (AAP job 482). meta doesn't support
+      # `when`, so this runs unconditionally — a harmless reconnect on
+      # already-bootstrapped hosts.
+      ansible.builtin.meta: reset_connection
+
     # ------------------------------------------------------------------
     # Set the operator's global git identity on the host user's ~/.gitconfig.
     # The david_igou.devhost.host_prep role is intentionally NOT in this play's
