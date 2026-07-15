@@ -1,4 +1,4 @@
-# windows-build-golden-image
+# playbook-windows-build_golden_image
 
 Live, on-cluster molecule scenario that exercises
 `playbooks/openshift_virtualization/build_windows_golden.yml`: it installs
@@ -35,16 +35,16 @@ ServiceAccount. The golden DataSource is published in `molecule`, never in
 Full pipeline (create → converge → verify → destroy):
 
 ```bash
-molecule test -s windows-build-golden-image
+molecule test -s playbook-windows-build_golden_image
 ```
 
 Step-wise (useful because converge is long-running):
 
 ```bash
-molecule create  -s windows-build-golden-image   # preflight gates only
-molecule converge -s windows-build-golden-image  # ~60–90 min build + publish
-molecule verify   -s windows-build-golden-image  # boot-test proof
-molecule destroy  -s windows-build-golden-image  # cleanup
+molecule create  -s playbook-windows-build_golden_image   # preflight gates only
+molecule converge -s playbook-windows-build_golden_image  # ~60–90 min build + publish
+molecule verify   -s playbook-windows-build_golden_image  # boot-test proof
+molecule destroy  -s playbook-windows-build_golden_image  # cleanup
 ```
 
 ## Building a different edition
@@ -63,7 +63,7 @@ export WINDOWS_GOLDEN_ISO_DV=iso-win11-25h2-enterprise-eval-noprompt
 export WINDOWS_GOLDEN_IMAGE_INDEX=1          # 1 = Win11 client editions
 export WINDOWS_GOLDEN_UNATTEND_TEMPLATE=autounattend-client.xml.j2
 export WINDOWS_GOLDEN_EXPECTED_OS="Windows 11"
-molecule test -s windows-build-golden-image
+molecule test -s playbook-windows-build_golden_image
 ```
 
 The client answer file adds the Win11 hardware-check bypasses,

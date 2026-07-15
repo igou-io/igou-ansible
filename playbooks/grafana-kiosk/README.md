@@ -74,12 +74,12 @@ ansible-playbook playbooks/grafana-kiosk/converge.yaml \
 
 ## Testing
 
-`molecule test -s grafana-kiosk` converges **both stacks** in guests capped
+`molecule test -s playbook-grafana-kiosk` converges **both stacks** in guests capped
 at the Pi Zero 2 W's 512MB envelope, against a mock Grafana that echoes the
 Authorization header. Verify proves end-to-end token injection, unit
 enablement, config permissions, and runs real headless browser renders
 (Chromium screenshot and cog 20s survival) inside the memory cap. Provisioning uses
-`david_igou.molecule_provisioners` (see `molecule/grafana-kiosk/inventory/`);
+`david_igou.molecule_provisioners` (see `molecule/playbook-grafana-kiosk/inventory/`);
 pick a backend with `PROVISIONER`:
 
 | `PROVISIONER` | Guests | Notes |
@@ -97,15 +97,15 @@ renders:
 ```bash
 export PROVISIONER=kubevirt   # and a KUBECONFIG for the ansible-molecule SA
 
-molecule converge -s grafana-kiosk   # create + prepare + converge; instances stay up
-KIOSK_FETCH_SCREENSHOT=1 molecule verify -s grafana-kiosk   # re-runnable
+molecule converge -s playbook-grafana-kiosk   # create + prepare + converge; instances stay up
+KIOSK_FETCH_SCREENSHOT=1 molecule verify -s playbook-grafana-kiosk   # re-runnable
 ```
 
 With `KIOSK_FETCH_SCREENSHOT=1` (off by default — plain test runs leave the
 render in the guest), `verify` fetches the headless Chromium render to
 `$MOLECULE_EPHEMERAL_DIRECTORY/screenshots/kiosk-chromium.png` — verify
 prints the exact path; it lives under
-`~/.ansible/tmp/molecule.*.grafana-kiosk/`. Open it locally, tweak the play
+`~/.ansible/tmp/molecule.*.playbook-grafana-kiosk/`. Open it locally, tweak the play
 or dashboard vars, re-run `converge`/`verify`, repeat.
 
 On the kubevirt backend you can also watch the **live** kiosk on the VM's
@@ -113,7 +113,7 @@ virtual display. Molecule defaults to `kiosk_start_browser: false` (units
 enabled but stopped); override it and attach VNC:
 
 ```bash
-molecule converge -s grafana-kiosk -- -e kiosk_start_browser=true
+molecule converge -s playbook-grafana-kiosk -- -e kiosk_start_browser=true
 virtctl vnc -n molecule kiosk-cog        # or kiosk-chromium
 ```
 
@@ -150,8 +150,8 @@ To get a shell, use `virtctl ssh debian@vmi/kiosk-cog -n molecule`, or plain
 done:
 
 ```bash
-molecule destroy -s grafana-kiosk
+molecule destroy -s playbook-grafana-kiosk
 ```
 
-(`molecule test -s grafana-kiosk --destroy=never` gives the same
+(`molecule test -s playbook-grafana-kiosk --destroy=never` gives the same
 keep-alive behavior for a full one-shot run.)

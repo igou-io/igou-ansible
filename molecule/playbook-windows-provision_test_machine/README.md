@@ -16,7 +16,7 @@ ServiceAccount.
 The shared sysprep unattend runs in **`local_account`** mode (a `molecule`
 LocalAccounts admin + `LocalAccountTokenFilterPolicy=1`) so the scenario's psrp
 connection — as the `molecule` admin — has a full network token. See
-`molecule/shared/templates/windows-unattend.xml.j2`.
+`molecule/_windows_common/templates/windows-unattend.xml.j2`.
 
 ## What verify proves
 

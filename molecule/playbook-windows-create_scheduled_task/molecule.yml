@@ -17,7 +17,7 @@
 #
 # Pattern note: copied from the PILOT playbook-windows-manage_services; only the
 #   converge (which playbook) and verify (which asserts) differ. Shared plumbing
-#   lives in molecule/shared/.
+#   lives in molecule/_windows_common/.
 #
 # Run recipe (from the repo root):
 #   1. unset KUBECONFIG

@@ -1,5 +1,5 @@
 ---
-# ghapp-e2e: live end-to-end test of the GitHub App runtime-token wiring on
+# role-ghapp-e2e: live end-to-end test of the GitHub App runtime-token wiring on
 # real KubeVirt VMs (burst/casval node) via david_igou.molecule_provisioners.
 #
 # Two instances mirror the two consumers:
@@ -16,13 +16,13 @@
 #     see igou-openshift#262 — `oc scale machineset.cluster.x-k8s.io/casval-worker
 #     -n openshift-cluster-api --replicas=1` if it is down)
 #
-# Run:  molecule test -s ghapp-e2e
+# Run:  molecule test -s role-ghapp-e2e
 prerun: false
 
 dependency:
   name: galaxy
   options:
-    requirements-file: molecule/ghapp-e2e/collections.yml
+    requirements-file: molecule/role-ghapp-e2e/collections.yml
     force: true
 
 ansible:
@@ -39,7 +39,7 @@ ansible:
     verify: verify.yml
 
 scenario:
-  name: ghapp-e2e
+  name: role-ghapp-e2e
   test_sequence:
     - dependency
     - syntax

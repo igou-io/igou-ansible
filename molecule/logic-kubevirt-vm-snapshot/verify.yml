@@ -2,8 +2,8 @@
 # Cluster-independent regression assertions for kubevirt_vm_snapshot.
 #
 # Runnable two ways and green both:
-#   molecule verify -s kubevirt-vm-snapshot
-#   ansible-playbook molecule/kubevirt-vm-snapshot/verify.yml
+#   molecule verify -s logic-kubevirt-vm-snapshot
+#   ansible-playbook molecule/logic-kubevirt-vm-snapshot/verify.yml
 #
 # Asserts:
 #   1. Validation: including the role with vm_name="" + snapshot_action=list

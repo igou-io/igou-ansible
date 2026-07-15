@@ -36,7 +36,7 @@ dependency:
     requirements-file: collections.yml
 
 scenario:
-  name: grafana-kiosk
+  name: playbook-grafana-kiosk
   test_sequence:
     - dependency
     - syntax

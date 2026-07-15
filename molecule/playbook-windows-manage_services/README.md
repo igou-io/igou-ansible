@@ -15,7 +15,7 @@ ServiceAccount.
 
 ## Architecture (shared vs. scenario-specific)
 
-- **Shared plumbing** (`molecule/shared/`, reused by every Windows scenario):
+- **Shared plumbing** (`molecule/_windows_common/`, reused by every Windows scenario):
   - `templates/windows-unattend.xml.j2` — per-clone **specialization** unattend
     (specialize + oobeSystem passes only) for a sysprep-generalized golden. Sets
     the ComputerName + Administrator password and stands up WinRM-over-HTTPS on

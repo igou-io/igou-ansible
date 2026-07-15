@@ -19,7 +19,7 @@
 #
 # Pattern note: copied from the PILOT playbook-windows-manage_services; only the
 #   converge (which playbook) and verify (which asserts) differ. Shared plumbing
-#   lives in molecule/shared/. Verify ADDITIONALLY creates its own NodePort
+#   lives in molecule/_windows_common/. Verify ADDITIONALLY creates its own NodePort
 #   Service (separate from the provisioner's SSH Service) for the 8080 GET, and
 #   deletes it again in its own cleanup; destroy.yml removes it belt-and-braces.
 #

@@ -240,13 +240,13 @@ prune unless you pass the flag.)
 ## Regression test (no cluster required)
 
 The cluster-independent logic — input validation and the prune
-selection/retention math — is covered by `molecule/kubevirt-vm-snapshot/`:
+selection/retention math — is covered by `molecule/logic-kubevirt-vm-snapshot/`:
 
 ```bash
 cd /workspace/igou-ansible
-molecule test -s kubevirt-vm-snapshot
+molecule test -s logic-kubevirt-vm-snapshot
 # or, without molecule's driver layer:
-ansible-playbook molecule/kubevirt-vm-snapshot/verify.yml
+ansible-playbook molecule/logic-kubevirt-vm-snapshot/verify.yml
 ```
 
 Live snapshot/restore against the real cluster is validated separately by the

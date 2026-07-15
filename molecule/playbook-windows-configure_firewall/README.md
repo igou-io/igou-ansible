@@ -18,11 +18,11 @@ unattend runs in **`local_account`** mode (`mp.kubevirt.unattend_admin_mode:
 local_account`): it creates a `molecule` LocalAccounts admin and sets
 `LocalAccountTokenFilterPolicy=1` so that non-builtin local admin gets a full
 NTLM network token (psrp would otherwise 401 on privileged operations). See
-`molecule/shared/templates/windows-unattend.xml.j2`.
+`molecule/_windows_common/templates/windows-unattend.xml.j2`.
 
 ## Architecture (shared vs. scenario-specific)
 
-- **Shared plumbing** (`molecule/shared/`): the specialization unattend template
+- **Shared plumbing** (`molecule/_windows_common/`): the specialization unattend template
   and the `<host>-sysprep` Secret play (imported by `create.yml`/`destroy.yml`).
 - **Scenario-specific** (this directory): the VM (`inventory/`), the converge
   rule list (`converge.yml`), the seed of the to-be-removed rule (`prepare.yml`),

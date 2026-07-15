@@ -10,7 +10,7 @@
 # It runs entirely on localhost with the `default` driver — no container and no
 # Kubernetes — so it is safe to run anywhere. The same assertions live in
 # verify.yml, which is also runnable standalone with plain ansible-playbook:
-#   ansible-playbook molecule/kubevirt-vm-snapshot/verify.yml
+#   ansible-playbook molecule/logic-kubevirt-vm-snapshot/verify.yml
 prerun: false
 
 dependency:
@@ -46,7 +46,7 @@ lint: |
   ansible-lint
 
 scenario:
-  name: kubevirt-vm-snapshot
+  name: logic-kubevirt-vm-snapshot
   # No create/destroy: localhost-only logic test, nothing to provision.
   test_sequence:
     - dependency

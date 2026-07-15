@@ -29,7 +29,7 @@
 #   boot). This is NOT idempotence-testable, so the test_sequence omits the
 #   idempotence step by design.
 #
-# Env setup one-liner (run before `molecule test -s windows-build-golden-image`):
+# Env setup one-liner (run before `molecule test -s playbook-windows-build_golden_image`):
 #   export K8S_AUTH_HOST=https://api.ocp.igou.systems:6443
 #   export K8S_AUTH_API_KEY="`op read op://lab_serviceaccounts/ocp-ansible-molecule/token`"
 # (molecule interpolates dollar-placeholders across this whole file, comments
@@ -99,7 +99,7 @@ lint: |
   ansible-lint
 
 scenario:
-  name: windows-build-golden-image
+  name: playbook-windows-build_golden_image
   test_sequence:
     - dependency
     - syntax

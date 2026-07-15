@@ -54,7 +54,7 @@
 
 # Render the per-host sysprep Secret (<host>-sysprep) BEFORE the VM starts.
 - name: Create — render Windows sysprep specialization Secrets
-  ansible.builtin.import_playbook: ../shared/playbooks/windows-sysprep-secrets.yml
+  ansible.builtin.import_playbook: ../_windows_common/playbooks/windows-sysprep-secrets.yml
 
 # Provision the VM(s) + NodePort service and write the runtime psrp inventory.
 - name: Create — provision molecule instances
