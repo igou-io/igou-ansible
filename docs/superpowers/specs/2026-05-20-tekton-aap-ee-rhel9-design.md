@@ -8,7 +8,7 @@ status: approved
 
 ## Problem
 
-`execution-environments/igou-aap-ee-rhel9/` has no CI build today. The other three EEs build on GitHub Actions, but the RHEL9 EE needs the entitled Red Hat registry plus an Automation Hub token to fetch certified collections — both of which are painful from public GitHub runners and natural on the OpenShift cluster.
+`execution-environments/igou-aap-ee-rhel9/` has no CI build today. The primary EE builds on GitHub Actions, but the RHEL9 EE needs the entitled Red Hat registry plus an Automation Hub token to fetch certified collections — both of which are painful from public GitHub runners and natural on the OpenShift cluster.
 
 The `igou-openshift` repo already provisions everything needed on the cluster side for this repo to use OpenShift Pipelines via Pipelines-as-Code (PaC). What's missing is the per-EE PipelineRun manifest in *this* repo.
 
@@ -18,7 +18,7 @@ Add Tekton manifests under `.tekton/` that, when the repo is mirrored to Forgejo
 
 ## Non-goals
 
-- Building the other three EEs (`igou-awx-ee`, `igou-awx-ee-fedora`, `igou-networking-ee`). Their GitHub Actions workflows remain unchanged.
+- Building `igou-awx-ee`. Its GitHub Actions workflow remains unchanged.
 - Adding the missing `ansible.cfg` to `execution-environments/igou-aap-ee-rhel9/`. The user will handle that separately. The pipeline manifests land but the EE won't actually build until `ansible.cfg` is provided.
 - Reconciling the AAP version skew (cluster ImageStream is AAP-26, EE pins AAP-25). Flagged for follow-up.
 - Modifying anything in `igou-openshift`.

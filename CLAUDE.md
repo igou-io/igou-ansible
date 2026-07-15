@@ -92,12 +92,10 @@ modes, or netboot TFTP assets.**
 
 ### Execution environments
 
-Built with `ansible-builder`, defined in `execution-environments/`. Each has `execution-environment.yml` + supporting files. CI builds and pushes to `quay.io/igou/` on push or weekly schedule.
+Built with `ansible-builder`, defined in `execution-environments/`. Each has `execution-environment.yml` + supporting files. CI builds publish the images when their definitions change.
 
-- `igou-awx-ee` - Primary EE (CentOS Stream 9, includes terraform, 1password-cli, oc, helm, kustomize)
-- `igou-awx-ee-fedora` - Fedora variant
+- `igou-awx-ee` - Primary EE (CentOS Stream 10, includes terraform, 1password-cli, oc, helm, kustomize)
 - `igou-aap-ee-rhel9` - AAP on RHEL9
-- `igou-networking-ee` - Network automation
 
 ### Roles
 
