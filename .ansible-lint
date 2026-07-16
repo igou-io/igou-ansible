@@ -14,17 +14,18 @@ exclude_paths:
   - roles/kubevirt_provision_survey/  # infra.controller_configuration.job_templates
   - roles/kubevirt_vm_snapshot/  # short interface + internal register/set_fact vars intentionally unprefixed for ergonomic CLI/extra_vars; lint logic via `ansible-lint -x var-naming`
   - roles/kubevirt_vm_provision/  # same: short vm_* interface + internal _kvp_* accumulators; lint logic via `ansible-lint -x var-naming`
-  # ghapp-e2e provisioner shims import david_igou.molecule_provisioners (pinned
-  # in the scenario's collections.yml, not installed in the lint env). converge/
-  # verify stay linted; these three only import_playbook the external collection.
-  - molecule/ghapp-e2e/create.yml
-  - molecule/ghapp-e2e/destroy.yml
-  - molecule/ghapp-e2e/prepare.yml
-  # grafana-kiosk provisioner shims: same david_igou.molecule_provisioners
-  # situation as ghapp-e2e above. converge/verify/prepare_mock stay linted.
-  - molecule/grafana-kiosk/create.yml
-  - molecule/grafana-kiosk/destroy.yml
-  - molecule/grafana-kiosk/prepare.yml
+  # role-ghapp-e2e provisioner shims import david_igou.molecule_provisioners
+  # (pinned in the scenario's collections.yml, not installed in the lint env).
+  # converge/verify stay linted; these three only import_playbook the external
+  # collection.
+  - molecule/role-ghapp-e2e/create.yml
+  - molecule/role-ghapp-e2e/destroy.yml
+  - molecule/role-ghapp-e2e/prepare.yml
+  # playbook-grafana-kiosk provisioner shims: same david_igou.molecule_provisioners
+  # situation as role-ghapp-e2e above. converge/verify/prepare_mock stay linted.
+  - molecule/playbook-grafana-kiosk/create.yml
+  - molecule/playbook-grafana-kiosk/destroy.yml
+  - molecule/playbook-grafana-kiosk/prepare.yml
   # playbook-devenv-bootstrap: same pattern — create/destroy are pure import
   # shims; prepare additionally carries real plays (scratch disk, host preflight,
   # docker group) that stay linted locally where the collection is installed

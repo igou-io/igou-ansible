@@ -24,7 +24,7 @@ re-run is fast and **changed=0** (`choco` state `present` is idempotent).
 The shared sysprep unattend runs in **`local_account`** mode (a `molecule`
 LocalAccounts admin + `LocalAccountTokenFilterPolicy=1`) so psrp can drive the
 client-SKU guest with a full network token. See
-`molecule/shared/templates/windows-unattend.xml.j2`.
+`templates/windows-unattend.xml.j2`.
 
 ## What verify proves
 

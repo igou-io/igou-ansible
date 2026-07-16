@@ -16,8 +16,8 @@
 #   the sysprep unattend specialized.
 #
 # Pattern note: copied from the PILOT playbook-windows-manage_services; only the
-#   converge (which playbook) and verify (which asserts) differ. Shared plumbing
-#   lives in molecule/shared/.
+#   converge (which playbook) and verify (which asserts) differ. Sysprep plumbing
+#   lives in this scenario dir (windows-sysprep-secrets.yml + templates/).
 #
 # Run recipe (from the repo root):
 #   1. unset KUBECONFIG

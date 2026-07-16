@@ -24,6 +24,6 @@
         namespace: "{{ iis_namespace }}"
 
 - name: Destroy — remove the per-host sysprep Secrets
-  ansible.builtin.import_playbook: ../shared/playbooks/windows-sysprep-secrets.yml
+  ansible.builtin.import_playbook: windows-sysprep-secrets.yml
   vars:
     windows_sysprep_state: absent

@@ -17,7 +17,7 @@
 #   the sysprep unattend specialized.
 #
 # Pattern note (PILOT): this is the reference the other playbook-windows-*
-#   scenarios copy. Shared plumbing lives in molecule/shared/ (the specialization
+#   scenarios copy. Sysprep plumbing (a self-contained copy) lives in this scenario dir (the specialization
 #   unattend template + the sysprep-Secret play); everything scenario-specific
 #   (which VM, which playbook, which asserts) lives here.
 #

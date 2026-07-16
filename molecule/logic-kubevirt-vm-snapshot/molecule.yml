@@ -1,0 +1,56 @@
+---
+# Cluster-independent regression test for the kubevirt_vm_snapshot role.
+#
+# This scenario exercises ONLY the two behaviors that do not need a live
+# cluster (live snapshot/restore ops are covered by the on-cluster smoke test,
+# not molecule):
+#   1. input validation (tasks/main.yml asserts) rejects bad input, and
+#   2. the prune selection+slice (tasks/prune.yml) picks the correct snapshots.
+#
+# It runs entirely on localhost with the `default` driver — no container and no
+# Kubernetes — so it is safe to run anywhere. The same assertions live in
+# verify.yml, which is also runnable standalone with plain ansible-playbook:
+#   ansible-playbook molecule/logic-kubevirt-vm-snapshot/verify.yml
+prerun: false
+
+dependency:
+  name: galaxy
+  options:
+    ignore_errors: true
+    role-file: requirements.yml
+    requirements-file: requirements.yml
+
+driver:
+  name: default
+
+platforms:
+  - name: localhost
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      host_key_checking: false
+      verbosity: 1
+      # molecule generates its own ansible.cfg, so the repo-root paths for
+      # galaxy roles/collections must be restated here.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
+  playbooks:
+    converge: converge.yml
+    verify: verify.yml
+
+lint: |
+  set -e
+  yamllint .
+  ansible-lint
+
+scenario:
+  name: logic-kubevirt-vm-snapshot
+  # No create/destroy: localhost-only logic test, nothing to provision.
+  test_sequence:
+    - dependency
+    - syntax
+    - converge
+    - idempotence
+    - verify

@@ -1,3 +1,0 @@
----
-- name: Run playbooks/openshift/bootstrap_gitops.yaml
-  ansible.builtin.import_playbook: ../../playbooks/openshift/bootstrap_gitops.yaml

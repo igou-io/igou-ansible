@@ -15,5 +15,5 @@
 # toggle. devenv_ghapp_enabled=false and devenv_full_toolset=false are passed as
 # extra-vars from molecule.yml because bootstrap.yml sets them as PLAY vars, which
 # outrank inventory group_vars — only extra-vars can override them. ghapp has its
-# own end-to-end scenario (ghapp-e2e).
+# own end-to-end scenario (role-ghapp-e2e).
 devenv_code_server_password: molecule-devenv-bootstrap-throwaway

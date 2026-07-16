@@ -24,7 +24,7 @@
 #   a full NTLM network token (psrp would otherwise 401 on privileged ops).
 #
 # Pattern note: this follows the LIVE-VALIDATED pilot
-#   playbook-windows-manage_services. Shared plumbing lives in molecule/shared/
+#   playbook-windows-manage_services. Sysprep plumbing (a self-contained copy) lives in this scenario dir
 #   (the specialization unattend template + the sysprep-Secret play); everything
 #   scenario-specific lives here.
 #
