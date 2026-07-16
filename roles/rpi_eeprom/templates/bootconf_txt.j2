@@ -1,5 +1,8 @@
-# Ansible managed — rpi_eeprom. Unmanaged keys preserved from the live
-# config; comments/sections are not.
+# Ansible managed (rpi_eeprom). ASCII ONLY in this file: the bootloader
+# config parser stops at the first non-ASCII byte and silently drops
+# everything after it (a UTF-8 em-dash here once truncated the whole
+# config). Unmanaged keys preserved from the live config;
+# comments/sections are not.
 [all]
 {% for k, v in (__rpi_eeprom_current | combine(__rpi_eeprom_desired)).items() %}
 {{ k }}={{ v }}
