@@ -1,4 +1,8 @@
-# Ansible managed — rpi_boot_render ({{ rpi_boot_render_hostname }}, mode={{ rpi_boot_render_boot_mode }})
+# Ansible managed (rpi_boot_render): {{ rpi_boot_render_hostname }}, mode={{ rpi_boot_render_boot_mode }}
+# ASCII ONLY in this file: the Pi firmware's config parser stops at the
+# first non-ASCII byte and drops the rest (bench-verified: an em-dash in
+# this header made netboot fetch config.txt and then abort before
+# start4.elf).
 [all]
 arm_64bit=1
 kernel={{ rpi_boot_render_kernel }}
