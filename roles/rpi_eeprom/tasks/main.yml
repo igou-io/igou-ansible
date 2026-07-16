@@ -83,6 +83,33 @@
         dest: "{{ rpi_eeprom_apply_path }}"
         mode: "0644"
 
+    - name: Read back the rendered config
+      ansible.builtin.slurp:
+        src: "{{ rpi_eeprom_apply_path }}"
+      register: __rpi_eeprom_rendered_raw
+
+    - name: Assert rendered config is pure ASCII and carries every managed key
+      vars:
+        __rpi_eeprom_rendered: "{{ __rpi_eeprom_rendered_raw.content | b64decode }}"
+        __rpi_eeprom_ascii_re: '^[\x00-\x7f]*$'
+      ansible.builtin.assert:
+        that:
+          - __rpi_eeprom_rendered is regex(__rpi_eeprom_ascii_re)
+          - __rpi_eeprom_desired | dict2items
+            | rejectattr('key', 'in', __rpi_eeprom_rendered)
+            | list | length == 0
+          - __rpi_eeprom_desired | dict2items
+            | map(attribute='key')
+            | zip(__rpi_eeprom_desired.values())
+            | map('join', '=')
+            | reject('in', __rpi_eeprom_rendered)
+            | list | length == 0
+        fail_msg: >-
+          Rendered bootconf at {{ rpi_eeprom_apply_path }} is not pure
+          ASCII or is missing managed key=value lines. The bootloader
+          config parser stops at the first non-ASCII byte and silently
+          drops the rest of the file — refusing to stage it.
+
     - name: Stage EEPROM update (rpi-eeprom-config --apply)
       ansible.builtin.command:
         cmd: "rpi-eeprom-config --apply {{ rpi_eeprom_apply_path }}"
