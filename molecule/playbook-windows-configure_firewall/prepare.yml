@@ -1,0 +1,59 @@
+---
+# Prepare = the provisioner's wait_for_connection (psrp, honoring the longer
+# mp_kubevirt_windows_wait_timeout), THEN seed both the firewall rule converge
+# will remove AND a persistent in-guest TCP listener on 7778 that makes the
+# negative external probe in verify a REAL test rather than a vacuous one.
+- name: Prepare molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+
+# Two independent seeds, both after wait_for_connection:
+#   1. Pre-create the rule converge declares state=absent, so the removal is a
+#      REAL transition (present -> absent) rather than a vacuous "already gone".
+#   2. Stand up a SYSTEM scheduled task whose action is a PowerShell TcpListener
+#      accept-loop bound to 0.0.0.0:7778. A psrp session's child processes die
+#      with the session, so a listener started inline would be gone by verify —
+#      a scheduled task (started now, and re-armed on boot) outlives the session.
+#      The listener binds to ALL interfaces on purpose: if the firewall were NOT
+#      blocking, the external NodePort probe in verify WOULD reach it and succeed.
+#      Because 7778 has no allow rule, the external probe still times out — so the
+#      timeout now isolates FIREWALL causation (verify proves the listener is
+#      genuinely up first, over loopback, which the firewall never filters).
+- name: Prepare — seed the doomed rule and the 7778 TCP listener
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Create the doomed rule so converge's absent case is a real change
+      community.windows.win_firewall_rule:
+        name: Remove legacy molecule TCP 7779
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "7779"
+        state: present
+        enabled: true
+
+    - name: Register the SYSTEM TCP listener accept-loop as a scheduled task
+      community.windows.win_scheduled_task:
+        name: molecule-fwprobe-listener
+        path: \Ansible
+        description: >-
+          Molecule firewall-probe listener — a PowerShell TcpListener accept-loop
+          on 0.0.0.0:7778 so verify's negative external probe tests the firewall,
+          not a missing listener. Torn down in verify's always block.
+        actions:
+          - path: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+            arguments: >-
+              -ExecutionPolicy Bypass -WindowStyle Hidden -NonInteractive -Command
+              "$l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, 7778);
+              $l.Start(); while ($true) { $c = $l.AcceptTcpClient(); $c.Close() }"
+        triggers:
+          - type: boot
+        username: SYSTEM
+        run_level: highest
+        state: present
+        enabled: true
+
+    - name: Start the listener task now (do not wait for the boot trigger)
+      ansible.windows.win_shell: >-
+        Start-ScheduledTask -TaskPath \Ansible\ -TaskName molecule-fwprobe-listener
+      changed_when: false

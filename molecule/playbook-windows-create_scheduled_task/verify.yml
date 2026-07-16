@@ -1,0 +1,121 @@
+---
+# Verify = INDEPENDENT evidence the task exists AND actually FIRES. Existence
+# alone is a weak test (the module could report a task that never runs); the
+# real contract is that triggering the task executes its action. We read the
+# task back with win_scheduled_task_stat (independent of win_scheduled_task),
+# then Start-ScheduledTask it and prove the marker file appears.
+- name: Verify — independent evidence for create_scheduled_task
+  hosts: windows
+  gather_facts: false
+  vars:
+    task_marker_path: 'C:\molecule-task-fired.txt'
+  tasks:
+    # Clean slate: the daily-triggered task has not fired on its own during the
+    # test window, so the marker should be absent — but remove it defensively so
+    # a re-run of verify can never pass on a stale file. Its reappearance below
+    # is therefore caused ONLY by our explicit trigger.
+    - name: Remove any pre-existing task marker file
+      ansible.windows.win_file:
+        path: "{{ task_marker_path }}"
+        state: absent
+
+    # Independent read of the registered task (NOT the converge module's return).
+    # NB: never `register: _task` — ansible-core (2.19+) binds an internal
+    # `_task` object while projecting registered results (it templates
+    # `_task.polymorphic_result`), so that name self-shadows and fails with
+    # "Recursive loop detected in expression".
+    - name: Read the scheduled task state (independent read)
+      community.windows.win_scheduled_task_stat:
+        path: \Ansible
+        name: molecule-marker-task
+      register: _task_stat
+
+    - name: Assert the task exists and is enabled
+      ansible.builtin.assert:
+        that:
+          - _task_stat.task_exists
+          - _task_stat.settings.enabled
+        fail_msg: >-
+          Scheduled task \Ansible\molecule-marker-task exists=
+          {{ _task_stat.task_exists | default(false) }}
+          enabled={{ _task_stat.settings.enabled | default('unknown') }};
+          expected an enabled, registered task.
+        success_msg: Scheduled task is registered under \Ansible and enabled.
+
+    # Structural contract (independent of firing): the playbook fixes SYSTEM +
+    # highest run level and a daily trigger. Assert those from the stat return —
+    # user_id is a substring match ('SYSTEM' vs 'NT AUTHORITY\SYSTEM'), run_level
+    # is the EXACT Task Scheduler enum token (TASK_RUNLEVEL_HIGHEST, not
+    # 'highest'), and the triggers list must carry a daily trigger with a
+    # non-empty start_boundary (converge passed 2026-01-01T03:00:00).
+    - name: Assert the task runs as SYSTEM at highest level with a dated daily trigger
+      vars:
+        _daily: >-
+          {{ _task_stat.triggers | default([])
+             | selectattr('type', 'equalto', 'TASK_TRIGGER_DAILY') | list }}
+      ansible.builtin.assert:
+        that:
+          - "'SYSTEM' in _task_stat.principal.user_id"
+          - _task_stat.principal.run_level == 'TASK_RUNLEVEL_HIGHEST'
+          - _daily | length > 0
+          - (_daily[0].start_boundary | default('')) | length > 0
+        fail_msg: >-
+          Scheduled task principal/trigger contract not met:
+          user_id={{ _task_stat.principal.user_id | default('?') }}
+          run_level={{ _task_stat.principal.run_level | default('?') }}
+          daily_triggers={{ _daily | length }}
+          start_boundary={{ (_daily[0].start_boundary | default('')) if (_daily | length > 0) else 'n/a' }}.
+        success_msg: >-
+          Task runs as SYSTEM ({{ _task_stat.principal.user_id }}) at
+          {{ _task_stat.principal.run_level }} with a daily trigger starting
+          {{ _daily[0].start_boundary }}.
+
+    # Fire it now. A daily trigger will not run during the test, so the only way
+    # the marker below appears is this on-demand run executing the task action.
+    # Path/name are unquoted on purpose: a single-quoted value ending in a
+    # backslash (…\Ansible\') reads as an escaped quote to Ansible's argument
+    # splitter and fails syntax-check. Neither token contains spaces, so bare
+    # tokens are unambiguous to PowerShell.
+    - name: Trigger the scheduled task on demand
+      ansible.windows.win_shell: Start-ScheduledTask -TaskPath \Ansible\ -TaskName molecule-marker-task
+      changed_when: false
+
+    # The task action runs asynchronously under the Task Scheduler service, so
+    # poll for the marker rather than assuming it exists the instant we return.
+    - name: Wait for the task to write its marker file
+      ansible.windows.win_stat:
+        path: "{{ task_marker_path }}"
+      register: _marker
+      until: _marker.stat.exists
+      retries: 12
+      delay: 5
+
+    - name: Assert the task fired and wrote non-empty content
+      ansible.builtin.assert:
+        that:
+          - _marker.stat.exists
+          - _marker.stat.size | int > 0
+        fail_msg: >-
+          {{ task_marker_path }} exists={{ _marker.stat.exists | default(false) }}
+          size={{ _marker.stat.size | default(0) }} after triggering the task —
+          the scheduled task did not actually run its action.
+        success_msg: >-
+          Task fired: {{ task_marker_path }} present with
+          {{ _marker.stat.size }} bytes.
+
+    # Diagnostics: the marker proves the sysprep unattend FirstLogonCommands ran
+    # (self-signed cert + WinRM listener path), i.e. the whole specialize path
+    # that made this VM reachable actually executed.
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: 'C:\molecule-specialize-done.txt'
+      register: _specialize_marker
+
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _specialize_marker.stat.exists
+        fail_msg: >-
+          C:\molecule-specialize-done.txt is missing — the sysprep unattend
+          FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.

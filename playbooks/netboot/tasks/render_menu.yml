@@ -7,6 +7,9 @@
   ansible.builtin.set_fact:
     _netboot_cache_dir: "{{ playbook_dir }}/../../.cache/netboot-menus"
   delegate_to: localhost
+  # become: false on all localhost-delegated tasks — the AAP EE has no
+  # sudo; controller-side render work never needs privilege.
+  become: false
   run_once: true
 
 - name: Render — wipe cache to avoid stale outputs
@@ -14,6 +17,7 @@
     path: "{{ _netboot_cache_dir }}"
     state: absent
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Render — recreate cache subdirs
@@ -26,6 +30,7 @@
     - entries
     - per_host
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Render — top-level menu.ipxe
@@ -34,6 +39,7 @@
     dest: "{{ _netboot_cache_dir }}/menu.ipxe"
     mode: "0644"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Render — entries (kernel/local)
@@ -47,6 +53,7 @@
   loop_control:
     label: "{{ item.id }}"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Render — entries (iso)
@@ -60,6 +67,7 @@
   loop_control:
     label: "{{ item.id }}"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Render — entries (chainload)
@@ -73,6 +81,7 @@
   loop_control:
     label: "{{ item.id }}"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Render — host pins (MAC file)
@@ -86,6 +95,7 @@
   loop_control:
     label: "{{ item.mac }}"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Render — host pins (HOSTNAME alias chains to MAC file)
@@ -106,6 +116,7 @@
   loop_control:
     label: "{{ item.hostname }}"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Render — summary
@@ -115,10 +126,12 @@
     recurse: true
   register: _render_summary
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Render — list rendered files
   ansible.builtin.debug:
     msg: "{{ _render_summary.files | map(attribute='path') | map('regex_replace', '^.*/.cache/netboot-menus/', '') | sort | list }}"
   delegate_to: localhost
+  become: false
   run_once: true

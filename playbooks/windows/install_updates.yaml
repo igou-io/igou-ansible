@@ -16,10 +16,28 @@
 #                                security + rollups). Use ["*"] for
 #                                everything, including drivers and feature
 #                                packs.
+#   windows_updates_state      - installed | searched | downloaded
+#                                (default installed). 'searched' is a
+#                                report-only pass — it lists applicable
+#                                updates without installing anything.
+#   windows_updates_accept_list - list of KB numbers or title regexes; when
+#                                non-empty ONLY matching updates install.
+#                                Pin this to make a run bounded and
+#                                repeatable. Empty (default) = not passed.
+#   windows_updates_reject_list - list of KB numbers or title regexes to
+#                                exclude from installation. Empty (default)
+#                                = not passed.
+#   windows_updates_skip_optional - skip updates flagged optional
+#                                (default false).
 #   windows_updates_reboot     - reboot and re-check until clean
 #                                (default false)
 #   windows_updates_reboot_timeout - seconds to wait for each reboot
 #                                (default 1200)
+#
+# Idempotency note: a second converge is only reliably no-op for a BOUNDED
+# pass — pin windows_updates_accept_list (or use windows_updates_state:
+# searched). An open-ended install run can always surface newly-published
+# updates on the next check, so it is not idempotent by nature.
 #
 # Run (patch + reboot cycle):
 #   ansible-navigator run playbooks/windows/install_updates.yaml \
@@ -34,6 +52,10 @@
       - CriticalUpdates
       - SecurityUpdates
       - UpdateRollups
+    windows_updates_state: installed
+    windows_updates_accept_list: []
+    windows_updates_reject_list: []
+    windows_updates_skip_optional: false
     windows_updates_reboot: false
     windows_updates_reboot_timeout: 1200
 
@@ -41,7 +63,13 @@
     - name: Search for and install updates
       ansible.windows.win_updates:
         category_names: "{{ windows_updates_categories }}"
-        state: installed
+        state: "{{ windows_updates_state }}"
+        # An empty list is falsy, so 'list or omit' passes nothing when the
+        # var is unset — an empty accept/reject list must NOT mean "match
+        # nothing", it means "no filter".
+        accept_list: "{{ windows_updates_accept_list or omit }}"
+        reject_list: "{{ windows_updates_reject_list or omit }}"
+        skip_optional: "{{ windows_updates_skip_optional }}"
         reboot: "{{ windows_updates_reboot }}"
         reboot_timeout: "{{ windows_updates_reboot_timeout }}"
       register: windows_updates_result

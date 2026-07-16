@@ -37,6 +37,9 @@ table inet hermes_egress {
     ip daddr {{ hermes_cluster_service_cidr }} tcp dport 8080 accept
     # In-cluster Firecrawl API (website extraction)
     ip daddr {{ hermes_cluster_service_cidr }} tcp dport 3002 accept
+    # In-cluster sands-of-time API (ClusterIP service port 80; the precise
+    # pod-level control is the hermes-egress NetworkPolicy in igou-openshift)
+    ip daddr {{ hermes_cluster_service_cidr }} tcp dport 80 accept
 
     # External HTTPS (OVN EgressFirewall already pins this to api.telegram.org)
     tcp dport 443 accept

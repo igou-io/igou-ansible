@@ -1,0 +1,34 @@
+---
+# Converge = run the REAL playbook unmodified against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: the real playbook targets
+# `{{ ansible_limit | default('windows') }}`, and a pattern that matches zero
+# hosts would "pass" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the imported playbook would
+          match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# The real playbook. It creates the default test user (apptester, a NON-admin in
+# Users + Remote Desktop Users), installs a small app set, and enables RDP. The
+# test-user password is the same complexity-satisfying value the sysprep admin
+# uses (win11's default policy would reject a weak one). RDP stays enabled (the
+# default) so verify can prove the listener is reachable from outside.
+- name: Converge — run playbooks/windows/provision_test_machine.yaml unmodified
+  ansible.builtin.import_playbook: ../../playbooks/windows/provision_test_machine.yaml
+  vars:
+    windows_test_user_password: "{{ lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') }}"
+    windows_test_apps:
+      - name: 7zip
+    windows_test_enable_rdp: true

@@ -10,6 +10,11 @@
     timeout: 10
     validate_certs: true
   delegate_to: localhost
+  # become: false on every localhost-delegated task in this playbook: the
+  # play-level become: true is only for the truenas-owned 950 tree, and
+  # the AAP EE has no sudo (job 467) — controller-side tasks never need
+  # privilege.
+  become: false
   changed_when: false
   run_once: true
 
@@ -20,6 +25,7 @@
       - netboot_entries is not string
     fail_msg: "netboot_entries must be a list (got {{ netboot_entries | type_debug }})."
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Preflight — validate each entry
@@ -45,12 +51,14 @@
   loop_control:
     label: "{{ item.id | default('<missing-id>') }}"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Preflight — collect entry ids for cross-reference
   ansible.builtin.set_fact:
     _netboot_entry_ids: "{{ netboot_entries | map(attribute='id') | list }}"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Preflight — validate each host pin (Form 3 fragment only)
@@ -74,6 +82,7 @@
   loop_control:
     label: "{{ item.mac | default('<missing-mac>') }}"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Preflight — verify referenced kickstart files exist locally
@@ -84,6 +93,7 @@
   loop_control:
     label: "{{ item.id }} -> {{ item.kickstart }}"
   delegate_to: localhost
+  become: false
   run_once: true
   failed_when:
     - _ks_check.stat is defined
@@ -96,12 +106,14 @@
     file_type: file
   register: _fragments_find
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Preflight — register fragment filename list
   ansible.builtin.set_fact:
     _netboot_fragments: "{{ _fragments_find.files | map(attribute='path') | map('basename') | sort | list }}"
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Preflight — summary
@@ -111,4 +123,5 @@
       - "host pins:  {{ netboot_host_pins | length }}"
       - "fragments:  {{ _netboot_fragments | length }} ({{ _netboot_fragments | join(', ') }})"
   delegate_to: localhost
+  become: false
   run_once: true

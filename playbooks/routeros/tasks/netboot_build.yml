@@ -1,15 +1,34 @@
 ---
-# Build the custom netboot.xyz iPXE binaries on the control node by
-# invoking the upstream Ansible build inside the official netbootxyz
-# builder container.
+# Build the custom netboot.xyz iPXE binaries by invoking the upstream
+# Ansible build inside the official netbootxyz builder container.
 #
-# Sets fact netboot_arches_resolved -- used by upload, dhcp, and verify
-# stages.
+# These tasks run ON the builder host (the armbian_builders group, a
+# docker-capable machine) — NOT on the controller. The AAP execution
+# environment only ships podman-remote, so it cannot run a builder
+# container on its own localhost; delegating the heavy lifting to a
+# real docker host over SSH is what makes this playbook AAP-runnable
+# (mirrors playbooks/armbian/build_and_publish.yaml).
+#
+# Sets fact netboot_arches_resolved -- consumed by the fetch at the end
+# of this file (to pull artifacts back to the controller). The upload,
+# dhcp, and verify stages run in the second play against rb5009, where
+# this fact is not visible; those stages recompute it from the static
+# arches map (see their `when: netboot_arches_resolved is not defined`
+# guards).
 #
 # Idempotency: a SHA256 of the rendered user_overrides plus the resolved
 # git SHA of the cloned netboot.xyz repo is recorded in MANIFEST.lastbuild
 # after each successful run. On re-run, if the hash matches AND every
-# expected output binary exists, the podman build is skipped.
+# expected output binary exists, the container build is skipped. The
+# MANIFEST lives on the builder host and persists across runs.
+
+- name: Resolve the builder-side build directory
+  # All build inputs/outputs live under the builder host's home by
+  # default (no become, no one-time sudo). Override with
+  # netboot_builder_build_dir to relocate.
+  ansible.builtin.set_fact:
+    _netboot_build_dir: >-
+      {{ netboot_builder_build_dir | default(ansible_env.HOME ~ '/netboot_build') }}
 
 - name: Define arches map (local -> public file names)
   ansible.builtin.set_fact:
@@ -18,7 +37,19 @@
         local_name: netboot.xyz.kpxe
         public_name: netboot.xyz.kpxe
       uefi-x64:
-        local_name: netboot.xyz.efi
+        # Serve the snponly flavor for UEFI x64, NOT the full-driver
+        # ipxe.efi. Since iPXE commit 2161e976 ("[build] Include USB
+        # drivers in the all-drivers build by default", 2026-02-13) the
+        # full-driver .efi attaches native USB host-controller drivers,
+        # which disconnect less-compliant AMI/HP UEFI firmware USB
+        # keyboard drivers -> a dead keyboard in the iPXE menu. snponly
+        # carries no native drivers (uses firmware SNP, always present
+        # on a PXE chainload), so the keyboard keeps working.
+        # See https://netboot.xyz/docs/kb/hardware/usb-keyboard
+        local_name: netboot.xyz-snponly.efi
+        # public_name stays netboot.xyz.efi: the DHCP boot-file-name,
+        # /ip tftp rows, and UEFI matchers are all keyed on this name
+        # and must not change.
         public_name: netboot.xyz.efi
       uefi-arm64:
         local_name: netboot.xyz-arm64.efi
@@ -32,64 +63,64 @@
                        | list
       }}
 
-- name: Ensure local build cache directory exists
+- name: Ensure builder build cache directory exists
   ansible.builtin.file:
-    path: "{{ netboot_local_build_dir }}"
+    path: "{{ _netboot_build_dir }}"
     state: directory
     mode: "0755"
-  delegate_to: localhost
 
-- name: Ensure local build output directory exists
+- name: Ensure builder build output directory exists
   ansible.builtin.file:
-    path: "{{ netboot_local_build_dir }}/output"
+    path: "{{ _netboot_build_dir }}/output"
     state: directory
     mode: "0755"
-  delegate_to: localhost
 
 - name: Clone or update netboot.xyz source at the pinned ref
   ansible.builtin.git:
     repo: "{{ netboot_xyz_repo }}"
-    dest: "{{ netboot_local_build_dir }}/src"
+    dest: "{{ _netboot_build_dir }}/src"
     version: "{{ netboot_xyz_ref }}"
     force: true
-  delegate_to: localhost
   environment:
-    # Bypass any host-level url rewrites in ~/.gitconfig (e.g.,
-    # `insteadOf = https://github.com/`). The clone is anonymous HTTPS
-    # against a public repo, so no creds are needed.
+    # Bypass any host-level url rewrites in the builder's ~/.gitconfig
+    # (e.g., `insteadOf = https://github.com/`). The clone is anonymous
+    # HTTPS against a public repo, so no creds are needed.
     GIT_CONFIG_GLOBAL: /dev/null
   register: _netboot_git
 
 - name: Render user_overrides.yml into the source clone
   ansible.builtin.template:
     src: "{{ playbook_dir }}/templates/netboot/user_overrides.yml.j2"
-    dest: "{{ netboot_local_build_dir }}/src/user_overrides.yml"
+    dest: "{{ _netboot_build_dir }}/src/user_overrides.yml"
     mode: "0644"
-  delegate_to: localhost
   register: _netboot_template
+
+- name: Read the rendered user_overrides back for hashing
+  # The build-input hash covers the rendered overrides + git SHA. The
+  # rendered file lives on the builder, so slurp it back rather than
+  # using lookup('file') (which only reads the controller filesystem).
+  ansible.builtin.slurp:
+    src: "{{ _netboot_build_dir }}/src/user_overrides.yml"
+  register: _netboot_overrides_slurp
 
 - name: Compute a build-input hash (rendered overrides + git SHA)
   ansible.builtin.set_fact:
     _netboot_build_hash: >-
       {{
-        (lookup('ansible.builtin.file',
-                netboot_local_build_dir ~ '/src/user_overrides.yml')
+        ((_netboot_overrides_slurp.content | b64decode)
          ~ _netboot_git.after) | hash('sha256')
       }}
-  delegate_to: localhost
 
 - name: Read prior build hash if present
   ansible.builtin.slurp:
-    src: "{{ netboot_local_build_dir }}/MANIFEST.lastbuild"
+    src: "{{ _netboot_build_dir }}/MANIFEST.lastbuild"
   register: _netboot_lastbuild
-  delegate_to: localhost
   failed_when: false
   changed_when: false
 
 - name: Stat each expected output binary
   ansible.builtin.stat:
-    path: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.local_name }}"
-  delegate_to: localhost
+    path: "{{ _netboot_build_dir }}/output/ipxe/{{ item.local_name }}"
   loop: "{{ netboot_arches_resolved }}"
   loop_control:
     label: "{{ item.public_name }}"
@@ -107,24 +138,26 @@
       }}
 
 - name: Run the netboot.xyz builder container  # noqa: command-instead-of-module
+  # netboot_container_runtime defaults to docker (the builder host is a
+  # real docker host). docker accepts --pull=always and ignores the :Z
+  # SELinux relabel suffix on non-SELinux hosts, so the same command
+  # works whether the runtime is docker or podman.
   ansible.builtin.command:
     cmd: >-
-      podman run --rm
+      {{ netboot_container_runtime | default('docker') }} run --rm
       --pull=always
-      -v {{ netboot_local_build_dir }}/src:/ansible:Z
-      -v {{ netboot_local_build_dir }}/output:/var/www/html:Z
+      -v {{ _netboot_build_dir }}/src:/ansible:Z
+      -v {{ _netboot_build_dir }}/output:/var/www/html:Z
       --workdir /ansible
       {{ netboot_builder_image }}
       ansible-playbook site.yml
   when: _netboot_need_build
-  delegate_to: localhost
   changed_when: true
   register: _netboot_build_run
 
 - name: Re-stat each expected output binary after build
   ansible.builtin.stat:
-    path: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.local_name }}"
-  delegate_to: localhost
+    path: "{{ _netboot_build_dir }}/output/ipxe/{{ item.local_name }}"
   loop: "{{ netboot_arches_resolved }}"
   loop_control:
     label: "{{ item.public_name }}"
@@ -136,7 +169,7 @@
       - item.stat.exists
     fail_msg: >-
       Expected output binary
-      {{ netboot_local_build_dir }}/output/ipxe/{{ item.item.local_name }}
+      {{ _netboot_build_dir }}/output/ipxe/{{ item.item.local_name }}
       is missing after the build step. Check the builder container's
       ansible-playbook output (the prior task) for errors.
   loop: "{{ _netboot_output_stat_post.results }}"
@@ -145,15 +178,14 @@
 
 - name: Persist build hash for next run
   ansible.builtin.copy:
-    dest: "{{ netboot_local_build_dir }}/MANIFEST.lastbuild"
+    dest: "{{ _netboot_build_dir }}/MANIFEST.lastbuild"
     content: "{{ _netboot_build_hash }}"
     mode: "0644"
-  delegate_to: localhost
   when: _netboot_need_build
 
 - name: Write human-readable MANIFEST
   ansible.builtin.copy:
-    dest: "{{ netboot_local_build_dir }}/MANIFEST"
+    dest: "{{ _netboot_build_dir }}/MANIFEST"
     mode: "0644"
     content: |
       ref: {{ netboot_xyz_ref }}
@@ -163,5 +195,18 @@
       {% for item in netboot_arches_resolved %}
         - ipxe/{{ item.local_name }}
       {% endfor %}
-  delegate_to: localhost
   when: _netboot_need_build
+
+# Pull the freshly built binaries from the builder back to the
+# controller's build cache, where the upload/verify stages (second play,
+# against rb5009) expect them. Always fetch: it is cheap (~3 MB total)
+# and keeps the controller cache in lockstep with the builder even when
+# the container build itself was skipped by the hash gate.
+- name: Fetch built binaries from the builder to the controller cache
+  ansible.builtin.fetch:
+    src: "{{ _netboot_build_dir }}/output/ipxe/{{ item.local_name }}"
+    dest: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.local_name }}"
+    flat: true
+  loop: "{{ netboot_arches_resolved }}"
+  loop_control:
+    label: "{{ item.public_name }}"

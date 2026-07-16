@@ -44,6 +44,13 @@ The `igou-aap-ee-rhel9` execution environment already ships
 `ansible.windows`/`community.windows` and the `pywinrm`/`pypsrp` Python
 libraries; the other EEs carry the Python libraries too.
 
+Honest caveat: `microsoft.iis` and `microsoft.ad` are NOT among the
+collections that `igou-aap-ee-rhel9` bundles. Running
+`deploy_iis_website.yaml` or `join_domain.yaml` under AAP therefore needs
+those two collections added to the EE first (out of scope here). Local and
+molecule runs are unaffected — they install everything from the repo-root
+`requirements.yml`, which pins both.
+
 ## Connecting to Windows
 
 No `windows` group exists in `igou-inventory` yet. When adding one, put the
@@ -61,6 +68,22 @@ ansible_port: 5986
 ansible_winrm_transport: ntlm
 # Lab only: Windows generates a self-signed cert for the HTTPS listener
 ansible_winrm_server_cert_validation: ignore
+ansible_user: Administrator
+ansible_password: "{{ lookup('community.general.onepassword', 'windows-administrator', field='password', vault='lab_agents') }}"
+```
+
+Alternative — PSRP (PowerShell Remoting over WinRM). Same NTLM / port 5986
+/ self-signed-cert-ignore plumbing as `winrm`, just a different connection
+plugin backed by `pypsrp` (already in the EEs). This is what the molecule
+scenarios use:
+
+```yaml
+---
+ansible_connection: psrp
+ansible_port: 5986
+ansible_psrp_auth: ntlm
+# Lab only: accept the self-signed HTTPS listener cert
+ansible_psrp_cert_validation: ignore
 ansible_user: Administrator
 ansible_password: "{{ lookup('community.general.onepassword', 'windows-administrator', field='password', vault='lab_agents') }}"
 ```
@@ -119,7 +142,7 @@ ansible-navigator run playbooks/windows/provision_test_machine.yaml \
 - Variables are prefixed `windows_` and documented in each playbook header.
 - Passwords arrive via extra_vars (ideally a
   `community.general.onepassword` lookup) and the tasks that handle them
-  set `no_log: true`.
+  set `no_log: true` or rely on the module's own argument-level redaction.
 - No `become:` — privilege comes from the connection user; Windows
   `runas` escalation is a separate mechanism you rarely need.
 - Reboots are opt-in (`install_updates.yaml`) or module-managed where a

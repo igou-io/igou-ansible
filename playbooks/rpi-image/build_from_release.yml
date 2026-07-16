@@ -265,20 +265,25 @@
             executable: /bin/bash
           register: _rpi_release_customize
           changed_when: "'CUSTOMIZE_OK' in _rpi_release_customize.stdout"
+          # The rendered command embeds the password hash when one is
+          # supplied — keep it out of failure output and -v logs.
+          no_log: "{{ rpi_image_user1passhash is defined }}"
 
         - name: Bake extra packages (chroot apt, optional)
           ansible.builtin.shell: |
             set -euo pipefail
             mnt='{{ _mnt }}'
             crt='{{ _chroot_cmd }}'
-            for d in proc sys dev dev/pts; do mount --bind "/$d" "$mnt/$d"; done
-            cp /etc/resolv.conf "$mnt/etc/resolv.conf.build"
-            mv "$mnt/etc/resolv.conf" "$mnt/etc/resolv.conf.orig" 2>/dev/null || true
-            mv "$mnt/etc/resolv.conf.build" "$mnt/etc/resolv.conf"
+            # Trap is armed BEFORE the binds: a failed mid-loop mount
+            # must still unwind whatever did get mounted.
             trap '
               mv -f "$mnt/etc/resolv.conf.orig" "$mnt/etc/resolv.conf" 2>/dev/null || true
               umount -q "$mnt/dev/pts" "$mnt/dev" "$mnt/sys" "$mnt/proc" 2>/dev/null || true
             ' EXIT
+            for d in proc sys dev dev/pts; do mount --bind "/$d" "$mnt/$d"; done
+            cp /etc/resolv.conf "$mnt/etc/resolv.conf.build"
+            mv "$mnt/etc/resolv.conf" "$mnt/etc/resolv.conf.orig" 2>/dev/null || true
+            mv "$mnt/etc/resolv.conf.build" "$mnt/etc/resolv.conf"
             $crt "$mnt" apt-get update -qq
             DEBIAN_FRONTEND=noninteractive $crt "$mnt" \
               apt-get install -y --no-install-recommends {{ rpi_image_extra_packages | join(' ') }}

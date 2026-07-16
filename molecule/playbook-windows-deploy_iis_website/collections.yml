@@ -1,0 +1,30 @@
+---
+# Test-only dependencies for this scenario. david_igou.molecule_provisioners is
+# kept out of the repo's main requirements.yml so it never lands in EE images;
+# it is pinned here as a git source so the scenario controls exactly the
+# provisioner revision it tests against.
+collections:
+  # Windows KubeVirt guest support (connection: psrp + sysprep_secret) merged
+  # to main in provisioner PR #55 (the feature branch was deleted). Installing
+  # it also pulls the provisioner's own galaxy deps (kubernetes.core,
+  # community.crypto, community.general, ...).
+  # TODO: re-pin to a Galaxy release once a version is cut.
+  - name: https://github.com/david-igou/ansible-collection-molecule_provisioners.git
+    type: git
+    version: main
+  # kubernetes.core: verify creates the NodePort Service + reads the node
+  # InternalIP; destroy removes the Service.
+  - name: kubernetes.core
+    version: ">=5.0.0"
+  # ansible.windows: win_feature / win_file / win_copy / win_uri (converge
+  # playbook) + win_shell / win_stat (verify in-guest checks).
+  - name: ansible.windows
+    version: ">=2.0.0"
+  # community.windows: win_firewall_rule (converge playbook opens the site port).
+  - name: community.windows
+    version: ">=2.0.0"
+  # microsoft.iis: web_app_pool + website (converge playbook). Only converge
+  # needs it — verify probes the site EXTERNALLY over HTTP and reads the site
+  # object with a raw Get-IISSite win_shell, so it does not import IIS modules.
+  - name: microsoft.iis
+    version: ">=1.0.0"

@@ -1,0 +1,44 @@
+---
+# Converge = run the REAL playbook unmodified against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: the real playbook targets
+# `{{ ansible_limit | default('windows') }}`, and a pattern that matches zero
+# hosts would "pass" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the imported playbook would
+          match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# The real playbook, unmodified. BOUNDED pass: only 'Definition Updates' (small,
+# fast, reboot-free) with reboot disabled, so a full install completes inside
+# the test window and never surprise-restarts the VM. windows_updates_state is
+# left at its playbook default (installed).
+- name: Converge — run playbooks/windows/install_updates.yaml unmodified
+  ansible.builtin.import_playbook: ../../playbooks/windows/install_updates.yaml
+  vars:
+    windows_updates_categories:
+      - Definition Updates
+    windows_updates_reboot: false
+    # KB4052623 (Defender antimalware PLATFORM update) ships under this
+    # category but has CHAINED applicability: Windows Update only offers it
+    # AFTER the fresh definitions from this same pass are installed, so a
+    # single reboot-free pass can never both see and install it (reproduced
+    # deterministically on two clean golden clones: converge found=2 /
+    # installed=2, every post-converge re-search found exactly KB4052623).
+    # Chained updates are what the playbook's windows_updates_reboot=true
+    # re-check loop is for; this scenario keeps reboots off, so pin the
+    # platform KB out via the playbook's documented reject_list var.
+    # verify.yml mirrors this exact filter in its re-search — keep in sync.
+    windows_updates_reject_list:
+      - KB4052623

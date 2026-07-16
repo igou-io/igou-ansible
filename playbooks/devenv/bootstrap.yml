@@ -1,52 +1,87 @@
 ---
 # Phase 2 of the devenv lifecycle: configure the freshly-provisioned VM into a
 # Docker host capable of running the igou-devenv devcontainer, using my
-# david_igou.devhost collection, then launch code-server from the published image.
+# david_igou.devhost collection, then launch the igou-devenv devcontainer
+# natively (devcontainer up from the published release image) — it serves
+# code-server always-on and autostarts on boot via a systemd unit.
 #
-# Reached over SSH by AAP: the kubevirt.core inventory (source igou_kubevirt_ocp)
-# resolves this host's virt-launcher pod IP; the play connects as remote_user igou
-# (ansible.cfg) with the `ansible_user_ed25519` machine credential. The workflow
-# node passes ansible_limit=devenv-devenv (hosts: reads it before group_vars apply).
+# Targets the `devenv` inventory group (github.com/igou-io/igou-inventory):
+# every devenv VM is added to that group and converged against the real
+# inventory, so its per-host connection details (ansible_host) and the ghapp
+# GitHub App wiring (group_vars/devenv/ghapp.yml — 1Password lookups) attach
+# automatically. `ansible_limit` still narrows the run to a single host when
+# passed (AAP limit field or `--limit`); it defaults to the whole `devenv`
+# group. The play connects as remote_user igou (ansible.cfg) with the
+# `ansible_user_ed25519` machine credential.
 #
 # NB: intentionally NO play-level become. The david_igou.devhost roles self-elevate
 # per task, and the packages role's user-level npm / @devcontainers/cli tasks must
 # run as the igou login user (not root).
 - name: Configure the devenv host via david_igou.devhost
-  hosts: "{{ ansible_limit | default('devenv-devenv') }}"
+  hosts: "{{ ansible_limit | default('devenv') }}"
   gather_facts: false
   vars:
-    # Keep the host lean (devhost >= 27.0.0 mise interface). A devcontainer host only
-    # needs docker + a distro Node.js + @devcontainers/cli; the CLI toolset lives in
-    # the devcontainer, so mise (packages_install_cli_tools) stays OFF. cli_tools=false
-    # installs the distro Node.js fallback for @devcontainers/cli and skips the heavy
-    # CLI/pip/extra-OS-package work (incl. the dnf5-fragile CRB/EPEL step).
-    packages_install_cli_tools: false
-    packages_install_extra_packages: false
-    packages_install_pip_packages: false
-    packages_install_onepassword: false
-    packages_install_github_cli: false
-    packages_install_claude_code: false
-    packages_install_cursor_agent: false
+    # Toolset profile (devhost >= 27.0.0 mise interface). The operator wants the
+    # FULL devhost toolset on the box itself (not just inside the devcontainer):
+    # the mise-pinned CLI set (kubectl/helm/oc/... + Node.js), 1Password CLI,
+    # GitHub CLI, Claude Code, the Cursor agent, the extra OS packages, and the
+    # pip layer. `devenv_full_toolset` drives all of the packages role's feature
+    # toggles so the physical devhost rebuild gets the complete set by default;
+    # flip it off for a lean devcontainer-only host with `-e devenv_full_toolset=false`
+    # (that restores the old profile: docker + distro Node.js + @devcontainers/cli
+    # only, skipping mise and the extra-package work). On CentOS Stream 10 the
+    # extra-package step's `dnf config-manager --set-enabled crb` works with the
+    # stock dnf 4.20 — the earlier "dnf5-fragile" caveat does not manifest on this
+    # image. mise install needs a GITHUB_TOKEN in the environment (packages role
+    # default reads it from env) to avoid the 60/hr anonymous GitHub API limit.
+    devenv_full_toolset: true
+    packages_install_cli_tools: "{{ devenv_full_toolset }}"
+    packages_install_extra_packages: "{{ devenv_full_toolset }}"
+    packages_install_pip_packages: "{{ devenv_full_toolset }}"
+    packages_install_onepassword: "{{ devenv_full_toolset }}"
+    packages_install_github_cli: "{{ devenv_full_toolset }}"
+    packages_install_claude_code: "{{ devenv_full_toolset }}"
+    packages_install_cursor_agent: "{{ devenv_full_toolset }}"
 
     # docker role: install the full daemon (docker-ce + containerd.io).
     docker_install_daemon: true
 
     # devenv extras
     devenv_repo: https://github.com/igou-io/igou-devenv.git
-    devenv_repo_version: main
-    devenv_image: ghcr.io/igou-io/igou-devenv:latest
+    # Pinned to the igou-devenv release cut for this rebuild (git tag +
+    # container image promoted by digest from the tested :latest). Bump both
+    # together when adopting a newer release.
+    # v2026.07.12-2 carries the post-create guard that lets the VM's
+    # read-only file-based ghapp config mount win over the op-based seed.
+    devenv_repo_version: v2026.07.12-2
+    devenv_image: ghcr.io/igou-io/igou-devenv:2026.07.12-2
     devenv_launch_devcontainer: true
 
-    # GitHub App runtime tokens (ghapp, local-mint mode). Gated OFF so this is
-    # a no-op until launched with -e devenv_ghapp_enabled=true. When on, the
-    # igou-dev App identity/key default from 1Password (vault claude; override
-    # devenv_ghapp_op_vault/_item or pass ghapp_client_* directly). The role
-    # params below are only templated when the gated role runs.
-    devenv_ghapp_enabled: false
-    ghapp_client_enabled: true
-    ghapp_client_user: igou
-    devenv_ghapp_op_item: igou-dev-github-app
-    devenv_ghapp_op_vault: claude
+    # GitHub App runtime tokens (ghapp, local-mint mode). ON by default so the
+    # devhost mints repo-scoped ~1h GitHub tokens instead of carrying a static
+    # PAT; disable with -e devenv_ghapp_enabled=false.
+    #
+    # This is the ONLY ghapp var set here on purpose: it is a non-secret
+    # behavior toggle. The App identity, installation map, private-key source
+    # (op:// lookup), enabled flag, config user, and pinned plugin ref all live
+    # in the inventory as group_vars/devenv/ghapp.yml — the authoritative source
+    # per the roles-as-functions directive (op:// references belong in inventory
+    # data, not play vars or role tasks). Do NOT reintroduce ghapp_client_*
+    # here: play vars OUTRANK group_vars, so any ghapp_* left in this vars: block
+    # would silently shadow the inventory values.
+    #
+    # Key source note (implemented in group_vars): the op lookups resolve on the
+    # ANSIBLE CONTROLLER (the devcontainer or the AAP EE, both of which have op
+    # + 1P auth) and the PEM is written 0600 to ~/.config/ghapp/key.pem on the
+    # host via ghapp_client_private_key_content. We deliberately do NOT use
+    # private_key_cmd (`op read`) on the host: even with the 1Password CLI now
+    # installed (full toolset), the host has no 1P credential of its own (no
+    # Connect token / service account), so an on-host `op read` would have
+    # nothing to authenticate with — and seeding one would just move a
+    # long-lived secret onto the box, which is what ghapp exists to avoid.
+    # In-container we DO use private_key_cmd, because the devcontainer already
+    # has op auth bind-mounted (see igou-devenv).
+    devenv_ghapp_enabled: true
 
   pre_tasks:
     - name: Wait for the VM's SSH to come up
@@ -66,33 +101,205 @@
     - name: Gather facts (after the connection is proven)
       ansible.builtin.setup:
 
+    # The CentOS Stream 10 golden cloud image ships kernel-modules /
+    # kernel-modules-core but NOT the legacy netfilter compat modules
+    # (xt_addrtype, iptable_nat, br_netfilter) that live in
+    # kernel-modules-extra. docker-ce 29's daemon startup programs iptables NAT
+    # rules (`-m addrtype --dst-type LOCAL`) and fails to start without them
+    # ("Extension addrtype revision 0 not supported, missing kernel module?").
+    # Install the extra modules pinned to the running kernel and load them
+    # (persisted via modules-load.d) BEFORE the docker role starts the daemon.
+    - name: Ensure Docker's netfilter kernel modules are available
+      become: true
+      block:
+        - name: Install kernel-modules-extra matching the running kernel
+          ansible.builtin.dnf:
+            name: "kernel-modules-extra-{{ ansible_kernel }}"
+            state: present
+
+        - name: Persist the netfilter modules for load at boot
+          ansible.builtin.copy:
+            dest: /etc/modules-load.d/docker-netfilter.conf
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Loaded for docker-ce's iptables/NAT bridge networking (see
+              # playbooks/devenv/bootstrap.yml). These live in
+              # kernel-modules-extra, absent from the CentOS Stream 10 golden image.
+              xt_addrtype
+              iptable_nat
+              br_netfilter
+
+        - name: Load the netfilter modules now
+          community.general.modprobe:
+            name: "{{ item }}"
+            state: present
+          loop:
+            - xt_addrtype
+            - iptable_nat
+            - br_netfilter
+
   roles:
     - role: david_igou.devhost.docker
     - role: david_igou.devhost.packages
     - role: david_igou.devhost.ghapp
       when: devenv_ghapp_enabled | bool
-      # Override vars use a devenv_-prefixed name so the role param can't
-      # reference itself (a self-referential {{ ghapp_client_id | default(...) }}
-      # recurses at arg-spec validation). Pass devenv_ghapp_client_id/... at
-      # launch to override the 1Password default.
+      # No vars: block. The role reads its parameters (ghapp_client_id,
+      # ghapp_client_app_slug, ghapp_client_installations,
+      # ghapp_client_private_key_content, ghapp_client_enabled, ghapp_client_user,
+      # ghapp_package_git_ref) straight from the inventory group_vars/devenv/
+      # ghapp.yml — validated by the role's argument_specs. Keeping them out of
+      # the play is deliberate: play/role vars outrank group_vars, so setting
+      # them here would shadow the inventory. Override at launch with extra vars
+      # (-e ghapp_client_id=...), which win over both.
+
+    # Prometheus node_exporter as a host systemd service (downloads the binary,
+    # creates a system user + hardened unit, enables the service) so the devenv
+    # VM's host metrics are scrapeable — mirrors playbooks/linux/node_exporter.yaml.
+    # This play has no play-level become (the devhost roles self-elevate and the
+    # packages role's user-level tasks must run as the igou login user), so
+    # become is set on the role itself. Binds all interfaces (0.0.0.0:9100) by
+    # default so the exporter is reachable on the VM's LAN address; override
+    # node_exporter_listen_address per host/group in inventory to narrow it.
+    - role: prometheus.prometheus.node_exporter
+      become: true
       vars:
-        ghapp_client_id: >-
-          {{ devenv_ghapp_client_id | default(lookup('community.general.onepassword',
-             devenv_ghapp_op_item, field='client_id', vault=devenv_ghapp_op_vault), true) }}
-        ghapp_client_app_slug: "{{ devenv_ghapp_app_slug | default('igou-dev') }}"
-        ghapp_client_installations: "{{ devenv_ghapp_installations | default(dict([['david-igou', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_david-igou', vault=devenv_ghapp_op_vault)], ['igou-io', lookup('community.general.onepassword', devenv_ghapp_op_item, field='installation_id_igou-io', vault=devenv_ghapp_op_vault)]]), true) }}"
-        ghapp_client_private_key_content: >-
-          {{ devenv_ghapp_private_key | default(lookup('community.general.onepassword',
-             devenv_ghapp_op_item, field='private_key', vault=devenv_ghapp_op_vault), true) }}
+        node_exporter_web_listen_address: "{{ node_exporter_listen_address | default('0.0.0.0:9100') }}"
 
   post_tasks:
-    - name: Clone the igou-devenv repo (public, HTTPS — no agent forwarding needed)
+    - name: Reset the connection so the docker group grant takes effect
+      # Group membership is evaluated at login; the ControlPersist session was
+      # opened before the docker role added the user to the docker group, so
+      # the unprivileged `devcontainer up` below would hit docker.sock EACCES
+      # on a fresh host's first bootstrap (AAP job 482). meta doesn't support
+      # `when`, so this runs unconditionally — a harmless reconnect on
+      # already-bootstrapped hosts.
+      ansible.builtin.meta: reset_connection
+
+    # ------------------------------------------------------------------
+    # Set the operator's global git identity on the host user's ~/.gitconfig.
+    # The david_igou.devhost.host_prep role is intentionally NOT in this play's
+    # roles (its repo-clone defaults would fight the workspace seeding below), so
+    # its git_config tasks are mirrored here as a dedicated step reading the
+    # host_prep_git_* vars from group_vars/devenv/gitconfig.yml. Applied before
+    # the clones so any commit made afterwards — on the box or in the
+    # devcontainer that inherits the bind-mounted ~/.gitconfig — is attributed
+    # correctly. The ghapp role supplies the credential helper; this supplies the
+    # author identity.
+    # ------------------------------------------------------------------
+    - name: Set global git user.name
+      community.general.git_config:
+        name: user.name
+        scope: global
+        value: "{{ host_prep_git_user_name }}"
+      when: host_prep_git_user_name | default('') | length > 0
+
+    - name: Set global git user.email
+      community.general.git_config:
+        name: user.email
+        scope: global
+        value: "{{ host_prep_git_user_email }}"
+      when: host_prep_git_user_email | default('') | length > 0
+
+    # ------------------------------------------------------------------
+    # Write the operator's ~/.ssh/config on the host user. Like the git identity
+    # above, this mirrors a david_igou.devhost.host_prep task (its "Write SSH
+    # config" step) that this play deliberately does not run, reading the same
+    # host_prep_ssh_config var from group_vars/devenv/ssh.yml. host_prep normally
+    # also creates ~/.ssh via host_prep_directories, so the dir is ensured here
+    # first (cloud-init may not have created it). Skipped when the var is empty.
+    # Bind-mounted into the devcontainer, so the container inherits it too.
+    # ------------------------------------------------------------------
+    - name: Ensure the host ~/.ssh directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.ssh"
+        state: directory
+        mode: "0700"
+      when: host_prep_ssh_config | default('') | length > 0
+
+    - name: Write the host SSH config
+      ansible.builtin.copy:
+        content: "{{ host_prep_ssh_config }}"
+        dest: "{{ ansible_user_dir }}/.ssh/config"
+        mode: "0600"
+      when: host_prep_ssh_config | default('') | length > 0
+
+    # ------------------------------------------------------------------
+    # Seed ~/workspace so the devcontainer's /workspace mirrors the operator's
+    # physical devhost — a directory of ALL the working repos — instead of just
+    # the igou-devenv clone. The canonical devcontainer.json ALREADY bind-mounts
+    # ${localEnv:HOME}/workspace -> /workspace, so simply cloning the repos here
+    # (as the igou user, before `devcontainer up`) is all it takes for them to
+    # appear in the container — no mount/workspaceFolder change needed. They also
+    # show up live in an already-running container (bind mount), so Task 2 needs
+    # no container recreate.
+    #
+    # igou-devenv itself deliberately stays at ~/igou-devenv (NOT inside
+    # ~/workspace): the devcontainer's workspaceMount overlays it onto
+    # /workspace/igou-devenv, so in-container the layout matches the laptop
+    # exactly, while on the host ~/workspace/igou-devenv is just that overlay's
+    # (root-owned) mountpoint. Cloning into that mountpoint while the container
+    # holds it fails "Permission denied", so we keep igou-devenv one level up.
+    # ------------------------------------------------------------------
+    - name: Ensure the host workspace directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/workspace"
+        state: directory
+        mode: "0755"
+
+    - name: Clone the igou-devenv repo at the pinned release (public, HTTPS)
+      # Pinned to devenv_repo_version and updated on converge — the one repo the
+      # automation owns; the rest below are clone-if-absent only. Kept at
+      # ~/igou-devenv (the container's workspaceFolder), surfaced in-container at
+      # /workspace/igou-devenv via the devcontainer.json workspaceMount overlay.
       ansible.builtin.git:
         repo: "{{ devenv_repo }}"
         dest: "{{ ansible_user_dir }}/igou-devenv"
         version: "{{ devenv_repo_version }}"
 
-    - name: Install the Docker SDK for Python (community.docker.docker_container needs it on the target)
+    - name: Pre-seed the operator's workspace repos (clone if absent; never touch WIP)  # noqa: latest[git]
+      # noqa latest[git]: these repos deliberately track their default branch and
+      # are clone-if-absent only (update:false), so there is nothing to pin — the
+      # operator's WIP branch/checkout is whatever they leave in place. The one
+      # pinned, automation-owned repo is igou-devenv, cloned above at a tag.
+      # update:false → an existing clone is left exactly as-is (work-in-progress
+      # safety); only missing repos are cloned. Runs as the igou user over HTTPS,
+      # so the ghapp git credential helper mints App tokens for private repos in
+      # the selected set; public repos clone anonymously. GIT_TERMINAL_PROMPT=0
+      # makes a repo the App can't mint for (private + unselected, or an org the
+      # App isn't installed on) fail fast instead of hanging on a credential
+      # prompt. ignore_errors keeps the play going — unreachable repos are
+      # summarized below, not fatal.
+      ansible.builtin.git:
+        repo: "{{ item }}"
+        dest: "{{ ansible_user_dir }}/workspace/{{ item | basename | regex_replace('\\.git$', '') }}"
+        update: false
+      loop: "{{ devenv_workspace_repos | default([]) }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      environment:
+        GIT_TERMINAL_PROMPT: "0"
+      register: devenv_workspace_clone
+      ignore_errors: true
+
+    - name: Summarize any workspace repos that could not be cloned
+      # Fail soft: these are almost always private repos outside the ghapp App's
+      # selected set, or orgs the App isn't installed on (e.g. third-party). The
+      # operator can add them by hand; the rest of the play proceeds.
+      ansible.builtin.debug:
+        msg: >-
+          Skipped (clone failed — private repo outside the ghapp App's selected
+          set, or an org the App isn't installed on):
+          {{ devenv_workspace_clone.results
+             | selectattr('failed', 'defined') | selectattr('failed')
+             | map(attribute='item') | list }}
+      when:
+        - devenv_workspace_clone.results is defined
+        - devenv_workspace_clone.results
+          | selectattr('failed', 'defined') | selectattr('failed') | list | length > 0
+
+    - name: Install the Docker SDK for Python (the community.docker modules need it on the target)
       # python3-docker is in EPEL; enable EPEL only (from the Stream extras repo) — this
       # does NOT run the dnf5-fragile CRB step the packages role's extra_packages would.
       become: true
@@ -106,29 +313,256 @@
             name: python3-docker
             state: present
 
-    - name: Launch code-server (detached) from the published devenv image
+    # ------------------------------------------------------------------
+    # Native devcontainer launch (@devcontainers/cli), replacing the earlier
+    # bare `docker run` of the release image. `devcontainer up` gives the VM
+    # the SAME environment as the laptop/devhost path: init.sh creates every
+    # missing host mount source (including an empty ~/.config/op), the full
+    # runArgs set applies (--privileged --network=host, /dev, fuse/tun — so
+    # bwrap/agent sandboxes work with no seccomp override), post-create seeds
+    # the dotfiles (.bashrc with ght/GHAPP_CONFIG), and post-start brings up
+    # the container-local ssh-agent, dbus/libvirt, and an always-on
+    # code-server (0.0.0.0:8080, HTTPS self-signed, password auth — the
+    # config persists on the host via the ~/.config/code-server mount).
+    #
+    # The image is NOT built on the VM: like the repo's `make up-release`,
+    # jq derives an image-based config from the canonical devcontainer.json
+    # (del(.build) + .image = the pinned release). One VM-only addition: the
+    # host's FILE-BASED ghapp config (config.yaml with private_key_path +
+    # key.pem, rendered 0600 by the devhost ghapp role) is bind-mounted
+    # read-only at /home/igou/.config/ghapp, so the baked ghapp CLI + git
+    # credential helper mint GitHub App tokens with NO 1P credential on this
+    # VM. post-create (>= v2026.07.12-2) seeds the op-based dotfiles config
+    # only when this path is absent, so the laptop flow is untouched and the
+    # mounted config wins here. `--update-remote-user-uid-default off` skips
+    # the CLI's uid-remap wrapper image (host and container igou are both
+    # uid 1000), keeping the running container on the pinned tag itself —
+    # which is also what the recreate-on-image-change check below compares.
+    # ------------------------------------------------------------------
+    - name: Remove the legacy bare code-server container (superseded by the native devcontainer)
+      # Pre-devcontainer revisions ran the image directly as
+      # igou-devenv-code-server publishing :8080; the devcontainer is
+      # host-network on the same port, so the old container must go.
       community.docker.docker_container:
         name: igou-devenv-code-server
-        image: "{{ devenv_image }}"
-        state: started
-        pull: true
-        restart_policy: unless-stopped
-        user: igou
-        env:
-          HOME: /home/igou
-        ports:
-          - "8080:8080"
-        volumes:
-          - "{{ ansible_user_dir }}/igou-devenv:/workspace:Z"
-        command: code-server --bind-addr 0.0.0.0:8080 /workspace --cert
+        state: absent
+      become: true
+
+    - name: Pull the pinned devenv release image
+      community.docker.docker_image_pull:
+        name: "{{ devenv_image }}"
       become: true
       when: devenv_launch_devcontainer | bool
+
+    - name: Ensure the derived-config directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.local/share/igou-devenv"
+        state: directory
+        mode: "0755"
+
+    - name: Derive the image-based devcontainer config (the repo's `make up-release` pattern)
+      ansible.builtin.command:
+        argv:
+          - jq
+          - --arg
+          - img
+          - "{{ devenv_image }}"
+          - --arg
+          - ghapp_mount
+          - >-
+            source={{ ansible_user_dir }}/.config/ghapp,target=/home/igou/.config/ghapp,type=bind,readonly
+          - del(.build) | .image = $img | .mounts += [$ghapp_mount]
+          - "{{ ansible_user_dir }}/igou-devenv/.devcontainer/devcontainer.json"
+      register: devenv_devcontainer_render
+      changed_when: false
+
+    - name: Write the derived devcontainer config
+      ansible.builtin.copy:
+        content: "{{ devenv_devcontainer_render.stdout }}\n"
+        dest: "{{ ansible_user_dir }}/.local/share/igou-devenv/devcontainer-release.json"
+        mode: "0644"
+
+    # ------------------------------------------------------------------
+    # code-server login password (owned by 1Password, not the random value
+    # code-server would self-generate). ~/.config/code-server is a persistent
+    # bind mount into the container, so writing the config on the host here —
+    # BEFORE `devcontainer up` — means post-create's "seed only if absent" guard
+    # and post-start's "generate only if no password" guard both no-op, and this
+    # password wins. When the value changes we recreate/restart the container
+    # below so code-server re-reads it. The file also carries the bind-addr/auth/
+    # cert keys (owned wholesale here) that code-server-config.yaml ships with.
+    # ------------------------------------------------------------------
+    - name: Ensure the host code-server config directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.config/code-server"
+        state: directory
+        mode: "0700"
+
+    - name: Write the code-server config with the 1Password-sourced password
+      ansible.builtin.copy:
+        dest: "{{ ansible_user_dir }}/.config/code-server/config.yaml"
+        mode: "0600"
+        content: |
+          # Ansible managed (igou-ansible playbooks/devenv/bootstrap.yml).
+          # Password sourced from 1Password via
+          # group_vars/devenv/code-server.yml. Bound to 0.0.0.0 (host network);
+          # password auth is mandatory — the container is privileged with /dev
+          # mounted, so this port is full host access.
+          bind-addr: 0.0.0.0:8080
+          auth: password
+          cert: true
+          password: {{ devenv_code_server_password }}
+      no_log: true
+      register: devenv_cs_config
+
+    - name: Read the current devcontainer state
+      community.docker.docker_container_info:
+        name: igou-devenv
+      register: devenv_devcontainer_info
+      become: true
+      when: devenv_launch_devcontainer | bool
+
+    - name: Decide whether the devcontainer must be recreated
+      # Recreate only when it is missing or running a different image than the
+      # pin (a new release). Promoted to a fact — instead of the launch task's
+      # inline var — so the code-server-password restart task below can read it.
+      # Mirrors the upstream short-circuit so `.container` is never dereferenced
+      # when the container does not exist.
+      ansible.builtin.set_fact:
+        devenv_devcontainer_recreate: >-
+          {{ not devenv_devcontainer_info.exists
+             or devenv_devcontainer_info.container.Config.Image != devenv_image }}
+      when: devenv_launch_devcontainer | bool
+
+    - name: Drop code-server so the relaunch below applies a changed password
+      # post-start.sh (re)starts code-server only when its port is free, so a
+      # warm `devcontainer up` keeps the OLD password running. Cycling the
+      # container stops code-server (the image ships no pkill/pgrep, and
+      # `docker restart` alone does NOT rerun the devcontainer postStartCommand),
+      # so the `devcontainer up` immediately below reruns post-start against a
+      # free port and relaunches code-server reading the new config. Skipped when
+      # the container is missing or about to be recreated — those paths start
+      # code-server fresh with the new password anyway.
+      become: true
+      ansible.builtin.command:
+        argv:
+          - docker
+          - restart
+          - igou-devenv
+      changed_when: true
+      when:
+        - devenv_launch_devcontainer | bool
+        - devenv_cs_config is changed
+        - devenv_devcontainer_info.exists
+        - not devenv_devcontainer_recreate
+
+    - name: Launch the devcontainer from the pinned release image
+      # Idempotent: `devcontainer up` reuses a running container (rerunning
+      # post-start only). --remove-existing-container is added exactly when
+      # devenv_devcontainer_recreate is true (see the fact above), so converging
+      # a new release recreates it (post-create reruns; state that must survive
+      # lives on host mounts: code-server config/password, extensions,
+      # ~/.claude, ssh known_hosts, ...).
+      ansible.builtin.command:
+        argv: >-
+          {{
+            [
+              ansible_user_dir + '/.local/bin/devcontainer',
+              'up',
+              '--workspace-folder', ansible_user_dir + '/igou-devenv',
+              '--override-config',
+              ansible_user_dir + '/.local/share/igou-devenv/devcontainer-release.json',
+              '--update-remote-user-uid-default', 'off'
+            ]
+            + (['--remove-existing-container'] if devenv_devcontainer_recreate else [])
+          }}
+      register: devenv_devcontainer_up
+      changed_when: devenv_devcontainer_recreate
+      when: devenv_launch_devcontainer | bool
+
+    - name: Install the igou-devenv systemd unit (devcontainer autostart on boot)
+      # The devcontainer CLI creates containers without a docker restart
+      # policy, so after a VM reboot the container sits stopped until
+      # `devcontainer up` runs again. This oneshot unit does exactly that as
+      # the igou user (docker group): ExecStart is the idempotent
+      # `devcontainer up` (on a warm container it reuses it and reruns
+      # post-start — ssh-agent, dbus/libvirt, code-server — the CLI's own
+      # boot-recovery path). ExecStop mirrors the repo's `make down`: it
+      # removes the container by its devcontainer local_folder label. Restart=
+      # is not valid for oneshot, but `systemctl restart igou-devenv` is
+      # stop+start — ExecStop (down) then ExecStart (up) — so it cleanly
+      # brings the container down and back up (and `systemctl stop` now
+      # actually stops it, instead of leaving it running).
+      become: true
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/igou-devenv.service
+        mode: "0644"
+        content: |
+          # Ansible managed (igou-ansible playbooks/devenv/bootstrap.yml)
+          [Unit]
+          Description=igou-devenv devcontainer (code-server IDE)
+          Wants=network-online.target
+          After=network-online.target docker.service
+          Requires=docker.service
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          User=igou
+          Group=igou
+          WorkingDirectory={{ ansible_user_dir }}/igou-devenv
+          Environment=HOME={{ ansible_user_dir }}
+          Environment=PATH={{ ansible_user_dir }}/.local/bin:/usr/local/bin:/usr/bin:/bin
+          # ExecStart must go through a system interpreter: SELinux denies
+          # systemd (init_t) execve of a script under /home (the npm
+          # user-install lands devcontainer as gconf_home_t), failing with
+          # 203/EXEC "Permission denied". Exec'ing /usr/bin/bash
+          # (shell_exec_t) first transitions the service into an unconfined
+          # service domain, which may then exec the user-home script.
+          # Live-verified on devenv-vlan9: the direct path fails 203, the
+          # wrapped one starts clean.
+          ExecStart=/usr/bin/bash -c 'exec {{ ansible_user_dir }}/.local/bin/devcontainer up --workspace-folder {{ ansible_user_dir }}/igou-devenv --override-config {{ ansible_user_dir }}/.local/share/igou-devenv/devcontainer-release.json --update-remote-user-uid-default off'
+          # Down = remove the container by its devcontainer local_folder label
+          # (mirrors `make down`). Same /usr/bin/bash -c wrap as ExecStart so
+          # the SELinux init_t->shell transition applies.
+          ExecStop=/usr/bin/bash -c 'cid=$(docker ps -aq --filter "label=devcontainer.local_folder={{ ansible_user_dir }}/igou-devenv"); if [ -n "$cid" ]; then docker rm -f $cid; fi'
+          TimeoutStartSec=900
+
+          [Install]
+          WantedBy=multi-user.target
+      register: devenv_devcontainer_unit
+
+    - name: Enable and start the igou-devenv unit
+      become: true
+      ansible.builtin.systemd_service:
+        name: igou-devenv.service
+        enabled: true
+        state: started
+        daemon_reload: "{{ devenv_devcontainer_unit is changed }}"
 
     - name: Summarize devenv access
       ansible.builtin.debug:
         msg:
           - "devenv host configured (docker-ce + node + @devcontainers/cli)."
-          - "SSH:         ssh -p 30022 igou@<any-node-ip>"
-          - "code-server: https://<any-node-ip>:30080  (self-signed TLS)"
-          - "cs password: docker exec igou-devenv-code-server cat /home/igou/.config/code-server/config.yaml"
-          - "Test a from-scratch build:  cd ~/igou-devenv && make e2e"
+          - "devcontainer: `igou-devenv` (host network, privileged), autostart via igou-devenv.service"
+          - "/workspace:   all operator repos pre-seeded under ~/workspace (mirrors the physical devhost)"
+          - "code-server:  https://<vm-ip>:8080  (self-signed TLS, password from 1Password lab_agents/devenv-code-server)"
+          - "cs password:  op read op://lab_agents/devenv-code-server/password"
+          - "shell:        devcontainer exec --workspace-folder ~/igou-devenv bash"
+
+# ---------------------------------------------------------------------------
+# Tailnet membership: join the devenv host(s) to the tailnet via the shared
+# tailscale play. The imported play targets `{{ ansible_limit | default('none') }}`,
+# so it converges the SAME hosts as the play above when a limit is passed (the
+# devenv_bootstrap AAP template launches with ansible_limit) and no-ops when
+# none is. Designated tags come from inventory (group_vars/devenv/tailscale.yml
+# — REQUIRED, the pettingzoo OAuth client owns the tag in the tailnet ACL).
+#
+# tailscale_authkey overrides the imported play's own vars: default (the legacy
+# awx-vault VPS item) — import_playbook vars outrank the imported play's vars
+# block. The op:// lookup resolves lazily on the controller/EE side (which has
+# 1P Connect auth), so the secret never lands on the host.
+- name: Join the devenv host to the tailnet
+  ansible.builtin.import_playbook: ../tailscale/tailscale.yml
+  vars:
+    tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-oauth-pettingzoo', field='token', vault='lab_external_api_keys') }}"

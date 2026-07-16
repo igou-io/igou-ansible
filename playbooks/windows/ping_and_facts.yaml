@@ -29,9 +29,9 @@
     - name: Show a short system summary
       ansible.builtin.debug:
         msg:
-          - "Hostname: {{ ansible_hostname }}"
-          - "OS:       {{ ansible_os_name | default('unknown') | trim }}"
-          - "Build:    {{ ansible_distribution_version | default('unknown') }}"
-          - "Arch:     {{ ansible_architecture | default('unknown') }}"
-          - "Memory:   {{ ansible_memtotal_mb | default(0) }} MB"
-          - "IPs:      {{ ansible_ip_addresses | default([]) | join(', ') }}"
+          - "Hostname: {{ ansible_facts['hostname'] }}"
+          - "OS:       {{ ansible_facts['os_name'] | default('unknown') | trim }}"
+          - "Build:    {{ ansible_facts['distribution_version'] | default('unknown') }}"
+          - "Arch:     {{ ansible_facts['architecture'] | default('unknown') }}"
+          - "Memory:   {{ ansible_facts['memtotal_mb'] | default(0) }} MB"
+          - "IPs:      {{ ansible_facts['ip_addresses'] | default([]) | join(', ') }}"

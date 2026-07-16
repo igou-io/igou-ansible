@@ -1,0 +1,276 @@
+---
+# Prepare = wait for psrp on BOTH VMs, THEN stand up the AD domain controller.
+#
+# Play 1 is the provisioner's wait_for_connection, which honors each host's
+# connection plugin (psrp) and uses the longer mp_kubevirt_windows_wait_timeout
+# for Windows guests — OOBE specialize + the unattend FirstLogonCommands (WinRM
+# HTTPS listener) run before psrp answers on either VM.
+- name: Prepare molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+
+# Play 2 promotes windc01 into a brand-new AD forest/domain. This is TEST SETUP
+# (the environment the playbook under test needs), NOT the playbook under test.
+# We connect as the LOCAL Administrator (inventory default) throughout.
+- name: Prepare — promote windc01 to an Active Directory domain controller
+  hosts: windc01
+  gather_facts: false
+  vars:
+    # DSRM / safe-mode password reuses the same complexity-satisfying secret as
+    # the local Administrator — one env var, never committed.
+    _windows_admin_password: "{{ lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') }}"
+    # molecule.test — RFC 6761 reserved, guaranteed non-routable, unambiguously
+    # lab-internal. NetBIOS pinned explicitly so the member's down-level
+    # MOLECULE\Administrator join account is deterministic.
+    join_domain_dns_domain: molecule.test
+    join_domain_netbios: MOLECULE
+  tasks:
+    - name: Install the AD Domain Services role and management tools
+      ansible.windows.win_feature:
+        name: AD-Domain-Services
+        include_management_tools: true
+        state: present
+      register: _adds_feature
+
+    - name: Promote windc01 into a new forest for the domain
+      microsoft.ad.domain:
+        dns_domain_name: "{{ join_domain_dns_domain }}"
+        domain_netbios_name: "{{ join_domain_netbios }}"
+        safe_mode_password: "{{ _windows_admin_password }}"
+        install_dns: true
+        # The module owns the promotion reboot; the play resumes once the host
+        # is back. A cold Server 2025 clone's post-promo boot is heavy — give it
+        # generous headroom over the 600s module default.
+        reboot: true
+        reboot_timeout: 1200
+      register: _promotion
+      no_log: true  # safe_mode_password
+
+    # Promotion "returning" is not the same as AD DS being SERVICEABLE: AD Web
+    # Services + the directory take a moment after the reboot. Block until an
+    # in-guest Get-ADDomain actually answers with our domain. ~10 min budget.
+    - name: Wait until AD DS answers Get-ADDomain in-guest
+      ansible.windows.win_shell: |
+        Import-Module ActiveDirectory -ErrorAction Stop
+        (Get-ADDomain).DNSRoot
+      register: _get_addomain
+      until: >-
+        _get_addomain.rc == 0 and
+        (_get_addomain.stdout | trim | lower) == join_domain_dns_domain
+      retries: 30
+      delay: 20
+      changed_when: false
+
+    # DNS is the classic first-join blocker, so prove the DC actually SERVES the
+    # domain locator SRV record before the member tries to join. Query the DC's
+    # own DNS (127.0.0.1) for _ldap._tcp.dc._msdcs.<domain>.
+    - name: Wait until the DC's DNS answers the domain-controller _ldap SRV query
+      ansible.windows.win_shell: >-
+        Resolve-DnsName -Type SRV
+        -Name _ldap._tcp.dc._msdcs.{{ join_domain_dns_domain }}
+        -Server 127.0.0.1 -ErrorAction Stop
+      register: _srv_lookup
+      until: _srv_lookup.rc == 0
+      retries: 30
+      delay: 20
+      changed_when: false
+
+    - name: Report the DC is up and serving the domain
+      ansible.builtin.debug:
+        msg: >-
+          windc01 is a domain controller for {{ join_domain_dns_domain }}
+          (NetBIOS {{ join_domain_netbios }}) and its DNS answers the
+          _ldap._tcp.dc._msdcs SRV locator. Ready for the DNS address fix-up.
+
+# Play 3 discovers the DC's cluster-routable pod IP (same virt-launcher
+# status.podIP read converge.yml uses — NOT the VMI's masquerade 10.0.2.x
+# address) so play 4 can repair the DC's DNS zone. Phase-5 finding: this play
+# pair is REQUIRED under masquerade networking, see play 4's header.
+- name: Prepare — discover the windc01 pod IP for the DNS fix-up
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    join_domain_namespace: molecule
+  tasks:
+    - name: Read the windc01 virt-launcher Pod(s)
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ join_domain_namespace }}"
+        label_selectors:
+          - kubevirt.io/domain=windc01
+      register: _windc01_pods
+
+    - name: Pin the Running windc01 launcher podIP as a fact
+      vars:
+        _running: >-
+          {{ _windc01_pods.resources | default([])
+             | selectattr('status.phase', 'equalto', 'Running') | list }}
+      ansible.builtin.set_fact:
+        dc_pod_ip: "{{ ((_running | first).status.podIP | default('')) if (_running | length > 0) else '' }}"
+
+    - name: Assert the DC pod IP is present and cluster-routable
+      ansible.builtin.assert:
+        that:
+          - dc_pod_ip | length > 0
+          - not (dc_pod_ip is match('^10\.0\.2\.'))
+        fail_msg: >-
+          No Running windc01 launcher pod with a routable podIP (got
+          '{{ dc_pod_ip }}'). Cannot repair the DC's DNS A records.
+        success_msg: "windc01 launcher podIP = {{ dc_pod_ip }} (cluster-routable)."
+
+# Play 4 — Phase-5 finding: make the DC ADVERTISE its cluster-routable pod IP.
+#
+# Under masquerade networking every VM's guest NIC holds the same in-VM address
+# (10.0.2.2). During promotion Windows dynamically registers its A records —
+# windc01.<domain> (DNS client), the domain A and gc._msdcs A (netlogon) — with
+# that address. A joining member then resolves the _ldap SRV locator fine
+# against the DC's pod IP, but the SRV TARGET's A record answers 10.0.2.2,
+# which from the member is its OWN masquerade address — the LDAP ping goes to
+# itself and the join fails in seconds with "The specified domain either does
+# not exist or could not be contacted". Fix: stop both self-registration paths,
+# then rewrite every masquerade-range A record to the pod IP the rest of the
+# cluster can actually reach (masquerade forwards all ports to the VM, so the
+# pod IP works for DNS/LDAP/Kerberos/SMB/RPC alike).
+- name: Prepare — make the DC advertise its cluster-routable pod IP
+  hosts: windc01
+  gather_facts: false
+  vars:
+    join_domain_dns_domain: molecule.test
+    _dc_pod_ip: "{{ hostvars['localhost']['dc_pod_ip'] }}"
+  tasks:
+    - name: Show the A records the DC currently serves (pre-fix evidence)
+      ansible.windows.win_shell: |
+        Get-DnsServerZone | Where-Object { -not $_.IsReverseLookupZone } |
+          ForEach-Object { Get-DnsServerResourceRecord -ZoneName $_.ZoneName -RRType A |
+            Select-Object HostName,
+              @{n='Zone';e={$_.DistinguishedName -replace '^.*?DC=([^,]+\.[^,]+),.*$', '$1'}},
+              @{n='IP';e={$_.RecordData.IPv4Address.IPAddressToString}} } |
+          ConvertTo-Json -Compress
+      register: _dc_a_before
+      changed_when: false
+
+    - name: Record the pre-fix A records in the log
+      ansible.builtin.debug:
+        var: _dc_a_before.stdout
+
+    - name: Stop the DNS client from re-registering the masquerade address
+      ansible.windows.win_shell: >-
+        Get-DnsClient | Set-DnsClient -RegisterThisConnectionsAddress $false
+      changed_when: true
+
+    # Netlogon owns the domain-A (LdapIpAddress) and gc._msdcs-A (GcIpAddress)
+    # registrations; the mnemonics below stop it re-adding 10.0.2.2 on its
+    # periodic refresh or a service restart.
+    - name: Keep netlogon from re-registering the domain and GC A records
+      ansible.windows.win_regedit:
+        path: HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters
+        name: DnsAvoidRegisterRecords
+        data:
+          - LdapIpAddress
+          - GcIpAddress
+        type: multistring
+
+    - name: Restart netlogon so the avoid-list takes effect
+      ansible.windows.win_service:
+        name: Netlogon
+        state: restarted
+
+    - name: Rewrite every masquerade-range A record to the DC pod IP
+      ansible.windows.win_shell: |
+        $pod = '{{ _dc_pod_ip }}'
+        $touched = @()
+        $zones = Get-DnsServerZone |
+          Where-Object { -not $_.IsReverseLookupZone -and $_.ZoneType -eq 'Primary' }
+        foreach ($z in $zones) {
+          $recs = @(Get-DnsServerResourceRecord -ZoneName $z.ZoneName -RRType A -ErrorAction SilentlyContinue |
+            Where-Object { $_.RecordData.IPv4Address.IPAddressToString -like '10.0.2.*' })
+          foreach ($r in $recs) {
+            $new = $r.Clone()
+            $new.RecordData.IPv4Address = [System.Net.IPAddress]::Parse($pod)
+            Set-DnsServerResourceRecord -ZoneName $z.ZoneName -OldInputObject $r -NewInputObject $new
+            $touched += "$($z.ZoneName)/$($r.HostName)"
+          }
+        }
+        # Netlogon never registered the domain apex A here (and the avoid-list
+        # keeps it that way) — make sure the records the join depends on exist
+        # with the pod IP. Enumerate the zone and filter on HostName because
+        # Get-DnsServerResourceRecord -Name '@' does NOT scope to the apex
+        # (Phase-5: it matched non-apex records, so the apex add was skipped).
+        $must = @(
+          @{ Zone = '{{ join_domain_dns_domain }}'; Rec = '@' },
+          @{ Zone = '{{ join_domain_dns_domain }}'; Rec = '{{ inventory_hostname }}' },
+          @{ Zone = '_msdcs.{{ join_domain_dns_domain }}'; Rec = 'gc' }
+        )
+        foreach ($m in $must) {
+          $have = @(Get-DnsServerResourceRecord -ZoneName $m.Zone -RRType A -ErrorAction SilentlyContinue |
+            Where-Object { $_.HostName -eq $m.Rec -and $_.RecordData.IPv4Address.IPAddressToString -eq $pod })
+          if ($have.Count -eq 0) {
+            Add-DnsServerResourceRecordA -ZoneName $m.Zone -Name $m.Rec -IPv4Address $pod
+            $touched += "added $($m.Zone)/$($m.Rec)"
+          }
+        }
+        Clear-DnsServerCache -Force
+        Clear-DnsClientCache
+        "rewritten: $($touched -join ', ')"
+      register: _dns_rewrite
+      changed_when: true
+
+    - name: Record what the sweep rewrote
+      ansible.builtin.debug:
+        var: _dns_rewrite.stdout
+
+    # Prove the DC now answers the SRV target's A and the domain A with the
+    # pod IP, and that the SRV locator survived the netlogon restart. -DnsOnly
+    # is REQUIRED: without it Resolve-DnsName answers from the local DNS client
+    # cache, which still holds the pre-rewrite 10.0.2.2 records for up to their
+    # TTL (Phase-5: the gate read stale cache and failed against fixed zones).
+    - name: Wait until the DC serves cluster-routable answers for the domain
+      ansible.windows.win_shell: |
+        Clear-DnsClientCache
+        $a1 = @(Resolve-DnsName -Name {{ inventory_hostname }}.{{ join_domain_dns_domain }} -Type A -Server 127.0.0.1 -DnsOnly -ErrorAction Stop).IPAddress
+        $a2 = @(Resolve-DnsName -Name {{ join_domain_dns_domain }} -Type A -Server 127.0.0.1 -DnsOnly -ErrorAction Stop).IPAddress
+        $srv = @(Resolve-DnsName -Name _ldap._tcp.dc._msdcs.{{ join_domain_dns_domain }} -Type SRV -Server 127.0.0.1 -DnsOnly -ErrorAction Stop)
+        [pscustomobject]@{ HostA = @($a1); DomainA = @($a2); SrvCount = $srv.Count } |
+          ConvertTo-Json -Compress
+      register: _dns_recheck
+      until: >-
+        _dns_recheck.rc == 0 and
+        ((_dns_recheck.stdout | from_json).SrvCount | int) > 0 and
+        _dc_pod_ip in ([(_dns_recheck.stdout | from_json).HostA] | flatten) and
+        _dc_pod_ip in ([(_dns_recheck.stdout | from_json).DomainA] | flatten) and
+        (([(_dns_recheck.stdout | from_json).HostA] | flatten) + ([(_dns_recheck.stdout | from_json).DomainA] | flatten))
+          | select('match', '^10\.0\.2\.') | list | length == 0
+      retries: 12
+      delay: 10
+      changed_when: false
+
+# Play 5 gates on the member's view: resolving the domain against the DC's pod
+# IP from INSIDE winmem01 proves pod-to-pod (VM-to-VM over masquerade) UDP/53
+# reachability AND the fixed zone data in one shot — the exact path the join
+# uses — before converge spends a member reboot finding out.
+- name: Prepare — prove the member can resolve the domain via the DC pod IP
+  hosts: winmem01
+  gather_facts: false
+  vars:
+    join_domain_dns_domain: molecule.test
+    _dc_pod_ip: "{{ hostvars['localhost']['dc_pod_ip'] }}"
+  tasks:
+    - name: Resolve the domain A record against the DC pod IP from the member
+      ansible.windows.win_shell: |
+        Clear-DnsClientCache
+        (Resolve-DnsName -Name {{ join_domain_dns_domain }} -Type A -Server {{ _dc_pod_ip }} -DnsOnly -ErrorAction Stop).IPAddress
+      register: _member_lookup
+      until: >-
+        _member_lookup.rc == 0 and
+        _dc_pod_ip in (_member_lookup.stdout_lines | map('trim') | list)
+      retries: 6
+      delay: 10
+      changed_when: false
+
+    - name: Report the DC is ready for the member join
+      ansible.builtin.debug:
+        msg: >-
+          windc01 ({{ _dc_pod_ip }}) serves {{ join_domain_dns_domain }} with
+          cluster-routable A records and winmem01 resolves the domain against
+          the DC pod IP over the pod network. Ready for the member join.

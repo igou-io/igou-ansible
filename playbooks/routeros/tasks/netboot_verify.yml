@@ -1,8 +1,11 @@
 ---
 # Verify the deployment end-to-end:
-#   1. Fetch each binary from rb5009 over TFTP (size compare).
-#   2. Fetch menu.ipxe from the TrueNAS netbootxyz container over TFTP
-#      and assert it begins with #!ipxe (chainload target alive).
+#   1. Fetch each binary from rb5009 over TFTP (sha256 compare against
+#      the controller build cache). Runs from the builder host — see
+#      the comment block above the fetch tasks for why.
+#   2. Fetch menu.ipxe from the chainload host over HTTPS — the
+#      binaries' actual fallback transport — and assert it begins with
+#      #!ipxe (chainload target alive).
 #   3. Read /ip dhcp-server network and matcher rows, assert that
 #      next-server, boot-file-name, and the expected matchers exist.
 
@@ -13,7 +16,14 @@
         local_name: netboot.xyz.kpxe
         public_name: netboot.xyz.kpxe
       uefi-x64:
-        local_name: netboot.xyz.efi
+        # snponly flavor: the full-driver ipxe.efi attaches native USB
+        # host-controller drivers (iPXE 2161e976) that kill USB keyboards
+        # on AMI-based UEFI firmware; snponly carries no native drivers.
+        # local_name drives the controller-side size compare below, so it
+        # must match the fetched artifact name. public_name (the TFTP
+        # request name) stays netboot.xyz.efi. Must match the map in
+        # tasks/netboot_build.yml.
+        local_name: netboot.xyz-snponly.efi
         public_name: netboot.xyz.efi
       uefi-arm64:
         local_name: netboot.xyz-arm64.efi
@@ -28,105 +38,167 @@
       }}
   when: netboot_arches_resolved is not defined
 
-- name: Stat each local binary (for size compare)
+- name: Stat each local binary (expected sha256 for the TFTP compare)
   ansible.builtin.stat:
     path: "{{ netboot_local_build_dir }}/output/ipxe/{{ item.local_name }}"
+    checksum_algorithm: sha256
   delegate_to: localhost
   loop: "{{ netboot_arches_resolved }}"
   loop_control:
     label: "{{ item.public_name }}"
   register: _netboot_local_stat_verify
 
-- name: Ensure local TFTP fetch directory exists
+# The TFTP fetches below run FROM THE BUILDER HOST, not the controller.
+# Two dead ends led here:
+#   1. curl: the igou-awx-ee execution environment and the devcontainer
+#      both ship curl-minimal, built without TFTP protocol support (curl
+#      exits 1 instantly with CURLE_UNSUPPORTED_PROTOCOL) — hence the
+#      bundled files/tftp_get.py, a self-contained stdlib RFC 1350
+#      client (octet mode, 512-byte blocks). (AAP job 458)
+#   2. EE pod network: even with a working client, the EE pod's egress
+#      path gets NO TFTP response from rb5009 at all (RRQ retries time
+#      out; AAP job 461), so no in-EE tool choice can make the check
+#      pass from the controller.
+# Running from the builder (same VLAN9 as real PXE clients) is also the
+# more honest e2e check — it exercises the exact network vantage a
+# PXE-booting host would have. ansible.builtin.script auto-transfers
+# tftp_get.py to the builder, so the repo doesn't need to exist there.
+#
+# Each delegated task pins `ansible_connection: ssh`: the builder's
+# inventory entry defines no ansible_connection, so the play-level
+# `connection: local` keyword (needed for the delegate_to: localhost
+# tasks) would otherwise leak onto it and run the fetch on the
+# controller instead.
+
+- name: Resolve builder host and scratch dir for the TFTP checks
+  ansible.builtin.set_fact:
+    _netboot_verify_host: >-
+      {{ groups[netboot_builders_group | default('armbian_builders')][0] }}
+    # ansible_env facts are not gathered in this play, so the default is
+    # a literal ~ path (expanded on the builder by the modules/shell);
+    # matches the build play's netboot_builder_build_dir default.
+    _netboot_verify_dir: >-
+      {{ netboot_builder_build_dir | default('~/netboot_build') }}/verify
+
+- name: Ensure builder-side TFTP fetch directory exists
   ansible.builtin.file:
-    path: "{{ netboot_local_build_dir }}/verify"
+    path: "{{ _netboot_verify_dir }}"
     state: directory
     mode: "0755"
-  delegate_to: localhost
+  delegate_to: "{{ _netboot_verify_host }}"
+  vars:
+    ansible_connection: ssh
 
-- name: Fetch each binary from rb5009 over TFTP  # noqa: command-instead-of-module
-  ansible.builtin.command:
+- name: Fetch each binary from rb5009 over TFTP (from the builder)
+  ansible.builtin.script:
     cmd: >-
-      curl -sf
-      -o {{ netboot_local_build_dir }}/verify/{{ item.public_name }}
-      tftp://{{ netboot_subnets[0].rb5009_ip }}/{{ item.public_name }}
-  delegate_to: localhost
+      {{ playbook_dir }}/files/tftp_get.py
+      {{ netboot_subnets[0].rb5009_ip }}
+      {{ item.public_name }}
+      {{ _netboot_verify_dir }}/{{ item.public_name }}
+  delegate_to: "{{ _netboot_verify_host }}"
+  vars:
+    ansible_connection: ssh
   changed_when: false
   loop: "{{ netboot_arches_resolved }}"
   loop_control:
     label: "{{ item.public_name }}"
 
-- name: Stat each fetched binary
+- name: Stat each fetched binary on the builder
   ansible.builtin.stat:
-    path: "{{ netboot_local_build_dir }}/verify/{{ item.public_name }}"
-  delegate_to: localhost
+    path: "{{ _netboot_verify_dir }}/{{ item.public_name }}"
+    checksum_algorithm: sha256
+  delegate_to: "{{ _netboot_verify_host }}"
+  vars:
+    ansible_connection: ssh
   loop: "{{ netboot_arches_resolved }}"
   loop_control:
     label: "{{ item.public_name }}"
   register: _netboot_fetched_stat
 
-- name: Assert each fetched binary matches the local build size
+- name: Assert each fetched binary matches the controller build sha256
   ansible.builtin.assert:
     that:
-      - item.0.stat.size == item.1.stat.size
+      - item.0.stat.checksum == item.1.stat.checksum
     fail_msg: >-
-      Size mismatch for {{ item.0.item.public_name }}:
-      rb5009 served {{ item.0.stat.size }} bytes,
-      local build is {{ item.1.stat.size }} bytes.
+      sha256 mismatch for {{ item.0.item.public_name }}:
+      rb5009 served {{ item.0.stat.checksum | default('<missing>') }}
+      ({{ item.0.stat.size | default(0) }} bytes), controller build
+      cache expects {{ item.1.stat.checksum }}
+      ({{ item.1.stat.size }} bytes).
       Re-run --tags upload and check /ip tftp print on the router.
   loop: "{{ _netboot_fetched_stat.results | zip(_netboot_local_stat_verify.results) | list }}"
   loop_control:
     label: "{{ item.0.item.public_name }}"
 
-- name: Fetch menu.ipxe redirect from rb5009 over TFTP  # noqa: command-instead-of-module
-  ansible.builtin.command:
+- name: Fetch menu.ipxe redirect from rb5009 over TFTP (from the builder)
+  ansible.builtin.script:
     cmd: >-
-      curl -sf
-      -o {{ netboot_local_build_dir }}/verify/menu-redirect.ipxe
-      tftp://{{ netboot_subnets[0].rb5009_ip }}/menu.ipxe
-  delegate_to: localhost
+      {{ playbook_dir }}/files/tftp_get.py
+      {{ netboot_subnets[0].rb5009_ip }}
+      menu.ipxe
+      {{ _netboot_verify_dir }}/menu-redirect.ipxe
+  delegate_to: "{{ _netboot_verify_host }}"
+  vars:
+    ansible_connection: ssh
   changed_when: false
 
 - name: Read fetched menu.ipxe redirect
   ansible.builtin.slurp:
-    src: "{{ netboot_local_build_dir }}/verify/menu-redirect.ipxe"
-  delegate_to: localhost
+    src: "{{ _netboot_verify_dir }}/menu-redirect.ipxe"
+  delegate_to: "{{ _netboot_verify_host }}"
+  vars:
+    ansible_connection: ssh
   register: _netboot_redirect_slurp
 
+# The chain target must use the chainload proto (https): the public
+# nginx has no TFTP listener, so a tftp:// target black-holes into a
+# UDP timeout on every fallback-menu fetch (pre-2026-07 regression).
 - name: Assert rb5009 menu.ipxe redirect chains to the chainload host
   ansible.builtin.assert:
     that:
       - "'#!ipxe' in (_netboot_redirect_slurp.content | b64decode)"
-      - "('chain tftp://' ~ netboot_chainload_host ~ '/menu.ipxe') in (_netboot_redirect_slurp.content | b64decode)"
+      - "('chain ' ~ netboot_chainload_proto ~ '://' ~ netboot_chainload_host ~ '/menu.ipxe') in (_netboot_redirect_slurp.content | b64decode)"
+      - "'chain tftp://' not in (_netboot_redirect_slurp.content | b64decode)"
     fail_msg: >-
       The menu.ipxe served by rb5009 is missing the iPXE shebang or
-      doesn't chain to tftp://{{ netboot_chainload_host }}/menu.ipxe.
+      doesn't chain to
+      {{ netboot_chainload_proto }}://{{ netboot_chainload_host }}/menu.ipxe
+      (a tftp:// target is the retired-TrueNAS regression).
       Re-run --tags upload to refresh the redirect file.
 
-- name: Fetch menu.ipxe from TrueNAS netbootxyz over TFTP  # noqa: command-instead-of-module
-  ansible.builtin.command:
-    cmd: >-
-      curl -sf
-      -o {{ netboot_local_build_dir }}/verify/menu.ipxe
-      tftp://{{ netboot_chainload_host }}/menu.ipxe
-  delegate_to: localhost
-  changed_when: false
+# Probe the chainload menu the way the binaries actually fetch it:
+# over HTTPS from the public nginx. The old check here TFTP-fetched
+# menu.ipxe from the TrueNAS netbootxyz container, but that container
+# was retired 2026-05-11 (assets moved to public.igou.systems, which
+# serves HTTP/HTTPS only — no TFTP listener), so the check probed a
+# dead service the boot chain no longer touches. The embedded autoexec
+# falls back to ${conn_type}://${boot_domain}/menu.ipxe, so an HTTPS
+# probe from the controller is the faithful e2e check (and works from
+# the AAP EE, unlike TFTP).
 
-- name: Slurp first 32 bytes of menu.ipxe
-  ansible.builtin.command:
-    cmd: head -c 32 {{ netboot_local_build_dir }}/verify/menu.ipxe
+- name: Fetch menu.ipxe from the chainload host over HTTPS
+  ansible.builtin.uri:
+    url: "{{ netboot_chainload_proto }}://{{ netboot_chainload_host }}/menu.ipxe"
+    status_code: 200
+    timeout: 10
+    validate_certs: true
+    return_content: true
   delegate_to: localhost
+  become: false
   changed_when: false
-  register: _netboot_menu_head
+  register: _netboot_menu_probe
 
 - name: Assert menu.ipxe begins with the iPXE shebang
   ansible.builtin.assert:
     that:
-      - "'#!ipxe' in _netboot_menu_head.stdout"
+      - "'#!ipxe' in (_netboot_menu_probe.content | default(''))[:32]"
     fail_msg: >-
-      Fetched {{ netboot_chainload_host }}/menu.ipxe but it does not
-      begin with #!ipxe. The TrueNAS netbootxyz container is likely
-      down or its dnsmasq is not serving menu.ipxe.
+      Fetched
+      {{ netboot_chainload_proto }}://{{ netboot_chainload_host }}/menu.ipxe
+      but it does not begin with #!ipxe. The public nginx is likely
+      serving the wrong file at /boot-files/menu.ipxe — re-run
+      playbooks/netboot/deploy_assets.yml --tags render,push.
 
 - name: Read DHCP network rows for assertion
   community.routeros.command:

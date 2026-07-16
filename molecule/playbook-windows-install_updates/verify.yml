@@ -1,0 +1,73 @@
+---
+# Verify = INDEPENDENT evidence the update pass behaved. We cannot re-read the
+# converge module's return from a separate play, so verify runs its OWN
+# win_updates pass in state=searched (report-only, installs nothing) over the
+# SAME category the playbook installed, and asserts the module reports clean,
+# well-structured results and exposes its reboot flag.
+- name: Verify — independent evidence for install_updates
+  hosts: windows
+  gather_facts: false
+  tasks:
+    # state=searched is a non-mutating report pass: it lists applicable updates
+    # for the category without downloading or installing. This is the meaningful
+    # (non-tautological) probe: because converge just INSTALLED everything
+    # applicable in this category, a re-search MUST come back with
+    # found_update_count == 0 — that zero is the independent proof converge
+    # brought the category to a clean state. `until` retries absorb the external
+    # feed briefly publishing a new definition between converge and this search;
+    # if it is still nonzero after all retries, the feed genuinely churned (see
+    # README rerun signature) rather than converge having left work undone.
+    - name: Re-search the category — converge must have left it clean (found=0)
+      ansible.windows.win_updates:
+        category_names:
+          - Definition Updates
+        # Mirror converge's EXACT search parameters. KB4052623 (antimalware
+        # platform) is reject-listed in converge because its applicability
+        # chains on the definitions converge installs — Windows Update only
+        # offers it in searches run AFTER converge's install pass, so without
+        # this mirror the found==0 contract can never hold for a single
+        # reboot-free pass (rejected matches land in filtered_updates, not
+        # found_update_count).
+        reject_list:
+          - KB4052623
+        state: searched
+      register: _searched
+      until: (_searched.found_update_count | default(-1) | int) == 0
+      retries: 3
+      delay: 60
+
+    - name: Assert the category is clean after converge and nothing failed
+      ansible.builtin.assert:
+        that:
+          # 0 applicable updates on re-search = converge installed the category
+          # to completion (the substantive contract, not a >= 0 tautology).
+          - (_searched.found_update_count | int) == 0
+          # A report-only pass installs nothing and must fail nothing.
+          - (_searched.failed_update_count | default(0) | int) == 0
+        fail_msg: >-
+          win_updates state=searched did not confirm a clean category after
+          converge: found={{ _searched.found_update_count | default('undefined') }}
+          failed={{ _searched.failed_update_count | default('undefined') }}. If
+          found is nonzero for a freshly published definition, the external feed
+          churned — re-run the scenario (see README).
+        success_msg: >-
+          Category clean after converge: found_update_count=0,
+          failed_update_count=
+          {{ _searched.failed_update_count | default(0) }}.
+
+    # Diagnostics: the marker proves the sysprep unattend FirstLogonCommands ran
+    # (self-signed cert + WinRM listener path), i.e. the whole specialize path
+    # that made this VM reachable actually executed.
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: 'C:\molecule-specialize-done.txt'
+      register: _specialize_marker
+
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _specialize_marker.stat.exists
+        fail_msg: >-
+          C:\molecule-specialize-done.txt is missing — the sysprep unattend
+          FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.

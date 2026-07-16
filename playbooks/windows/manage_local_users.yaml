@@ -45,6 +45,32 @@
     windows_local_users: []
 
   tasks:
+    # Fail fast with a clear message instead of a mid-play win_user error
+    # when someone asks to create a user but forgets the password. state
+    # defaults to present (see the loop below), so an omitted state counts.
+    # We only ever surface offending usernames — never the password values,
+    # so this stays safe without no_log (the assert prints its conditions
+    # and fail_msg, not the computed user dicts).
+    - name: Fail fast if any present user is missing a password
+      vars:
+        windows_present_users: >-
+          {{ (windows_local_users | selectattr('state', 'undefined') | list)
+             + (windows_local_users | selectattr('state', 'defined')
+                | selectattr('state', 'equalto', 'present') | list) }}
+        windows_users_missing_password: >-
+          {{ (windows_present_users | selectattr('password', 'undefined')
+              | map(attribute='name') | list)
+             + (windows_present_users | selectattr('password', 'defined')
+                | rejectattr('password', 'truthy')
+                | map(attribute='name') | list) }}
+      ansible.builtin.assert:
+        that:
+          - windows_users_missing_password | length == 0
+        fail_msg: >-
+          These state=present users have no password:
+          {{ windows_users_missing_password | join(', ') }}. Set one via
+          extra_vars (ideally a 1Password lookup) — see the header.
+
     # Groups first, so users can reference them on creation.
     - name: Ensure local groups exist
       ansible.windows.win_group:

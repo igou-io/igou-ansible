@@ -1,0 +1,27 @@
+---
+# This scenario is inherently kubevirt: it exists to validate the devenv host
+# lifecycle on a real cluster VM. No podman/docker fallback.
+mp_backend: kubevirt
+mp_kubevirt_wait_timeout: 600
+
+# ---------------------------------------------------------------------------
+# 1Password integration gate (optional — see molecule.yml header for the full
+# requirements). Everything to do with the container's use()/1Password flow is
+# opt-in via MOLECULE_OP_* env vars so the default no-token run stays byte-for-
+# byte identical. The env lookups are LAZY (evaluated only when a play references
+# them), which keeps the actual tokens out of any inventory dump — an
+# `ansible-inventory --list` renders these as the unresolved lookup expressions,
+# never the secret values.
+devenv_bootstrap_op_connect_host: "{{ lookup('ansible.builtin.env', 'MOLECULE_OP_CONNECT_HOST') }}"
+devenv_bootstrap_op_connect_token: "{{ lookup('ansible.builtin.env', 'MOLECULE_OP_CONNECT_TOKEN') }}"
+devenv_bootstrap_op_sa_token: "{{ lookup('ansible.builtin.env', 'MOLECULE_OP_SERVICE_ACCOUNT_TOKEN') }}"
+
+# Connect mode needs BOTH the host and the token; SA mode needs just the token.
+# devenv_bootstrap_op_enabled is the single master switch every 1P play/task gates on.
+devenv_bootstrap_op_connect_enabled: >-
+  {{ (devenv_bootstrap_op_connect_host | length > 0)
+     and (devenv_bootstrap_op_connect_token | length > 0) }}
+devenv_bootstrap_op_sa_enabled: "{{ devenv_bootstrap_op_sa_token | length > 0 }}"
+devenv_bootstrap_op_enabled: >-
+  {{ (devenv_bootstrap_op_connect_enabled | bool)
+     or (devenv_bootstrap_op_sa_enabled | bool) }}

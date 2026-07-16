@@ -194,6 +194,30 @@
       become: true
       when: hermes_ghapp_broker_enabled | default(false) | bool
 
+    # tirith (the pre-exec command scanner) blocks plain-HTTP URLs in terminal
+    # commands (plain_http_to_sink). The in-cluster sands-of-time API is HTTP by
+    # design (ClusterIP service, no route), so agents need a rule-scoped trust
+    # entry for that one hostname. The trust store lives in ~/.config/tirith on
+    # the ROOT disk (not the state PVC), so a rebuild wipes it — reseed here.
+    - name: Check tirith trust for the in-cluster sands-of-time entry
+      ansible.builtin.command:
+        cmd: grep -q sands-of-time.sands-of-time.svc.cluster.local /home/{{ hermes_user }}/.config/tirith/trust.json
+      become: true
+      register: hermes_tirith_sot_trust
+      changed_when: false
+      failed_when: false
+
+    - name: Trust the in-cluster sands-of-time hostname in tirith (plain-HTTP rule only)
+      ansible.builtin.command:
+        cmd: >-
+          {{ hermes_state_mount }}/bin/tirith trust add
+          sands-of-time.sands-of-time.svc.cluster.local
+          --rule plain_http_to_sink
+      become: true
+      become_user: "{{ hermes_user }}"
+      when: hermes_tirith_sot_trust.rc != 0
+      changed_when: true
+
     - name: Map legacy Hermes devenv image tag to terminal backend image tag
       ansible.builtin.set_fact:
         hermes_terminal_backend_image_tag: "{{ hermes_devenv_image_tag }}"
@@ -247,6 +271,42 @@
     - name: Manage Hermes terminal backend image lifecycle
       when: hermes_terminal_backend_image_pre_pull | default(false) | bool
       block:
+        # QUIESCE the live gateway BEFORE any image ops. The gateway
+        # (hermes-gateway.service, a rootless systemd --user unit) continuously
+        # spawns and removes ephemeral podman exec-sandbox containers on the SAME
+        # rootless-podman graphroot that the pull/prewarm/prune tasks below use.
+        # Two independent podman processes doing concurrent overlayfs
+        # copy-up/rename on the same XFS dirs previously tripped a kernel XFS bug
+        # and shut the filesystem down. Stop the gateway (and dashboard) and drain
+        # any still-running containers so nothing else touches podman while the
+        # image lifecycle runs. Nothing here restarts them: the gateway is brought
+        # back up unconditionally at play end ("Enable and restart the Hermes
+        # gateway user unit") and the dashboard by its auth-gated restart task.
+        - name: Stop the Hermes gateway and dashboard user units before image ops
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: stopped
+            scope: user
+          become: true
+          become_user: "{{ hermes_user }}"
+          environment:
+            XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid }}"
+          loop:
+            - hermes-gateway.service
+            - hermes-dashboard.service
+
+        - name: Drain any running rootless Podman containers before image ops
+          ansible.builtin.command:
+            cmd: "{{ item }}"
+          become: true
+          become_user: "{{ hermes_user }}"
+          become_flags: "-i"
+          environment: "{{ hermes_podman_environment }}"
+          loop:
+            - podman stop --all --time 30
+            - podman rm --all --force
+          changed_when: false
+
         - name: Pre-pull Hermes terminal backend image
           containers.podman.podman_image:
             name: "{{ hermes_terminal_backend_image_ref }}"
@@ -258,10 +318,13 @@
           become_flags: "-i"
           environment: "{{ hermes_podman_environment }}"
 
+        # 20m (not 10m): the first keep-id run after a fresh pull cold-builds an
+        # ID-mapped copy of every layer of the multi-GB devenv image, which can
+        # exceed 10m under IO load (see the matching note in setup-os.yml).
         - name: Pre-warm Hermes terminal backend image with rootless Podman keep-id mapping
           ansible.builtin.command:
             cmd: >-
-              timeout --kill-after=30s 10m
+              timeout --kill-after=30s 20m
               podman run --rm
               --entrypoint {{ hermes_terminal_backend_container_shell }}
               --userns=keep-id:uid={{ hermes_terminal_backend_container_uid }},gid={{ hermes_terminal_backend_container_gid }}
@@ -661,6 +724,89 @@
         mode: "0644"
       become: true
       notify: Restart journald
+
+    # END-OF-PLAY HEALTH GATES. This play once SUCCEEDED over a dead filesystem:
+    # the state XFS shut itself down mid-converge (concurrent rootless-podman
+    # activity tripped a kernel XFS bug), every access to the state disk returned
+    # Input/output error, yet the systemd units stayed "active" so the AAP job
+    # went green and nobody noticed for days. These pure, side-effect-free checks
+    # FAIL LOUD at play end so a future mid-run fault turns the job RED instead.
+    #
+    # flush_handlers FIRST: the gateway/dashboard restart handlers run at play
+    # end, AFTER all tasks — so a plain "gateway active" assertion here would race
+    # a not-yet-fired restart handler and false-pass (or false-fail) on a stale
+    # unit state. Flushing forces any pending restarts to happen NOW, so the
+    # checks below observe the post-restart reality.
+    - name: Flush pending restart handlers before asserting health
+      ansible.builtin.meta: flush_handlers
+
+    - name: Assert Hermes end-of-play health
+      block:
+        # State mount writable: a shut-down XFS returns EIO on EVERY operation,
+        # so a real read-write-delete probe as the hermes user fails loudly here
+        # instead of the play silently passing over a dead disk. Plain file IO —
+        # no XDG_RUNTIME_DIR/podman env needed. changed_when: false + the probe
+        # file is removed in the same command, so this leaves no side effect.
+        - name: Probe the Hermes state mount is writable (catches an EIO / shut-down fs)
+          ansible.builtin.command:
+            cmd: >-
+              bash -lc 'f={{ hermes_state_mount }}/.configure_health_probe;
+              echo ok > "$f" && cat "$f" && rm -f "$f"'
+          become: true
+          become_user: "{{ hermes_user }}"
+          register: hermes_state_probe
+          changed_when: false
+          failed_when: >-
+            hermes_state_probe.rc != 0
+            or 'ok' not in hermes_state_probe.stdout
+
+        # Gateway unit active: the durable agent gateway must be up at play end.
+        # It may have JUST been restarted by the flushed handler above, so a brief
+        # activating->active transition is normal — retry/until absorbs it rather
+        # than false-failing on a momentary "activating". scope: user + become_user
+        # hermes + XDG_RUNTIME_DIR matches the systemd --user idiom used above.
+        - name: Verify the Hermes gateway user unit is active
+          ansible.builtin.systemd:
+            name: hermes-gateway.service
+            scope: user
+          become: true
+          become_user: "{{ hermes_user }}"
+          environment:
+            XDG_RUNTIME_DIR: "/run/user/{{ hermes_uid }}"
+          register: hermes_gateway_state
+          until: hermes_gateway_state.status.ActiveState == "active"
+          retries: 5
+          delay: 3
+
+        # No XFS shutdown / state-disk EIO during this run: scan the kernel log
+        # for the state-device (vdb, the XFS state disk) failure signature. The
+        # units can stay "active" over a dead fs, so unit state alone is not
+        # enough — the kernel is the source of truth. Match the vd[b-z] XFS
+        # shutdown/corruption strings SPECIFICALLY to avoid false positives from
+        # unrelated benign log lines; grep rc is ignored (no match = rc 1 = fine),
+        # and the assert fails only if the signature actually appears.
+        - name: Scan the kernel log for a state-disk XFS shutdown / corruption signature
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail;
+              journalctl -k --since "-15min" --no-pager
+              | grep -E 'XFS \(vd[b-z]\): .*(Shutting down|Corruption of in-memory data)'
+              || true
+          become: true
+          register: hermes_xfs_shutdown_scan
+          changed_when: false
+          failed_when: false
+
+        - name: Assert no state-disk XFS shutdown occurred during this run
+          ansible.builtin.assert:
+            that:
+              - hermes_xfs_shutdown_scan.stdout | trim | length == 0
+            fail_msg: >-
+              Kernel log shows an XFS shutdown / in-memory corruption on the
+              Hermes state disk (vdb) during this run. The state filesystem at
+              {{ hermes_state_mount }} is compromised — the units may still read
+              "active" but every state-disk access returns EIO. Investigate the
+              vdb XFS filesystem (dmesg / xfs_repair) before trusting this host.
   handlers:
     - name: Restart journald
       ansible.builtin.systemd:

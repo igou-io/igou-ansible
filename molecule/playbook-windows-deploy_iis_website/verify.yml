@@ -1,0 +1,143 @@
+---
+# Verify (in-guest) = independent read that the SITE OBJECT exists, using a raw
+# Get-IISSite (NOT the microsoft.iis modules the playbook used to create it).
+- name: Verify — in-guest evidence the IIS site exists
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Read the IIS site list with Get-IISSite (independent of microsoft.iis)
+      ansible.windows.win_shell: >-
+        Get-IISSite -Name 'demo-site' -WarningAction SilentlyContinue |
+        Select-Object -ExpandProperty Name
+      register: _iis_site
+      changed_when: false
+
+    - name: Assert the demo-site IIS site is present
+      ansible.builtin.assert:
+        that:
+          - "'demo-site' in _iis_site.stdout"
+        fail_msg: >-
+          Get-IISSite did not report a 'demo-site' site (stdout=
+          '{{ _iis_site.stdout | trim }}') — the playbook's site was not created.
+        success_msg: IIS site 'demo-site' exists (independent Get-IISSite read).
+
+    # Diagnostics: the marker proves the sysprep unattend FirstLogonCommands ran
+    # (self-signed cert + WinRM listener path), i.e. the whole specialize path
+    # that made this VM reachable actually executed.
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: 'C:\molecule-specialize-done.txt'
+      register: _specialize_marker
+
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _specialize_marker.stat.exists
+        fail_msg: >-
+          C:\molecule-specialize-done.txt is missing — the sysprep unattend
+          FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.
+
+# Verify (external) = the REAL value. Stand up a NodePort Service to the VM pod,
+# GET the site from the CONTROLLER (outside the guest), and assert the served
+# content. This proves the site is reachable through the guest firewall (the
+# playbook's win_uri only ever hit localhost inside the VM). The Service is
+# created here and torn down in this play's own `always` block; destroy.yml
+# removes it again belt-and-braces.
+- name: Verify — external HTTP GET proves IIS serves through the firewall
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    iis_vm_name: winiis-test
+    iis_namespace: molecule
+    iis_site_port: 8080
+    iis_nodeport_service: winiis-test-iis
+    iis_expected_marker: It works!
+  tasks:
+    - name: Provision the site NodePort Service and probe it
+      block:
+        - name: Create a NodePort Service to the VM pod on the site port
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: "{{ iis_nodeport_service }}"
+                namespace: "{{ iis_namespace }}"
+              spec:
+                type: NodePort
+                # The provisioner labels each VM's virt-launcher pod with
+                # kubevirt.io/domain=<vm-name>; select it to reach the guest.
+                selector:
+                  kubevirt.io/domain: "{{ iis_vm_name }}"
+                ports:
+                  - port: "{{ iis_site_port | int }}"
+                    targetPort: "{{ iis_site_port | int }}"
+                    protocol: TCP
+
+        - name: Read the Service back until Kubernetes assigns a nodePort
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Service
+            name: "{{ iis_nodeport_service }}"
+            namespace: "{{ iis_namespace }}"
+          register: _iis_svc
+          until:
+            - _iis_svc.resources | length > 0
+            - (_iis_svc.resources[0].spec.ports[0].nodePort | default(0)) | int > 0
+          retries: 10
+          delay: 3
+
+        - name: Look up cluster nodes for an InternalIP to target
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Node
+          register: _iis_nodes
+
+        - name: Resolve a node InternalIP and the assigned nodePort
+          ansible.builtin.set_fact:
+            _iis_node_ip: >-
+              {{ (_iis_nodes.resources[0].status.addresses
+                  | selectattr('type', 'equalto', 'InternalIP')
+                  | list | first).address }}
+            _iis_node_port: "{{ _iis_svc.resources[0].spec.ports[0].nodePort }}"
+
+        - name: GET the site from the controller (external, through the firewall)
+          ansible.builtin.uri:
+            url: "http://{{ _iis_node_ip }}:{{ _iis_node_port }}/"
+            return_content: true
+            status_code:
+              - 200
+          register: _iis_get
+          # W3SVC warm-up + NodePort propagation can lag the Service create;
+          # retry until IIS answers 200.
+          until: _iis_get.status == 200
+          retries: 15
+          delay: 8
+
+        - name: Assert the external GET returned the expected content
+          ansible.builtin.assert:
+            that:
+              - _iis_get.status == 200
+              - iis_expected_marker in _iis_get.content
+            fail_msg: >-
+              External GET of http://{{ _iis_node_ip }}:{{ _iis_node_port }}/
+              returned status={{ _iis_get.status | default('none') }} without the
+              expected marker "{{ iis_expected_marker }}" — IIS is not serving
+              the deployed content to outside clients.
+            success_msg: >-
+              External GET returned 200 with "{{ iis_expected_marker }}" — IIS
+              serves the deployed site through the guest firewall.
+      always:
+        # Verify owns this Service; remove it whether or not the probe passed so
+        # the molecule namespace does not leak resources. destroy.yml deletes it
+        # again (state=absent is a no-op) as a belt-and-braces backstop.
+        - name: Remove the site NodePort Service
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Service
+            name: "{{ iis_nodeport_service }}"
+            namespace: "{{ iis_namespace }}"

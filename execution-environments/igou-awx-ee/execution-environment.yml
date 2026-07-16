@@ -3,7 +3,7 @@ version: 3
 images:
   base_image:
     # renovate: datasource=docker depName=quay.io/centos/centos
-    name: quay.io/centos/centos:stream10-minimal@sha256:8553fc71b29dfcbba3e82349dfdbff2f57f45c6dbf0cbcb631f662c81e0124d6
+    name: quay.io/centos/centos:stream10-minimal@sha256:975d9a916423ed5c65991c8d248cb63a769d6b0a77f2e95db4c5a3e8f3dcfc64
 options:
   package_manager_path: /usr/bin/microdnf
 dependencies:
@@ -56,7 +56,7 @@ additional_build_steps:
 
   append_final: |
     # renovate: datasource=github-releases depName=ansible/receptor
-    ARG RECEPTOR_VERSION="v1.6.5"
+    ARG RECEPTOR_VERSION="v1.6.6"
     RUN curl -L -o /tmp/receptor.tar.gz "https://github.com/ansible/receptor/releases/download/${RECEPTOR_VERSION}/receptor_${RECEPTOR_VERSION#v}_linux_amd64.tar.gz" && \
         tar xzf /tmp/receptor.tar.gz -C /usr/bin/ receptor && \
         chmod +x /usr/bin/receptor && \
@@ -77,4 +77,10 @@ additional_build_steps:
         curl -L -o /tmp/helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" && \
         tar xzf /tmp/helm.tar.gz --strip-components=1 -C /usr/local/bin linux-amd64/helm && \
         rm -f /tmp/kustomize.tar.gz /tmp/oc.tar.gz /tmp/helm.tar.gz
-    RUN oc version && python -V && ansible --version && ansible-galaxy collection list
+    # virtctl for KubeVirt VM ops driven from playbooks. Version tracks the
+    # cluster's OpenShift Virtualization KubeVirt release.
+    # renovate: datasource=github-releases depName=kubevirt/kubevirt
+    ARG VIRTCTL_VERSION="v1.8.4"
+    RUN curl -L -o /usr/local/bin/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-amd64" && \
+        chmod +x /usr/local/bin/virtctl
+    RUN oc version && virtctl version --client && python -V && ansible --version && ansible-galaxy collection list

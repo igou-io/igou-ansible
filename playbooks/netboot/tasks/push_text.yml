@@ -33,6 +33,9 @@
     path: "{{ _netboot_cache_dir }}/menu.ipxe"
   register: _netboot_cache_check
   delegate_to: localhost
+  # become: false on all localhost-delegated tasks — the AAP EE has no
+  # sudo; controller-side tasks never need privilege.
+  become: false
   run_once: true
 
 - name: Push — assert render cache is populated
@@ -44,6 +47,7 @@
       with --tags render,push (or no tag filter) so render produces the
       cache before push reads it.
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Push — ensure destination subdirs exist on public host

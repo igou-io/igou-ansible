@@ -28,6 +28,10 @@
          | list)
       }}
   delegate_to: localhost
+  # become: false on all localhost-delegated tasks — the AAP EE has no
+  # sudo; controller-side tasks never need privilege. (rb5009-delegated
+  # network_cli tasks are untouched: become works differently there.)
+  become: false
   run_once: true
 
 - name: Push pins — ensure flash subdirectory exists on rb5009
@@ -56,6 +60,7 @@
     label: "{{ item }}"
   register: _pin_local_stat
   delegate_to: localhost
+  become: false
 
 - name: Push pins — assert each expected pin exists locally
   ansible.builtin.assert:
@@ -153,6 +158,7 @@
         | difference(_pin_expected_files)
       }}
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Push pins — remove stale pin files from rb5009 flash
@@ -189,6 +195,7 @@
         | difference(_pin_expected_files)
       }}
   delegate_to: localhost
+  become: false
   run_once: true
 
 - name: Push pins — remove stale /ip tftp rows

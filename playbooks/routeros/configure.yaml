@@ -6,7 +6,7 @@
 #
 # To preview without applying:
 #   ansible-playbook playbooks/routeros/configure.yaml \
-#     -i ../igou-inventory/inventory.yaml -e host=routeros_router --check
+#     -i ../igou-inventory/inventory.yaml -e host=routeros --check
 # To apply:
 #   same command without --check.
 # To ship a fresh S3 backup snapshot before the apply touches anything

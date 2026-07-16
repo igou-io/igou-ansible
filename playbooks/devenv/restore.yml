@@ -1,0 +1,318 @@
+---
+# Restore counterpart of backup.yml - devenv agent state from rustfs-cold.
+#
+# Downloads the MOST RECENT backup (the current version of the fixed key
+# s3://devenv-backups/devenv/agent-state.tar.gz) - or a pinned VersionId via
+# devenv_restore_version_id - to a target host's /home/igou, then extracts it
+# over the target's existing agent/tooling state. This productizes the manual
+# restore recipe documented at the foot of backup.yml.
+#
+# DESTRUCTIVE + DOUBLE-GUARDED: like the hermes snapshot restore, this play
+# overwrites live agent state on the target, so it refuses to run unless
+# devenv_restore_confirm=true is passed explicitly. There is no accidental path.
+#
+# Default target is the devenv-vlan9 test rebuild VM - it must NEVER default to
+# vscode.igou.systems, which is the live backup SOURCE. Restore anywhere else
+# only by naming it explicitly via `-e ansible_limit=<host>`.
+#
+# Quiesce, and the stale file-bind-inode trap: if igou-devenv.service is present
+# and active, it is stopped before extracting and restarted after. This is not
+# just politeness - the devcontainer bind-mounts individual host files (e.g.
+# ~/.claude.json) into the container, and a bind pins the inode. Overwriting the
+# host file replaces the inode on disk, but a running container keeps reading the
+# OLD pinned inode until it restarts, so a live restore would appear to do
+# nothing inside the container. Stopping the service drops those bind holds.
+#
+# Rollback: before extracting, the target's existing state (the same path set
+# backup.yml archives) is tarred to ~/.devenv-pre-restore.tar.gz (fixed name,
+# overwritten each run) so a bad restore can be undone by hand.
+#
+# Ownership: the archive was created with --numeric-owner on the source host.
+# We extract with PLAIN tar (no --numeric-owner, no -p) as the igou login user,
+# so non-root extraction maps every entry to igou regardless of the uid the
+# source host recorded - this sidesteps uid drift between hosts.
+#
+# become is used ONLY on the three service tasks (probe/stop/start); everything
+# else runs as the igou login user, exactly like backup.yml (no become anywhere
+# else, no become at play level).
+#
+# Credentials: 1Password item devenv-backups-rustfs-cold (lab_s3 vault),
+# resolved at runtime - the job template must carry the
+# onepassword-connect-token credential. Endpoint comes from the same inventory
+# host_vars the rustfs_state role reconciles against.
+- name: Restore devenv agent state from rustfs-cold
+  hosts: "{{ ansible_limit | default('devenv-vlan9') }}"
+  gather_facts: false
+  vars:
+    devenv_restore_home: /home/igou
+    # Hard gate (hermes snapshot-restore double-guard pattern)
+    devenv_restore_confirm: false
+    # Optional VersionId pin; empty string = most recent (current version)
+    devenv_restore_version_id: ""
+    devenv_restore_service: igou-devenv.service
+    # Same path set backup.yml archives - used here to select what goes in
+    # the pre-restore rollback tarball. Keep in sync with backup.yml.
+    devenv_restore_paths:
+      - .claude.json
+      - .claude-container
+      - .claude
+      - .tmux.conf
+      - .codex
+      - .opencode
+      - .config/opencode
+      - .local/share/opencode
+      - workspace/scratch
+    # Single source of truth: the rustfs-cold stub host's spec vars.
+    devenv_s3_endpoint: "{{ hostvars['rustfs-cold'].rustfs_state_endpoint }}"
+    devenv_s3_bucket: devenv-backups
+    devenv_s3_object: devenv/agent-state.tar.gz
+    devenv_s3_region: us-east-1
+    devenv_s3_access_key: "{{ lookup('community.general.onepassword', 'devenv-backups-rustfs-cold', field='username', vault='lab_s3') }}"
+    devenv_s3_secret_key: "{{ lookup('community.general.onepassword', 'devenv-backups-rustfs-cold', field='password', vault='lab_s3') }}"
+    # An implausibly small download means the object was empty or wrong - fail
+    # rather than clobber live state with garbage.
+    devenv_restore_min_bytes: 10485760
+    devenv_restore_rollback_path: "{{ devenv_restore_home }}/.devenv-pre-restore.tar.gz"
+
+  pre_tasks:
+    - name: Refuse to restore without the explicit confirmation gate
+      ansible.builtin.assert:
+        that:
+          - devenv_restore_confirm | bool
+        fail_msg: >-
+          This OVERWRITES the live agent state on {{ inventory_hostname }}
+          (default target devenv-vlan9). Re-run with -e devenv_restore_confirm=true
+          once you are sure, and -e ansible_limit=<host> if you mean a host other
+          than the devenv-vlan9 test VM.
+
+    - name: Stage a control-node scratch path for the archive to restore
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .tar.gz
+      register: _local_archive
+      delegate_to: localhost
+      connection: local
+      changed_when: false
+
+    - name: Read back the object metadata (current version + size)
+      amazon.aws.s3_object_info:
+        endpoint_url: "{{ devenv_s3_endpoint }}"
+        access_key: "{{ devenv_s3_access_key }}"
+        secret_key: "{{ devenv_s3_secret_key }}"
+        region: "{{ devenv_s3_region }}"
+        bucket_name: "{{ devenv_s3_bucket }}"
+        object_name: "{{ devenv_s3_object }}"
+      register: _object_info
+      delegate_to: localhost
+      connection: local
+
+    - name: Report the object that will be restored
+      ansible.builtin.debug:
+        msg: >-
+          Current s3://{{ devenv_s3_bucket }}/{{ devenv_s3_object }} is version
+          {{ _object_info.object_info[0].object_data.version_id | default('n/a') }},
+          {{ _object_info.object_info[0].object_data.content_length | default('?') }} bytes.
+          {{ (devenv_restore_version_id | length > 0)
+             | ternary('Pinned to version ' ~ devenv_restore_version_id, 'Restoring the current version.') }}
+
+    - name: Download the archive to the control node
+      amazon.aws.s3_object:
+        endpoint_url: "{{ devenv_s3_endpoint }}"
+        access_key: "{{ devenv_s3_access_key }}"
+        secret_key: "{{ devenv_s3_secret_key }}"
+        region: "{{ devenv_s3_region }}"
+        bucket: "{{ devenv_s3_bucket }}"
+        object: "{{ devenv_s3_object }}"
+        # Pin only when asked; omit => the store returns the current version.
+        # Parenthesize the comparison: `| length > 0 | ternary` without parens
+        # binds as `(length) > (0 | ternary(...))` and raises a type error.
+        version: "{{ (devenv_restore_version_id | length > 0) | ternary(devenv_restore_version_id, omit) }}"
+        dest: "{{ _local_archive.path }}"
+        mode: get
+        overwrite: always
+      # Same integrity-checksum escape hatch as the backup upload: RustFS
+      # 1.0.0-beta.8 miscomputes CRC32, so the default checksums boto3 >= 1.36
+      # sends (2025-01 behavior change) fail with "checksum mismatch: CRC32".
+      # when_required is the documented workaround for third-party stores.
+      environment:
+        AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      delegate_to: localhost
+      connection: local
+
+    - name: Record which version was actually restored
+      ansible.builtin.set_fact:
+        _restored_version: >-
+          {{ (devenv_restore_version_id | length > 0)
+             | ternary(devenv_restore_version_id,
+                       _object_info.object_info[0].object_data.version_id | default('n/a')) }}
+
+    - name: Stat the downloaded archive
+      ansible.builtin.stat:
+        path: "{{ _local_archive.path }}"
+      register: _archive_stat
+      delegate_to: localhost
+      connection: local
+
+    - name: Refuse to restore an implausibly small archive
+      ansible.builtin.assert:
+        that:
+          - _archive_stat.stat.size | int >= devenv_restore_min_bytes | int
+        fail_msg: >-
+          Downloaded archive is {{ _archive_stat.stat.size }} bytes (<
+          {{ devenv_restore_min_bytes }}) - the object was empty or wrong.
+          Refusing to overwrite live state with garbage.
+      delegate_to: localhost
+      connection: local
+
+  tasks:
+    - name: Stage a guest scratch file for the archive
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .tar.gz
+      register: _remote_archive
+      changed_when: false
+
+    - name: Copy the archive to the target
+      ansible.builtin.copy:
+        src: "{{ _local_archive.path }}"
+        dest: "{{ _remote_archive.path }}"
+        mode: "0600"
+
+    - name: Measure free space under the restore home
+      ansible.builtin.command:
+        argv:
+          - df
+          - --output=avail
+          - -B1
+          - "{{ devenv_restore_home }}"
+      register: _df
+      changed_when: false
+
+    - name: Ensure there is headroom for the gunzip expansion
+      # Extraction inflates the gzip; require > 4x the archive size free so a
+      # decompress cannot fill the filesystem mid-restore.
+      ansible.builtin.assert:
+        that:
+          - _df.stdout_lines[1] | int > (_archive_stat.stat.size | int) * 4
+        fail_msg: >-
+          Only {{ _df.stdout_lines[1] }} bytes free under {{ devenv_restore_home }};
+          need > {{ (_archive_stat.stat.size | int) * 4 }} (4x the
+          {{ _archive_stat.stat.size }}-byte archive) for the gunzip expansion.
+
+    - name: Probe whether the devcontainer service is active
+      # rc 0 = active; nonzero = inactive or unit absent. Both nonzero cases
+      # mean "do not manage it on the way out unless it was running".
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - "{{ devenv_restore_service }}"
+      become: true
+      register: _svc_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Restore over the target state, quiescing the devcontainer
+      block:
+        - name: Stop the devcontainer service so it releases its bind holds
+          ansible.builtin.systemd_service:
+            name: "{{ devenv_restore_service }}"
+            state: stopped
+          become: true
+          when: _svc_probe.rc == 0
+
+        - name: Stat each rollback candidate path on the target
+          ansible.builtin.stat:
+            path: "{{ devenv_restore_home }}/{{ item }}"
+          loop: "{{ devenv_restore_paths }}"
+          register: _rollback_stat
+
+        - name: Select the rollback paths that currently exist
+          ansible.builtin.set_fact:
+            _rollback_existing: >-
+              {{ _rollback_stat.results
+                 | selectattr('stat.exists')
+                 | map(attribute='item') | list }}
+
+        - name: Tar the existing state to the fixed pre-restore rollback path
+          # Same hot-tar tolerance as backup.yml: a live agent session may
+          # rewrite a file mid-read and GNU tar then exits rc=1 ("file changed
+          # as we read it") - accepted. rc=2 is a real error and still fails.
+          ansible.builtin.command:
+            argv: >-
+              {{ ['tar', 'czf', devenv_restore_rollback_path, '-C', devenv_restore_home]
+                 + _rollback_existing }}
+          register: _rollback_tar
+          changed_when: true
+          failed_when: _rollback_tar.rc not in [0, 1]
+          when: _rollback_existing | length > 0
+
+        - name: Report the rollback tarball that was captured
+          ansible.builtin.debug:
+            msg: >-
+              Pre-restore rollback saved to {{ devenv_restore_rollback_path }}
+              capturing: {{ _rollback_existing }}
+          when: _rollback_existing | length > 0
+
+        - name: Note that there was no existing state to roll back
+          ansible.builtin.debug:
+            msg: "No existing devenv state on {{ inventory_hostname }} - nothing to roll back."
+          when: _rollback_existing | length == 0
+
+        - name: Extract the archive over the restore home as igou
+          # PLAIN tar: no --numeric-owner and no -p. Non-root extraction maps
+          # every entry to the igou login user, so the uid the source host
+          # recorded is irrelevant and uid drift between hosts cannot bite.
+          ansible.builtin.command:
+            argv:
+              - tar
+              - xzf
+              - "{{ _remote_archive.path }}"
+              - -C
+              - "{{ devenv_restore_home }}"
+          changed_when: true
+
+      always:
+        - name: Restart the devcontainer service if it was running
+          # Restart exactly what was active before, in an always block so a
+          # failed extract never leaves the devcontainer down.
+          ansible.builtin.systemd_service:
+            name: "{{ devenv_restore_service }}"
+            state: started
+          become: true
+          when: _svc_probe.rc == 0
+
+    - name: Remove the guest scratch archive
+      ansible.builtin.file:
+        path: "{{ _remote_archive.path }}"
+        state: absent
+      changed_when: false
+
+    - name: Verify the primary agent state landed
+      ansible.builtin.stat:
+        path: "{{ devenv_restore_home }}/.claude-container"
+      register: _verify_stat
+
+    - name: Assert the primary agent state was restored
+      ansible.builtin.assert:
+        that:
+          - _verify_stat.stat.exists
+        fail_msg: >-
+          {{ devenv_restore_home }}/.claude-container is absent after extract -
+          the archive did not contain the primary agent state?
+
+    - name: Record the restore outcome
+      ansible.builtin.debug:
+        msg: >-
+          Restored {{ _archive_stat.stat.size }} bytes (version
+          {{ _restored_version }}) to {{ inventory_hostname }}
+
+  post_tasks:
+    - name: Remove the control-node scratch file
+      ansible.builtin.file:
+        path: "{{ _local_archive.path }}"
+        state: absent
+      delegate_to: localhost
+      connection: local
+      changed_when: false

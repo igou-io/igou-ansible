@@ -1,0 +1,7 @@
+---
+# Prepare = the provisioner's wait_for_connection, which honors each host's
+# connection plugin (psrp here) and uses the longer
+# mp_kubevirt_windows_wait_timeout for Windows guests — OOBE specialize + the
+# unattend FirstLogonCommands (WinRM HTTPS listener) run before psrp answers.
+- name: Prepare molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare

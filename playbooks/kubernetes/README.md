@@ -8,7 +8,7 @@ cluster lifetime, don't mix.
 | --------------------------------- | -------------------------------------------------------------- |
 | `install-k3s-cluster.yml`         | **Primary.** Install k3s via `xanmanning.k3s`.                 |
 | `install-kubernetes-cluster.yml`  | Alternative. Install kubeadm-based kubernetes via `geerlingguy.kubernetes` (+ `geerlingguy.containerd`). |
-| `bootstrap-cluster.yml`           | Post-install: ESO + ArgoCD + 1Password ClusterSecretStore. Runs against `localhost`, talks to the cluster API. |
+| `bootstrap-gitops.yaml`           | Post-install: seeds the ESO Connect token, installs argocd, applies the igou-kubernetes app-of-apps root. Runs against `localhost`, talks to whatever `KUBECONFIG` points at. |
 
 ## Inventory
 
@@ -64,26 +64,32 @@ playbook handles both via `geerlingguy.containerd` and an
 ## Bootstrap (either distro)
 
 `bootstrap-gitops.yaml` bootstraps a cluster from igou-kubernetes'
-app-of-apps layout (see `docs/bootstrap.md` there). It pulls the
-kubeconfig from `op://lab_rk8s/<cluster>-kubeconfig` (published by the
-install playbook above), installs argocd, seeds the 1Password Connect
-token secret backing the `onepassword` ClusterSecretStore, and applies
-`clusters/<cluster>` — after which argocd self-manages the cluster.
-Needs `OP_CONNECT_HOST`/`OP_CONNECT_TOKEN` in the env (AAP injects
-them via the "Onepassword Connect" credential).
+app-of-apps layout (see `docs/bootstrap.md` there). It seeds the
+`external-secrets` namespace + Connect token secret backing the
+`onepassword` ClusterSecretStore, installs argocd, and applies
+`clusters/<cluster>` — after which argocd self-manages the cluster. The
+two kustomize stages build straight from the remote repo (no local
+clone). It needs two env vars:
+
+- `KUBECONFIG` — points the `kubernetes.core.*` modules at the target
+  cluster (e.g. `use rk8s` in the devcontainer).
+- `OP_SERVICE_ACCOUNT_TOKEN` — the `ocp-bootstrap` SA token (`ops_...`);
+  the `community.general.onepassword` lookup reads the rk8s **entity**
+  Connect token from the `ocp-connect-bootstrap` vault via its env
+  fallback (same pattern as `openshift/bootstrap_gitops.yaml`). AAP
+  injects it via a credential.
 
 ```bash
-ansible-playbook playbooks/kubernetes/bootstrap-gitops.yaml \
-  -e gitops_cluster=internal \
-  -e kubeconfig_op_item=rk8s-kubeconfig
+KUBECONFIG=~/.kube/rk8s OP_SERVICE_ACCOUNT_TOKEN=ops_... \
+  ansible-playbook playbooks/kubernetes/bootstrap-gitops.yaml \
+  -e gitops_cluster=internal
 ```
 
 Application CRs track `targetRevision: HEAD` — only bootstrap from a
-ref whose content matches the repo's default branch.
-
-`bootstrap-cluster.yml` is the legacy version targeting the old
-`config/<overlay>` layout; it is retained until the
-`kubernetes_bootstrap_gitops` AAP template repoints, then it goes.
+ref whose content matches the repo's default branch. All cluster
+interaction runs through `kubernetes.core.*` (no shell/kubectl),
+mirroring `playbooks/openshift/bootstrap_gitops.yaml`. The
+`kubernetes_bootstrap_gitops` AAP template runs this playbook.
 
 ## Notes
 

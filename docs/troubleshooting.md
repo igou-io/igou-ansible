@@ -176,8 +176,8 @@ template to the trailing position:
 
 ### `yamllint` "line too long" on legacy iPXE fragments
 
-Pre-existing in inventory `netboot_host_pins` — the helpernode/p330/hpg5
-fragments have long URLs. Out of scope to fix; ignored project-wide.
+Pre-existing in inventory `netboot_host_pins` — the p330/hpg5 fragments
+have long URLs. Out of scope to fix; ignored project-wide.
 
 ### GitHub `syntax-check` workflow always failing
 

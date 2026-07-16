@@ -8,6 +8,11 @@
     vm_name: hermes
     vm_namespace: hermes
     vm_run_strategy: Always
+    # This cluster has no live migration (RWO-only storage), and hermes-root is
+    # RWO, so the VM is not migratable. Without this, the VMI inherits the HCO
+    # default and a node drain blocks on it (raising VMCannotBeEvicted). None =>
+    # a drain shuts the VM down and vm_run_strategy: Always restarts it after.
+    vm_eviction_strategy: None
     # image clone (match golden size — NO resize)
     vm_os_datasource: centos-stream10
     vm_storage_class: freenas-nvmeof-ssd-csi

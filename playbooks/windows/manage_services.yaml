@@ -18,6 +18,9 @@
 #                      Omitted keys are left untouched, so an entry with only
 #                      start_mode changes boot behaviour without bouncing the
 #                      service now.
+#                      Note: the shipped defaults (started/stopped) are
+#                      idempotent, but state: restarted is inherently NOT —
+#                      if you set it, the service bounces on every run.
 #
 # Run:
 #   ansible-navigator run playbooks/windows/manage_services.yaml \
@@ -48,9 +51,7 @@
 
     - name: Show the resulting service states
       ansible.builtin.debug:
-        msg: >-
-          {{ windows_services_result.results
-             | map(attribute='item.name')
-             | zip(windows_services_result.results | map(attribute='state', default='unchanged'))
-             | map('join', ': ')
-             | join(', ') }}
+        msg: "{{ item.item.name }}: {{ item.state | default('unchanged') }}"
+      loop: "{{ windows_services_result.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"

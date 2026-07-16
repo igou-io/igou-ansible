@@ -1,0 +1,21 @@
+---
+# Prepare = the provisioner's wait_for_connection (psrp, honoring the longer
+# mp_kubevirt_windows_wait_timeout), THEN seed a user that converge will remove.
+- name: Prepare molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+
+# Pre-create the account converge declares state=absent, so the removal is a
+# REAL transition (present -> absent) rather than a vacuous "already gone".
+# Runs after wait_for_connection, so the host answers psrp. The password is the
+# same complexity-satisfying value used elsewhere; on_create semantics don't
+# matter here since verify only checks the account is GONE afterwards.
+- name: Prepare — seed the to-be-removed user
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Create the doomed user so converge's absent case is a real change
+      ansible.windows.win_user:
+        name: molgone
+        password: "{{ lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') }}"
+        state: present
+      no_log: true

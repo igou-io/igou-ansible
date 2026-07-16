@@ -1,0 +1,29 @@
+---
+# Destroy = tear down the VM + NodePort service (provisioner), delete the
+# per-host sysprep Secrets, and belt-and-braces delete the extra NodePort
+# Service verify creates for its external RDP probe (the provisioner only owns
+# the primary `<host>` 5986 Service, not this one). state: absent is idempotent
+# everywhere, so a second destroy — or a destroy after a failed create/verify —
+# is a safe no-op and leaves the molecule namespace empty.
+- name: Destroy — tear down molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
+
+- name: Destroy — remove the per-host sysprep Secrets
+  ansible.builtin.import_playbook: windows-sysprep-secrets.yml
+  vars:
+    windows_sysprep_state: absent
+
+- name: Destroy — remove the verify RDP-probe NodePort Service
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    # verify.yml creates wintm-test-rdp (guest port 3389) and deletes it itself;
+    # this is the safety net for a verify that failed before its cleanup ran.
+    - name: Delete the RDP-probe NodePort Service (if present)
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Service
+        name: wintm-test-rdp
+        namespace: molecule

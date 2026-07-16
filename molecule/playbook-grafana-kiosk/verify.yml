@@ -1,0 +1,100 @@
+---
+- name: Verify the grafana-kiosk convergence
+  hosts: grafana_kiosk
+  become: true
+  gather_facts: false
+
+  vars:
+    _verify_proxy: http://127.0.0.1:8480
+    _verify_unit: "{{ 'cog-kiosk.service' if kiosk_stack == 'cog' else 'grafana-kiosk.service' }}"
+
+  tasks:
+    - name: Fetch a dashboard URL through the proxy
+      ansible.builtin.uri:
+        url: "{{ _verify_proxy }}/d/mock/dashboard"
+        return_content: true
+      register: verify_proxy_get
+
+    - name: Assert nginx injected the SA token end to end
+      ansible.builtin.assert:
+        that:
+          - verify_proxy_get.json.authorization == 'Bearer molecule-dummy-token'
+        fail_msg: >-
+          Proxy did not inject the Authorization header:
+          {{ verify_proxy_get.json }}
+
+    - name: Stat the token-bearing nginx config
+      ansible.builtin.stat:
+        path: /etc/nginx/sites-available/grafana-kiosk.conf
+      register: verify_nginx_conf
+
+    - name: Assert the token-bearing config is root-only
+      ansible.builtin.assert:
+        that:
+          - verify_nginx_conf.stat.mode == '0600'
+          - verify_nginx_conf.stat.pw_name == 'root'
+
+    - name: Collect service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert the kiosk unit is installed and enabled
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services[_verify_unit].status == 'enabled'
+        fail_msg: >-
+          {{ _verify_unit }}:
+          {{ ansible_facts.services[_verify_unit] | default('unit not found') }}
+
+    # --- Low-resource smoke: real browser rendering inside the 512MB cgroup.
+    # Headless because containers have no DRM/X; the memory ceiling is what
+    # is under test (an OOM kill fails the task).
+
+    - name: Chromium render smoke
+      when: kiosk_stack == 'chromium'
+      vars:
+        # Opt-in render inspection: KIOSK_FETCH_SCREENSHOT=1 pulls the
+        # render back to the controller (see README "Render testing").
+        # The smoke itself always runs - the fetch is human-eyeball only.
+        _verify_fetch_screenshot: "{{ lookup('env', 'KIOSK_FETCH_SCREENSHOT') | bool }}"
+        # Falls back to the scenario dir if run outside molecule.
+        _verify_shot_dest: >-
+          {{ (lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY')
+              or playbook_dir) ~ '/screenshots/' ~ inventory_hostname ~ '.png' }}
+      block:
+        - name: Render a screenshot with headless Chromium through the proxy
+          ansible.builtin.command:
+            cmd: >-
+              timeout 90 chromium --headless --no-sandbox --disable-gpu
+              --disable-dev-shm-usage --screenshot=/tmp/kiosk-smoke.png
+              --window-size=1280,720 {{ _verify_proxy }}/d/mock/dashboard
+          changed_when: false
+
+        - name: Assert the Chromium screenshot rendered
+          ansible.builtin.stat:
+            path: /tmp/kiosk-smoke.png
+          register: verify_shot
+          failed_when: not verify_shot.stat.exists or verify_shot.stat.size == 0
+
+        - name: Fetch the Chromium screenshot to the controller
+          ansible.builtin.fetch:
+            src: /tmp/kiosk-smoke.png
+            dest: "{{ _verify_shot_dest }}"
+            flat: true
+          when: _verify_fetch_screenshot
+
+        - name: Show where the screenshot landed
+          ansible.builtin.debug:
+            msg: "Screenshot fetched to {{ _verify_shot_dest }}"
+          when: _verify_fetch_screenshot
+
+    - name: Run headless cog against the proxy for 20s
+      ansible.builtin.command:
+        cmd: timeout 20 cog --platform=headless {{ _verify_proxy }}/d/mock/dashboard
+      environment:
+        XDG_RUNTIME_DIR: /tmp
+      register: verify_cog
+      changed_when: false
+      # timeout(1) rc 124 = cog was still alive after 20s of rendering; any
+      # other rc means it crashed or was OOM-killed.
+      failed_when: verify_cog.rc != 124
+      when: kiosk_stack == 'cog'

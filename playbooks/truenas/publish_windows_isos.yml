@@ -1,0 +1,368 @@
+---
+# Publish the Microsoft Evaluation Center Windows ISO library on
+# public.igou.systems AND emit no-prompt (remastered) siblings for the golden
+# pipeline's unattended install feedstock.
+#
+# Design: igou-io/igou-ansible#343 (Windows golden-image design v3, increment 1);
+# publish leg originally from igou-io/igou-openshift#380 Phase 1.
+#
+# ── Publish leg ────────────────────────────────────────────────────────────
+# The nginx-reverse-proxy container on TrueNAS serves /mnt/ssd/public read-only
+# at public.igou.systems (autoindex), so the ISOs under
+# /mnt/ssd/public/isos/windows/ are published with zero nginx config changes:
+#   https://public.igou.systems/isos/windows/<file>.iso   (and http:// for CDI)
+#
+# ASSUMPTION (not a task): the vanilla eval ISO library and its SHA256SUMS
+# already live at /mnt/ssd/public/isos/windows/ on TrueNAS. This play does NOT
+# transfer anything — it only asserts presence + integrity of the serving copy.
+# igounas (Synology) remains the archival provenance of the media, but that is
+# background, not a runtime dependency: no igounas connectivity is needed here.
+#
+# One-time seed procedure for adding a NEW eval ISO to the library (run by hand
+# ON TrueNAS, then add the file to truenas_windows_isos below):
+#   1. Copy the ISO into the served dir. igounas DSM has no sftp/scp, so stream
+#      it over ssh (cat) from TrueNAS:
+#        ssh igou@igounas.igou.systems \
+#          "cat /volume1/igoushare/Lab/isos/windows/<file>.iso" \
+#          > /mnt/ssd/public/isos/windows/<file>.iso
+#   2. Append the upstream checksum line to the manifest:
+#        echo "<sha256>  <file>.iso" >> /mnt/ssd/public/isos/windows/SHA256SUMS
+# Thereafter this play verifies it on every run.
+#
+# ── Remaster leg (why noprompt media exists) ───────────────────────────────
+# Windows install media stops at a "Press any key to boot from CD…" prompt.
+# For a fully declarative KubeVirt build the firmware must NOT wait: with a
+# no-keypress firmware the prompting cdboot.efi makes the firmware SKIP the CD
+# and boot-loop a blank disk. Microsoft ships (undocumented) efisys_noprompt.bin
+# / cdboot_noprompt.efi variants; swapping them in and repacking the ISO yields
+# media that boots straight into Setup. This is the only declarative path
+# (matches Red Hat's pipeline) — see #343 review. TrueNAS SCALE has no native
+# xorriso, so the whole remaster runs inside a throwaway pinned docker container
+# that has /isos bind-mounted.
+#
+# This playbook runs fine from the devcontainer: the only network path it needs
+# is devcontainer → truenas SSH (truenas_admin@truenas.igou.systems).
+
+- name: Publish Windows eval ISOs on public.igou.systems
+  hosts: truenas
+  gather_facts: false
+  become: false
+  vars:
+    # Serving location on TrueNAS; override in group_vars/truenas.yml as needed.
+    truenas_public_pool: ssd
+    # Refquota bump is OPT-IN: the live ssd/public dataset deliberately runs
+    # refquota=none (pool has ample headroom). Set a BYTE COUNT (int, e.g.
+    # 161061273600 for 150GiB) to enforce one; empty skips the task.
+    truenas_public_quota: ""
+    truenas_windows_isos:
+      - winserver2025-eval-en-us.iso
+      - winserver2022-eval-en-us.iso
+      - winserver2019-eval-en-us.iso
+      - winserver2016-eval-en-us.iso
+      - win11-25h2-enterprise-eval-en-us.iso
+      - win11-ltsc2024-enterprise-eval-en-us.iso
+      - win11-iot-ltsc2024-enterprise-eval-en-us.iso
+    _dst_dir: "/mnt/{{ truenas_public_pool }}/public/isos/windows"
+  tasks:
+
+    - name: Bump the public dataset refquota (headroom for the ISO library)
+      # arensb.truenas.filesystem takes refquota as an integer byte count.
+      when: truenas_public_quota | string | length > 0
+      arensb.truenas.filesystem:
+        name: "{{ truenas_public_pool }}/public"
+        state: present
+        type: FILESYSTEM
+        refquota: "{{ truenas_public_quota | int }}"
+      tags: [quota]
+
+    - name: Ensure the published ISO directory exists
+      ansible.builtin.file:
+        path: "{{ _dst_dir }}"
+        state: directory
+        mode: "0755"
+      tags: [dir]
+
+    - name: Stat each published ISO
+      # Presence of the vanilla library is an assumption, not a task — assert it.
+      ansible.builtin.stat:
+        path: "{{ _dst_dir }}/{{ item }}"
+      register: _iso_stat
+      loop: "{{ truenas_windows_isos }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [verify]
+
+    - name: Assert every listed ISO is present in the serving directory
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: >-
+          {{ item.item }} is missing from {{ _dst_dir }}. This play assumes the
+          vanilla ISO library is already seeded there; add it via the one-time
+          seed procedure documented in this file's header (stream from igounas
+          over ssh cat, then append its line to SHA256SUMS).
+      loop: "{{ _iso_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      tags: [verify]
+
+    - name: Read the SHA256SUMS manifest
+      # Slurp once and parse in Jinja (the house idiom — Play 2 slurps its
+      # markers) instead of spawning a grep per ISO. A missing manifest fails
+      # here, loudly, before the presence assertion below.
+      ansible.builtin.slurp:
+        src: "{{ _dst_dir }}/SHA256SUMS"
+      register: _sums_raw
+      tags: [verify]
+
+    - name: Assert every listed ISO has a line in SHA256SUMS
+      # `sha256sum -c SHA256SUMS` (below) passes SILENTLY for files that have no
+      # line in the manifest, so this explicit presence check is required: an ISO
+      # missing from the manifest must fail loudly. Strip the "<hash>  " prefix
+      # from each manifest line to get the filename list, then assert membership.
+      vars:
+        _sums_files: >-
+          {{ (_sums_raw.content | b64decode).splitlines()
+             | map('regex_replace', '^[0-9A-Fa-f]+ +', '')
+             | map('trim') | select | list }}
+      ansible.builtin.assert:
+        that: item in _sums_files
+        fail_msg: >-
+          {{ item }} has no line in {{ _dst_dir }}/SHA256SUMS. This play assumes
+          the vanilla ISO library is already seeded there; add its checksum line
+          via the one-time seed procedure documented in this file's header
+          (append "<sha256>  {{ item }}" to SHA256SUMS).
+      loop: "{{ truenas_windows_isos }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [verify]
+
+    - name: Verify checksums on the serving copy (hard gate)
+      # DEFENDED command (no native equivalent): this verifies EVERY line of the
+      # checksum manifest against the files on disk, including the <base>-noprompt
+      # siblings the remaster play (Play 2) appends — filenames that no play var
+      # enumerates. A native stat get_checksum comparison could only cover the
+      # ISOs listed in truenas_windows_isos and would silently ignore those
+      # appended remaster lines; no module verifies an arbitrary checksum-manifest
+      # file wholesale. Runs before the remaster play; on a fresh system the
+      # -noprompt lines are not yet present (only the pristine ISOs are checked),
+      # on a converged system both are present and checked.
+      ansible.builtin.command:
+        cmd: sha256sum -c SHA256SUMS
+        chdir: "{{ _dst_dir }}"
+      register: _sha
+      changed_when: false
+      failed_when: _sha.rc != 0
+      tags: [verify]
+
+# ── Remaster leg ─────────────────────────────────────────────────────────────
+# become: true because docker requires root on TrueNAS SCALE (matches the docker
+# tasks in configure_docker_containers.yml). Extraction/repack happen in a pinned
+# throwaway container; only the idempotence decision, marker write, checksum and
+# SHA256SUMS update happen on the host (per #343: lineinfile, hash on host).
+
+- name: Emit no-prompt remastered Windows ISOs
+  hosts: truenas
+  gather_facts: false
+  become: true
+  vars:
+    truenas_public_pool: ssd
+    # The two standing golden-pipeline editions. The other 5 remain publishable
+    # (above) but unremastered by default; add to this list to remaster them.
+    windows_iso_remaster:
+      - winserver2025-eval-en-us.iso
+      - win11-25h2-enterprise-eval-en-us.iso
+    _dst_dir: "/mnt/{{ truenas_public_pool }}/public/isos/windows"
+    # Scratch on the same dataset as the ISOs (plenty of space); cleaned up after.
+    _scratch: "/mnt/{{ truenas_public_pool }}/public/isos/windows/.remaster-work"
+    # Pinned by digest (skopeo-resolved alpine:3.20, 2026-07-11); xorriso via apk.
+    # Digest pin makes the remaster reproducible and supply-chain-auditable.
+    _remaster_image: >-
+      docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    # The full remaster, run inside the container. $1 = base ISO filename.
+    #   1. extract the ISO tree WITHOUT loop-mounting (unprivileged-friendly)
+    #   2. preflight (MUST): hard-fail unless BOTH noprompt boot files exist
+    #   3. swap the prompting boot files for the noprompt variants
+    #   4. repack with the verified official flags (-iso-level 4 packs the >4GB
+    #      install.wim; do NOT add -udf)
+    _remaster_script: |
+      set -eu
+      # 7zip reads the UDF tree (where Windows media stores everything but a
+      # stub README in ISO9660 — xorriso -osirrox extracts only that ISO9660
+      # view and misses efi/, sources/install.wim, boot/); xorriso does the
+      # bootable repack. Both are unprivileged, no loop mount, no KVM.
+      apk add --no-cache 7zip xorriso >/dev/null
+      base="$1"
+      src="/isos/${base}"
+      tree="/work/${base%.iso}"
+      rm -rf "$tree"
+      mkdir -p "$tree"
+      7z x -bd -bso0 -bsp0 -o"$tree" "$src"
+      bootdir="$tree/efi/microsoft/boot"
+      # Per-ISO preflight: some media lack the shipped-but-undocumented noprompt
+      # boot files. Refuse to produce a silently-still-prompting ISO.
+      if [ ! -f "$bootdir/efisys_noprompt.bin" ] || [ ! -f "$bootdir/cdboot_noprompt.efi" ]; then
+        echo "PREFLIGHT_FAIL: ${base} lacks efisys_noprompt.bin and/or cdboot_noprompt.efi" >&2
+        exit 3
+      fi
+      rm -f "$bootdir/efisys.bin" "$bootdir/cdboot.efi"
+      mv "$bootdir/efisys_noprompt.bin" "$bootdir/efisys.bin"
+      mv "$bootdir/cdboot_noprompt.efi" "$bootdir/cdboot.efi"
+      xorriso -as mkisofs -no-emul-boot -e "efi/microsoft/boot/efisys.bin" \
+        -boot-load-size 1 -iso-level 4 -J -l -D -N -joliet-long \
+        -relaxed-filenames -V "WINDOWS" \
+        -o "/isos/${base%.iso}-noprompt.iso" "$tree"
+      rm -rf "$tree"
+      echo "REMASTERED ${base}"
+  tasks:
+
+    - name: Stat published source ISOs (with sha256)
+      # Hashing the source each run is the cost of true hash-idempotence: the
+      # marker below stores this hash so we re-remaster only when it changes.
+      ansible.builtin.stat:
+        path: "{{ _dst_dir }}/{{ item }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: _remaster_src
+      loop: "{{ windows_iso_remaster }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [remaster]
+
+    - name: Fail if a remaster source ISO is not published
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Remaster source {{ item.item }} not present in {{ _dst_dir }} — publish it first."
+      loop: "{{ _remaster_src.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      tags: [remaster]
+
+    - name: Read existing source-hash markers
+      ansible.builtin.slurp:
+        src: "{{ _dst_dir }}/{{ item[:-4] }}-noprompt.iso.src.sha256"
+      register: _remaster_marker
+      loop: "{{ windows_iso_remaster }}"
+      loop_control:
+        label: "{{ item }}"
+      failed_when: false
+      tags: [remaster]
+
+    - name: Stat existing no-prompt ISOs
+      ansible.builtin.stat:
+        path: "{{ _dst_dir }}/{{ item[:-4] }}-noprompt.iso"
+      register: _remaster_np
+      loop: "{{ windows_iso_remaster }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [remaster]
+
+    - name: Decide which ISOs need remastering (skip when noprompt exists AND marker matches source hash)
+      ansible.builtin.set_fact:
+        _to_remaster: >-
+          {{ (_to_remaster | default([])) + [item.0.item]
+             if ((not item.2.stat.exists)
+                  or (item.1.content is not defined)
+                  or ((item.1.content | b64decode | trim) != item.0.stat.checksum))
+             else (_to_remaster | default([])) }}
+      loop: "{{ _remaster_src.results | zip(_remaster_marker.results, _remaster_np.results) | list }}"
+      loop_control:
+        label: "{{ item.0.item }}"
+      tags: [remaster]
+
+    - name: Report remaster plan
+      ansible.builtin.debug:
+        msg: "ISOs to (re)remaster this run: {{ _to_remaster | default([]) }}"
+      tags: [remaster]
+
+    - name: Create the remaster scratch workspace
+      ansible.builtin.file:
+        path: "{{ _scratch }}"
+        state: directory
+        mode: "0700"
+      when: (_to_remaster | default([])) | length > 0
+      tags: [remaster]
+
+    - name: Remaster ISO to no-prompt boot media (extract → preflight → swap → repack)
+      # DEFENDED command (over community.docker.docker_container): this is a
+      # one-shot `docker run --rm` whose exit code AND stdout ARE the result
+      # (changed_when keys on 'REMASTERED', PREFLIGHT_FAIL surfaces via rc/stderr);
+      # docker_container manages container lifecycle/state and does not cleanly
+      # return a throwaway run's captured output and exit status.
+      # argv avoids all shell quoting: the script is passed intact, base as $1.
+      # A ~8GB ISO takes a few minutes of IO — hence the generous async window.
+      # rc != 0 (e.g. PREFLIGHT_FAIL, exit 3) fails the task with the stderr shown.
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --pull=missing
+          - -v
+          - "{{ _dst_dir }}:/isos"
+          - -v
+          - "{{ _scratch }}:/work"
+          - "{{ _remaster_image }}"
+          - sh
+          - -c
+          - "{{ _remaster_script }}"
+          - remaster
+          - "{{ item }}"
+      register: _remaster_run
+      changed_when: "'REMASTERED' in _remaster_run.stdout"
+      # No async: `command` has no default timeout, so it waits out the
+      # multi-minute IO on its own. The async wrapper was swallowing the
+      # container's stdout/stderr and failing the task with an opaque rc=38.
+      loop: "{{ _to_remaster | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [remaster]
+
+    - name: Record the source-hash marker for each remastered ISO
+      # The marker sibling stores the SOURCE hash; the decide step above compares
+      # it to re-remaster only when the pristine ISO is refreshed.
+      ansible.builtin.copy:
+        content: "{{ (_remaster_src.results | selectattr('item', 'equalto', item) | first).stat.checksum }}\n"
+        dest: "{{ _dst_dir }}/{{ item[:-4] }}-noprompt.iso.src.sha256"
+        mode: "0644"
+      loop: "{{ _to_remaster | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [remaster]
+
+    - name: World-readable perms on remastered ISOs (match the served dir)
+      ansible.builtin.file:
+        path: "{{ _dst_dir }}/{{ item[:-4] }}-noprompt.iso"
+        mode: "0644"
+      loop: "{{ _to_remaster | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [remaster]
+
+    - name: Compute sha256 of remastered ISOs
+      ansible.builtin.stat:
+        path: "{{ _dst_dir }}/{{ item[:-4] }}-noprompt.iso"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: _remaster_np_sha
+      loop: "{{ _to_remaster | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [remaster]
+
+    - name: Update SHA256SUMS with the remastered ISO hashes (idempotent by filename)
+      ansible.builtin.lineinfile:
+        path: "{{ _dst_dir }}/SHA256SUMS"
+        regexp: "  {{ (item.item[:-4] ~ '-noprompt.iso') | regex_escape }}$"
+        line: "{{ item.stat.checksum }}  {{ item.item[:-4] }}-noprompt.iso"
+        create: true
+        mode: "0644"
+      loop: "{{ _remaster_np_sha.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      tags: [remaster]
+
+    - name: Remove the remaster scratch workspace
+      ansible.builtin.file:
+        path: "{{ _scratch }}"
+        state: absent
+      tags: [remaster]

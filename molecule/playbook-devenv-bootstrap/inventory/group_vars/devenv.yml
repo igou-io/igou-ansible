@@ -1,0 +1,19 @@
+---
+# Vars the real igou-inventory group_vars/devenv/ supplies in production, but
+# which molecule does NOT load (it only reads this scenario's inventory). Only
+# the ones bootstrap.yml actually needs for this scenario live here.
+#
+# code-server login password. In production this is a 1Password lookup
+# (group_vars/devenv/code-server.yml -> op://lab_agents/devenv-code-server);
+# here it is a throwaway literal so the default run needs no 1Password access.
+# bootstrap.yml writes it into ~/.config/code-server/config.yaml on a no_log
+# task, so it never prints. verify only asserts that auth is ENFORCED (the login
+# page is served, a forged cookie is bounced) — it never needs to know this
+# value, so a fixed synthetic string is sufficient and keeps re-runs change-free.
+#
+# NOT set here (deliberately): the ghapp GitHub App vars and the full-toolset
+# toggle. devenv_ghapp_enabled=false and devenv_full_toolset=false are passed as
+# extra-vars from molecule.yml because bootstrap.yml sets them as PLAY vars, which
+# outrank inventory group_vars — only extra-vars can override them. ghapp has its
+# own end-to-end scenario (role-ghapp-e2e).
+devenv_code_server_password: molecule-devenv-bootstrap-throwaway

@@ -1,0 +1,210 @@
+---
+# Weekly devenv agent-state backup -> rustfs-cold.
+#
+# Tars the agent/tooling state (Claude/Codex/opencode config + sessions,
+# tmux, the scratch workspace) out of the vscode.igou.systems devhost's
+# host home with numeric ownership, then uploads the archive from the EE
+# to ONE fixed key in the versioned devenv-backups bucket on rustfs-cold.
+# Each weekly run becomes the new current version; the bucket's ILM rule
+# (NoncurrentDays: 30, declared in igou-inventory host_vars/rustfs-cold.yml)
+# expires superseded versions after a month, so at a weekly cadence the
+# bucket retains roughly the current copy plus the last four.
+#
+# Target is the vscode.igou.systems devhost - the physical machine that runs
+# the devcontainer. (devenv-vlan9 is a near-empty test rebuild VM and can
+# still be targeted explicitly via `-e ansible_limit=devenv-vlan9`; its
+# devcontainer layout maps the same way.)
+#
+# Container<->host path mapping: the devcontainer binds host ~/.claude-container
+# -> container ~/.claude, and host ~/workspace -> container /workspace. This
+# play SSHes to the HOST, so it archives the HOST-side bind sources (e.g.
+# .claude-container, workspace/scratch), NOT the in-container paths.
+#
+# HOT backup by design: nothing is quiesced. The state is dotfiles and
+# session scratch, so a crash-consistent snapshot is fine and the agents
+# keep running while it is taken. The consequence is that GNU tar routinely
+# exits rc=1 ("file changed as we read it") when a live session rewrites a
+# file mid-read; that is expected and accepted, see the archive task.
+#
+# Everything here is igou-owned - there is no become anywhere in this play,
+# and the fetch reads the archive as the ssh login user directly.
+#
+# Credentials: 1Password item devenv-backups-rustfs-cold (lab_s3 vault),
+# resolved at runtime - the job template must carry the
+# onepassword-connect-token credential. The endpoint comes from the same
+# inventory host_vars the rustfs_state role reconciles against.
+#
+# Restore (paths in the archive are host-side, relative to /home/igou):
+#   1. aws s3api list-object-versions --bucket devenv-backups \
+#        --prefix devenv/agent-state.tar.gz   (pick a VersionId)
+#   2. aws s3api get-object --version-id <id> ... agent-state.tar.gz
+#   3. tar xzf agent-state.tar.gz --numeric-owner -C /home/igou
+- name: Back up devenv agent state to rustfs-cold
+  hosts: "{{ ansible_limit | default('vscode.igou.systems') }}"
+  gather_facts: false
+  vars:
+    devenv_backup_home: /home/igou
+    devenv_backup_paths: # host-side, relative to devenv_backup_home
+      - .claude.json
+      - .claude-container # host-side bind source of the container's ~/.claude (the primary agent state)
+      - .claude # the host's own native claude state, if any
+      - .tmux.conf
+      - .codex
+      - .opencode # host-native opencode dir if present (the container ~/.opencode is overlay-ephemeral)
+      - .config/opencode
+      - .local/share/opencode # durable opencode data (bind-mounted into the container)
+      - workspace/scratch # host-side bind source of the devcontainer's /workspace/scratch
+    devenv_backup_required_paths: # absent => wrong host/unprovisioned home => fail
+      - .claude-container
+    # Single source of truth: the rustfs-cold stub host's spec vars.
+    devenv_s3_endpoint: "{{ hostvars['rustfs-cold'].rustfs_state_endpoint }}"
+    devenv_s3_bucket: devenv-backups
+    devenv_s3_object: devenv/agent-state.tar.gz
+    devenv_s3_region: us-east-1
+    devenv_s3_access_key: "{{ lookup('community.general.onepassword', 'devenv-backups-rustfs-cold', field='username', vault='lab_s3') }}"
+    devenv_s3_secret_key: "{{ lookup('community.general.onepassword', 'devenv-backups-rustfs-cold', field='password', vault='lab_s3') }}"
+    # Real agent state is tens of MB; an implausibly small tarball means the
+    # home was empty or wrong - fail rather than upload garbage.
+    devenv_backup_min_bytes: 10485760
+
+  pre_tasks:
+    - name: Stage a control-node scratch path for the fetched archive
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .tar.gz
+      register: _local_archive
+      delegate_to: localhost
+      connection: local
+      changed_when: false
+
+  tasks:
+    - name: Stat each candidate backup path on the target
+      ansible.builtin.stat:
+        path: "{{ devenv_backup_home }}/{{ item }}"
+      loop: "{{ devenv_backup_paths }}"
+      register: _path_stat
+
+    - name: Partition the candidate paths into present and missing
+      ansible.builtin.set_fact:
+        _existing: "{{ _path_stat.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+        _missing: "{{ _path_stat.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+
+    - name: Refuse to back up a host that is not a provisioned devenv home
+      ansible.builtin.assert:
+        that:
+          - devenv_backup_required_paths | difference(_existing) | length == 0
+        fail_msg: >-
+          Required path(s) {{ devenv_backup_required_paths | difference(_existing) }}
+          are missing under {{ devenv_backup_home }} - this is the wrong host
+          or an unprovisioned home. Refusing to archive garbage.
+
+    - name: Note any optional paths that are absent and will be skipped
+      ansible.builtin.debug:
+        msg: "Skipping absent paths: {{ _missing }}"
+      when: _missing | length > 0
+
+    - name: Stage a guest scratch file for the archive
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .tar.gz
+      register: _remote_archive
+      changed_when: false
+
+    - name: Archive the existing devenv state paths
+      # HOT backup: nothing is quiesced, so GNU tar (1.35, measured) exits
+      # rc=1 "file changed as we read it" whenever a live agent session
+      # rewrites a file mid-read - accepted. Live unix sockets under
+      # ~/.claude and ~/.codex only draw a "socket ignored" warning and do
+      # NOT change the rc (measured: socket-only run stays rc=0), so no
+      # --warning override is needed. rc=2 is a real error and still fails.
+      ansible.builtin.command:
+        argv: >-
+          {{ ['tar', 'czf', _remote_archive.path, '--numeric-owner', '-C', devenv_backup_home]
+             + _existing }}
+      register: _tar
+      changed_when: true
+      failed_when: _tar.rc not in [0, 1]
+
+    - name: Fetch the archive to the control node
+      ansible.builtin.fetch:
+        src: "{{ _remote_archive.path }}"
+        dest: "{{ _local_archive.path }}"
+        flat: true
+
+    - name: Remove the guest scratch file
+      ansible.builtin.file:
+        path: "{{ _remote_archive.path }}"
+        state: absent
+      changed_when: false
+
+    - name: Stat the fetched archive
+      ansible.builtin.stat:
+        path: "{{ _local_archive.path }}"
+      register: _archive_stat
+      delegate_to: localhost
+      connection: local
+
+    - name: Refuse to upload an implausibly small archive
+      ansible.builtin.assert:
+        that:
+          - _archive_stat.stat.size | int >= devenv_backup_min_bytes | int
+        fail_msg: >-
+          Archive is {{ _archive_stat.stat.size }} bytes (<
+          {{ devenv_backup_min_bytes }}) - was {{ devenv_backup_home }}
+          actually populated?
+      delegate_to: localhost
+      connection: local
+
+    - name: Upload the archive as the new current version
+      amazon.aws.s3_object:
+        endpoint_url: "{{ devenv_s3_endpoint }}"
+        access_key: "{{ devenv_s3_access_key }}"
+        secret_key: "{{ devenv_s3_secret_key }}"
+        region: "{{ devenv_s3_region }}"
+        bucket: "{{ devenv_s3_bucket }}"
+        object: "{{ devenv_s3_object }}"
+        src: "{{ _local_archive.path }}"
+        mode: put
+        # No canned ACL: the devenv-backups policy grants no ACL verbs and
+        # RustFS access control is IAM-policy based - the module's default
+        # (permission: [private]) makes a separate PutObjectAcl call after
+        # a multipart upload, which 403s.
+        permission: []
+      # RustFS 1.0.0-beta.8 miscomputes CRC32 on UploadPart, so the default
+      # integrity checksums boto3 >= 1.36 sends (2025-01 behavior change)
+      # fail every multipart part with "Io error: checksum mismatch: CRC32".
+      # when_required is the documented escape hatch for third-party stores.
+      environment:
+        AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      delegate_to: localhost
+      connection: local
+
+    - name: Read back the uploaded object's metadata
+      amazon.aws.s3_object_info:
+        endpoint_url: "{{ devenv_s3_endpoint }}"
+        access_key: "{{ devenv_s3_access_key }}"
+        secret_key: "{{ devenv_s3_secret_key }}"
+        region: "{{ devenv_s3_region }}"
+        bucket_name: "{{ devenv_s3_bucket }}"
+        object_name: "{{ devenv_s3_object }}"
+      register: _uploaded
+      delegate_to: localhost
+      connection: local
+
+    - name: Record the backup outcome
+      ansible.builtin.debug:
+        msg: >-
+          Uploaded {{ _archive_stat.stat.size }} bytes to
+          s3://{{ devenv_s3_bucket }}/{{ devenv_s3_object }}
+          (version {{ _uploaded.object_info[0].object_data.version_id
+                      | default('n/a') }})
+
+  post_tasks:
+    - name: Remove the control-node scratch file
+      ansible.builtin.file:
+        path: "{{ _local_archive.path }}"
+        state: absent
+      delegate_to: localhost
+      connection: local
+      changed_when: false

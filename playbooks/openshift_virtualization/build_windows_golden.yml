@@ -1,0 +1,601 @@
+---
+# Build a Windows golden image for OpenShift Virtualization (issue #343, phase 1).
+#
+# Turns a Windows installer ISO DataVolume into a generalized (sysprepped)
+# bootable golden root disk, published as a CDI DataSource that stock KubeVirt
+# Windows templates can clone via sourceRef.
+#
+# Flow (all inside windows_golden_namespace, plus one cross-namespace ISO clone):
+#   1. preflight (source ISO DataVolume + no-prompt feedstock)
+#   2. clone the installer ISO into the build namespace
+#   3. render the autounattend answer file into a Secret
+#   4. create a STANDALONE golden root DataVolume (not a dataVolumeTemplate, so
+#      it survives VM deletion and becomes the published disk with no capture)
+#   5. create a throwaway build VM (runStrategy RerunOnFailure) — a remastered
+#      no-prompt ISO auto-boots the CD on every power-on, disk-first bootOrder
+#      terminates the loop, so no keypress helper is needed
+#   6. the answer file drives install -> guest tools -> sysprep /generalize
+#      /shutdown, fully unattended (no WinRM needed in phase 1); the VMI goes
+#      Succeeded on poweroff
+#   7. delete the VM, publish the surviving root DV as a DataSource, clean up
+#
+# All k8s tasks use kubernetes.core with NO explicit auth params — they honor
+# K8S_AUTH_HOST / K8S_AUTH_API_KEY / K8S_AUTH_VERIFY_SSL / KUBECONFIG from the
+# environment. The whole flow is pure kubernetes.core — no virtctl, no
+# kubeconfig FILE: the remastered no-prompt ISO auto-boots the CD, so there is
+# no keypress helper to drive.
+- name: Build Windows golden image DataSource
+  hosts: "{{ target_hosts | default('localhost') }}"
+  # Talk to the API via env-injected K8S_AUTH_* / KUBECONFIG — no SSH needed.
+  # Force local so a bare `localhost` inventory entry does not default to ssh.
+  connection: local
+  gather_facts: false
+  vars:
+    # --- Interface contract (see issue #343 phase 1, part A) ---------------
+    # REQUIRED. Namespace used for BOTH the build VM and the published DataSource.
+    windows_golden_namespace: ""
+    # Local Administrator / auto-logon password for the throwaway build VM.
+    # Empty -> a random throwaway is generated at runtime (see the "Generate a
+    # throwaway build-VM admin password" task). Safe to auto-generate because
+    # sysprep /generalize wipes local accounts and credentials from the published
+    # image — nothing that clones the golden disk inherits it, so there is
+    # nothing durable to protect. Honor an explicit override if set. Every task
+    # that renders or uses it sets no_log: true.
+    windows_golden_admin_password: ""
+    # Short edition key; drives all derived resource names.
+    windows_golden_edition: win2k25
+    # virtualmachineclusterpreference applied to the build VM and stamped as the
+    # DataSource default-preference label.
+    windows_golden_preference: windows.2k25
+    # Only used as the DataSource default-instancetype label.
+    windows_golden_instancetype: u1.medium
+    # Where the source installer ISO DataVolume already lives.
+    windows_golden_iso_namespace: windows-images
+    # REMASTERED no-prompt feedstock (Design A): a `-noprompt` ISO auto-boots the
+    # CD on every power-on with no "press any key" prompt, so the build is fully
+    # declarative. The igou-openshift DV re-point lands in the same increment
+    # train. Non-remastered media would sit forever at the prompt — see the
+    # feedstock preflight, which enforces the `-noprompt` name suffix.
+    windows_golden_iso_dv: iso-winserver2025-eval-noprompt
+    # install.wim image index; 2 = Server 2025 Standard Eval (Desktop Experience).
+    # For the win11-25h2-enterprise-eval media the client index is 1.
+    windows_golden_image_index: 2
+    # Answer-file (autounattend) Jinja template rendered into the sysprep Secret.
+    # Default = the proven Server template. Client editions (Windows 11) set
+    # autounattend-client.xml.j2, which adds the Win11 hardware-check bypasses,
+    # PreventDeviceEncryption (never arm BitLocker in a golden image), a
+    # BypassNRO/local-account OOBE path, and a Store-auto-update disable before
+    # sysprep. Both templates share the SAME var contract
+    # (windows_golden_image_index / windows_golden_hostname /
+    # windows_golden_admin_password) and the SAME sysprep-via-RunOnce mechanism.
+    windows_golden_unattend_template: autounattend-server.xml.j2
+    # ComputerName for the throwaway build VM.
+    windows_golden_hostname: goldenbuild
+    # Size of the golden root disk.
+    windows_golden_disk_size: 50Gi
+    # StorageClass for the golden root disk; empty -> cluster default SC.
+    windows_golden_storage_class: ""
+    # StorageClass for the ISO clone target; same SC as the source enables a
+    # smart (server-side) clone instead of a host-assisted copy.
+    windows_golden_iso_storage_class: freenas-nfs-cold-csi
+    # Cap on the install -> generalize -> shutdown wait (minutes).
+    windows_golden_install_timeout_minutes: 90
+    # Keep the installcd clone DV + unattend Secret after publishing.
+    windows_golden_keep_build_artifacts: false
+
+    # --- Production publish path (issue #343 phase 1, part B) --------------
+    # Empty -> publish in the build namespace exactly as today (the surviving
+    # standalone root DV IS the deliverable, no capture-clone). Non-empty ->
+    # after the build, capture-clone the golden root DV into this namespace.
+    # Production sets openshift-virtualization-os-images (where the SSP-managed
+    # os-image DataSources live) while building in windows-images (where the
+    # installer ISO DVs live).
+    windows_golden_publish_namespace: ""
+    # Name of the published DV/PVC (and DataSource, when managed) in the publish
+    # namespace. Empty -> derives to windows_golden_dv_name. Production sets
+    # "win2k25" so the PVC name matches the stock SSP DataSource's expected
+    # spec.source.pvc.name — that DataSource flips Ready=True on its own once the
+    # PVC exists, so production creates NO DataSource of its own.
+    windows_golden_publish_name: ""
+    # StorageClass for the capture-clone into the publish namespace; empty ->
+    # cluster default SC (same combine() omission pattern as the root DV).
+    windows_golden_publish_storage_class: ""
+    # true -> create/patch a DataSource pointing at the published PVC. false ->
+    # skip the DataSource task entirely: stock SSP-managed DataSources already
+    # bind to the named PVC on their own, and the AAP virtualmachine-ops service
+    # account deliberately cannot write DataSources. Production sets this false.
+    windows_golden_manage_datasource: true
+
+    # --- Derived resource names (sibling molecule scenario depends on these) --
+    windows_golden_vm_name: "golden-{{ windows_golden_edition }}-build"
+    # Golden root DV == published PVC == DataSource name.
+    windows_golden_dv_name: "golden-{{ windows_golden_edition }}"
+    windows_golden_installcd_dv: "golden-{{ windows_golden_edition }}-installcd"
+    windows_golden_unattend_secret: "golden-{{ windows_golden_edition }}-unattend"
+
+  tasks:
+
+    # --- Step 1: assert inputs --------------------------------------------
+    - name: Assert windows_golden_namespace is set
+      ansible.builtin.assert:
+        that:
+          - windows_golden_namespace | length > 0
+        fail_msg: >-
+          windows_golden_namespace is required (build + publish namespace).
+
+    # Feedstock preflight: the declarative build relies on a REMASTERED no-prompt
+    # ISO. Pristine media still shows "Press any key to boot from CD" and, with no
+    # keypress helper, the build VM sits at that prompt forever (then boot-loops
+    # Setup once the prompt times out to the empty disk). Name convention
+    # (igou-openshift #418 set + publish_windows_isos.yml) marks the remastered
+    # ISO with a `-noprompt` suffix, so enforce it here.
+    - name: Assert the boot path uses remastered no-prompt feedstock
+      ansible.builtin.assert:
+        that:
+          - windows_golden_iso_dv is match('.*-noprompt$')
+        fail_msg: >-
+          windows_golden_iso_dv="{{ windows_golden_iso_dv }}" is not a
+          remastered no-prompt ISO (name must end in '-noprompt'). Non-remastered
+          media sits forever at the "press any key to boot from CD" prompt.
+          Remaster it via playbooks/truenas/publish_windows_isos.yml
+          (emits '<base>-noprompt.iso').
+
+    # generalize wipes local accounts and credentials from the published image,
+    # so the build-VM Administrator password is throwaway — nothing durable to
+    # protect. Generate a random one when the caller did not override it. The
+    # 'zZ9!' suffix guarantees Windows' upper/lower/digit/symbol complexity.
+    - name: Generate a throwaway build-VM admin password when unset
+      when: windows_golden_admin_password | length == 0
+      no_log: true
+      ansible.builtin.set_fact:
+        windows_golden_admin_password: >-
+          {{ lookup('ansible.builtin.password',
+                    '/dev/null length=16 chars=ascii_letters,digits') ~ 'zZ9!' }}
+
+    - name: Build and publish the Windows golden image
+      # Retained as a grouping block so the build/publish steps read as one unit.
+      # It previously carried an `always:` that removed the temp kubeconfig the
+      # deprecated keypress helper rendered; that cleanup (and its rescue/always
+      # surface) went with the helper, leaving a pure-kubernetes.core sequence.
+      block:
+
+        # --- Step 2: preflight the source ISO DataVolume ------------------
+        - name: Look up the source installer ISO DataVolume
+          kubernetes.core.k8s_info:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_iso_dv }}"
+            namespace: "{{ windows_golden_iso_namespace }}"
+          register: golden_iso_dv
+
+        - name: Assert the source ISO DataVolume exists and is ready
+          ansible.builtin.assert:
+            that:
+              - golden_iso_dv.resources | length == 1
+              - golden_iso_dv.resources[0].status.phase == "Succeeded"
+            fail_msg: >-
+              Source ISO DataVolume {{ windows_golden_iso_dv }} in
+              {{ windows_golden_iso_namespace }} is missing or not Succeeded.
+
+        - name: Capture the source ISO storage request (clone size)
+          ansible.builtin.set_fact:
+            windows_golden_iso_size: >-
+              {{ golden_iso_dv.resources[0].spec.storage.resources.requests.storage
+                 | default(golden_iso_dv.resources[0].spec.pvc.resources.requests.storage) }}
+
+        # --- Step 3: clone the ISO into the build namespace ---------------
+        - name: Clone the installer ISO into the build namespace
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: cdi.kubevirt.io/v1beta1
+              kind: DataVolume
+              metadata:
+                name: "{{ windows_golden_installcd_dv }}"
+                namespace: "{{ windows_golden_namespace }}"
+                annotations:
+                  cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+                  cdi.kubevirt.io/storage.usePopulator: "true"
+              spec:
+                source:
+                  pvc:
+                    name: "{{ windows_golden_iso_dv }}"
+                    namespace: "{{ windows_golden_iso_namespace }}"
+                storage:
+                  storageClassName: "{{ windows_golden_iso_storage_class }}"
+                  resources:
+                    requests:
+                      storage: "{{ windows_golden_iso_size }}"
+
+        - name: Wait for the ISO clone to complete
+          kubernetes.core.k8s_info:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_installcd_dv }}"
+            namespace: "{{ windows_golden_namespace }}"
+          register: golden_clone_status
+          until:
+            - golden_clone_status.resources | length == 1
+            - golden_clone_status.resources[0].status.phase == "Succeeded"
+          retries: 60
+          delay: 30
+
+        # --- Step 4: render the autounattend answer file into a Secret ----
+        - name: Create the unattend Secret
+          no_log: true
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: "{{ windows_golden_unattend_secret }}"
+                namespace: "{{ windows_golden_namespace }}"
+              stringData:
+                autounattend.xml: "{{ lookup('ansible.builtin.template', 'templates/' ~ windows_golden_unattend_template) }}"
+
+        # --- Step 5: create the STANDALONE golden root DataVolume ---------
+        # Build the storage spec so storageClassName is omitted (cluster default)
+        # when windows_golden_storage_class is empty.
+        - name: Build the golden root DV storage spec
+          ansible.builtin.set_fact:
+            windows_golden_root_storage: >-
+              {{
+                {'resources': {'requests': {'storage': windows_golden_disk_size}}}
+                | combine(
+                    {'storageClassName': windows_golden_storage_class}
+                    if windows_golden_storage_class | length > 0 else {}
+                  )
+              }}
+
+        - name: Create the standalone golden root DataVolume
+          # STANDALONE (not a dataVolumeTemplate): the VM must not own it so it
+          # survives VM deletion and becomes the published disk with zero
+          # capture-clone.
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: cdi.kubevirt.io/v1beta1
+              kind: DataVolume
+              metadata:
+                name: "{{ windows_golden_dv_name }}"
+                namespace: "{{ windows_golden_namespace }}"
+                annotations:
+                  cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+              spec:
+                source:
+                  blank: {}
+                storage: "{{ windows_golden_root_storage }}"
+
+        # --- Step 6: create the throwaway build VM -----------------------
+        # Assemble the VM definition as a fact first so the bootOrder invariant
+        # can be asserted BEFORE anything is created on the cluster.
+        - name: Assemble the build VM definition
+          ansible.builtin.set_fact:
+            windows_golden_vm_definition:
+              apiVersion: kubevirt.io/v1
+              kind: VirtualMachine
+              metadata:
+                name: "{{ windows_golden_vm_name }}"
+                namespace: "{{ windows_golden_namespace }}"
+                labels:
+                  app.kubernetes.io/part-of: windows-golden-build
+                  windows-edition: "{{ windows_golden_edition }}"
+              spec:
+                # RerunOnFailure: starts the VM on create, and guest reboots
+                # during Setup stay in-VMI (rebootPolicy nil = in-place libvirt
+                # reboot, never a VMI restart), so sysprep's poweroff drives the
+                # VMI to Succeeded and it stays stopped — same terminal signal as
+                # Manual/Once. UNLIKE Manual/Once, it auto-recreates the VMI if
+                # infra kills this non-migratable TPM+SATA VM mid-install; with
+                # no-prompt media an early re-entry into Setup just re-wipes the
+                # disk (WillWipeDisk) — the build self-heals instead of hanging
+                # stopped.
+                runStrategy: RerunOnFailure
+                preference:
+                  kind: virtualmachineclusterpreference
+                  name: "{{ windows_golden_preference }}"
+                template:
+                  metadata:
+                    labels:
+                      kubevirt.io/domain: "{{ windows_golden_vm_name }}"
+                  spec:
+                    # A TPM+SATA VM cannot live-migrate; LiveMigrateIfPossible
+                    # falls back to a normal shutdown+reschedule on drain, which
+                    # RerunOnFailure then recreates (see runStrategy comment).
+                    evictionStrategy: LiveMigrateIfPossible
+                    # Keep Windows VMs OFF the TrueNAS-hosted worker (nested virt
+                    # unsupported). Belt-and-suspenders with the HCO workloads
+                    # nodePlacement exclusion.
+                    affinity:
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                                - key: kubernetes.io/hostname
+                                  operator: NotIn
+                                  values:
+                                    # SHORT hostname — the node's
+                                    # kubernetes.io/hostname label is
+                                    # "truenas-w1", not the FQDN (verified on the
+                                    # live cluster; every other node uses its
+                                    # FQDN). FQDN here silently never matches, so
+                                    # the exclusion is a no-op. See README / #420.
+                                    - truenas-w1
+                    domain:
+                      cpu:
+                        cores: 1
+                        sockets: 2
+                        threads: 1
+                      memory:
+                        guest: 6Gi
+                      firmware:
+                        # secureBoot required for Windows 11 client install;
+                        # harmless for Server.
+                        bootloader:
+                          efi:
+                            secureBoot: true
+                      features:
+                        smm:
+                          enabled: true
+                        acpi: {}
+                      devices:
+                        # Non-persistent vTPM (satisfies Win 11 TPM 2.0 check).
+                        tpm: {}
+                        disks:
+                          - name: rootdisk
+                            bootOrder: 1
+                            disk:
+                              bus: sata
+                          - name: installcd
+                            bootOrder: 2
+                            cdrom:
+                              bus: sata
+                          - name: virtiodrivers
+                            cdrom:
+                              bus: sata
+                          - name: sysprep
+                            cdrom:
+                              bus: sata
+                        interfaces:
+                          - name: default
+                            masquerade: {}
+                            model: e1000e
+                    networks:
+                      - name: default
+                        pod: {}
+                    volumes:
+                      - name: rootdisk
+                        dataVolume:
+                          name: "{{ windows_golden_dv_name }}"
+                      - name: installcd
+                        persistentVolumeClaim:
+                          claimName: "{{ windows_golden_installcd_dv }}"
+                      - name: virtiodrivers
+                        containerDisk:
+                          image: registry.redhat.io/container-native-virtualization/virtio-win-rhel9@sha256:cc98b37978b84b5fe7127c08d52a09c8c136c61ae51085a3f3180e3e11275497
+                      - name: sysprep
+                        sysprep:
+                          # secret (not configMap): the rendered answer file
+                          # carries the Administrator password. The field is a
+                          # LocalObjectReference — `name`, NOT `secretName`
+                          # (the API silently drops unknown fields and the VM
+                          # ends up with an empty sysprep reference).
+                          secret:
+                            name: "{{ windows_golden_unattend_secret }}"
+
+        # bootOrder invariant (MUST-2): no-prompt media auto-boots the CD on
+        # EVERY power-on. Disk-first ordering is what terminates the install
+        # loop — the empty rootdisk (bootOrder 1) is unbootable so firmware
+        # falls through to the CD (bootOrder 2) and installs; once Windows is on
+        # the disk it boots itself and never re-enters Setup. CD-first would
+        # infinite-loop. Assert it BEFORE create so a spec regression fails here,
+        # not after a wasted install.
+        - name: Assert the build VM boot order terminates the install loop
+          vars:
+            golden_disks: "{{ windows_golden_vm_definition.spec.template.spec.domain.devices.disks }}"
+          ansible.builtin.assert:
+            that:
+              - (golden_disks | selectattr('name', 'equalto', 'rootdisk')
+                 | map(attribute='bootOrder') | first) == 1
+              - (golden_disks | selectattr('name', 'equalto', 'installcd')
+                 | map(attribute='bootOrder') | first) == 2
+            fail_msg: >-
+              Build VM boot order must be rootdisk=1, installcd=2 so the empty
+              disk falls through to the CD on first boot and the installed disk
+              boots itself thereafter. Any other ordering infinite-loops Setup on
+              no-prompt media.
+
+        - name: Create the build VM (runStrategy RerunOnFailure)
+          # RerunOnFailure starts the VM on create and the remastered no-prompt CD
+          # auto-boots into Windows Setup — no keypress helper is needed.
+          kubernetes.core.k8s:
+            definition: "{{ windows_golden_vm_definition }}"
+
+        # --- Step 8: wait for install -> generalize -> shutdown ----------
+        # Terminal signal is unchanged (VMI Succeeded on sysprep poweroff). Under
+        # RerunOnFailure the VMI can briefly NOT EXIST between failure-driven
+        # recreations (infra kill -> VM controller respawns the VMI); the until
+        # loop tolerates that because `resources | length == 1` simply stays
+        # false for those polls and it keeps retrying until Succeeded (or the
+        # timeout), never erroring on the empty window.
+        # Completion signal under runStrategy RerunOnFailure: the answer file
+        # ends with sysprep /generalize /shutdown, a CLEAN guest poweroff.
+        # RerunOnFailure treats a clean exit as success and STOPS the VM,
+        # DELETING the VMI (unlike Manual, which parked it in phase Succeeded).
+        # So we watch the VirtualMachine's printableStatus reach "Stopped",
+        # not the VMI phase. A genuine install failure keeps RerunOnFailure
+        # restarting the VMI (Starting/Running/CrashLoopBackOff), so it never
+        # reaches Stopped and this times out — which is the behavior we want.
+        - name: Wait for the build VM to finish and power off (VM Stopped)
+          kubernetes.core.k8s_info:
+            api_version: kubevirt.io/v1
+            kind: VirtualMachine
+            name: "{{ windows_golden_vm_name }}"
+            namespace: "{{ windows_golden_namespace }}"
+          register: golden_vm_status
+          until:
+            - golden_vm_status.resources | length == 1
+            - golden_vm_status.resources[0].status.printableStatus == "Stopped"
+          retries: "{{ windows_golden_install_timeout_minutes | int }}"
+          delay: 60
+
+        # --- Step 9: publish --------------------------------------------
+        - name: Delete the build VM (standalone root DV survives)
+          kubernetes.core.k8s:
+            state: absent
+            api_version: kubevirt.io/v1
+            kind: VirtualMachine
+            name: "{{ windows_golden_vm_name }}"
+            namespace: "{{ windows_golden_namespace }}"
+            wait: true
+
+        # --- Step 9b: resolve the publish target ------------------------
+        # Empty publish vars keep today's behavior: publish IN the build
+        # namespace under the build DV's own name (no capture-clone).
+        - name: Resolve the publish namespace and name
+          ansible.builtin.set_fact:
+            windows_golden_resolved_publish_namespace: >-
+              {{ windows_golden_publish_namespace
+                 if windows_golden_publish_namespace | length > 0
+                 else windows_golden_namespace }}
+            windows_golden_resolved_publish_name: >-
+              {{ windows_golden_publish_name
+                 if windows_golden_publish_name | length > 0
+                 else windows_golden_dv_name }}
+
+        # A capture-clone is only needed when the resolved target differs from
+        # the build DV in EITHER namespace or name; otherwise the surviving
+        # standalone root DV already IS the published PVC.
+        - name: Determine whether a capture-clone is needed
+          ansible.builtin.set_fact:
+            windows_golden_publish_is_clone: >-
+              {{ windows_golden_resolved_publish_namespace != windows_golden_namespace
+                 or windows_golden_resolved_publish_name != windows_golden_dv_name }}
+
+        # --- Step 9c: capture-clone into the publish namespace ----------
+        # Build the publish DV storage spec so storageClassName is omitted
+        # (cluster default) when windows_golden_publish_storage_class is empty.
+        - name: Build the published DV storage spec
+          when: windows_golden_publish_is_clone | bool
+          ansible.builtin.set_fact:
+            windows_golden_publish_storage: >-
+              {{
+                {'resources': {'requests': {'storage': windows_golden_disk_size}}}
+                | combine(
+                    {'storageClassName': windows_golden_publish_storage_class}
+                    if windows_golden_publish_storage_class | length > 0 else {}
+                  )
+              }}
+
+        - name: Capture-clone the golden root disk into the publish namespace
+          # CDI authorizes a cross-namespace clone against
+          # `datavolumes/source create` in the SOURCE (build) namespace, which
+          # the AAP virtualmachine-ops SA holds cluster-wide. A same-SC clone is
+          # a snapshot smart-clone (minutes); a cross-SC clone falls back to a
+          # host-assisted 50Gi copy (the slow path the wait below tolerates).
+          when: windows_golden_publish_is_clone | bool
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: cdi.kubevirt.io/v1beta1
+              kind: DataVolume
+              metadata:
+                name: "{{ windows_golden_resolved_publish_name }}"
+                namespace: "{{ windows_golden_resolved_publish_namespace }}"
+                annotations:
+                  cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+                  cdi.kubevirt.io/storage.usePopulator: "true"
+              spec:
+                source:
+                  pvc:
+                    name: "{{ windows_golden_dv_name }}"
+                    namespace: "{{ windows_golden_namespace }}"
+                storage: "{{ windows_golden_publish_storage }}"
+
+        - name: Wait for the published capture-clone to complete
+          when: windows_golden_publish_is_clone | bool
+          kubernetes.core.k8s_info:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_resolved_publish_name }}"
+            namespace: "{{ windows_golden_resolved_publish_namespace }}"
+          register: golden_publish_status
+          until:
+            - golden_publish_status.resources | length == 1
+            - golden_publish_status.resources[0].status.phase == "Succeeded"
+          retries: 60
+          delay: 30
+
+        # --- Step 9d: publish the DataSource (optional) ------------------
+        # Skipped in production: stock SSP-managed DataSources bind the named PVC
+        # on their own and the AAP SA cannot write DataSources.
+        - name: Publish the golden root disk as a DataSource
+          when: windows_golden_manage_datasource | bool
+          kubernetes.core.k8s:
+            definition:
+              apiVersion: cdi.kubevirt.io/v1beta1
+              kind: DataSource
+              metadata:
+                name: "{{ windows_golden_resolved_publish_name }}"
+                namespace: "{{ windows_golden_resolved_publish_namespace }}"
+                labels:
+                  instancetype.kubevirt.io/default-preference: "{{ windows_golden_preference }}"
+                  instancetype.kubevirt.io/default-instancetype: "{{ windows_golden_instancetype }}"
+              spec:
+                source:
+                  pvc:
+                    name: "{{ windows_golden_resolved_publish_name }}"
+                    namespace: "{{ windows_golden_resolved_publish_namespace }}"
+
+        # --- Step 10: clean up build artifacts --------------------------
+        - name: Delete the installcd clone DataVolume
+          when: not (windows_golden_keep_build_artifacts | bool)
+          kubernetes.core.k8s:
+            state: absent
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_installcd_dv }}"
+            namespace: "{{ windows_golden_namespace }}"
+
+        - name: Delete the unattend Secret
+          when: not (windows_golden_keep_build_artifacts | bool)
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Secret
+            name: "{{ windows_golden_unattend_secret }}"
+            namespace: "{{ windows_golden_namespace }}"
+
+        # Only an intermediate artifact when a capture-clone produced the
+        # deliverable elsewhere. In same-namespace mode this DV IS the published
+        # PVC — deleting it would destroy the build output — so gate on
+        # publish_is_clone as well as keep_build_artifacts.
+        - name: Delete the intermediate build-namespace golden DataVolume
+          when:
+            - not (windows_golden_keep_build_artifacts | bool)
+            - windows_golden_publish_is_clone | bool
+          kubernetes.core.k8s:
+            state: absent
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_golden_dv_name }}"
+            namespace: "{{ windows_golden_namespace }}"
+
+        # --- Step 11: report --------------------------------------------
+        - name: Report the published golden image
+          ansible.builtin.debug:
+            msg:
+              - >-
+                Published PVC {{ windows_golden_resolved_publish_name }} in
+                namespace {{ windows_golden_resolved_publish_namespace }}.
+              - >-
+                DataSource managed by this run:
+                {{ windows_golden_manage_datasource | bool }}.
+              - >-
+                {{
+                  'Consume it from a VM via a dataVolumeTemplate sourceRef: '
+                  ~ '{kind: DataSource, name: '
+                  ~ windows_golden_resolved_publish_name
+                  ~ ', namespace: ' ~ windows_golden_resolved_publish_namespace ~ '}'
+                  if windows_golden_manage_datasource | bool
+                  else 'No DataSource created — the stock SSP-managed DataSource '
+                       ~ windows_golden_resolved_publish_name
+                       ~ ' binds this PVC automatically and flips Ready=True.'
+                }}

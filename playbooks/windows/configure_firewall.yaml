@@ -8,6 +8,15 @@
 #                                           (Domain / Private / Public)
 #   * community.windows.win_firewall_rule - manages INDIVIDUAL rules
 #
+# Ordering matters: rules are created FIRST, profiles enabled LAST. If the
+# firewall starts disabled, enabling a profile applies its default
+# inbound-block immediately — so the allow rules must already exist or the
+# converge severs its own WinRM connection.
+#
+# Invariant: the WinRM-over-HTTPS (5986) allow rule is applied by its own
+# dedicated task that runs REGARDLESS of windows_firewall_rules. Overriding
+# windows_firewall_rules can never lock Ansible out of the host.
+#
 # Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
 # inventory group.
 #
@@ -23,9 +32,10 @@
 #                                            not used for icmp)
 #                                 profiles:  list                (optional)
 #                                 state:     present|absent      (default present)
-#                               The defaults below allow ping and WinRM over
-#                               HTTPS — the two rules a lab Windows VM
-#                               almost always needs.
+#                               The default below allows ICMP ping. The
+#                               WinRM-over-HTTPS allow rule is NOT in this
+#                               list — it is applied separately and always
+#                               (see the invariant above).
 #
 # Run:
 #   ansible-navigator run playbooks/windows/configure_firewall.yaml \
@@ -42,17 +52,20 @@
     windows_firewall_rules:
       - name: Allow ICMP ping (managed by Ansible)
         protocol: icmpv4
-      - name: Allow WinRM over HTTPS (managed by Ansible)
-        protocol: tcp
-        localport: "5986"
 
   tasks:
-    # Keep the firewall ON and punch explicit holes — disabling profiles to
-    # "make things work" is the anti-pattern this playbook exists to avoid.
-    - name: Ensure firewall profiles are enabled
-      ansible.windows.win_firewall:
-        profiles: "{{ windows_firewall_profiles }}"
-        state: enabled
+    # Rules FIRST, profiles last. And the WinRM-HTTPS allow rule is applied
+    # here unconditionally — never sourced from windows_firewall_rules — so
+    # a caller who overrides that list can't accidentally lock Ansible out.
+    - name: Always allow WinRM over HTTPS (5986) so the converge can't lock itself out
+      community.windows.win_firewall_rule:
+        name: Allow WinRM over HTTPS (managed by Ansible)
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "5986"
+        state: present
+        enabled: true
 
     - name: Ensure firewall rules match the desired state
       community.windows.win_firewall_rule:
@@ -67,3 +80,12 @@
       loop: "{{ windows_firewall_rules }}"
       loop_control:
         label: "{{ item.name }}"
+
+    # Keep the firewall ON and punch explicit holes — disabling profiles to
+    # "make things work" is the anti-pattern this playbook exists to avoid.
+    # Enabled LAST so the default inbound-block only lands after the allow
+    # rules above are in place.
+    - name: Ensure firewall profiles are enabled
+      ansible.windows.win_firewall:
+        profiles: "{{ windows_firewall_profiles }}"
+        state: enabled

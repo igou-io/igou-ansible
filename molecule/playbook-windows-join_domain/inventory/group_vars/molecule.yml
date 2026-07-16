@@ -1,0 +1,11 @@
+---
+# This scenario is inherently kubevirt: it provisions two real Windows Server
+# 2025 VMs on the live cluster. No podman/docker fallback.
+mp_backend: kubevirt
+
+# Windows first boot on a fresh clone is slow: the smart-clone must finish, then
+# the generalized image runs OOBE specialize + the unattend FirstLogonCommands
+# (self-signed cert + WinRM HTTPS listener) before psrp can answer. Give the
+# prepare wait_for_connection generous headroom over the 900s role default.
+# Both VMs boot in parallel, so this is the per-host budget, not the sum.
+mp_kubevirt_windows_wait_timeout: 1500

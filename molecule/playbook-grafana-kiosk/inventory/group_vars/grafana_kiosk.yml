@@ -1,0 +1,21 @@
+---
+# Converge vars for the kiosk play inside molecule containers: mock Grafana
+# upstream (started by prepare.yml) + a dummy token so no 1Password access
+# is needed in CI.
+kiosk_grafana_url: http://127.0.0.1:3000
+kiosk_grafana_token: molecule-dummy-token
+kiosk_dashboard_path: /d/mock/dashboard?orgId=1
+# Molecule guests default to headless - leave the browser unit
+# enabled-but-stopped; verify runs headless smokes. On the kubevirt backend
+# the VM does have a virtual display: override with
+# `-- -e kiosk_start_browser=true` and watch it over `virtctl vnc` (see
+# playbooks/grafana-kiosk/README.md "Render testing").
+kiosk_start_browser: false
+# The kubevirt backend's virtio-gpu has no working dmabuf path and WebKit's
+# accelerated compositing segfaults on real Grafana there - both renderers
+# must fall back to plain software. Harmless for the container backends
+# (browser never starts); DO NOT set these on real Pi hardware, vc4/v3d
+# wants both.
+kiosk_cog_env:
+  WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+  WEBKIT_DISABLE_COMPOSITING_MODE: "1"
