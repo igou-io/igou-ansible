@@ -69,8 +69,9 @@ must match the playbook's hosts var or the play silently matches no hosts.
 The `boards` fleet boots via per-MAC pxelinux pins on rb5009 with four
 modes: `local_kernel` (fleet default — kernel from local disk, updated
 via apt), `nfs` (reimaging), `sd` (bring-up), `local` (transitional).
-**Read `docs/armbian-boot-modes.md` before touching board kernels, boot
-modes, or netboot TFTP assets.**
+**When working with the fleet, read `playbooks/armbian/AGENTS.md` first** —
+it covers boot modes, playbooks/job templates, workflows, and per-board
+quirks, and points to the authoritative `docs/armbian-boot-modes.md`.
 
 ### Execution environments
 
