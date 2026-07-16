@@ -1,6 +1,6 @@
 AAP_NAV_CFG := playbooks/aap/ansible-navigator.yml
 
-.PHONY: lint yamllint syntax-check _check-inv aap-configure aap-sync-credentials aap-sync-templates aap-bootstrap-connect
+.PHONY: lint yamllint syntax-check ee _check-inv aap-configure aap-sync-credentials aap-sync-templates aap-bootstrap-connect
 
 lint:
 	ansible-lint --profile=production
@@ -17,6 +17,10 @@ syntax-check:
 		fi; \
 	done; \
 	exit "$${failed}"
+
+ee:
+	cd execution-environments/igou-awx-ee && \
+		ansible-builder build -v 3 --tag igou-awx-ee:latest
 
 pac-sim:
 	tkn pac resolve -f .tekton/igou-aap-ee-rhel9-push.yml | oc create -n ci-igou-ansible -f -
