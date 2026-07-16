@@ -20,7 +20,7 @@ this order — each depends on the ones above it being alive:
    reachable.
 5. **OCP cluster** — depends on rb5009 + truenas (PXE) and the rendezvous
    host being able to boot.
-6. **Homelab pets** (helpernode, p330, hpg5 if not OCP) — PXE-driven; depend
+6. **Homelab pets** (vscode, p330, hpg5 if not OCP) — PXE-driven; depend
    on rb5009 + truenas.
 
 Backups for `rb5009` and the inventory itself are the only things you cannot
@@ -267,7 +267,7 @@ recreated by GitOps.
 
 ---
 
-## Homelab pets (helpernode, p330, etc.)
+## Homelab pets (vscode, p330, etc.)
 
 Each is configured via a per-host `netboot_host_pins` entry in
 `igou-inventory/group_vars/all/netboot.yml`. Most autoinstall CentOS Stream

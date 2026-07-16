@@ -16,7 +16,7 @@
 
 - The operator-facing boot-flip playbook (`set_host_boot.yml` / `clear_host_boot.yml`). Out of scope; deferred to a follow-up brainstorm. The primitives this design produces are the foundation it will sit on.
 - Verifying that iPXE *executed* the fragment body (vs. merely fetched it). That still needs serial console scraping or a phone-home probe; both were explicitly rejected during brainstorming. The HTTP-side check covers the regressions the user actually hits.
-- Booting real-host pins (helpernode, p330, hpg5, 5847ca77098a, 998877664433, 02:9f:47:58:1b:f7). Their fragments would attempt real OS installs. Test fixtures stay limited to the two smoke pins (`02:00:00:50:58:01`, `02:00:00:50:58:02`).
+- Booting real-host pins (vscode, p330, hpg5, 5847ca77098a, 998877664433). Their fragments would attempt real OS installs. Test fixtures stay limited to the two smoke pins (`02:00:00:50:58:01`, `02:00:00:50:58:02`).
 - Changing the inventory schema. `netboot_host_pins` is read-only from the test's perspective; no `smoke_test:` flag, no parallel test-case list in inventory.
 - Touching the iPXE binary build (`playbooks/routeros/deploy_netboot_binaries.yml`) or the asset-management playbook (`playbooks/netboot/deploy_assets.yml`).
 
@@ -255,7 +255,7 @@ No molecule scenario (consistent with the rest of `playbooks/kubevirt/`).
 - Verification mechanism: HTTP probe of nginx root at preflight (liveness only) + ansible.builtin.copy of smoke pin files into the container's `/config/menus/host/` mount + `docker exec cat` read-back substring check + `docker logs` slice for dnsmasq-tftp lines (catches dynamic dispatch breakage). No virtctl console; no probe URL.
 - Test fixture location: `pxe_test_arches` stays in the playbook (test concern). Inventory `netboot_host_pins` is read-only from the test's perspective; the smoke pin file BODY comes from inventory's `netboot_host_pins[…].fragment` field — the test playbook copies that text into the container's menus directory.
 - Inventory schema: unchanged. No `smoke_test:` flag added.
-- Real-host pins (helpernode/p330/hpg5/etc.): NOT booted by the test. Only the two `02:00:00:50:58:0*` smoke pins.
+- Real-host pins (vscode/p330/hpg5/etc.): NOT booted by the test. Only the two `02:00:00:50:58:0*` smoke pins.
 - Per-case discriminator: dnsmasq-tftp **outcome** (`sent` vs `not found`) on the per-host path. Single observable, two interpretations. Replaces the original "menu.ipxe vs host/MAC-* path" framing — the actual deployment serves nothing through HTTP except `/assets/`; all chainload is TFTP.
 - Substring check on deployed pin body: preflight only (test-side default substring map keyed by MAC). Per-case substring assertion dropped because preflight already validates the body via `docker exec cat` after deploy.
 - Boot-flip helper playbook: out of scope; deferred to a follow-up brainstorm. The four primitives this design produces are the foundation it will reuse.

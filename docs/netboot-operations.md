@@ -173,9 +173,23 @@ Pin fragments may use Jinja `{{ '{{' }} netboot_public_url {{ '}}' }}` because A
 
 After any change: `--tags render,push,verify`. Push writes the pin file to `flash:/netboot/per-host/MAC-<hex>.ipxe` on rb5009 and creates a `/ip tftp` row mapping `MAC-<hex>.ipxe` → that flash path. Stale pins (entries removed from inventory) are pruned from both `flash:/netboot/per-host/` and `/ip tftp`.
 
-### Pins that boot from local disk: the `pin_local_exit` sentinel
+### Pins that boot from local disk: `sanboot` first, then the `pin_local_exit` sentinel
 
-A pin cannot exit straight to firmware: the binary's embedded `:tftpmenu` autoexec chains the fallback `menu.ipxe` **unconditionally** after the MAC pin returns — a pin's `exit 1` returns to the autoexec ladder, not to the firmware. Without countermeasures, a pinned host choosing local boot therefore transits the generic fallback menu (and its 30-second default timeout) before the firmware finally boots the disk. The fix is a sentinel: iPXE variables persist across chains within a boot session, so a pin's local-boot path sets `set pin_local_exit 1` before its `exit`, and the rendered `menu.ipxe` checks `isset ${pin_local_exit}` at the top of `:start` and exits immediately — each retry in the autoexec's `:menu` ladder hits the same check (sub-second on LAN) until the binary's `:localboot` exit hands control to firmware. The generic menu never appears. Pin fragments that want a clean local boot must set the sentinel (see `netboot_host_pins` in igou-inventory); rollout is `deploy_assets.yml --tags render,push,verify` (the `netboot_deploy_assets` job template) — no binary rebuild needed.
+A pin's local-boot path must boot the disk **itself**:
+
+```
+:local
+echo Booting from local disk ...
+set pin_local_exit 1
+sanboot --no-describe --drive 0x80 || exit 1
+```
+
+Two mechanisms, in order:
+
+1. **`sanboot --no-describe --drive 0x80`** — on BIOS hosts iPXE boots the disk MBR directly and never returns to firmware. This is the only deterministic disk handoff. Relying on firmware boot-order fallthrough after an iPXE `exit` is NOT safe: a pin's exit status never reaches firmware (the chain always terminates at the binary autoexec's `:localboot` plain `exit`, i.e. status 0), and some firmware treats a success-exit as "PXE handled the boot, stop here" and errors out instead of trying the disk — hpg5 failed exactly this way with error 0x00000001 (2026-07-16 incident) when pins carried a bare `exit 1` and the sentinel skipped the generic menu's `sanboot`. `sanboot` is BIOS-only; a UEFI host that hits the same firmware behavior needs a binary rebuild with a patched `:localboot` in the embedded autoexec — no deployed script can control the final exit status.
+2. **`set pin_local_exit 1` sentinel** — covers the `sanboot`-failed path. The autoexec chains the fallback `menu.ipxe` unconditionally after a pin returns; iPXE variables persist across chains within a boot session, so `menu.ipxe` sees the sentinel at the top of `:start` and exits immediately (sub-second on LAN) on every retry in the autoexec's `:menu` ladder, until the binary's `:localboot` exit hands control to firmware. The generic 30-second menu never appears.
+
+Rollout after editing `netboot_host_pins` (igou-inventory): `deploy_assets.yml --tags render,push,verify` (the `netboot_deploy_assets` job template) — no binary rebuild needed.
 
 ---
 
