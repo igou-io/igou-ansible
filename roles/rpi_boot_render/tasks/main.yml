@@ -28,3 +28,22 @@
     src: cmdline_txt.j2
     dest: "{{ rpi_boot_render_output_dir }}/{{ rpi_boot_render_hostname }}/cmdline.txt"
     mode: "0644"
+
+- name: Assert rendered boot files are pure ASCII
+  vars:
+    __rpi_boot_render_ascii_re: '^[\x00-\x7f]*$'
+    __rpi_boot_render_rendered: >-
+      {{ lookup('ansible.builtin.file',
+                rpi_boot_render_output_dir ~ '/' ~ rpi_boot_render_hostname
+                ~ '/' ~ item) }}
+  ansible.builtin.assert:
+    that:
+      - __rpi_boot_render_rendered is regex(__rpi_boot_render_ascii_re)
+    fail_msg: >-
+      Rendered {{ item }} for {{ rpi_boot_render_hostname }} contains
+      non-ASCII bytes. The Pi firmware's config parser stops at the first
+      non-ASCII byte and silently drops the rest — refusing to emit it.
+      Check rpi_boot_render_config_extra / rpi_boot_render_cmdline_extra.
+  loop:
+    - config.txt
+    - cmdline.txt
