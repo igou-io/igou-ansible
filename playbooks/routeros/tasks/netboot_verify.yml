@@ -151,14 +151,20 @@
     ansible_connection: ssh
   register: _netboot_redirect_slurp
 
+# The chain target must use the chainload proto (https): the public
+# nginx has no TFTP listener, so a tftp:// target black-holes into a
+# UDP timeout on every fallback-menu fetch (pre-2026-07 regression).
 - name: Assert rb5009 menu.ipxe redirect chains to the chainload host
   ansible.builtin.assert:
     that:
       - "'#!ipxe' in (_netboot_redirect_slurp.content | b64decode)"
-      - "('chain tftp://' ~ netboot_chainload_host ~ '/menu.ipxe') in (_netboot_redirect_slurp.content | b64decode)"
+      - "('chain ' ~ netboot_chainload_proto ~ '://' ~ netboot_chainload_host ~ '/menu.ipxe') in (_netboot_redirect_slurp.content | b64decode)"
+      - "'chain tftp://' not in (_netboot_redirect_slurp.content | b64decode)"
     fail_msg: >-
       The menu.ipxe served by rb5009 is missing the iPXE shebang or
-      doesn't chain to tftp://{{ netboot_chainload_host }}/menu.ipxe.
+      doesn't chain to
+      {{ netboot_chainload_proto }}://{{ netboot_chainload_host }}/menu.ipxe
+      (a tftp:// target is the retired-TrueNAS regression).
       Re-run --tags upload to refresh the redirect file.
 
 # Probe the chainload menu the way the binaries actually fetch it:
