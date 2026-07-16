@@ -35,11 +35,21 @@
          | selectattr('rpi_netboot_managed', 'defined')
          | selectattr('rpi_netboot_managed')
          | map(attribute='inventory_hostname') | list }}
-    # (host, asset) cross-product for the fetch loop.
+    # (host, asset) cross-product for the fetch loop. Built with
+    # targeted attribute access only: piping full hostvars dicts through
+    # subelements() forces EVERY inherited var to render, and fact-less
+    # plays then explode on unrelated vars that template ansible_facts
+    # (baseline_user_groups' os_family lookup, first hit at the bench).
     _fetch_pairs: >-
-      {{ _managed_pis
-         | map('extract', hostvars) | list
-         | subelements('rpi_tftp_assets') }}
+      {%- set out = [] -%}
+      {%- for h in _managed_pis -%}
+      {%-   for a in hostvars[h].rpi_tftp_assets -%}
+      {%-     set _ = out.append({'host': h,
+                                  'cache_dir': hostvars[h].rpi_tftp_cache_dir,
+                                  'asset': a}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
   tasks:
     - name: Run rpi_rootfs per Pi
       ansible.builtin.include_role:
@@ -70,12 +80,12 @@
 
     - name: Fetch each (host, asset) pair from netboot server
       ansible.builtin.fetch:
-        src: "{{ rpi_image_cache }}/rpi-tftp/{{ item.0.inventory_hostname }}/{{ item.1 }}"
-        dest: "{{ item.0.rpi_tftp_cache_dir }}/{{ item.0.inventory_hostname }}/{{ item.1 }}"
+        src: "{{ rpi_image_cache }}/rpi-tftp/{{ item.host }}/{{ item.asset }}"
+        dest: "{{ item.cache_dir }}/{{ item.host }}/{{ item.asset }}"
         flat: true
       loop: "{{ _fetch_pairs }}"
       loop_control:
-        label: "{{ item.0.inventory_hostname }}/{{ item.1 }}"
+        label: "{{ item.host }}/{{ item.asset }}"
 
 - name: Upload shared TFTP assets to router and register per-Pi rows
   hosts: "{{ rpi_group | default('rpis') }}"
