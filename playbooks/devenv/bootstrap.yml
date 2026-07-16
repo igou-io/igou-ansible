@@ -549,3 +549,20 @@
           - "code-server:  https://<vm-ip>:8080  (self-signed TLS, password from 1Password lab_agents/devenv-code-server)"
           - "cs password:  op read op://lab_agents/devenv-code-server/password"
           - "shell:        devcontainer exec --workspace-folder ~/igou-devenv bash"
+
+# ---------------------------------------------------------------------------
+# Tailnet membership: join the devenv host(s) to the tailnet via the shared
+# tailscale play. The imported play targets `{{ ansible_limit | default('none') }}`,
+# so it converges the SAME hosts as the play above when a limit is passed (the
+# devenv_bootstrap AAP template launches with ansible_limit) and no-ops when
+# none is. Designated tags come from inventory (group_vars/devenv/tailscale.yml
+# — REQUIRED, the pettingzoo OAuth client owns the tag in the tailnet ACL).
+#
+# tailscale_authkey overrides the imported play's own vars: default (the legacy
+# awx-vault VPS item) — import_playbook vars outrank the imported play's vars
+# block. The op:// lookup resolves lazily on the controller/EE side (which has
+# 1P Connect auth), so the secret never lands on the host.
+- name: Join the devenv host to the tailnet
+  ansible.builtin.import_playbook: ../tailscale/tailscale.yml
+  vars:
+    tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-oauth-pettingzoo', field='token', vault='lab_external_api_keys') }}"
