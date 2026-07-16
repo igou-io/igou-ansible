@@ -1,0 +1,114 @@
+---
+# Enroll a Pi into netboot management: converge the EEPROM bootloader
+# config (BOOT_ORDER, TFTP prefix mode, UART) and capture the identity
+# facts the operator must record in inventory (serial, MAC).
+#
+# This is the one imperative bring-up step Pi netboot cannot avoid — a
+# factory Pi must boot once from SD/USB before its EEPROM can be set
+# (the analog of persist_uboot_env on SPI boards). The Pi must be
+# SSH-reachable when this runs.
+#
+# The EEPROM TFTP_PREFIX key is derived from the SAME
+# rpi_tftp_prefix_mode var the router-side playbooks key their /ip tftp
+# rows on, so firmware and router can never disagree about the prefix.
+#
+# Usage:
+#   ansible-playbook playbooks/rpi_netboot/enroll.yml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=upsmonitor.igou.systems
+- name: Enroll Pi into netboot management (EEPROM + identity capture)
+  hosts: "{{ target_hosts | default('rpis') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Resolve effective rpi config
+      ansible.builtin.include_tasks: tasks/_resolve_rpi_config.yml
+
+    - name: Refuse to enroll unmanaged hosts
+      ansible.builtin.assert:
+        that:
+          - rpi_netboot_managed
+        fail_msg: >-
+          {{ inventory_hostname }} has rpi_boot_mode=local — enrolling it
+          would flip its BOOT_ORDER to net-first. Set rpi_boot_mode to
+          net or sd in inventory first if that is really intended.
+
+    - name: Assert the fleet EEPROM golden config is defined
+      ansible.builtin.assert:
+        that:
+          - rpi_eeprom_config is defined
+          - rpi_eeprom_config.BOOT_ORDER is defined
+        fail_msg: >-
+          rpi_eeprom_config (the fleet golden EEPROM settings, at least
+          BOOT_ORDER) is unset. It belongs in the rpis group_vars — see
+          playbooks/rpi_netboot/README.md.
+
+    # Merge order: fleet golden < prefix-mode keys < per-host extras.
+    # Empty-string values are dropped from the MANAGED set — the key is
+    # left unmanaged (an existing EEPROM value is NOT removed). The
+    # inventory uses '' for TFTP_IP when the router is the TFTP server
+    # via next-server; a Pi that already carries a stale TFTP_IP must
+    # have it cleared manually (rpi-eeprom-config --edit).
+    - name: Compose effective EEPROM settings
+      ansible.builtin.set_fact:
+        _rpi_enroll_settings: >-
+          {{ rpi_eeprom_config
+             | combine(rpi_eeprom_prefix_settings)
+             | combine(rpi_eeprom_extra_settings | default({}))
+             | dict2items
+             | rejectattr('value', 'equalto', '')
+             | items2dict }}
+
+    # Enroll reboots to flash BEFORE any netboot assets are staged — a
+    # net-only BOOT_ORDER (e.g. 0x2) would strand the Pi with nothing
+    # to boot. Require an SD (1) or USB (4) fallback digit.
+    - name: Assert BOOT_ORDER keeps a local fallback
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_rpi_enroll_settings.BOOT_ORDER | string) is search('[14]')
+            or not (rpi_eeprom_reboot | default(true) | bool)
+            or (rpi_enroll_allow_no_local_fallback | default(false) | bool)
+        fail_msg: >-
+          BOOT_ORDER={{ _rpi_enroll_settings.BOOT_ORDER }} contains no SD
+          (1) or USB (4) fallback digit, and enrollment flashes it via
+          reboot before stage_netboot_assets has run — the Pi would have
+          nothing to boot. Fix rpi_eeprom_config.BOOT_ORDER (e.g. 0xf12),
+          or set rpi_enroll_allow_no_local_fallback=true if you really
+          mean it.
+
+    - name: Converge EEPROM bootloader config
+      ansible.builtin.include_role:
+        name: rpi_eeprom
+      vars:
+        rpi_eeprom_settings: "{{ _rpi_enroll_settings }}"
+
+    - name: Flag inventory drift against captured identity
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: inventory drift on {{ inventory_hostname }} —
+          rpi_serial='{{ rpi_serial | default('') }}' vs captured
+          '{{ rpi_eeprom_facts.serial8 }}'; rpi_board_mac='{{ rpi_board_mac }}'
+          vs captured '{{ rpi_eeprom_facts.mac }}'. Update host_vars with
+          the stanza below.
+      when: >-
+        (rpi_serial | default('')) != rpi_eeprom_facts.serial8
+        or (rpi_board_mac | upper) != rpi_eeprom_facts.mac
+
+    - name: Emit inventory stanza for this Pi
+      ansible.builtin.debug:
+        msg:
+          - "# inventory.yaml (under rpis > {{ rpi_board_model }}):"
+          - "{{ inventory_hostname }}:"
+          - "  rpi_board_mac: \"{{ rpi_eeprom_facts.mac }}\""
+          - "  rpi_serial: \"{{ rpi_eeprom_facts.serial8 }}\""
+          - "  rpi_boot_mode: {{ rpi_boot_mode }}"
+          - "# rb5009 host_vars /ip/dhcp-server/lease (MAC-only, outside 10.10.9.24/29):"
+          - "#   address=<10.10.9.x> mac-address={{ rpi_eeprom_facts.mac }} comment={{ inventory_hostname.split('.')[0] }}"
+          - "# bootloader: {{ rpi_eeprom_facts.bootloader_version }}"
+
+    - name: Record enrollment facts for AAP workflows
+      ansible.builtin.set_stats:
+        data:
+          rpi_enrolled_serials: >-
+            {{ {inventory_hostname: {'serial8': rpi_eeprom_facts.serial8,
+                                     'mac': rpi_eeprom_facts.mac}} }}

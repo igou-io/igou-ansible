@@ -1,0 +1,43 @@
+---
+argument_specs:
+  main:
+    short_description: "Converge a Raspberry Pi's EEPROM bootloader configuration."
+    description:
+      - >-
+        Runs ON the Pi (which must be up on SD/USB — a factory Pi cannot
+        have its EEPROM set over the network; this one imperative step is
+        the Pi analog of persist_uboot_env on SPI boards). Reads the live
+        bootloader config via rpi-eeprom-config, merges the managed
+        settings over it (unmanaged keys are preserved, comments and
+        section structure are not — bootconf is flat key=value under
+        [all] in practice), applies via rpi-eeprom-config --apply, and
+        reboots to flash. Idempotent: no-op when every managed key
+        already matches.
+      - >-
+        Also captures enrollment facts the operator needs for inventory:
+        rpi_eeprom_facts (serial8, mac, bootloader_version, changed).
+    options:
+      rpi_eeprom_settings:
+        type: dict
+        required: true
+        description: >-
+          Managed bootloader keys, e.g. {BOOT_ORDER: "0xf12", BOOT_UART: 1,
+          TFTP_PREFIX: 0}. Values are compared as strings. Only listed
+          keys are managed; everything else in the live config is
+          preserved as-is.
+      rpi_eeprom_reboot:
+        type: bool
+        default: true
+        description: >-
+          Reboot to flash the staged update and re-verify afterwards.
+          When false the update stays staged until the next reboot and
+          verification is skipped (the pre-reboot config still shows old
+          values).
+      rpi_eeprom_apply_path:
+        type: path
+        default: /tmp/rpi-eeprom-bootconf.txt
+        description: "Where the merged config is written on the Pi before --apply."
+      rpi_eeprom_reboot_timeout:
+        type: int
+        default: 300
+        description: "Seconds to wait for the Pi to return after the flashing reboot."

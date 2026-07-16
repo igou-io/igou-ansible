@@ -1,0 +1,16 @@
+---
+# Shared assert: this host's TFTP prefix must be derivable before any
+# router row can be keyed. Included by plumbing_check.yml and by
+# stage_netboot_assets.yml (which needs it BEFORE the first upload).
+#
+# Required vars (from _resolve_rpi_config.yml): rpi_tftp_prefix
+
+- name: Assert the TFTP prefix is derivable for this host
+  ansible.builtin.assert:
+    that:
+      - rpi_tftp_prefix | length > 0
+    fail_msg: >-
+      Host {{ inventory_hostname }} has no resolvable TFTP prefix —
+      rpi_tftp_prefix_mode=serial but rpi_serial is empty. Run
+      playbooks/rpi_netboot/enroll.yml first and record the captured
+      serial in host_vars (or switch the host to rpi_tftp_prefix_mode=mac).

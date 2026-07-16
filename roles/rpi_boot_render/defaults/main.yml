@@ -1,0 +1,15 @@
+# roles/rpi_boot_render/defaults/main.yml
+---
+# Required from caller — no defaults:
+#   rpi_boot_render_output_dir
+#   rpi_boot_render_hostname
+#   rpi_boot_render_boot_mode
+#   rpi_boot_render_kernel
+#   rpi_boot_render_nfs_server_ip (when boot_mode=net)
+#   rpi_boot_render_nfs_root_path (when boot_mode=net)
+
+rpi_boot_render_nfs_options: "vers=3"
+rpi_boot_render_sd_root: "LABEL=igou_root"
+rpi_boot_render_serial_console: true
+rpi_boot_render_cmdline_extra: ""
+rpi_boot_render_config_extra: []

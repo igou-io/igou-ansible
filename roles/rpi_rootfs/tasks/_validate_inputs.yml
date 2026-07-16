@@ -1,0 +1,32 @@
+# roles/rpi_rootfs/tasks/_validate_inputs.yml
+---
+- name: Assert required inputs are present and well-formed
+  ansible.builtin.assert:
+    that:
+      - rpi_rootfs_src | length > 0
+      - rpi_rootfs_host | length > 0
+      - rpi_rootfs_src is search('\.img\.xz$')
+    fail_msg: >-
+      rpi_rootfs requires rpi_rootfs_src (a .img.xz URL or
+      path) and rpi_rootfs_host. See meta/argument_specs.yml.
+
+# Use /proc/mounts directly — `mountpoint -q` has surprising behavior
+# in some VMs. An EXACT match on column 2 of /proc/mounts is the
+# unambiguous test for "this path is currently mounted".
+- name: Refuse to overwrite a mounted target_dir
+  ansible.builtin.shell: |
+    awk -v p='{{ rpi_rootfs_target_dir }}' '$2 == p { found=1; exit } END { exit !found }' /proc/mounts \
+        && echo MOUNTED || echo NOT_MOUNTED
+  args:
+    executable: /bin/bash
+  register: __rpi_rootfs_target_mount_state
+  changed_when: false
+
+- name: Fail if target_dir is currently a mountpoint
+  ansible.builtin.fail:
+    msg: >-
+      rpi_rootfs_target_dir={{ rpi_rootfs_target_dir }} is currently
+      a mountpoint. Refusing to overwrite. Unmount it before re-provisioning.
+  # Exact-match comparison — substring `in` would match BOTH 'MOUNTED'
+  # and 'NOT_MOUNTED' since the latter contains the former.
+  when: (__rpi_rootfs_target_mount_state.stdout | trim) == 'MOUNTED'

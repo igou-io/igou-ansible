@@ -1,0 +1,25 @@
+---
+# Shared primitive: remove any /ip tftp row whose req-filename matches
+# but whose real-filename points elsewhere. The upload_file primitive
+# only ADDS missing rows — without this pre-step, re-staging onto a new
+# shared build dir would leave two rows answering the same request
+# (old build + new build) and the served file becomes ambiguous.
+#
+# Required vars on include:
+#   _retarget_req   req-filename to reconcile
+#   _retarget_real  the ONLY real-filename allowed to serve it
+
+- name: Remove stale /ip tftp rows pointing at a different real-filename
+  community.routeros.command:
+    commands:
+      - >-
+        /ip tftp remove
+        [find where req-filename="{{ _retarget_req }}"
+        and real-filename!="{{ _retarget_real }}"]
+  register: _retarget_remove
+  retries: 3
+  delay: 5
+  until: _retarget_remove is succeeded
+  # Unconditional remove — RouterOS gives no removed-count back, so
+  # report changed rather than hide real mutations.
+  changed_when: true

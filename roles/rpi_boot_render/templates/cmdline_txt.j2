@@ -1,0 +1,22 @@
+{#- cmdline.txt must be a single line. No init= — that arg is where RPi OS
+    hangs its firstboot/init_resize hooks, which are wrong for both a
+    pre-provisioned NFS rootfs and a pre-built SD image. -#}
+{%- set _parts = [] -%}
+{%- if rpi_boot_render_serial_console | bool -%}
+{%-   set _ = _parts.append('console=serial0,115200') -%}
+{%- endif -%}
+{%- set _ = _parts.append('console=tty1') -%}
+{%- if rpi_boot_render_boot_mode == 'net' -%}
+{%-   set _ = _parts.append('root=/dev/nfs') -%}
+{%-   set _ = _parts.append('nfsroot=' ~ rpi_boot_render_nfs_server_ip ~ ':' ~ rpi_boot_render_nfs_root_path ~ '/' ~ rpi_boot_render_hostname ~ ',' ~ rpi_boot_render_nfs_options) -%}
+{%-   set _ = _parts.append('rw') -%}
+{%-   set _ = _parts.append('ip=dhcp') -%}
+{%- else -%}
+{%-   set _ = _parts.append('root=' ~ rpi_boot_render_sd_root) -%}
+{%-   set _ = _parts.append('rootfstype=ext4') -%}
+{%- endif -%}
+{%- set _ = _parts.append('rootwait') -%}
+{%- if rpi_boot_render_cmdline_extra | length > 0 -%}
+{%-   set _ = _parts.append(rpi_boot_render_cmdline_extra) -%}
+{%- endif -%}
+{{ _parts | join(' ') }}

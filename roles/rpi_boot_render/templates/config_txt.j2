@@ -1,0 +1,10 @@
+# Ansible managed — rpi_boot_render ({{ rpi_boot_render_hostname }}, mode={{ rpi_boot_render_boot_mode }})
+[all]
+arm_64bit=1
+kernel={{ rpi_boot_render_kernel }}
+{% if rpi_boot_render_serial_console | bool %}
+enable_uart=1
+{% endif %}
+{% for line in rpi_boot_render_config_extra %}
+{{ line }}
+{% endfor %}

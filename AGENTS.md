@@ -58,10 +58,14 @@ Playbooks are organized by infrastructure domain under `playbooks/`:
 - `windows/` - Windows host automation (WinRM/SSH): app provisioning, users, updates, IIS, AD join
 - `aap/` - automation platform configuration
 - `armbian/` - ARM SBC fleet lifecycle (image build, provisioning, boot modes)
+- `rpi_netboot/` - Raspberry Pi netboot lifecycle (EEPROM enroll, NFS rootfs staging, cmdline pins)
 - Root-level playbooks for common ops (system-update, system-reboot)
 
 Many playbooks use `ansible_limit` variable for dynamic host targeting;
-`playbooks/armbian/` uses `target_hosts` instead. AAP template extra_vars
+`playbooks/armbian/` and `playbooks/rpi_netboot/` use `target_hosts`
+instead (`rpi_group` for the multi-tier staging playbook;
+`publish_to_netboot.yml` targets the builder/netboot_server groups
+directly). AAP template extra_vars
 must match the playbook's hosts var or the play silently matches no hosts.
 
 ### ARM SBC boot modes

@@ -1,0 +1,80 @@
+---
+# Cold-cycle Pi(s) via PoE and verify the booted rootfs matches the
+# declared boot mode. Run converge_boot_mode.yml first so the router's
+# pin files match rpi_boot_mode before cycling into it.
+#
+# Requires per host: rpi_poe_switch + rpi_poe_port.
+#
+# Usage:
+#   ansible-playbook playbooks/rpi_netboot/cycle_pi.yml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=upsmonitor.igou.systems
+- name: Cold-cycle Pi and verify boot mode
+  hosts: "{{ target_hosts | default('rpis') }}"
+  gather_facts: false
+  tasks:
+    - name: Resolve effective rpi config
+      ansible.builtin.include_tasks: tasks/_resolve_rpi_config.yml
+
+    - name: Skip note for unmanaged hosts
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} has rpi_boot_mode=local — not netboot
+          managed, refusing to cycle it.
+      when: not rpi_netboot_managed
+
+    - name: Cycle and verify
+      when: rpi_netboot_managed
+      block:
+        - name: Assert PoE transport vars are present
+          ansible.builtin.assert:
+            that:
+              - rpi_poe_switch is defined
+              - rpi_poe_port is defined
+            fail_msg: >-
+              Host {{ inventory_hostname }} has no rpi_poe_switch /
+              rpi_poe_port — cycle_pi.yml can only cold-cycle
+              PoE-powered Pis.
+
+        - name: PoE cycle
+          ansible.builtin.include_tasks: transport/poe_cycle.yml
+
+        - name: Wait for SSH after cold boot
+          ansible.builtin.wait_for_connection:
+            delay: 30
+            timeout: "{{ rpi_post_boot_wait_timeout | default(300) }}"
+
+        - name: Gather facts for rootfs verification
+          ansible.builtin.setup:
+
+        - name: Capture root mount
+          ansible.builtin.set_fact:
+            _root_fstype: "{{ ansible_mounts | selectattr('mount', 'equalto', '/')
+                                             | map(attribute='fstype') | first }}"
+            _root_device: "{{ ansible_mounts | selectattr('mount', 'equalto', '/')
+                                             | map(attribute='device') | first }}"
+
+        - name: Assert NFS rootfs when rpi_boot_mode=net
+          ansible.builtin.assert:
+            that:
+              - _root_fstype in ['nfs', 'nfs4']
+              - inventory_hostname in _root_device
+            fail_msg: >-
+              rpi_boot_mode[net]: expected NFS rootfs
+              {{ rpi_netboot_server_ip }}:{{ rpi_nfs_rootfs_path }}/{{ inventory_hostname }}
+              but got {{ _root_device }} ({{ _root_fstype }}). Either the
+              firmware fell back to SD (check the router's TFTP rows and
+              the EEPROM BOOT_ORDER) or the cmdline pin points elsewhere.
+          when: rpi_boot_mode == 'net'
+
+        - name: Assert local block-device rootfs when rpi_boot_mode=sd
+          ansible.builtin.assert:
+            that:
+              - _root_fstype not in ['nfs', 'nfs4']
+              - _root_device is match('^/dev/')
+            fail_msg: >-
+              rpi_boot_mode[sd]: expected local block device rootfs but
+              got {{ _root_device }} ({{ _root_fstype }}). Default kernel
+              cmdline is root=LABEL=igou_root; override per-host with
+              rpi_sd_root if this Pi's card carries a different
+              label/PARTUUID.
+          when: rpi_boot_mode == 'sd'

@@ -1,0 +1,58 @@
+---
+argument_specs:
+  main:
+    short_description: "Provision one Pi's NFS rootfs + TFTP boot artifacts from a published .img.xz."
+    description:
+      - >-
+        Runs on the netboot server. Downloads (or copies) a Raspberry Pi
+        .img.xz, loop-mounts it, and splits it netboot-style — partition 2
+        (ext4 root) rsyncs into the per-host NFS export directory,
+        partition 1 (FAT boot) rsyncs into a per-host TFTP staging
+        directory for the router upload play to consume. The image's own
+        cmdline.txt/config.txt are staged but never uploaded — rpi_boot_render
+        owns the pin files.
+      - >-
+        Post-processes the rootfs for diskless boot — strips block-device
+        and PARTUUID fstab entries, sets hostname, zeroes machine-id,
+        regenerates SSH host keys, and masks dphys-swapfile (swap on NFS
+        is a footgun).
+      - >-
+        Idempotent via a sentinel JSON (src URL + host), same contract as
+        the armbian rootfs_provision role — an upstream that serves new
+        bytes at the same URL needs rpi_rootfs_force_refresh=true.
+    options:
+      rpi_rootfs_src:
+        type: str
+        required: true
+        description: "http(s):// URL or netboot-server-local path to the .img.xz."
+      rpi_rootfs_host:
+        type: str
+        required: true
+        description: "Inventory hostname of the Pi — names the NFS subdir and TFTP staging dir."
+      rpi_rootfs_target_dir:
+        type: path
+        description: "Per-host rootfs destination. Default <rpi_nfs_rootfs_path>/<rpi_rootfs_host>."
+      rpi_rootfs_tftp_dir:
+        type: path
+        description: >-
+          Per-host TFTP staging destination (full boot-partition copy).
+          Default <rpi_image_cache>/rpi-tftp/<rpi_rootfs_host>.
+      rpi_rootfs_image_cache:
+        type: path
+        description: "URL-keyed shared .img.xz download cache. Default <rpi_image_cache>/downloads."
+      rpi_rootfs_mount_dir:
+        type: path
+        default: /mnt/rpi_rootfs_provision
+        description: "Where the image's root partition gets loop-mounted during extraction."
+      rpi_rootfs_boot_mount_dir:
+        type: path
+        default: /mnt/rpi_rootfs_provision_boot
+        description: "Where the image's boot partition gets loop-mounted during extraction."
+      rpi_rootfs_force_refresh:
+        type: bool
+        default: false
+        description: "Ignore the sentinel and cached artifacts; re-download and re-extract."
+      rpi_rootfs_reset_identity:
+        type: bool
+        default: true
+        description: "Set hostname, zero machine-id, and regenerate SSH host keys in the extracted rootfs."

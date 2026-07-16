@@ -1,0 +1,24 @@
+# roles/rpi_rootfs/defaults/main.yml
+---
+# Required from caller — no defaults:
+#   rpi_rootfs_src
+#   rpi_rootfs_host
+# Topology inputs resolved from inventory:
+#   rpi_nfs_rootfs_path, rpi_image_cache
+
+rpi_rootfs_target_dir: "{{ rpi_nfs_rootfs_path }}/{{ rpi_rootfs_host }}"
+rpi_rootfs_tftp_dir: "{{ rpi_image_cache }}/rpi-tftp/{{ rpi_rootfs_host }}"
+
+# URL-keyed shared download cache. Hosts pointing at the same image URL
+# share the .img.xz download; extraction is always per-host.
+rpi_rootfs_image_cache: "{{ rpi_image_cache }}/downloads"
+
+rpi_rootfs_mount_dir: /mnt/rpi_rootfs_provision
+rpi_rootfs_boot_mount_dir: /mnt/rpi_rootfs_provision_boot
+
+# Optional sha256 of the source image (threaded from the publish
+# manifest by stage_netboot_assets); '' = skip download verification.
+rpi_rootfs_src_sha256: ""
+
+rpi_rootfs_force_refresh: false
+rpi_rootfs_reset_identity: true
