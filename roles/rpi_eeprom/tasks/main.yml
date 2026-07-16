@@ -34,17 +34,23 @@
 # carrying conditional-filter sections ([pi4], [cm4], ...) would have
 # scoped keys silently promoted to global — refuse instead.
 - name: Assert live config has no conditional-filter sections beyond [all]
+  vars:
+    # Single-quoted plain YAML on purpose: an inline '\\[' in the Jinja
+    # expression is unescaped twice under ansible-core 2.19 templating
+    # and reaches re.compile as an invalid pattern ("unbalanced
+    # parenthesis") — first hit on real hardware at bench enrollment.
+    __rpi_eeprom_section_re: '(?m)^\[([^\]]+)\]'
   ansible.builtin.assert:
     that:
       - >-
         __rpi_eeprom_current_raw.stdout
-        | regex_findall('(?m)^\\[([^\\]]+)\\]')
+        | regex_findall(__rpi_eeprom_section_re)
         | reject('equalto', 'all') | list | length == 0
     fail_msg: >-
       Live bootloader config on {{ inventory_hostname }} contains
       conditional-filter sections beyond [all]:
       {{ __rpi_eeprom_current_raw.stdout
-         | regex_findall('(?m)^\\[([^\\]]+)\\]')
+         | regex_findall(__rpi_eeprom_section_re)
          | reject('equalto', 'all') | list | join(', ') }}.
       This role renders a flat [all] config and would change those keys'
       scope. Converge this Pi's EEPROM manually (rpi-eeprom-config
