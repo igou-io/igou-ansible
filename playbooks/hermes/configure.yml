@@ -41,6 +41,20 @@
     # enabled when an auth username is set (fail closed — see the start task below).
     hermes_dashboard_host: "0.0.0.0"
     hermes_dashboard_port: 9119
+    # Runtime coding-agent overlay (agent-update): versioned claude/codex/
+    # opencode/cursor installs on the STATE disk that shadow the image-baked
+    # pins on both execution surfaces (the terminal containers mount it at
+    # ~/.agents/runtime, the host reaches it at ~/.hermes/agent-runtime; a
+    # ~/.bashrc.d PATH snippet on each surface gives it precedence). Runtime
+    # pulls are the operator-accepted freshness path — no age gate, no
+    # review-time pin; verification where vendors offer it (claude PGP, codex
+    # SHA256SUMS). The baked pins stay the reviewed fallback baseline:
+    # `agent-update reset` clears the overlay and they resolve again.
+    hermes_agent_runtime_dir: "{{ hermes_state_mount }}/agent-runtime"
+    # Same trust anchor as the igou-devenv image build (CLAUDE_CODE_PGP_FPR).
+    hermes_agent_update_claude_pgp_fpr: "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+    hermes_agent_update_ttl_seconds: 3600
+    hermes_agent_update_keep_versions: 3
     # ghapp token broker wiring (gated OFF — flip with
     # -e hermes_ghapp_broker_enabled=true, same gate as the broker deploy in
     # setup-hermes.yml). When enabled the terminal containers mount the broker
@@ -110,6 +124,8 @@
             '/home/hermes/.config/cursor:' ~ hermes_terminal_backend_container_home ~ '/.config/cursor:ro,Z',
             '/home/hermes/.cursor:' ~ hermes_terminal_backend_container_home ~ '/.cursor:Z',
             '/home/hermes/.terraform.d:' ~ hermes_terminal_backend_container_home ~ '/.terraform.d:Z',
+            '/home/hermes/.hermes/agent-runtime:' ~ hermes_terminal_backend_container_home ~ '/.agents/runtime:Z',
+            '/home/hermes/.hermes/agent-runtime/bashenv.d/10-agent-runtime.sh:' ~ hermes_terminal_backend_container_home ~ '/.bashrc.d/10-agent-runtime.sh:ro,Z',
           ]
           + (
               [hermes_ghapp_broker_runtime_dir ~ ':' ~ hermes_ghapp_broker_runtime_dir]
@@ -462,6 +478,99 @@
         - { path: "{{ hermes_home }}/.gitconfig", mode: "0644" }
       become: true
 
+    # ── Runtime coding-agent overlay (agent-update) ─────────────────────────
+    # Created BEFORE the merged config is written: the terminal mounts below
+    # reference the overlay dir and the PATH snippet file, and podman would
+    # otherwise create a missing single-file bind source as a directory.
+    - name: Create the agent-runtime overlay directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ hermes_agent_runtime_dir }}", mode: "0755" }
+        - { path: "{{ hermes_agent_runtime_dir }}/bin", mode: "0755" }
+        - { path: "{{ hermes_agent_runtime_dir }}/tools", mode: "0755" }
+        - { path: "{{ hermes_agent_runtime_dir }}/state", mode: "0700" }
+        - { path: "{{ hermes_agent_runtime_dir }}/bashenv.d", mode: "0755" }
+      become: true
+
+    # One snippet works on both surfaces (it probes both candidate paths);
+    # rendered twice: into the overlay (bind-mounted to the container's
+    # ~/.bashrc.d) and into the hermes user's host ~/.bashrc.d. The skel
+    # ~/.bashrc sources ~/.bashrc.d/*, and the terminal tool's
+    # BASH_ENV=~/.bashrc makes every non-interactive command inherit it.
+    - name: Render the agent-runtime PATH snippet (overlay copy, container-mounted)
+      ansible.builtin.template:
+        src: agent-runtime-path.sh.j2
+        dest: "{{ hermes_agent_runtime_dir }}/bashenv.d/10-agent-runtime.sh"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+      become: true
+
+    - name: Ensure the hermes user bashrc.d directory exists (host PATH seam)
+      ansible.builtin.file:
+        path: "/home/{{ hermes_user }}/.bashrc.d"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0755"
+      become: true
+
+    - name: Render the agent-runtime PATH snippet (host bashrc.d)
+      ansible.builtin.template:
+        src: agent-runtime-path.sh.j2
+        dest: "/home/{{ hermes_user }}/.bashrc.d/10-agent-runtime.sh"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+      become: true
+
+    # Host copy is root-owned in /usr/local/bin (not agent-writable); the
+    # overlay copy sits on the agent-writable state disk so terminal sessions
+    # can run it, and is re-asserted from the same template every converge.
+    - name: Install agent-update (host copy, root-owned)
+      ansible.builtin.template:
+        src: agent-update.sh.j2
+        dest: /usr/local/bin/agent-update
+        owner: root
+        group: root
+        mode: "0755"
+      become: true
+
+    - name: Install agent-update into the overlay bin (reachable inside containers)
+      ansible.builtin.template:
+        src: agent-update.sh.j2
+        dest: "{{ hermes_agent_runtime_dir }}/bin/agent-update"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0755"
+      become: true
+
+    # Skill telling the agent it may update its own coding CLIs "as needed".
+    # Written AFTER the installer (setup-hermes) like the github-auth skill,
+    # so an installer run can't remove it for long.
+    - name: Ensure the agent-update skill directory exists
+      ansible.builtin.file:
+        path: "{{ hermes_state_mount }}/skills/tools/agent-update"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0755"
+      become: true
+
+    - name: Install the agent-update skill
+      ansible.builtin.copy:
+        src: files/agent-update-SKILL.md
+        dest: "{{ hermes_state_mount }}/skills/tools/agent-update/SKILL.md"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+      become: true
+
     - name: Check Hermes config.yaml
       ansible.builtin.stat:
         path: "{{ hermes_state_mount }}/config.yaml"
@@ -526,6 +635,8 @@
           - ("--user=" ~ hermes_terminal_backend_container_uid ~ ":" ~ hermes_terminal_backend_container_gid) in hermes_merged_config.terminal.docker_extra_args
           - "'/home/hermes/agent-repos:/workspace:Z' in hermes_merged_config.terminal.docker_volumes"
           - ('/home/hermes/.agents/skills:' ~ hermes_terminal_backend_container_home ~ '/.agents/skills:Z') in hermes_merged_config.terminal.docker_volumes
+          - ('/home/hermes/.hermes/agent-runtime:' ~ hermes_terminal_backend_container_home ~ '/.agents/runtime:Z') in hermes_merged_config.terminal.docker_volumes
+          - ('/home/hermes/.hermes/agent-runtime/bashenv.d/10-agent-runtime.sh:' ~ hermes_terminal_backend_container_home ~ '/.bashrc.d/10-agent-runtime.sh:ro,Z') in hermes_merged_config.terminal.docker_volumes
 
     - name: Assert the ghapp broker terminal wiring
       ansible.builtin.assert:
@@ -661,6 +772,20 @@
       become: true
       notify: Restart the Hermes dashboard user unit
 
+    # Nightly overlay refresh: host-side timer so freshness never depends on
+    # the agent asking (Hermes cron approvals are deny). Runs agent-update
+    # from /usr/local/bin as the hermes user.
+    - name: Render the agent-runtime update timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "{{ hermes_home }}/.config/systemd/user/{{ item }}"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0644"
+      loop:
+        - agent-runtime-update.service
+        - agent-runtime-update.timer
+
     # Reload the per-user systemd manager so the new units are visible.
     # XDG_RUNTIME_DIR is required or `systemctl --user` can't find the bus
     # ("Failed to connect to bus").
@@ -701,6 +826,17 @@
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
       when: (hermes_env_values.HERMES_DASHBOARD_BASIC_AUTH_USERNAME | default('')) | length > 0
+
+    - name: Enable and start the agent-runtime update timer
+      ansible.builtin.systemd:
+        name: agent-runtime-update.timer
+        enabled: true
+        state: started
+        scope: user
+      become: true
+      become_user: "{{ hermes_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hermes_user][1] }}"
 
     - name: Ensure the journald drop-in directory exists
       ansible.builtin.file:

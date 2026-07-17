@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+# Prepend the agent-runtime overlay bin to PATH so runtime-updated coding
+# agents (claude/codex/opencode/cursor) shadow the baked pins. Works on both
+# surfaces: the Hermes terminal container mounts the overlay at
+# ~/.agents/runtime, the VM host keeps it at ~/.hermes/agent-runtime. Sourced
+# via ~/.bashrc.d/ (skel bashrc sources it; the terminal tool's BASH_ENV
+# points at ~/.bashrc, so every non-interactive terminal command inherits it).
+for _ar_dir in "$HOME/.agents/runtime/bin" "$HOME/.hermes/agent-runtime/bin"; do
+  if [ -d "$_ar_dir" ]; then
+    case ":$PATH:" in
+      *":$_ar_dir:"*) ;;
+      *) PATH="$_ar_dir:$PATH" ;;
+    esac
+  fi
+done
+unset _ar_dir
+export PATH

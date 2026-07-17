@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Nightly refresh of the runtime coding-agent CLI overlay
+
+[Timer]
+# 05:30 local sits clear of the 01:30 snapshot slot and the weekend backup
+# cluster (02:30-04:00). Persistent catches missed windows after downtime.
+OnCalendar=*-*-* 05:30:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

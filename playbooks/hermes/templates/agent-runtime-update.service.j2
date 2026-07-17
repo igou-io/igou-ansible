@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Refresh the runtime coding-agent CLI overlay (claude/codex/opencode/cursor)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/agent-update update all
+# Vendor endpoints occasionally stall; don't wedge the user manager.
+TimeoutStartSec=900

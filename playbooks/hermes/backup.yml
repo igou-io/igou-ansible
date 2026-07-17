@@ -58,6 +58,10 @@
       - .hermes/containers
       - .hermes/bin
       - .hermes/node
+      # agent-runtime/tools holds the runtime-pulled coding-agent CLIs
+      # (multi-GB, re-fetchable via `agent-update all`); the overlay's small
+      # bin/state/bashenv.d stay in so pins and update history survive.
+      - .hermes/agent-runtime/tools
     # Real state alone is tens of MB; an implausibly small tarball means
     # the state mount was not mounted - fail rather than upload garbage.
     hermes_backup_min_bytes: 1048576
