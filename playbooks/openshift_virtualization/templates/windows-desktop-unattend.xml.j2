@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+{#-
+  Per-clone SPECIALIZATION unattend for the Windows 11 desktop test host.
+
+  Self-contained copy of the LIVE-VALIDATED molecule specialization unattend
+  (molecule/playbook-windows-provision_test_machine/templates/windows-unattend.xml.j2),
+  trimmed to the single mode this playbook uses: local_account. The golden PVC
+  (DataSource win11) is already generalized (sysprep /generalize), so this file
+  drives ONLY the specialize + oobeSystem passes — there is NO windowsPE pass and
+  NO DiskConfiguration / ImageInstall.
+
+  KubeVirt attaches this file as the `unattend.xml` key of the <vm>-sysprep
+  Secret on a CD-ROM; Windows OOBE consumes it at first boot.
+
+  Rendered by deploy_windows_desktop.yml. Template vars:
+    windows_desktop_computer_name - source name; sanitized to <=15 alphanumerics.
+    windows_desktop_admin_password - local admin password (XML-escaped).
+    windows_desktop_admin_user     - local admin account name; psrp connects AS
+                                     this same user.
+
+  Win11 is a CLIENT SKU: it DISABLES the built-in Administrator, so we create a
+  LocalAccounts admin (name = windows_desktop_admin_user, group Administrators)
+  and AutoLogon as THAT user. A FirstLogonCommand sets
+  HKLM\...\Policies\System LocalAccountTokenFilterPolicy=1 — without it a
+  non-built-in local admin receives a UAC-filtered NTLM network token and
+  psrp/WinRM authenticate but every privileged op 401s / access-denies.
+
+  The oobeSystem FirstLogonCommands stand up WinRM-over-HTTPS on 5986 so the
+  playbook's psrp/NTLM connection can reach the clone. Fresh KubeVirt NICs
+  classify as the Public network profile, so the firewall rule covers ALL
+  profiles.
+-#}
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>{{ (windows_desktop_computer_name | regex_replace('[^A-Za-z0-9]', ''))[:15] }}</ComputerName>
+    </component>
+  </settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Password>
+              <Value>{{ windows_desktop_admin_password | e }}</Value>
+              <PlainText>true</PlainText>
+            </Password>
+            <Description>Codex desktop test-host local admin (deploy_windows_desktop.yml)</Description>
+            <DisplayName>{{ windows_desktop_admin_user | e }}</DisplayName>
+            <Group>Administrators</Group>
+            <Name>{{ windows_desktop_admin_user | e }}</Name>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Password>
+          <Value>{{ windows_desktop_admin_password | e }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Domain>{{ (windows_desktop_computer_name | regex_replace('[^A-Za-z0-9]', ''))[:15] }}</Domain>
+        <Username>{{ windows_desktop_admin_user | e }}</Username>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>WinRM service auto-start and started</Description>
+          <CommandLine>powershell -ExecutionPolicy Bypass -Command "Set-Service -Name WinRM -StartupType Automatic; Start-Service -Name WinRM"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>Self-signed cert + WinRM HTTPS listener on 5986</Description>
+          <CommandLine>powershell -ExecutionPolicy Bypass -Command "$c = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My; New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * -CertificateThumbPrint $c.Thumbprint -Force"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Description>Firewall allow 5986 inbound on all profiles</Description>
+          <CommandLine>powershell -ExecutionPolicy Bypass -Command "New-NetFirewallRule -DisplayName 'WinRM HTTPS 5986' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5986 -Profile Any"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Description>LocalAccountTokenFilterPolicy=1 so the non-builtin local admin gets a full NTLM network token</Description>
+          <CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Description>Completion marker for the specialize path</Description>
+          <CommandLine>powershell -ExecutionPolicy Bypass -Command "New-Item -Path C:\desktop-specialize-done.txt -ItemType File -Force | Out-Null"</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>
