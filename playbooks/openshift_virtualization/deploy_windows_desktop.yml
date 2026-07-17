@@ -396,6 +396,9 @@
       register: windows_desktop_execpolicy
       changed_when: "'changed' in windows_desktop_execpolicy.stdout"
 
+    # Package payloads download from external CDNs (GitHub releases for
+    # powershell-core/codex) which intermittently time out from the pod
+    # network — retry per package before declaring the deploy failed.
     - name: Install desktop applications with Chocolatey
       chocolatey.chocolatey.win_chocolatey:
         name: "{{ item.name }}"
@@ -404,6 +407,10 @@
       loop: "{{ windows_desktop_apps }}"
       loop_control:
         label: "{{ item.name }}"
+      register: windows_desktop_choco
+      until: windows_desktop_choco is succeeded
+      retries: 3
+      delay: 30
 
     - name: Install extra MSI/EXE packages
       ansible.windows.win_package:
