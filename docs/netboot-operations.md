@@ -6,6 +6,8 @@ ISOs, kickstart/cloud-init seeds, OpenShift PXE assets, and rb5009 iPXE binaries
 This covers the x86/iPXE netboot path (OpenShift nodes, rescue ISOs,
 kickstart). The ARM SBC fleet uses a separate per-MAC **pxelinux** pin
 mechanism with declarative boot modes — see `docs/armbian-boot-modes.md`.
+The Raspberry Pi fleet uses native EEPROM netboot (no iPXE, no pxelinux) —
+see `docs/rpi-netboot-operations.md`.
 
 This is operations-focused. For architecture see the design specs:
 - `docs/superpowers/specs/2026-05-08-netboot-asset-management-design.md` (initial design — *superseded*)
