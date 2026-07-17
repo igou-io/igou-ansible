@@ -529,6 +529,23 @@
         mode: "0644"
       become: true
 
+    # The opencode installer (setup-hermes install phase) appends its own
+    # `export PATH=~/.opencode/bin:$PATH` to ~/.bashrc — AFTER the ~/.bashrc.d
+    # loop, so the stale host opencode shadows the agent-runtime overlay
+    # (observed: Hermes session resolved host 1.17.13 over overlay v1.18.3).
+    # Strip it here; the PATH snippet above appends ~/.opencode/bin as an
+    # end-of-PATH fallback instead. Canonical converge order install ->
+    # configure means a fresh install's re-added line is stripped again.
+    - name: Remove the opencode installer PATH lines from the hermes bashrc
+      ansible.builtin.lineinfile:
+        path: "/home/{{ hermes_user }}/.bashrc"
+        regexp: "{{ item }}"
+        state: absent
+      loop:
+        - '^# opencode$'
+        - '^export PATH=/home/{{ hermes_user }}/\.opencode/bin:\$PATH$'
+      become: true
+
     # Host copy is root-owned in /usr/local/bin (not agent-writable); the
     # overlay copy sits on the agent-writable state disk so terminal sessions
     # can run it, and is re-asserted from the same template every converge.
