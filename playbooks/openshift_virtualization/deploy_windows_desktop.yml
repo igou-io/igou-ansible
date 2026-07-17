@@ -52,7 +52,10 @@
 #   windows_desktop_datasource_name       - golden DataSource (default win11)
 #   windows_desktop_datasource_namespace  - its namespace
 #                                           (default openshift-virtualization-os-images)
-#   windows_desktop_disk_size       - boot DataVolume request (default 64Gi)
+#   windows_desktop_disk_size       - boot DataVolume request (default 50Gi — matches
+#                                     the win11 golden; larger values force the CSI
+#                                     snapshot-restore onto a slow send/recv path that
+#                                     can outlive the provisioner deadline and wedge)
 #   windows_desktop_instancetype    - cluster instancetype (default u1.large)
 #   windows_desktop_preference      - cluster preference (default windows.11)
 #   windows_desktop_apps            - Chocolatey packages: list of dicts with
@@ -97,7 +100,7 @@
     windows_desktop_admin_user: igou
     windows_desktop_datasource_name: win11
     windows_desktop_datasource_namespace: openshift-virtualization-os-images
-    windows_desktop_disk_size: 64Gi
+    windows_desktop_disk_size: 50Gi
     windows_desktop_instancetype: u1.large
     windows_desktop_preference: windows.11
     windows_desktop_enable_rdp: true
