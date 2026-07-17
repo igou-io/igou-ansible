@@ -322,6 +322,7 @@
             # Carried into play 2 for the RDP endpoint summary.
             windows_desktop_rdp_endpoint: "{{ windows_desktop_target_ip }}:{{ windows_desktop_rdp_svc.resources[0].spec.ports[0].nodePort }}"
             windows_desktop_wait_timeout: "{{ windows_desktop_wait_timeout }}"
+            windows_desktop_guest_mtu: "{{ windows_desktop_guest_mtu }}"
             windows_desktop_apps: "{{ windows_desktop_apps }}"
             windows_desktop_msi_packages: "{{ windows_desktop_msi_packages }}"
             windows_desktop_enable_rdp: "{{ windows_desktop_enable_rdp }}"
