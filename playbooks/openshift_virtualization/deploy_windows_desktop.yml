@@ -1,0 +1,473 @@
+---
+# Deploy a Windows 11 desktop test host for interactive / computer-use agent
+# testing, with OpenAI Codex installed by default.
+#
+# WHAT IT DOES
+#   Clones the generalized win11 golden (SSP DataSource `win11` in
+#   openshift-virtualization-os-images) into a running KubeVirt VirtualMachine
+#   on api.ocp.igou.systems, drives Windows OOBE with a sysprep specialization
+#   unattend (local-admin mode, WinRM-over-HTTPS listener), exposes WinRM (5986)
+#   and RDP (3389) via NodePort Services, then provisions the guest over psrp:
+#   an execution-policy guard, a Chocolatey app set (PowerShell 7 + git +
+#   nodejs-lts + python + the Codex CLI), optional direct MSI installers, and
+#   Remote Desktop. An operator then RDPs in to complete the one-time,
+#   MANDATORY interactive Codex sign-in (ChatGPT Plus/Pro/Business OAuth — no
+#   headless path exists for the app; the CLI supports OPENAI_API_KEY auth).
+#
+#   Codex packaging note: the *windowed* Codex desktop app ships MSIX/Store-only
+#   (package id 9PLM9XGG6VKS) with no vendor MSI/EXE and no direct URL, so it
+#   cannot be installed unattended over WinRM reliably. The robust, idempotent,
+#   headless default this playbook ships is therefore the Codex CLI via
+#   Chocolatey (`codex`), which is exactly what agent testing needs. To also get
+#   the GUI app, RDP in and install it interactively from the Microsoft Store.
+#
+# CLIENT-SKU / sysprep gotchas baked in (do not "simplify" away):
+#   * Win11 client SKUs DISABLE the built-in Administrator, so the unattend runs
+#     in local_account mode: it creates windows_desktop_admin_user as a local
+#     admin and sets LocalAccountTokenFilterPolicy=1 (without it psrp/WinRM auth
+#     succeeds but every privileged op 401s / access-denies).
+#   * The sysprep volume references the Secret as `secret: {name: ...}`. The key
+#     is `name`, NOT `secretName` — `secretName` is silently dropped by the API
+#     and the VMI wedges Pending.
+#   * preference windows.11 requires >=2 vCPU: u1.large works, u1.medium is
+#     webhook-rejected (422). windows.11 already injects EFI+secureBoot firmware
+#     and the vTPM requirement, so no hand-rolled firmware/tpm block is needed
+#     (non-persistent vTPM is fine for eval clones).
+#   * Fresh KubeVirt NICs classify as the Public network profile, so the WinRM
+#     (in the unattend) and RDP firewall rules cover ALL profiles.
+#   * Chocolatey's bootstrap runs a downloaded .ps1 which the client-SKU default
+#     execution policy (Restricted) blocks, so the guard sets LocalMachine to
+#     RemoteSigned first.
+#
+# VARIABLES (all prefixed windows_desktop_):
+#   windows_desktop_name            - VM / Secret / Service base name (default codex-desktop)
+#   windows_desktop_namespace       - target namespace (default windows-images)
+#   windows_desktop_state           - present (default) | absent. absent tears
+#                                     down the VM, its boot DataVolume, both
+#                                     NodePort Services, and the sysprep Secret.
+#   windows_desktop_admin_user      - local admin created by the unattend AND the
+#                                     psrp connect user (default igou)
+#   windows_desktop_admin_password  - REQUIRED, no default. Source:
+#                                     op read op://lab_agents/windows-administrator/password
+#   windows_desktop_datasource_name       - golden DataSource (default win11)
+#   windows_desktop_datasource_namespace  - its namespace
+#                                           (default openshift-virtualization-os-images)
+#   windows_desktop_disk_size       - boot DataVolume request (default 64Gi)
+#   windows_desktop_instancetype    - cluster instancetype (default u1.large)
+#   windows_desktop_preference      - cluster preference (default windows.11)
+#   windows_desktop_apps            - Chocolatey packages: list of dicts with
+#                                     name / version (opt) / state (opt).
+#   windows_desktop_msi_packages    - win_package installers: list of dicts with
+#                                     path / product_id / arguments / creates_path.
+#                                     Default empty (Chocolatey covers Codex).
+#   windows_desktop_enable_rdp      - enable Remote Desktop (default true)
+#   windows_desktop_node_ip         - OPTIONAL NodePort target IP override. Left
+#                                     empty, the play auto-discovers a node
+#                                     InternalIP (needs `nodes [get,list]` RBAC).
+#                                     The scoped virtualmachine-ops SA CANNOT list
+#                                     nodes, so pass this explicitly (a
+#                                     schedulable worker InternalIP) under that
+#                                     token, or run under a token with node read.
+#   windows_desktop_wait_timeout    - psrp readiness timeout seconds (default
+#                                     1500; a Win11 clone must finish smart-clone
+#                                     + OOBE specialize + FirstLogonCommands
+#                                     before WinRM answers).
+#
+# RUN RECIPE (localhost cluster auth is env-based; UNSET KUBECONFIG so
+#   kubernetes.core does NOT silently prefer it over K8S_AUTH_*):
+#     unset KUBECONFIG
+#     export K8S_AUTH_HOST=https://api.ocp.igou.systems:6443
+#     export K8S_AUTH_API_KEY="$(op read op://service-accounts/virtualmachine-ops/token)"
+#     ansible-playbook playbooks/openshift_virtualization/deploy_windows_desktop.yml \
+#       -e windows_desktop_admin_password="$(op read op://lab_agents/windows-administrator/password)" \
+#       -e windows_desktop_node_ip=<schedulable-worker-InternalIP>
+#   Teardown:
+#     ansible-playbook playbooks/openshift_virtualization/deploy_windows_desktop.yml \
+#       -e windows_desktop_state=absent
+#   Controller dep: the psrp connection plugin needs the `pypsrp` python lib on
+#   the EE (already present for the windows molecule scenarios).
+- name: Deploy the Codex Windows 11 desktop — cluster side
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    windows_desktop_name: codex-desktop
+    windows_desktop_namespace: windows-images
+    windows_desktop_state: present
+    windows_desktop_admin_user: igou
+    windows_desktop_datasource_name: win11
+    windows_desktop_datasource_namespace: openshift-virtualization-os-images
+    windows_desktop_disk_size: 64Gi
+    windows_desktop_instancetype: u1.large
+    windows_desktop_preference: windows.11
+    windows_desktop_enable_rdp: true
+    windows_desktop_node_ip: ""
+    windows_desktop_wait_timeout: 1500
+    windows_desktop_apps:
+      - name: powershell-core
+      - name: git
+      - name: nodejs-lts
+      - name: python
+      - name: codex
+    windows_desktop_msi_packages: []
+    windows_desktop_unattend_template: "{{ playbook_dir }}/templates/windows-desktop-unattend.xml.j2"
+  tasks:
+    - name: Assert windows_desktop_state is valid
+      ansible.builtin.assert:
+        that:
+          - windows_desktop_state in ['present', 'absent']
+        fail_msg: "windows_desktop_state must be 'present' or 'absent'."
+        success_msg: "windows_desktop_state = {{ windows_desktop_state }}."
+
+    - name: Assert cluster auth env vars are present
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'K8S_AUTH_HOST') | length > 0
+          - lookup('ansible.builtin.env', 'K8S_AUTH_API_KEY') | length > 0
+        fail_msg: >-
+          K8S_AUTH_HOST and K8S_AUTH_API_KEY must be set (and KUBECONFIG unset).
+          See this playbook's RUN RECIPE header.
+        success_msg: Cluster auth env vars present.
+
+    - name: Assert the Windows admin password is provided
+      ansible.builtin.assert:
+        that:
+          - windows_desktop_admin_password is defined
+          - windows_desktop_admin_password | default('') | length > 0
+        fail_msg: >-
+          windows_desktop_admin_password is REQUIRED. Source:
+          op read op://lab_agents/windows-administrator/password
+        success_msg: Windows admin password provided.
+      no_log: true
+      when: windows_desktop_state == 'present'
+
+    # --- Provision (state: present) --------------------------------------
+    - name: Provision the desktop VM
+      when: windows_desktop_state == 'present'
+      block:
+        # Render the specialization unattend into <vm>-sysprep BEFORE the VM
+        # starts — KubeVirt boots the clone immediately and OOBE consumes the
+        # sysprep CD at first boot.
+        - name: Render and create the sysprep Secret
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: "{{ windows_desktop_name }}-sysprep"
+                namespace: "{{ windows_desktop_namespace }}"
+              stringData:
+                unattend.xml: "{{ lookup('ansible.builtin.template', windows_desktop_unattend_template) }}"
+          vars:
+            windows_desktop_computer_name: "{{ windows_desktop_name }}"
+          no_log: true
+
+        - name: Create the desktop VirtualMachine (smart-clone of the win11 golden)
+          kubevirt.core.kubevirt_vm:
+            name: "{{ windows_desktop_name }}"
+            namespace: "{{ windows_desktop_namespace }}"
+            state: present
+            wait: true
+            wait_timeout: 600
+            labels:
+              # REQUIRED — the NodePort Services select on this label.
+              kubevirt.io/domain: "{{ windows_desktop_name }}"
+            instancetype:
+              kind: virtualmachineclusterinstancetype
+              name: "{{ windows_desktop_instancetype }}"
+            preference:
+              kind: virtualmachineclusterpreference
+              name: "{{ windows_desktop_preference }}"
+            data_volume_templates:
+              - metadata:
+                  name: "{{ windows_desktop_name }}-boot"
+                spec:
+                  sourceRef:
+                    kind: DataSource
+                    name: "{{ windows_desktop_datasource_name }}"
+                    namespace: "{{ windows_desktop_datasource_namespace }}"
+                  storage:
+                    resources:
+                      requests:
+                        storage: "{{ windows_desktop_disk_size }}"
+            spec:
+              domain:
+                devices:
+                  disks:
+                    - name: rootdisk
+                      bootOrder: 1
+                      disk:
+                        bus: virtio
+                    - name: sysprep
+                      cdrom:
+                        bus: sata
+                  interfaces:
+                    - name: default
+                      masquerade: {}
+                resources: {}
+              networks:
+                - name: default
+                  pod: {}
+              volumes:
+                - name: rootdisk
+                  dataVolume:
+                    name: "{{ windows_desktop_name }}-boot"
+                - name: sysprep
+                  sysprep:
+                    secret:
+                      # CRITICAL: key is `name`, NOT `secretName` (silently
+                      # dropped -> VMI wedges Pending).
+                      name: "{{ windows_desktop_name }}-sysprep"
+
+        - name: Create the WinRM (5986) NodePort Service
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: "{{ windows_desktop_name }}"
+                namespace: "{{ windows_desktop_namespace }}"
+              spec:
+                type: NodePort
+                selector:
+                  kubevirt.io/domain: "{{ windows_desktop_name }}"
+                # Jinja dict-literal keeps the port values real ints (a quoted
+                # "{{ x | int }}" string-coerces and k8s rejects it).
+                ports: >-
+                  {{ [{'name': 'winrm', 'port': 5986, 'protocol': 'TCP', 'targetPort': 5986}] }}
+
+        - name: Create the RDP (3389) NodePort Service
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: "{{ windows_desktop_name }}-rdp"
+                namespace: "{{ windows_desktop_namespace }}"
+              spec:
+                type: NodePort
+                selector:
+                  kubevirt.io/domain: "{{ windows_desktop_name }}"
+                ports: >-
+                  {{ [{'name': 'rdp', 'port': 3389, 'protocol': 'TCP', 'targetPort': 3389}] }}
+
+        # NodePort target IP: prefer the explicit override; otherwise discover a
+        # node InternalIP (needs `nodes [get,list]` RBAC the scoped SA lacks).
+        - name: Discover a node InternalIP for the NodePort endpoint
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Node
+          register: windows_desktop_node_info
+          when: windows_desktop_node_ip | length == 0
+
+        - name: Resolve the NodePort target IP
+          ansible.builtin.set_fact:
+            windows_desktop_target_ip: >-
+              {{ windows_desktop_node_ip if windows_desktop_node_ip | length > 0
+                 else (windows_desktop_node_info.resources[0].status.addresses
+                       | selectattr('type', 'equalto', 'InternalIP')
+                       | map(attribute='address') | first) }}
+
+        # nodePort is populated asynchronously — poll until allocated.
+        - name: Wait for the WinRM NodePort to be allocated
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Service
+            name: "{{ windows_desktop_name }}"
+            namespace: "{{ windows_desktop_namespace }}"
+          register: windows_desktop_winrm_svc
+          until:
+            - windows_desktop_winrm_svc.resources | length > 0
+            - (windows_desktop_winrm_svc.resources[0].spec.ports[0].nodePort | default(0)) | int > 0
+          retries: 10
+          delay: 3
+
+        - name: Wait for the RDP NodePort to be allocated
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Service
+            name: "{{ windows_desktop_name }}-rdp"
+            namespace: "{{ windows_desktop_namespace }}"
+          register: windows_desktop_rdp_svc
+          until:
+            - windows_desktop_rdp_svc.resources | length > 0
+            - (windows_desktop_rdp_svc.resources[0].spec.ports[0].nodePort | default(0)) | int > 0
+          retries: 10
+          delay: 3
+
+        - name: Register the runtime psrp desktop host
+          ansible.builtin.add_host:
+            name: "{{ windows_desktop_name }}"
+            groups: windows_desktop_targets
+            ansible_host: "{{ windows_desktop_target_ip }}"
+            ansible_port: "{{ windows_desktop_winrm_svc.resources[0].spec.ports[0].nodePort | int }}"
+            ansible_user: "{{ windows_desktop_admin_user }}"
+            ansible_password: "{{ windows_desktop_admin_password }}"
+            ansible_connection: psrp
+            ansible_psrp_protocol: https
+            ansible_psrp_auth: ntlm
+            ansible_psrp_cert_validation: ignore
+            ansible_psrp_connection_timeout: 60
+            ansible_psrp_read_timeout: 70
+            ansible_psrp_operation_timeout: 60
+            # Carried into play 2 for the RDP endpoint summary.
+            windows_desktop_rdp_endpoint: "{{ windows_desktop_target_ip }}:{{ windows_desktop_rdp_svc.resources[0].spec.ports[0].nodePort }}"
+            windows_desktop_wait_timeout: "{{ windows_desktop_wait_timeout }}"
+            windows_desktop_apps: "{{ windows_desktop_apps }}"
+            windows_desktop_msi_packages: "{{ windows_desktop_msi_packages }}"
+            windows_desktop_enable_rdp: "{{ windows_desktop_enable_rdp }}"
+          no_log: true
+
+    # --- Teardown (state: absent) ----------------------------------------
+    - name: Tear down the desktop VM
+      when: windows_desktop_state == 'absent'
+      block:
+        - name: Delete the VirtualMachine
+          kubevirt.core.kubevirt_vm:
+            name: "{{ windows_desktop_name }}"
+            namespace: "{{ windows_desktop_namespace }}"
+            state: absent
+            wait: true
+            wait_timeout: 300
+
+        - name: Delete the boot DataVolume
+          kubernetes.core.k8s:
+            state: absent
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ windows_desktop_name }}-boot"
+            namespace: "{{ windows_desktop_namespace }}"
+
+        - name: Delete the WinRM NodePort Service
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Service
+            name: "{{ windows_desktop_name }}"
+            namespace: "{{ windows_desktop_namespace }}"
+
+        - name: Delete the RDP NodePort Service
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Service
+            name: "{{ windows_desktop_name }}-rdp"
+            namespace: "{{ windows_desktop_namespace }}"
+
+        - name: Delete the sysprep Secret
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Secret
+            name: "{{ windows_desktop_name }}-sysprep"
+            namespace: "{{ windows_desktop_namespace }}"
+
+# --- In-guest provisioning (psrp) --------------------------------------
+# Only runs on state: present (the host is added only then; on absent this
+# matches no hosts and is skipped).
+- name: Provision the Codex desktop — in guest
+  hosts: windows_desktop_targets
+  gather_facts: false
+  tasks:
+    # A Win11 clone must finish smart-clone + OOBE specialize +
+    # FirstLogonCommands before the WinRM HTTPS listener answers.
+    - name: Wait for the guest WinRM listener to answer
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ windows_desktop_wait_timeout | int }}"
+
+    # Client-SKU default execution policy (Restricted) blocks Chocolatey's
+    # downloaded bootstrap .ps1 — raise LocalMachine to RemoteSigned first.
+    # Idempotent: only writes when more restrictive than an allowed value.
+    - name: Ensure the execution policy permits the Chocolatey bootstrap
+      ansible.windows.win_shell: |
+        $ok = @('RemoteSigned', 'Unrestricted', 'Bypass')
+        if ((Get-ExecutionPolicy -Scope LocalMachine) -notin $ok) {
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
+          'changed'
+        } else {
+          'ok'
+        }
+      register: windows_desktop_execpolicy
+      changed_when: "'changed' in windows_desktop_execpolicy.stdout"
+
+    - name: Install desktop applications with Chocolatey
+      chocolatey.chocolatey.win_chocolatey:
+        name: "{{ item.name }}"
+        version: "{{ item.version | default(omit) }}"
+        state: "{{ item.state | default('present') }}"
+      loop: "{{ windows_desktop_apps }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Install extra MSI/EXE packages
+      ansible.windows.win_package:
+        path: "{{ item.path }}"
+        product_id: "{{ item.product_id | default(omit) }}"
+        arguments: "{{ item.arguments | default(omit) }}"
+        creates_path: "{{ item.creates_path | default(omit) }}"
+        state: present
+      loop: "{{ windows_desktop_msi_packages }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    # --- Remote Desktop --------------------------------------------------
+    - name: Allow Remote Desktop connections
+      ansible.windows.win_regedit:
+        path: HKLM:\System\CurrentControlSet\Control\Terminal Server
+        name: fDenyTSConnections
+        data: 0
+        type: dword
+      when: windows_desktop_enable_rdp | bool
+
+    - name: Start the Remote Desktop service
+      ansible.windows.win_service:
+        name: TermService
+        start_mode: auto
+        state: started
+      when: windows_desktop_enable_rdp | bool
+
+    - name: Open the firewall for Remote Desktop on all profiles
+      community.windows.win_firewall_rule:
+        name: Remote Desktop (managed by Ansible)
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "3389"
+        profiles:
+          - domain
+          - private
+          # Fresh KubeVirt NICs classify as Public, so RDP stays blocked
+          # without this (lab-only).
+          - public
+        state: present
+        enabled: true
+      when: windows_desktop_enable_rdp | bool
+
+    # --- Verify the Codex CLI landed on disk -----------------------------
+    - name: Stat the Codex CLI shim
+      ansible.windows.win_stat:
+        path: C:\ProgramData\chocolatey\bin\codex.exe
+      register: windows_desktop_codex_stat
+
+    - name: Assert the Codex CLI is installed
+      ansible.builtin.assert:
+        that:
+          - windows_desktop_codex_stat.stat.exists
+        fail_msg: >-
+          Codex CLI shim not found at C:\ProgramData\chocolatey\bin\codex.exe —
+          the `codex` Chocolatey package did not install.
+        success_msg: Codex CLI present.
+
+    - name: Summarize the provisioned desktop
+      ansible.builtin.debug:
+        msg:
+          - "VM:          {{ inventory_hostname }}"
+          - "Admin user:  {{ windows_desktop_admin_user | default('igou') }}"
+          - "Apps:        {{ windows_desktop_apps | map(attribute='name') | join(', ') }}"
+          - "Extra pkgs:  {{ windows_desktop_msi_packages | length }}"
+          - "RDP:         {{ 'enabled at ' ~ windows_desktop_rdp_endpoint if windows_desktop_enable_rdp | bool else 'left as-is' }}"
+          - "Next step:   RDP in and complete the one-time interactive Codex sign-in."
+...
