@@ -262,20 +262,31 @@
 
         # NodePort target IP: prefer the explicit override; otherwise discover a
         # node InternalIP (needs `nodes [get,list]` RBAC the scoped SA lacks).
+        # The deployer SA usually cannot list nodes (403) — tolerate that and
+        # fall back below rather than failing the play.
         - name: Discover a node InternalIP for the NodePort endpoint
           kubernetes.core.k8s_info:
             api_version: v1
             kind: Node
           register: windows_desktop_node_info
+          failed_when: false
           when: windows_desktop_node_ip | length == 0
 
+        # Precedence: explicit override -> discovered node InternalIP -> the
+        # API endpoint hostname (kube-proxy answers NodePorts on the VIP
+        # holder's addresses too, so this works without any node RBAC).
         - name: Resolve the NodePort target IP
           ansible.builtin.set_fact:
             windows_desktop_target_ip: >-
-              {{ windows_desktop_node_ip if windows_desktop_node_ip | length > 0
-                 else (windows_desktop_node_info.resources[0].status.addresses
-                       | selectattr('type', 'equalto', 'InternalIP')
-                       | map(attribute='address') | first) }}
+              {%- if windows_desktop_node_ip | length > 0 -%}
+              {{ windows_desktop_node_ip }}
+              {%- elif (windows_desktop_node_info.resources | default([])) | length > 0 -%}
+              {{ windows_desktop_node_info.resources[0].status.addresses
+                 | selectattr('type', 'equalto', 'InternalIP')
+                 | map(attribute='address') | first }}
+              {%- else -%}
+              {{ lookup('ansible.builtin.env', 'K8S_AUTH_HOST') | urlsplit('hostname') }}
+              {%- endif -%}
 
         # nodePort is populated asynchronously — poll until allocated.
         - name: Wait for the WinRM NodePort to be allocated
