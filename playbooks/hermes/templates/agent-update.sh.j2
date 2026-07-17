@@ -1,0 +1,357 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# agent-update — runtime updater for the coding-agent CLI overlay.
+#
+# Maintains versioned installs of claude / codex / opencode / cursor in the
+# agent-runtime overlay (state disk), with stable symlinks in bin/ that both
+# the VM host and the Hermes terminal containers resolve ahead of the baked
+# image pins. The baked pins are never touched — `agent-update reset` wipes
+# the overlay and falls straight back to them.
+#
+# Verification policy (operator-accepted trade-off, see the design doc):
+#   claude   — PGP: SHASUMS256.txt.sig verified against the pinned Anthropic
+#              release key fingerprint (same anchor as the image build).
+#   codex    — SHA256: checked against the release's codex-package_SHA256SUMS.
+#   opencode — TLS to the GitHub release only (no upstream sums published).
+#   cursor   — TLS to downloads.cursor.com only.
+# No minimum-release-age gate and no review-time pinning on this path.
+set -euo pipefail
+
+CLAUDE_PGP_FPR="{{ hermes_agent_update_claude_pgp_fpr }}"
+CLAUDE_PGP_URL="https://downloads.claude.ai/keys/claude-code.asc"
+TTL_SECONDS="{{ hermes_agent_update_ttl_seconds }}"
+KEEP_VERSIONS="{{ hermes_agent_update_keep_versions }}"
+
+TOOLS=(claude codex opencode cursor)
+
+# Overlay root: container mounts it at ~/.agents/runtime, the host keeps it
+# at ~/.hermes/agent-runtime. Same directory either way.
+if [ -n "${AGENT_RUNTIME_DIR:-}" ]; then
+  RUNTIME="$AGENT_RUNTIME_DIR"
+elif [ -d "$HOME/.agents/runtime" ]; then
+  RUNTIME="$HOME/.agents/runtime"
+elif [ -d "$HOME/.hermes/agent-runtime" ]; then
+  RUNTIME="$HOME/.hermes/agent-runtime"
+else
+  echo "agent-update: no agent-runtime overlay directory found" >&2
+  exit 1
+fi
+BIN="$RUNTIME/bin"
+TOOLS_DIR="$RUNTIME/tools"
+STATE="$RUNTIME/state"
+mkdir -p "$BIN" "$TOOLS_DIR" "$STATE"
+
+PINS="$STATE/pins"
+LOG="$STATE/update.log"
+FORCE=0
+
+log() { printf '%s %s\n' "$(date -Is)" "$*" >>"$LOG"; }
+say() { printf '%s\n' "$*"; }
+die() { echo "agent-update: $*" >&2; exit 1; }
+
+arch_suffix() {
+  case "$(uname -m)" in
+    x86_64) echo x64 ;;
+    aarch64) echo arm64 ;;
+    *) die "unsupported arch: $(uname -m)" ;;
+  esac
+}
+
+musl_triple() {
+  case "$(uname -m)" in
+    x86_64) echo x86_64-unknown-linux-musl ;;
+    aarch64) echo aarch64-unknown-linux-musl ;;
+    *) die "unsupported arch: $(uname -m)" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Version discovery — one function per tool, echoes the version string.
+# GitHub lookups are unauthenticated (60 req/h/IP): fine for a nightly timer
+# plus occasional on-demand runs; failures are non-fatal per tool.
+# ---------------------------------------------------------------------------
+# Capture the response body BEFORE extracting: `curl | grep -m1`-style
+# pipelines make the consumer exit early, curl dies of SIGPIPE, and pipefail
+# turns a successful lookup into a spurious failure.
+gh_latest_tag() {
+  local body tags
+  body=$(curl -fsSL --retry 2 "https://api.github.com/repos/$1/releases/latest") || return 1
+  tags=$(printf '%s\n' "$body" | sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p')
+  printf '%s\n' "$tags" | head -1
+}
+
+latest_claude()   { gh_latest_tag anthropics/claude-code; }
+latest_codex()    { gh_latest_tag openai/codex | sed -E 's/^rust-v//'; }
+latest_opencode() { gh_latest_tag anomalyco/opencode; }
+latest_cursor() {
+  local body matches
+  body=$(curl -fsSL --retry 2 https://cursor.com/install) || return 1
+  matches=$(printf '%s\n' "$body" | grep -oP 'lab/\K[0-9a-zA-Z.-]+')
+  printf '%s\n' "$matches" | head -1
+}
+
+# ---------------------------------------------------------------------------
+# Install steps — download into $1 (a staging dir), verify, and print the
+# path (relative to the version dir) of the entry binary.
+# ---------------------------------------------------------------------------
+install_claude() {
+  local dest="$1" ver="$2" arch tarball base
+  arch=$(arch_suffix)
+  tarball="claude-linux-${arch}.tar.gz"
+  base="https://github.com/anthropics/claude-code/releases/download/${ver}"
+  command -v gpg >/dev/null || die "gpg is required to verify claude"
+  local work
+  work=$(mktemp -d)
+  export GNUPGHOME="$work/gnupg"
+  mkdir -p "$GNUPGHOME"
+  chmod 0700 "$GNUPGHOME"
+  (
+    cd "$work"
+    curl -fsSL -o key.asc "$CLAUDE_PGP_URL"
+    gpg --batch --import key.asc 2>/dev/null
+    gpg --list-keys --with-colons --with-fingerprint \
+      | awk -F: '$1=="fpr"{print $10}' | grep -qFx "$CLAUDE_PGP_FPR" \
+      || exit 65
+    curl -fsSL -o "$tarball" "${base}/${tarball}"
+    curl -fsSL -o SHASUMS256.txt "${base}/SHASUMS256.txt"
+    curl -fsSL -o SHASUMS256.txt.sig "${base}/SHASUMS256.txt.sig"
+    gpg --batch --status-fd 1 --verify SHASUMS256.txt.sig SHASUMS256.txt 2>/dev/null \
+      | grep -qF "VALIDSIG ${CLAUDE_PGP_FPR}" || exit 66
+    grep " ${tarball}\$" SHASUMS256.txt | sha256sum -c - >/dev/null
+    tar -xzf "$tarball" -C "$dest"
+  ) || { local rc=$?; rm -rf "$work"; unset GNUPGHOME
+         [ "$rc" = 65 ] && die "claude: PGP key fingerprint mismatch"
+         [ "$rc" = 66 ] && die "claude: SHASUMS signature invalid"
+         return 1; }
+  rm -rf "$work"; unset GNUPGHOME
+  echo "claude"
+}
+
+install_codex() {
+  local dest="$1" ver="$2" triple tarball base sha
+  triple=$(musl_triple)
+  tarball="codex-package-${triple}.tar.gz"
+  base="https://github.com/openai/codex/releases/download/rust-v${ver}"
+  local work
+  work=$(mktemp -d)
+  (
+    cd "$work"
+    curl -fsSL -o "$tarball" "${base}/${tarball}"
+    curl -fsSL -o SHA256SUMS "${base}/codex-package_SHA256SUMS"
+    sha=$(grep -F "$tarball" SHA256SUMS | head -1 | awk '{print $1}')
+    [ -n "$sha" ] || exit 65
+    echo "$sha  $tarball" | sha256sum -c - >/dev/null
+    tar -xzf "$tarball" -C "$dest"
+  ) || { local rc=$?; rm -rf "$work"
+         [ "$rc" = 65 ] && die "codex: ${tarball} missing from SHA256SUMS"
+         return 1; }
+  rm -rf "$work"
+  chmod 0755 "$dest/bin/codex" "$dest/codex-path/rg" 2>/dev/null || true
+  [ -f "$dest/codex-resources/bwrap" ] && chmod 0755 "$dest/codex-resources/bwrap"
+  echo "bin/codex"
+}
+
+install_opencode() {
+  local dest="$1" ver="$2" arch tarball
+  arch=$(arch_suffix)
+  tarball="opencode-linux-${arch}.tar.gz"
+  curl -fsSL --retry 2 -o "$dest/$tarball" \
+    "https://github.com/anomalyco/opencode/releases/download/${ver}/${tarball}"
+  tar -xzf "$dest/$tarball" -C "$dest"
+  rm -f "$dest/$tarball"
+  chmod 0755 "$dest/opencode"
+  echo "opencode"
+}
+
+install_cursor() {
+  local dest="$1" ver="$2" arch
+  arch=$(arch_suffix)
+  curl -fsSL --retry 2 -o "$dest/pkg.tar.gz" \
+    "https://downloads.cursor.com/lab/${ver}/linux/${arch}/agent-cli-package.tar.gz"
+  tar -xzf "$dest/pkg.tar.gz" -C "$dest" --strip-components=1
+  rm -f "$dest/pkg.tar.gz"
+  echo "cursor-agent"
+}
+
+# Extra bin/ symlink names per tool (cursor also answers to `agent`).
+extra_links() { [ "$1" = cursor ] && echo "agent" || true; }
+
+current_version() {
+  # Resolve bin/<tool> symlink → tools/<tool>/<version>/... → version.
+  local link="$BIN/$1" target
+  [ -L "$link" ] || { echo "-"; return; }
+  target=$(readlink "$link")
+  echo "$target" | sed -E "s|.*/tools/$1/([^/]+)/.*|\1|"
+}
+
+pinned() { [ -f "$PINS" ] && grep -q "^$1 " "$PINS"; }
+
+prune() {
+  local tool="$1" keep="$KEEP_VERSIONS"
+  # shellcheck disable=SC2012
+  ls -1t "$TOOLS_DIR/$tool" 2>/dev/null | tail -n +$((keep + 1)) | while read -r old; do
+    rm -rf "${TOOLS_DIR:?}/$tool/$old"
+    log "$tool pruned $old"
+  done
+}
+
+update_tool() {
+  local tool="$1" latest cur stamp
+  if pinned "$tool"; then
+    say "$tool: pinned ($(grep "^$tool " "$PINS" | cut -d' ' -f2-)) — skipping"
+    return 0
+  fi
+  stamp="$STATE/check-$tool.stamp"
+  if [ "$FORCE" = 0 ] && [ -f "$stamp" ]; then
+    local age
+    age=$(( $(date +%s) - $(stat -c %Y "$stamp") ))
+    if [ "$age" -lt "$TTL_SECONDS" ]; then
+      say "$tool: checked ${age}s ago (< ${TTL_SECONDS}s TTL) — skipping (--force to override)"
+      return 0
+    fi
+  fi
+  latest=$("latest_$tool") || { say "$tool: version discovery failed"; return 1; }
+  [ -n "$latest" ] || { say "$tool: version discovery returned empty"; return 1; }
+  cur=$(current_version "$tool")
+  touch "$stamp"
+  if [ "$cur" = "$latest" ]; then
+    say "$tool: up to date ($cur)"
+    return 0
+  fi
+  say "$tool: $cur -> $latest"
+  local vdir="$TOOLS_DIR/$tool/$latest" staging entry
+  staging="${vdir}.partial"
+  rm -rf "$staging"
+  mkdir -p "$staging"
+  if ! entry=$("install_$tool" "$staging" "$latest"); then
+    rm -rf "$staging"
+    say "$tool: install failed"
+    return 1
+  fi
+  # Smoke test before the flip — a broken download must never win the PATH.
+  if ! "$staging/$entry" --version >/dev/null 2>&1; then
+    rm -rf "$staging"
+    say "$tool: smoke test failed ($entry --version)"
+    return 1
+  fi
+  rm -rf "$vdir"
+  mv "$staging" "$vdir"
+  ln -sfn "../tools/$tool/$latest/$entry" "$BIN/$tool"
+  local extra
+  extra=$(extra_links "$tool")
+  [ -n "$extra" ] && ln -sfn "../tools/$tool/$latest/$entry" "$BIN/$extra"
+  prune "$tool"
+  log "$tool $cur -> $latest"
+  say "$tool: updated to $latest"
+}
+
+cmd_status() {
+  printf '%-10s %-16s %s\n' TOOL OVERLAY PINNED
+  local t
+  for t in "${TOOLS[@]}"; do
+    printf '%-10s %-16s %s\n' "$t" "$(current_version "$t")" \
+      "$(pinned "$t" && grep "^$t " "$PINS" | cut -d' ' -f2- || echo -)"
+  done
+  say ""
+  say "overlay: $RUNTIME"
+  say "effective on PATH: $(command -v claude 2>/dev/null || echo none)"
+}
+
+cmd_check() {
+  local t
+  for t in "${TOOLS[@]}"; do
+    printf '%-10s current=%-14s latest=%s\n' "$t" "$(current_version "$t")" \
+      "$("latest_$t" 2>/dev/null || echo '?')"
+  done
+}
+
+cmd_rollback() {
+  local tool="$1" cur prev
+  cur=$(current_version "$tool")
+  [ "$cur" != "-" ] || die "$tool: nothing installed in the overlay"
+  # Version dir names are controlled (vendor tags), so ls|grep is safe here.
+  # shellcheck disable=SC2010,SC2012
+  prev=$(ls -1t "$TOOLS_DIR/$tool" | grep -vFx "$cur" | head -1)
+  [ -n "$prev" ] || die "$tool: no previous version kept"
+  # Re-derive the entry path shape from the current link, swapping versions.
+  local target
+  target=$(readlink "$BIN/$tool" | sed "s|/$cur/|/$prev/|")
+  ln -sfn "$target" "$BIN/$tool"
+  local extra
+  extra=$(extra_links "$tool")
+  [ -n "$extra" ] && ln -sfn "$target" "$BIN/$extra"
+  log "$tool rollback $cur -> $prev"
+  say "$tool: rolled back $cur -> $prev"
+}
+
+cmd_reset() {
+  local t
+  for t in "${TOOLS[@]}" agent; do rm -f "$BIN/$t"; done
+  rm -rf "$TOOLS_DIR"
+  mkdir -p "$TOOLS_DIR"
+  log "reset — overlay cleared, baked pins take effect"
+  say "overlay cleared; image/host baked versions now resolve"
+}
+
+usage() {
+  cat <<'EOF'
+agent-update — runtime updater for the coding-agent CLI overlay
+  agent-update [--force] [update] [all|claude|codex|opencode|cursor]
+  agent-update check              # show current vs latest, no install
+  agent-update status             # show overlay state
+  agent-update pin <tool> [ver]   # hold a tool (at optional version note)
+  agent-update unpin <tool>
+  agent-update rollback <tool>    # flip back to the previous kept version
+  agent-update reset              # wipe overlay -> baked pins take effect
+EOF
+}
+
+main() {
+  local args=() a
+  for a in "$@"; do
+    case "$a" in
+      --force) FORCE=1 ;;
+      -h|--help) usage; exit 0 ;;
+      *) args+=("$a") ;;
+    esac
+  done
+  set -- "${args[@]:-}"
+  local cmd="${1:-update}"
+  case "$cmd" in
+    status) cmd_status; exit 0 ;;
+    check)  cmd_check; exit 0 ;;
+    pin)
+      [ -n "${2:-}" ] || die "pin: tool name required"
+      touch "$PINS"; grep -v "^$2 " "$PINS" >"$PINS.tmp" || true
+      echo "$2 ${3:-held}" >>"$PINS.tmp"; mv "$PINS.tmp" "$PINS"
+      say "$2 pinned"; exit 0 ;;
+    unpin)
+      [ -n "${2:-}" ] || die "unpin: tool name required"
+      touch "$PINS"; grep -v "^$2 " "$PINS" >"$PINS.tmp" || true
+      mv "$PINS.tmp" "$PINS"; say "$2 unpinned"; exit 0 ;;
+    rollback) [ -n "${2:-}" ] || die "rollback: tool name required"
+      cmd_rollback "$2"; exit 0 ;;
+    reset) cmd_reset; exit 0 ;;
+    update) shift || true ;;
+    claude|codex|opencode|cursor|all) ;;
+    *) usage; die "unknown command: $cmd" ;;
+  esac
+
+  # Serialize updates across host, containers, and the nightly timer.
+  exec 9>"$STATE/.lock"
+  flock -w 300 9 || die "could not acquire update lock"
+
+  local target="${1:-all}" rc=0 t
+  if [ "$target" = all ]; then
+    for t in "${TOOLS[@]}"; do update_tool "$t" || rc=1; done
+  else
+    case "$target" in
+      claude|codex|opencode|cursor) update_tool "$target" || rc=1 ;;
+      *) die "unknown tool: $target" ;;
+    esac
+  fi
+  exit "$rc"
+}
+
+main "$@"
