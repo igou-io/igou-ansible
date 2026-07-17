@@ -52,6 +52,8 @@
 #   windows_desktop_datasource_name       - golden DataSource (default win11)
 #   windows_desktop_datasource_namespace  - its namespace
 #                                           (default openshift-virtualization-os-images)
+#   windows_desktop_guest_mtu       - IPv4 MTU forced in-guest (default 1400, the
+#                                     pod-network MTU Windows won't take from DHCP)
 #   windows_desktop_disk_size       - boot DataVolume request (default 50Gi — matches
 #                                     the win11 golden; larger values force the CSI
 #                                     snapshot-restore onto a slow send/recv path that
@@ -101,6 +103,7 @@
     windows_desktop_datasource_name: win11
     windows_desktop_datasource_namespace: openshift-virtualization-os-images
     windows_desktop_disk_size: 50Gi
+    windows_desktop_guest_mtu: 1400
     windows_desktop_instancetype: u1.large
     windows_desktop_preference: windows.11
     windows_desktop_enable_rdp: true
@@ -384,6 +387,23 @@
     # Client-SKU default execution policy (Restricted) blocks Chocolatey's
     # downloaded bootstrap .ps1 — raise LocalMachine to RemoteSigned first.
     # Idempotent: only writes when more restrictive than an allowed value.
+    # KubeVirt masquerade guests must use the pod-network MTU (~1400), but
+    # Windows ignores the DHCP-advertised MTU and stays at 1500 — full-size
+    # packets can then blackhole on the overlay for some external paths.
+    # Linux guests pick this up from DHCP automatically; clamp it here.
+    - name: Clamp the guest MTU to the pod network
+      ansible.windows.win_shell: |
+        $changed = $false
+        Get-NetIPInterface -AddressFamily IPv4 -InterfaceAlias 'Ethernet*' |
+          Where-Object NlMtu -ne {{ windows_desktop_guest_mtu }} |
+          ForEach-Object {
+            $_ | Set-NetIPInterface -NlMtu {{ windows_desktop_guest_mtu }}
+            $changed = $true
+          }
+        if ($changed) { 'changed' } else { 'ok' }
+      register: windows_desktop_mtu
+      changed_when: "'changed' in windows_desktop_mtu.stdout"
+
     - name: Ensure the execution policy permits the Chocolatey bootstrap
       ansible.windows.win_shell: |
         $ok = @('RemoteSigned', 'Unrestricted', 'Bypass')
@@ -409,8 +429,8 @@
         label: "{{ item.name }}"
       register: windows_desktop_choco
       until: windows_desktop_choco is succeeded
-      retries: 3
-      delay: 30
+      retries: 5
+      delay: 60
 
     - name: Install extra MSI/EXE packages
       ansible.windows.win_package:
