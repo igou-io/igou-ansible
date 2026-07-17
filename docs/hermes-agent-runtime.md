@@ -148,14 +148,59 @@ boundary the operator already accepted. Each converge re-asserts both copies.
   re-asserted by converge.
 - **Partial download**: `.partial` staging + smoke-run gate before flip.
 
-## Implementation plan (single igou-ansible PR)
+## As implemented (playbooks/hermes/configure.yml)
 
 1. `templates/agent-update.sh.j2`, `templates/agent-runtime-path.sh.j2`,
    `templates/agent-runtime-update.{service,timer}.j2`,
    `files/agent-update-SKILL.md`.
-2. configure.yml: create overlay dirs, install script+snippet+skill, add the
-   two mounts to `hermes_terminal_config.docker_volumes`, enable the timer.
-3. setup-os.yml: host profile drop-in.
-4. Verify (live): `agent-update status` → baseline versions; `agent-update all`
-   → overlay populated; in-container `claude --version` shows overlay version;
-   `agent-update reset` → falls back to baked pins; timer fires.
+2. configure.yml owns everything (host profile drop-in included — not
+   setup-os.yml as originally planned): overlay dirs, script (root-owned
+   `/usr/local/bin/agent-update` + overlay-bin copy), PATH snippets on both
+   surfaces, skill, the two terminal mounts, merged-config asserts, and the
+   nightly timer.
+3. backup.yml excludes `agent-runtime/tools` (re-fetchable).
+
+## Operations: invoking an update manually
+
+The nightly timer and the agent's own skill cover normal operation. To force
+an update by hand:
+
+**From the VM over SSH (the usual way):**
+
+```bash
+ssh igou@10.10.150.1
+sudo -u hermes -i agent-update status          # what's installed / pinned
+sudo -u hermes -i agent-update check           # current vs latest, no install
+sudo -u hermes -i agent-update all             # update everything
+sudo -u hermes -i agent-update --force codex   # one tool, bypass the 1h TTL
+```
+
+(`-i` gives hermes a login shell so the `~/.bashrc.d` PATH seam resolves
+`agent-update`; the root-owned copy also works from any context as
+`/usr/local/bin/agent-update`.)
+
+**Via the systemd unit** (identical to what the nightly timer runs, output in
+the journal):
+
+```bash
+sudo -u hermes XDG_RUNTIME_DIR=/run/user/1001 \
+  systemctl --user start agent-runtime-update.service
+sudo -u hermes XDG_RUNTIME_DIR=/run/user/1001 \
+  journalctl --user -u agent-runtime-update.service -n 50
+```
+
+**By asking Hermes** — any chat surface: "run `agent-update all` in your
+terminal and show me the output". The skill primes it to do this on its own
+when it hits a version failure.
+
+**When something breaks:**
+
+```bash
+agent-update rollback codex     # previous kept version
+agent-update pin codex          # freeze until unpinned (survives the timer)
+agent-update reset              # wipe overlay — image/host baked pins resolve
+tail ~hermes/.hermes/agent-runtime/state/update.log
+```
+
+Updates apply to new terminal invocations immediately (symlink flip; running
+sessions may need `hash -r`). No service restarts are required.
