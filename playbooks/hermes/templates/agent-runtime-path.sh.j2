@@ -14,4 +14,15 @@ for _ar_dir in "$HOME/.agents/runtime/bin" "$HOME/.hermes/agent-runtime/bin"; do
   fi
 done
 unset _ar_dir
+# The opencode installer's own dir, APPENDED as a fallback: configure.yml
+# strips the installer's `export PATH=~/.opencode/bin:$PATH` line from
+# ~/.bashrc (it lands after the ~/.bashrc.d loop and would shadow the
+# overlay), so this keeps the baked host binary reachable when the overlay
+# is empty/reset while the overlay wins whenever it is populated.
+if [ -d "$HOME/.opencode/bin" ]; then
+  case ":$PATH:" in
+    *":$HOME/.opencode/bin:"*) ;;
+    *) PATH="$PATH:$HOME/.opencode/bin" ;;
+  esac
+fi
 export PATH
