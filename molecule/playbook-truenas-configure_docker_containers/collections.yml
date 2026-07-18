@@ -1,0 +1,15 @@
+---
+# Test-only dependency, resolved by molecule's dependency step (kept out of
+# the main requirements.yml so it never lands in EE images).
+collections:
+  - name: david_igou.molecule_provisioners
+    version: 0.0.4-alpha
+  # Needed on the controller so the imported playbook's module references
+  # resolve (syntax step): the networks play (community.docker.docker_network,
+  # empty loop here) and the datasets play (arensb.truenas.filesystem,
+  # --skip-tags'd at runtime).
+  - name: community.docker
+    version: 5.2.1
+  - name: https://github.com/david-igou/ansible-truenas.git
+    type: git
+    version: fix-user-update

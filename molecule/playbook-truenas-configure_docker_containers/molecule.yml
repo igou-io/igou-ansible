@@ -1,0 +1,69 @@
+---
+# playbook-truenas-configure_docker_containers: regression test for the
+# compose/config_files ORDERING contract of
+# playbooks/truenas/configure_docker_containers.yml (igou-ansible#330).
+#
+# The bug class: `midclt call app.create` deploys/starts the stack, and Docker
+# auto-creates any missing bind-mount source as a DIRECTORY — so a container
+# whose config_files land AFTER app.create starts broken and the config copy
+# fails with "can not use content with a dir as dest". The contract under test:
+# every file the compose stack mounts (docker-compose.yml, config_files, .env)
+# exists on the dataset BEFORE app.create runs.
+#
+# No TrueNAS middleware is involved: the instance is a plain container standing
+# in for the TrueNAS host, with a stateful `midclt` STUB (files/midclt.py) on
+# PATH. The stub snapshots the container-dataset file listing at the moment
+# app.create is called; verify asserts the compose file, config file, and .env
+# are all in that snapshot — with the pre-#330 task order this assertion fails.
+# app.query replays state recorded by app.create, so the idempotence step also
+# proves a second converge issues no app.create/app.redeploy.
+#
+# The datasets play (arensb.truenas.filesystem — real middleware calls) is
+# skipped via --skip-tags; the ownership play's `file state=directory` tasks
+# create the same paths. Everything else runs unmodified.
+#
+# Run:  molecule test -s playbook-truenas-configure_docker_containers
+prerun: false
+
+ansible:
+  cfg:
+    defaults:
+      # molecule generates its own ansible.cfg, so restate collection/role
+      # resolution paths
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles:~/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections:~/.ansible/collections
+  executor:
+    args:
+      ansible_playbook:
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+        # The datasets play drives the real TrueNAS middleware
+        # (arensb.truenas.filesystem) — not mockable on a plain container.
+        # Harmless for the other phases (nothing else carries the tag).
+        - --skip-tags=datasets
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: collections.yml
+
+scenario:
+  name: playbook-truenas-configure_docker_containers
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy
+
+verifier:
+  name: ansible

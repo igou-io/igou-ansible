@@ -1,0 +1,81 @@
+---
+# Assert the #330 ordering contract and the on-disk results.
+#
+# The load-bearing check is the app.create snapshot: the midclt stub recorded
+# the dataset's file listing at the exact moment app.create ran. With the
+# pre-#330 task order (app.create before config_files/.env) the snapshot holds
+# only docker-compose.yml and the first assert fails.
+- name: Verify configure_docker_containers ordering and results
+  hosts: molecule
+  gather_facts: false
+  vars:
+    _dataset: /mnt/tank/containers/nginx-mock
+  tasks:
+    - name: Read the app.create-time dataset snapshot
+      ansible.builtin.slurp:
+        src: /var/lib/molecule-midclt/app.create.nginx-mock.files.json
+      register: _snapshot_slurp
+
+    - name: Assert every mounted file existed BEFORE app.create ran
+      ansible.builtin.assert:
+        that:
+          - "'docker-compose.yml' in _snapshot"
+          - "'config/default.conf' in _snapshot"
+          - "'.env' in _snapshot"
+        fail_msg: >-
+          app.create fired before the dataset was fully staged — files present
+          at create time: {{ _snapshot }}. Docker would auto-create the missing
+          bind-mount sources as directories (igou-ansible#330).
+      vars:
+        _snapshot: "{{ _snapshot_slurp.content | b64decode | from_json }}"
+
+    - name: Stat the deployed config file
+      ansible.builtin.stat:
+        path: "{{ _dataset }}/config/default.conf"
+      register: _config_stat
+
+    - name: Assert the config file is a regular file with the declared owner/mode
+      ansible.builtin.assert:
+        that:
+          - _config_stat.stat.exists
+          - _config_stat.stat.isreg
+          - _config_stat.stat.mode == '0644'
+          - _config_stat.stat.uid == 950
+          - _config_stat.stat.gid == 950
+        fail_msg: >-
+          {{ _dataset }}/config/default.conf is missing, a directory (the #330
+          failure mode), or has the wrong owner/mode:
+          {{ _config_stat.stat | default({}) }}
+
+    - name: Read the rendered compose file
+      ansible.builtin.slurp:
+        src: "{{ _dataset }}/docker-compose.yml"
+      register: _compose_slurp
+
+    - name: Assert the compose file mounts the config file read-only and reads .env
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_dataset ~ '/config/default.conf:/etc/nginx/conf.d/default.conf:ro')
+            in _compose
+          - "'- .env' in _compose"
+        fail_msg: "Rendered compose is missing the expected mounts: {{ _compose }}"
+      vars:
+        _compose: "{{ _compose_slurp.content | b64decode }}"
+
+    - name: Read the midclt call log
+      ansible.builtin.slurp:
+        src: /var/lib/molecule-midclt/calls.log
+      register: _calls_slurp
+
+    - name: Assert app.create ran exactly once and nothing was redeployed
+      ansible.builtin.assert:
+        that:
+          - _calls | select('search', 'app\\.create') | length == 1
+          - _calls | select('search', 'app\\.redeploy') | length == 0
+        fail_msg: >-
+          Unexpected middleware call pattern (converge + idempotence should
+          create once and never redeploy): {{ _calls }}
+      vars:
+        _calls: >-
+          {{ _calls_slurp.content | b64decode | trim | split('\n') }}

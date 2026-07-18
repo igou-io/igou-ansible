@@ -1,0 +1,24 @@
+---
+# Container fixture standing in for igou-inventory group_vars/truenas.yml.
+# One dynamic-template container reproducing the exact #330 shape: a
+# config_files bind mount (the netdata-metrics-proxy/ipmi-exporter class)
+# plus an inline env dict, so docker-compose.yml, config/default.conf, and
+# .env must ALL be on the dataset before app.create fires.
+truenas_docker_networks: []
+truenas_docker_containers_default_pool: tank
+truenas_docker_containers_default_owner: "950"
+truenas_docker_containers_default_group: "950"
+truenas_docker_containers:
+  - name: nginx-mock
+    state: present
+    image: docker.io/library/nginx:mainline-alpine
+    config_files:
+      - content: |
+          server {
+              listen 8080;
+              location / { return 200 "molecule #330 ordering probe"; }
+          }
+        dest: config/default.conf
+        mount: /etc/nginx/conf.d/default.conf
+    env:
+      MOLECULE_MARKER: "issue-330"

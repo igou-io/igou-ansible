@@ -1,0 +1,20 @@
+---
+mp_backend: "{{ lookup('env', 'PROVISIONER') | default('podman', true) }}"
+
+# Plain OS container, NOT a systemd image: every task the scenario exercises
+# is file/copy/template/command, so no init is needed — which also keeps the
+# scenario runnable under the devcontainer's nested rootless podman (no
+# cgroup delegation there, systemd containers cannot boot).
+mp_defaults:
+  podman:
+    image: quay.io/centos/centos:stream10
+    command: sleep infinity
+  docker:
+    image: quay.io/centos/centos:stream10
+    command: sleep infinity
+
+# The imported playbook's plays set `become: true`, but the provisioner
+# connects to the container as root already and the image ships neither sudo
+# nor su. Variables outrank play keywords, so this neutralizes become for the
+# container instance without touching the playbook.
+ansible_become: false
