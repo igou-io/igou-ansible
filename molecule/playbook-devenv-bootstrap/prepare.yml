@@ -139,6 +139,23 @@
           user.max_user_namespaces is {{ __devenv_userns.stdout }} — rootless
           podman inside the devcontainer needs unprivileged user namespaces
 
+    # The golden cloud image does not ship firewalld, but the kickstarted
+    # physical devhost (vscode) runs it — and bootstrap.yml's firewalld tasks
+    # (#399 ports, #408 TFTP-reply rule) gate on the service running. Install
+    # and enable it here so converge exercises those tasks and the scenario's
+    # external NodePort reachability check proves 8080 is genuinely opened
+    # (with firewalld active and no port declaration, that check fails).
+    - name: Install firewalld (mirror the kickstarted physical devhost)
+      ansible.builtin.dnf:
+        name: firewalld
+        state: present
+
+    - name: Enable and start firewalld
+      ansible.builtin.systemd_service:
+        name: firewalld.service
+        enabled: true
+        state: started
+
     - name: Check for /dev/kvm (nested virt — gates the in-container qemu path)
       ansible.builtin.stat:
         path: /dev/kvm

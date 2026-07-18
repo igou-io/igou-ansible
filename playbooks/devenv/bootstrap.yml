@@ -140,6 +140,56 @@
             - iptable_nat
             - br_netfilter
 
+    # ------------------------------------------------------------------
+    # firewalld port/rule declarations (#399, #408). The kickstarted physical
+    # devhost runs firewalld (public zone, default target); the golden cloud
+    # image may not. Every task gates on the service actually running, so
+    # firewalld-less hosts converge unchanged.
+    # ------------------------------------------------------------------
+    - name: Gather service facts (firewalld gate)
+      ansible.builtin.service_facts:
+      become: true
+
+    - name: Open the devenv service ports in firewalld
+      # 8080: code-server (post-start in the devcontainer, host network,
+      #       password auth + self-signed TLS). 9100: node_exporter (role
+      #       below), scraped by UWM/Prometheus.
+      become: true
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - 8080/tcp
+        - 9100/tcp
+      when:
+        - "'firewalld.service' in ansible_facts.services"
+        - ansible_facts.services['firewalld.service'].state == 'running'
+
+    - name: Accept TFTP replies from the rb5009 netboot servers (builders only)
+      # TFTP data comes back from a NEW server-side source port, so without a
+      # conntrack helper the replies are never ESTABLISHED/RELATED and
+      # firewalld drops them — breaking TFTP *clients* on this host: the
+      # netboot_deploy_binaries verify stage and devcontainer tooling (#408).
+      # Kernel >= 6.0 removed the nf_conntrack auto-helper sysctl and
+      # firewalld 1.0 removed its tftp-client service, so the reliable
+      # declarative fix is a source-scoped accept for the only TFTP servers
+      # this host ever fetches from. Override the list per host/group with
+      # netboot_tftp_server_ips (the routeros-group netboot_subnets vars are
+      # not visible to devenv hosts).
+      become: true
+      ansible.posix.firewalld:
+        rich_rule: rule family="ipv4" source address="{{ item }}/32" protocol value="udp" accept
+        permanent: true
+        immediate: true
+        state: enabled
+      loop: "{{ netboot_tftp_server_ips | default(['10.10.9.1', '10.10.45.1']) }}"
+      when:
+        - "'armbian_builders' in group_names"
+        - "'firewalld.service' in ansible_facts.services"
+        - ansible_facts.services['firewalld.service'].state == 'running'
+
   roles:
     - role: david_igou.devhost.docker
     - role: david_igou.devhost.packages
