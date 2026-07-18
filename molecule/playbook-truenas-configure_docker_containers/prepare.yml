@@ -1,0 +1,28 @@
+---
+# Stand the container in for a TrueNAS host:
+#   - /mnt/tank — the pool mountpoint the play writes under (the real
+#     datasets play is --skip-tags'd; the ownership play's file tasks create
+#     the per-container directories themselves).
+#   - /usr/local/bin/midclt — stateful stub of the TrueNAS middleware client
+#     (see files/midclt.py); records every call and snapshots the dataset
+#     file listing at app.create time, which verify.yml asserts on.
+- name: Prepare the mock TrueNAS host
+  hosts: molecule
+  gather_facts: false
+  tasks:
+    - name: Create the mock pool mountpoint
+      ansible.builtin.file:
+        path: /mnt/tank
+        state: directory
+        mode: "0755"
+
+    - name: Install the midclt stub
+      ansible.builtin.copy:
+        src: files/midclt.py
+        dest: /usr/local/bin/midclt
+        mode: "0755"
+
+    - name: Start from a clean stub state
+      ansible.builtin.file:
+        path: /var/lib/molecule-midclt
+        state: absent

@@ -369,6 +369,76 @@
              | list }}
       tags: [compose]
 
+    # --- Config files (inline content) -----------------------------------------
+    #
+    # Deployed BEFORE app.create/app.redeploy below: the compose template
+    # bind-mounts each config file, and Docker auto-creates a missing mount
+    # source as a DIRECTORY — the container then starts broken and the later
+    # copy fails with "can not use content with a dir as dest" (#330).
+
+    - name: Ensure config file parent directories exist
+      ansible.builtin.file:
+        path: "/mnt/{{ item.0.pool | default(_default_pool) }}/containers/{{ item.0.name }}/{{ item.1.dest | dirname }}"
+        state: directory
+        owner: "{{ item.0.owner | default(_default_owner) }}"
+        group: "{{ item.0.group | default(_default_group) }}"
+        mode: "0755"
+      loop: "{{ _present | subelements('config_files', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.dest | dirname }}"
+      tags: [config_files]
+
+    - name: Deploy config files from inline content
+      ansible.builtin.copy:
+        content: "{{ item.1.content }}"
+        dest: "/mnt/{{ item.0.pool | default(_default_pool) }}/containers/{{ item.0.name }}/{{ item.1.dest }}"
+        owner: "{{ item.0.owner | default(_default_owner) }}"
+        group: "{{ item.0.group | default(_default_group) }}"
+        mode: "{{ item.1.mode | default('0644') }}"
+      loop: "{{ _present | subelements('config_files', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.dest }}"
+      tags: [config_files]
+
+    # --- Environment file -----------------------------------------------------
+    # Also deployed before app.create: dynamic-mode compose references
+    # env_file: [.env], so it must exist when the stack first comes up.
+
+    - name: Deploy .env file from local source
+      ansible.builtin.copy:
+        src: "{{ item.env_src }}"
+        dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/.env"
+        owner: "{{ item.owner | default(_default_owner) }}"
+        group: "{{ item.group | default(_default_group) }}"
+        mode: "0600"
+      loop: >-
+        {{ _present
+           | selectattr('env_src', 'defined')
+           | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [env]
+
+    - name: Deploy .env file from inline variables
+      ansible.builtin.copy:
+        content: |
+          # Managed by Ansible — do not edit manually.
+          {% for key, value in item.env.items() %}
+          {{ key }}={{ value }}
+          {% endfor %}
+        dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/.env"
+        owner: "{{ item.owner | default(_default_owner) }}"
+        group: "{{ item.group | default(_default_group) }}"
+        mode: "0600"
+      loop: >-
+        {{ _present
+           | selectattr('env', 'defined')
+           | rejectattr('env_src', 'defined')
+           | list }}
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [env]
+
     # --- Register & redeploy TrueNAS custom apps --------------------------------
     #
     # TrueNAS custom apps use an include directive pointing at the compose file
@@ -474,69 +544,6 @@
           {{ _changed_compose_names | intersect(_truenas_app_names | default([])) }}
       when: (_changed_compose_names | intersect(_truenas_app_names | default([]))) | length > 0
       tags: [compose]
-
-    # --- Config files (inline content) -----------------------------------------
-
-    - name: Ensure config file parent directories exist
-      ansible.builtin.file:
-        path: "/mnt/{{ item.0.pool | default(_default_pool) }}/containers/{{ item.0.name }}/{{ item.1.dest | dirname }}"
-        state: directory
-        owner: "{{ item.0.owner | default(_default_owner) }}"
-        group: "{{ item.0.group | default(_default_group) }}"
-        mode: "0755"
-      loop: "{{ _present | subelements('config_files', skip_missing=True) }}"
-      loop_control:
-        label: "{{ item.0.name }}/{{ item.1.dest | dirname }}"
-      tags: [config_files]
-
-    - name: Deploy config files from inline content
-      ansible.builtin.copy:
-        content: "{{ item.1.content }}"
-        dest: "/mnt/{{ item.0.pool | default(_default_pool) }}/containers/{{ item.0.name }}/{{ item.1.dest }}"
-        owner: "{{ item.0.owner | default(_default_owner) }}"
-        group: "{{ item.0.group | default(_default_group) }}"
-        mode: "{{ item.1.mode | default('0644') }}"
-      loop: "{{ _present | subelements('config_files', skip_missing=True) }}"
-      loop_control:
-        label: "{{ item.0.name }}/{{ item.1.dest }}"
-      tags: [config_files]
-
-    # --- Environment file -----------------------------------------------------
-
-    - name: Deploy .env file from local source
-      ansible.builtin.copy:
-        src: "{{ item.env_src }}"
-        dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/.env"
-        owner: "{{ item.owner | default(_default_owner) }}"
-        group: "{{ item.group | default(_default_group) }}"
-        mode: "0600"
-      loop: >-
-        {{ _present
-           | selectattr('env_src', 'defined')
-           | list }}
-      loop_control:
-        label: "{{ item.name }}"
-      tags: [env]
-
-    - name: Deploy .env file from inline variables
-      ansible.builtin.copy:
-        content: |
-          # Managed by Ansible — do not edit manually.
-          {% for key, value in item.env.items() %}
-          {{ key }}={{ value }}
-          {% endfor %}
-        dest: "/mnt/{{ item.pool | default(_default_pool) }}/containers/{{ item.name }}/.env"
-        owner: "{{ item.owner | default(_default_owner) }}"
-        group: "{{ item.group | default(_default_group) }}"
-        mode: "0600"
-      loop: >-
-        {{ _present
-           | selectattr('env', 'defined')
-           | rejectattr('env_src', 'defined')
-           | list }}
-      loop_control:
-        label: "{{ item.name }}"
-      tags: [env]
 
 # --- Cleanup: state=absent ---------------------------------------------------
 

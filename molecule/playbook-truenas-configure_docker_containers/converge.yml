@@ -1,0 +1,3 @@
+---
+- name: Converge the real configure_docker_containers playbook
+  ansible.builtin.import_playbook: ../../playbooks/truenas/configure_docker_containers.yml
