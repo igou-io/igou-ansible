@@ -33,6 +33,11 @@ exclude_paths:
   - molecule/playbook-devenv-bootstrap/create.yml
   - molecule/playbook-devenv-bootstrap/destroy.yml
   - molecule/playbook-devenv-bootstrap/prepare.yml
+  # playbook-truenas-configure_docker_containers provisioner shims: same
+  # david_igou.molecule_provisioners situation as above. prepare (pure tasks,
+  # no provisioner import), converge, and verify stay linted in CI.
+  - molecule/playbook-truenas-configure_docker_containers/create.yml
+  - molecule/playbook-truenas-configure_docker_containers/destroy.yml
   # playbook-windows-* provisioner shims (9 scenarios): same
   # david_igou.molecule_provisioners situation as above. create/prepare also
   # carry real preflight/sysprep-secret/DC-promotion plays that stay linted
