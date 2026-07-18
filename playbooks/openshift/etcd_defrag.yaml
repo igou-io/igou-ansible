@@ -1,0 +1,44 @@
+---
+# Defragment etcd members that cross the thresholds the
+# cluster-etcd-operator's DefragController uses on HA topologies
+# (>=45% fragmented AND db >=100MB). The operator skips SingleReplica
+# topology entirely — defrag blocks the sole member, stalling the API
+# for a few seconds — so on this SNO cluster fragmentation only grows
+# until etcdDatabaseHighFragmentationRatio fires (igou-inventory#81).
+# This job is the scheduled substitute: a no-op below the thresholds.
+#
+# Auth: K8S_AUTH_* env vars injected by the etcd-defrag-token AAP
+# credential (SA etcd-defrag, pod read + exec in openshift-etcd only).
+- name: Defragment etcd members over the fragmentation threshold
+  hosts: "{{ host | default('localhost') }}"
+  connection: local
+  gather_facts: false
+  vars:
+    etcd_defrag_namespace: openshift-etcd
+    # Mirror the operator's defragcontroller constants.
+    etcd_defrag_max_fragmented_percent: 45
+    etcd_defrag_min_db_bytes: 104857600
+    # Recovery pause between members (operator uses 36s).
+    etcd_defrag_wait_seconds: 36
+  tasks:
+    - name: Discover running etcd pods
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ etcd_defrag_namespace }}"
+        label_selectors:
+          - app=etcd
+        field_selectors:
+          - status.phase=Running
+      register: etcd_defrag_pods
+
+    - name: Assert etcd pods were found
+      ansible.builtin.assert:
+        that:
+          - etcd_defrag_pods.resources | length > 0
+        fail_msg: "No running app=etcd pods visible in {{ etcd_defrag_namespace }} — check credential RBAC"
+
+    - name: Defragment members one at a time
+      ansible.builtin.include_tasks: tasks/etcd_defrag_member.yaml
+      loop: "{{ etcd_defrag_pods.resources | map(attribute='metadata.name') | sort }}"
+      loop_control:
+        loop_var: etcd_defrag_pod
