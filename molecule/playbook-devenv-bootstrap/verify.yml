@@ -34,6 +34,56 @@
           - ansible_facts.services['docker.service'].state == 'running'
         fail_msg: docker.service is not running
 
+    # --- firewalld declarations (#399 ports, #408 TFTP-reply rule) ----------
+    # prepare.yml installed and enabled firewalld to mirror the kickstarted
+    # physical devhost; converge must have declared the ports/rules on top.
+    # The NodePort play below is the end-to-end proof for 8080; here we assert
+    # the runtime AND permanent config (the latter is what a reboot reloads).
+    - name: Assert firewalld is running (prepare enabled it)
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['firewalld.service'].state == 'running'
+        fail_msg: >-
+          firewalld.service is not running — the bootstrap firewalld tasks
+          were gated off and this scenario verified nothing (#399/#408)
+
+    - name: List the firewalld ports and rich rules (runtime + permanent)
+      ansible.builtin.command:
+        cmd: "firewall-cmd {{ item }}"
+      become: true
+      register: __fw_lists
+      changed_when: false
+      loop:
+        - --list-ports
+        - --list-rich-rules
+        - --permanent --list-ports
+        - --permanent --list-rich-rules
+
+    - name: Assert the devenv service ports are open, runtime and permanent (#399)
+      ansible.builtin.assert:
+        that:
+          - "'8080/tcp' in __fw_lists.results[0].stdout"
+          - "'9100/tcp' in __fw_lists.results[0].stdout"
+          - "'8080/tcp' in __fw_lists.results[2].stdout"
+          - "'9100/tcp' in __fw_lists.results[2].stdout"
+        fail_msg: >-
+          code-server/node_exporter ports missing from firewalld:
+          runtime [{{ __fw_lists.results[0].stdout }}],
+          permanent [{{ __fw_lists.results[2].stdout }}]
+
+    - name: Assert the TFTP-reply accept rules are present, runtime and permanent (#408)
+      ansible.builtin.assert:
+        that:
+          - __fw_lists.results[1].stdout is search('source address="' ~ item ~ '/32"')
+          - __fw_lists.results[3].stdout is search('source address="' ~ item ~ '/32"')
+        fail_msg: >-
+          TFTP-reply rich rule for {{ item }} missing:
+          runtime [{{ __fw_lists.results[1].stdout }}],
+          permanent [{{ __fw_lists.results[3].stdout }}]
+      loop:
+        - 10.10.9.1
+        - 10.10.45.1
+
     - name: Assert the docker scratch disk is what backs /var/lib/docker
       ansible.builtin.command:
         cmd: findmnt -n -o SOURCE /var/lib/docker
