@@ -1,0 +1,64 @@
+---
+# Per-member check + conditional defrag. ETCDCTL_ENDPOINTS is unset so
+# etcdctl talks to the LOCAL member only (127.0.0.1:2379) — defrag must
+# never fan out cluster-wide in one call. --command-timeout is raised
+# because the 5s default is shorter than a real defrag.
+- name: Read local endpoint status on {{ etcd_defrag_pod }}
+  kubernetes.core.k8s_exec:
+    namespace: "{{ etcd_defrag_namespace }}"
+    pod: "{{ etcd_defrag_pod }}"
+    container: etcdctl
+    command: >-
+      /bin/sh -c 'unset ETCDCTL_ENDPOINTS;
+      etcdctl --command-timeout=30s endpoint status -w json'
+  register: etcd_defrag_status
+  changed_when: false
+
+- name: Compute fragmentation for {{ etcd_defrag_pod }}
+  ansible.builtin.set_fact:
+    etcd_defrag_db_size: "{{ (etcd_defrag_status.stdout | from_json | first).Status.dbSize | int }}"
+    etcd_defrag_db_in_use: "{{ (etcd_defrag_status.stdout | from_json | first).Status.dbSizeInUse | int }}"
+    etcd_defrag_fragmented_percent: "{{ (100 * (1 - ((etcd_defrag_status.stdout | from_json | first).Status.dbSizeInUse / (etcd_defrag_status.stdout | from_json | first).Status.dbSize))) | round(1) }}"
+
+- name: Report fragmentation for {{ etcd_defrag_pod }}
+  ansible.builtin.debug:
+    msg: >-
+      dbSize={{ etcd_defrag_db_size }}B inUse={{ etcd_defrag_db_in_use }}B
+      fragmented={{ etcd_defrag_fragmented_percent }}%
+      (threshold: >={{ etcd_defrag_max_fragmented_percent }}% and >={{ etcd_defrag_min_db_bytes }}B)
+
+- name: Defragment when over threshold on {{ etcd_defrag_pod }}
+  when:
+    - etcd_defrag_fragmented_percent | float >= etcd_defrag_max_fragmented_percent | float
+    - etcd_defrag_db_size | int >= etcd_defrag_min_db_bytes | int
+  block:
+    - name: Run etcdctl defrag on local member of {{ etcd_defrag_pod }}
+      kubernetes.core.k8s_exec:
+        namespace: "{{ etcd_defrag_namespace }}"
+        pod: "{{ etcd_defrag_pod }}"
+        container: etcdctl
+        command: >-
+          /bin/sh -c 'unset ETCDCTL_ENDPOINTS;
+          etcdctl --command-timeout=120s defrag'
+      changed_when: true
+
+    - name: Wait for member recovery after defrag of {{ etcd_defrag_pod }}
+      ansible.builtin.pause:
+        seconds: "{{ etcd_defrag_wait_seconds }}"
+
+    - name: Read post-defrag status on {{ etcd_defrag_pod }}
+      kubernetes.core.k8s_exec:
+        namespace: "{{ etcd_defrag_namespace }}"
+        pod: "{{ etcd_defrag_pod }}"
+        container: etcdctl
+        command: >-
+          /bin/sh -c 'unset ETCDCTL_ENDPOINTS;
+          etcdctl --command-timeout=30s endpoint status -w json'
+      register: etcd_defrag_post
+      changed_when: false
+
+    - name: Report reclaim for {{ etcd_defrag_pod }}
+      ansible.builtin.debug:
+        msg: >-
+          defrag complete: dbSize {{ etcd_defrag_db_size }}B ->
+          {{ (etcd_defrag_post.stdout | from_json | first).Status.dbSize }}B
