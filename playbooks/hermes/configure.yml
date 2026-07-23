@@ -126,6 +126,7 @@
             '/home/hermes/.terraform.d:' ~ hermes_terminal_backend_container_home ~ '/.terraform.d:Z',
             '/home/hermes/.hermes/agent-runtime:' ~ hermes_terminal_backend_container_home ~ '/.agents/runtime:Z',
             '/home/hermes/.hermes/agent-runtime/bashenv.d/10-agent-runtime.sh:' ~ hermes_terminal_backend_container_home ~ '/.bashrc.d/10-agent-runtime.sh:ro,Z',
+            '/home/hermes/.config/gcp-sa:' ~ hermes_terminal_backend_container_home ~ '/.config/gcp-sa:ro,Z',
           ]
           + (
               [hermes_ghapp_broker_runtime_dir ~ ':' ~ hermes_ghapp_broker_runtime_dir]
@@ -181,6 +182,34 @@
         owner: "{{ hermes_user }}"
         group: "{{ hermes_user }}"
         mode: "0600"
+      become: true
+      no_log: true
+
+    # GCP service-account keys for Google API access from agent sessions and
+    # cron sandbox runs (e.g. storescrape -> Sheets). Same contract as .netrc:
+    # declared as hermes_gcp_sa_keys in group_vars/hermes.yml with 1Password
+    # lookups, written here, bind-mounted read-only into terminal containers —
+    # the key never appears in prompts, skills, or shell history. The directory
+    # is always present (possibly empty) so the bind mount has a valid source.
+    - name: Ensure the GCP service-account key directory exists
+      ansible.builtin.file:
+        path: "/home/{{ hermes_user }}/.config/gcp-sa"
+        state: directory
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0700"
+      become: true
+
+    - name: Provision GCP service-account keys
+      ansible.builtin.copy:
+        dest: "/home/{{ hermes_user }}/.config/gcp-sa/{{ item.name }}.json"
+        content: "{{ lookup('community.general.onepassword', item.item, field=item.field, vault=item.vault) }}"
+        owner: "{{ hermes_user }}"
+        group: "{{ hermes_user }}"
+        mode: "0600"
+      loop: "{{ hermes_gcp_sa_keys | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
       become: true
       no_log: true
 
