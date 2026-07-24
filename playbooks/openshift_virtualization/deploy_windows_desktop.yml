@@ -68,7 +68,9 @@
 #                                     name / version (opt) / state (opt).
 #   windows_desktop_msi_packages    - win_package installers: list of dicts with
 #                                     path / product_id / arguments / creates_path.
-#                                     Default empty (Chocolatey covers Codex).
+#                                     Default: Chrome via Google's evergreen
+#                                     enterprise MSI (choco's pinned checksum
+#                                     races Google's in-place binary rotation).
 #   windows_desktop_disable_sleep   - zero the AC idle-standby timeout and turn
 #                                     hibernation off (default true)
 #   windows_desktop_firefox_default - make Firefox the default browser for the
@@ -136,7 +138,6 @@
       - name: python
       - name: codex
       - name: firefox
-      - name: googlechrome
     windows_desktop_firefox_default: true
     windows_desktop_debloat: true
     # Appx identities removed by the debloat pass (provisioned + all-users).
@@ -171,7 +172,14 @@
       - Microsoft.ZuneVideo
       - MSTeams
       - MicrosoftCorporationII.QuickAssist
-    windows_desktop_msi_packages: []
+    # Chrome comes from Google's evergreen enterprise MSI, NOT the choco
+    # googlechrome package: that package pins the MSI's sha256 and Google
+    # rotates the binary in place, so installs hard-fail on a stale checksum
+    # whenever the package lags (live-hit AAP job 757). Vendor-direct over
+    # TLS has no pinned-checksum race; creates_path keeps it idempotent.
+    windows_desktop_msi_packages:
+      - path: https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi
+        creates_path: C:\Program Files\Google\Chrome\Application\chrome.exe
     windows_desktop_disable_sleep: true
     windows_desktop_codex_app: true
     windows_desktop_codex_app_url: https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix
@@ -631,6 +639,10 @@
       loop: "{{ windows_desktop_msi_packages }}"
       loop_control:
         label: "{{ item.path }}"
+      register: windows_desktop_msi
+      until: windows_desktop_msi is succeeded
+      retries: 5
+      delay: 60
 
     # Windows guards http/https UserChoice with a per-user hash, so plain
     # registry writes are rejected. Firefox's own default-browser-agent
