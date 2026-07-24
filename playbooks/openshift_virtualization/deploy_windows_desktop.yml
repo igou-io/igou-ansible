@@ -96,6 +96,11 @@
 #                                     task (default 1920x1080; '' = leave alone)
 #   windows_desktop_timezone        - Windows time-zone id (default Eastern
 #                                     Standard Time)
+#   windows_desktop_perf_visuals    - visual effects tuned for performance over
+#                                     appearance: animations/fades/transparency/
+#                                     shadows/Aero Peek off, thumbnails → icons;
+#                                     ClearType stays on. Applies at next logon
+#                                     (default true)
 #   windows_desktop_codex_app       - provision the Codex/ChatGPT desktop app
 #                                     from OpenAI's offline enterprise MSIX
 #                                     (default true)
@@ -163,6 +168,7 @@
     # WxH pinned via a logon scheduled task (empty string = leave alone).
     windows_desktop_resolution: 1920x1080
     windows_desktop_timezone: Eastern Standard Time
+    windows_desktop_perf_visuals: true
     # Appx identities removed by the debloat pass (provisioned + all-users).
     # Kept: Store, Terminal, Notepad, Calculator, Photos, Camera, Paint,
     # DesktopAppInstaller and the runtime frameworks.
@@ -436,6 +442,7 @@
             windows_desktop_disable_notifications: "{{ windows_desktop_disable_notifications }}"
             windows_desktop_resolution: "{{ windows_desktop_resolution }}"
             windows_desktop_timezone: "{{ windows_desktop_timezone }}"
+            windows_desktop_perf_visuals: "{{ windows_desktop_perf_visuals }}"
             windows_desktop_codex_app: "{{ windows_desktop_codex_app }}"
             windows_desktop_codex_app_url: "{{ windows_desktop_codex_app_url }}"
             windows_desktop_codex_app_license_url: "{{ windows_desktop_codex_app_license_url }}"
@@ -748,6 +755,66 @@
       loop_control:
         label: "{{ item.path }}\\{{ item.name }}"
       when: windows_desktop_disable_notifications | bool
+
+    # Software-rendered VGA has no GPU to spend on eye candy, and animations/
+    # fades blur mid-transition screenshots for computer-use agents. The
+    # UserPreferencesMask value is the "adjust for best performance" set with
+    # the font-smoothing bit kept ON (ClearType helps vision agents read
+    # text). Per-user; applies at next logon.
+    - name: Tune visual effects for performance over appearance
+      ansible.windows.win_regedit:
+        path: "{{ item.path }}"
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: "{{ item.type }}"
+      loop:
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects
+          name: VisualFXSetting
+          data: 2
+          type: dword
+        - path: HKCU:\Control Panel\Desktop
+          name: UserPreferencesMask
+          data: hex:90,12,03,80,10,00,00,00
+          type: binary
+        - path: HKCU:\Control Panel\Desktop
+          name: DragFullWindows
+          data: '0'
+          type: string
+        - path: HKCU:\Control Panel\Desktop
+          name: MenuShowDelay
+          data: '0'
+          type: string
+        - path: HKCU:\Control Panel\Desktop\WindowMetrics
+          name: MinAnimate
+          data: '0'
+          type: string
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+          name: TaskbarAnimations
+          data: 0
+          type: dword
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+          name: ListviewAlphaSelect
+          data: 0
+          type: dword
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+          name: ListviewShadow
+          data: 0
+          type: dword
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+          name: IconsOnly
+          data: 1
+          type: dword
+        - path: HKCU:\Software\Microsoft\Windows\DWM
+          name: EnableAeroPeek
+          data: 0
+          type: dword
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize
+          name: EnableTransparency
+          data: 0
+          type: dword
+      loop_control:
+        label: "{{ item.path }}\\{{ item.name }}"
+      when: windows_desktop_perf_visuals | bool
 
     # Resolution can only be changed from an interactive session, never over
     # WinRM (no desktop attached), so a logon scheduled task pins it in the
