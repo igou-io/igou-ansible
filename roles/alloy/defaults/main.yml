@@ -1,0 +1,17 @@
+---
+# defaults file for alloy
+alloy_enabled: true
+
+# Loki push endpoint the host ships its journal to. REQUIRED — e.g.
+# http://syslog.igou.systems:3500/loki/api/v1/push
+alloy_loki_url: ""
+
+# Static labels added to every stream from this host (merged into
+# loki.write external_labels). host/unit/job come from the journal
+# relabel and need not be listed here.
+alloy_extra_labels: {}
+
+# How far back to replay journal entries on first start.
+alloy_journal_max_age: "12h"
+
+alloy_config_path: /etc/alloy/config.alloy

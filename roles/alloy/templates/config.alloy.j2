@@ -1,0 +1,35 @@
+// {{ ansible_managed }}
+// Ship the systemd journal to the central log-gateway (roles/alloy,
+// igou-openshift#382 phase 4).
+
+loki.source.journal "system" {
+  max_age       = "{{ alloy_journal_max_age }}"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { job = "systemd-journal" }
+  forward_to    = [loki.write.gateway.receiver]
+}
+
+loki.relabel "journal" {
+  forward_to = []
+  rule {
+    source_labels = ["__journal__hostname"]
+    target_label  = "host"
+  }
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+}
+
+loki.write "gateway" {
+  endpoint {
+    url = "{{ alloy_loki_url }}"
+  }
+{% if alloy_extra_labels | length > 0 %}
+  external_labels = {
+{% for key, value in alloy_extra_labels.items() %}
+    {{ key }} = "{{ value }}",
+{% endfor %}
+  }
+{% endif %}
+}

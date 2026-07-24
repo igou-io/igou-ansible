@@ -1,0 +1,71 @@
+---
+# tasks file for alloy
+
+- name: Assert alloy_loki_url is set
+  ansible.builtin.assert:
+    that:
+      - alloy_loki_url | length > 0
+    fail_msg: alloy_loki_url must be set (Loki push endpoint).
+  when: alloy_enabled | bool
+
+- name: Configure Grafana rpm repository
+  ansible.builtin.yum_repository:
+    name: grafana
+    description: grafana
+    baseurl: https://rpm.grafana.com
+    gpgcheck: true
+    gpgkey: https://rpm.grafana.com/gpg.key
+    repo_gpgcheck: true
+  when: ansible_facts.os_family == 'RedHat'
+
+- name: Configure Grafana apt repository
+  when: ansible_facts.os_family == 'Debian'
+  block:
+
+    - name: Ensure apt keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Download Grafana apt signing key
+      ansible.builtin.get_url:
+        url: https://apt.grafana.com/gpg.key
+        dest: /etc/apt/keyrings/grafana.asc
+        mode: "0644"
+
+    - name: Add Grafana apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/etc/apt/keyrings/grafana.asc]
+          https://apt.grafana.com stable main
+        filename: grafana
+        state: present
+
+- name: Install alloy package
+  ansible.builtin.package:
+    name: alloy
+    state: present
+
+- name: Grant alloy read access to the journal
+  ansible.builtin.user:
+    name: alloy
+    groups: systemd-journal
+    append: true
+  notify: "Restart alloy"
+
+- name: Template alloy configuration
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_path }}"
+    owner: root
+    group: alloy
+    mode: "0640"
+  notify: "Restart alloy"
+
+- name: Enable and start alloy service
+  ansible.builtin.service:
+    name: alloy
+    enabled: true
+    state: started
+  when: alloy_enabled | bool
