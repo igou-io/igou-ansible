@@ -62,7 +62,10 @@ argument_specs:
         description: >-
           When true, make Firefox the default browser for the psrp connect
           user via Firefox's default-browser-agent (the only headless path
-          Windows' hashed UserChoice accepts). Fails if the write is rejected.
+          Windows' hashed UserChoice accepts). Requires the connect user to
+          have an interactive session (e.g. an autologon console session) —
+          Windows rejects the write for a user who has never logged on
+          interactively. Fails honestly if the write is rejected.
       windows_desktop_apps_retries:
         type: int
         default: 5

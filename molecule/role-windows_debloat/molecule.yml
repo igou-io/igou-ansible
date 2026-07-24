@@ -2,12 +2,17 @@
 # role-windows_debloat — Windows 11 molecule scenario.
 #
 # What this proves:
-#   The roles/windows_debloat role actually strips consumer bloat, provable by
-#   INDEPENDENT evidence — a sampled set of targeted Appx identities is gone from
-#   both Get-AppxProvisionedPackage -Online and Get-AppxPackage -AllUsers, the
-#   key consumer-content/telemetry registry values read back as set, and
-#   OneDrive.exe is absent from both known locations. Not by trusting the role's
-#   own registers.
+#   The roles/windows_debloat role actually strips consumer bloat at
+#   tiny11builder parity, provable by INDEPENDENT evidence — a sampled set of
+#   targeted Appx identities is gone from both Get-AppxProvisionedPackage
+#   -Online and Get-AppxPackage -AllUsers, the consumer-content / telemetry /
+#   Copilot / OneDrive-policy registry values read back as set, the telemetry
+#   service and Compatibility Appraiser task are disabled, DISM reports
+#   reserved storage disabled, and OneDrive.exe is absent. Not by trusting the
+#   role's own registers.
+#   windows_debloat_remove_edge (Edge BROWSER uninstall) is NOT exercised —
+#   it defaults off and is a build-dependent, unsupported runtime op (tiny11
+#   removes Edge offline from a mounted image); see converge.yml.
 #
 # Where it runs:
 #   Against the LIVE cluster https://api.ocp.igou.systems:6443 as the scoped

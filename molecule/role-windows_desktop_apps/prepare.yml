@@ -5,3 +5,26 @@
 # unattend FirstLogonCommands (WinRM HTTPS listener) run before psrp answers.
 - name: Prepare molecule instances
   ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+
+# KubeVirt masquerade guests must use the pod-network MTU (~1400), but Windows
+# ignores the DHCP-advertised MTU and stays at 1500 — full-size packets then
+# blackhole on the overlay for some external paths (live-hit: the Firefox
+# chocolateyInstall.ps1 header fetch to download.mozilla.org times out at
+# 1500). deploy_windows_desktop clamps this before its app install; mirror
+# that here as test-host prep so the role converges in the same conditions.
+- name: Prepare — clamp the guest MTU to the pod network
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Clamp the guest MTU to the pod network
+      ansible.windows.win_shell: |
+        $changed = $false
+        Get-NetIPInterface -AddressFamily IPv4 -InterfaceAlias 'Ethernet*' |
+          Where-Object NlMtu -ne 1400 |
+          ForEach-Object {
+            $_ | Set-NetIPInterface -NlMtu 1400
+            $changed = $true
+          }
+        if ($changed) { 'changed' } else { 'ok' }
+      register: _guest_mtu
+      changed_when: "'changed' in _guest_mtu.stdout"

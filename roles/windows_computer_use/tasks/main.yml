@@ -128,19 +128,33 @@
       }
   when: windows_computer_use_resolution | length > 0
 
+# Registered via PS cmdlets, NOT community.windows.win_scheduled_task: the
+# module is not idempotent for logon-trigger tasks (it compares the given
+# account name against the principal/trigger identity Task Scheduler stores
+# in normalized form, so every run reports changed — live-hit by this role's
+# molecule idempotence step). The compare below only re-registers when the
+# action, run level, enabled state, or logon trigger actually differ.
 - name: Pin the display resolution at logon
-  community.windows.win_scheduled_task:
-    name: pin-display-resolution
-    description: Managed by Ansible — pin resolution for computer-use determinism
-    actions:
-      - path: '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-        arguments: -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\pin-resolution.ps1
-    triggers:
-      - type: logon
-        user_id: "{{ windows_computer_use_autologon_user }}"
-    username: "{{ windows_computer_use_autologon_user }}"
-    logon_type: interactive_token
-    run_level: highest
-    state: present
-    enabled: true
+  ansible.windows.win_shell: |
+    $user = '{{ windows_computer_use_autologon_user }}'
+    $exe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $taskArgs = '-NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\pin-resolution.ps1'
+    $name = 'pin-display-resolution'
+    $t = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+    $ok = $false
+    if ($t) {
+      $logon = @($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' })
+      $ok = ($t.Actions.Count -eq 1) -and ($t.Actions[0].Execute -eq $exe) -and ($t.Actions[0].Arguments -eq $taskArgs) -and ($t.Principal.RunLevel -eq 'Highest') -and ($t.Settings.Enabled) -and ($logon.Count -ge 1)
+    }
+    if ($ok) {
+      'ok'
+    } else {
+      $action = New-ScheduledTaskAction -Execute $exe -Argument $taskArgs
+      $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+      $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+      Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Description 'Managed by Ansible - pin resolution for computer-use determinism' -Force | Out-Null
+      'changed'
+    }
+  register: windows_computer_use_pin_task
+  changed_when: "'changed' in windows_computer_use_pin_task.stdout"
   when: windows_computer_use_resolution | length > 0

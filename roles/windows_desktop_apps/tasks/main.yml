@@ -50,9 +50,13 @@
 # registry writes are rejected. Firefox's own default-browser-agent
 # computes the valid hash (it backs the in-product "Set as default"
 # button) and works headless. Per-user: applies to the psrp connect
-# user (ansible_user) only. Verified by re-reading the UserChoice ProgId
-# — if Windows (e.g. the UCPD driver on newer builds) rejects the write,
-# this task FAILS rather than pretending.
+# user (ansible_user) only. CONSTRAINT: the write only takes when the
+# connect user has an interactive session (e.g. an autologon console
+# session, as deploy_windows_desktop configures) — on a host where the
+# user has never logged on interactively Windows rejects it (live-hit:
+# molecule clone kept ProgId MSEdgeHTM). Verified by re-reading the
+# UserChoice ProgId — if Windows (e.g. the UCPD driver on newer builds)
+# rejects the write, this task FAILS rather than pretending.
 - name: Make Firefox the default browser
   ansible.windows.win_shell: |
     $key = 'HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice'

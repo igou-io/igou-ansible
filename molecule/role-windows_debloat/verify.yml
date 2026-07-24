@@ -13,6 +13,10 @@
       - Microsoft.XboxGamingOverlay
       - Microsoft.ZuneMusic
       - MSTeams
+      # tiny11-parity additions — prove the expanded default list works.
+      - Microsoft.WindowsMaps
+      - Microsoft.WindowsCamera
+      - microsoft.windowscommunicationsapps
   tasks:
     # Raw Appx state: search the provisioned image packages AND the all-users
     # installs for any sampled identity, independent of the role's shell output.
@@ -47,6 +51,11 @@
         "consumer=$(Get-Val 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableWindowsConsumerFeatures')"
         "telemetry=$(Get-Val 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry')"
         "suggestions=$(Get-Val 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' 'SystemPaneSuggestionsEnabled')"
+        "cdm=$(Get-Val 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' 'ContentDeliveryAllowed')"
+        "teams=$(Get-Val 'HKLM:\SOFTWARE\Policies\Microsoft\Teams' 'DisableInstallation')"
+        "copilot=$(Get-Val 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot')"
+        "advertising=$(Get-Val 'HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo' 'Enabled')"
+        "onedrivepolicy=$(Get-Val 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive' 'DisableFileSyncNGSC')"
       register: _debloat_regvals
       changed_when: false
 
@@ -56,12 +65,67 @@
           - "'consumer=1' in _debloat_regvals.stdout_lines"
           - "'telemetry=0' in _debloat_regvals.stdout_lines"
           - "'suggestions=0' in _debloat_regvals.stdout_lines"
+          - "'cdm=0' in _debloat_regvals.stdout_lines"
+          - "'teams=1' in _debloat_regvals.stdout_lines"
+          - "'copilot=1' in _debloat_regvals.stdout_lines"
+          - "'advertising=0' in _debloat_regvals.stdout_lines"
+          - "'onedrivepolicy=1' in _debloat_regvals.stdout_lines"
         fail_msg: >-
           Expected DisableWindowsConsumerFeatures=1, AllowTelemetry=0,
-          SystemPaneSuggestionsEnabled=0. Got: {{ _debloat_regvals.stdout_lines }}.
+          SystemPaneSuggestionsEnabled=0, ContentDeliveryAllowed=0,
+          Teams DisableInstallation=1, TurnOffWindowsCopilot=1,
+          AdvertisingInfo Enabled=0, DisableFileSyncNGSC=1.
+          Got: {{ _debloat_regvals.stdout_lines }}.
         success_msg: >-
-          Registry reads confirm DisableWindowsConsumerFeatures=1,
-          AllowTelemetry=0, SystemPaneSuggestionsEnabled=0.
+          Registry reads confirm the consumer-content, telemetry, Copilot,
+          Teams-blocker and OneDrive-policy values.
+
+    # Telemetry runtime state: the WAP push service is disabled+stopped and a
+    # sampled telemetry scheduled task (the Compatibility Appraiser) reads
+    # Disabled straight from the task scheduler.
+    - name: Read dmwappushservice and Compatibility Appraiser state (independent read)
+      ansible.windows.win_shell: |
+        $svc = Get-CimInstance Win32_Service -Filter "Name='dmwappushservice'"
+        if (-not $svc) { 'service=absent' } else { "service=$($svc.StartMode)/$($svc.State)" }
+        $task = Get-ScheduledTask -ErrorAction SilentlyContinue |
+          Where-Object { $_.TaskName -eq 'Microsoft Compatibility Appraiser' }
+        if (-not $task) { 'appraiser=absent' } else { "appraiser=$($task.State)" }
+      register: _telemetry_state
+      changed_when: false
+
+    - name: Assert the telemetry service and scheduled task are neutralized
+      ansible.builtin.assert:
+        that:
+          - _telemetry_state.stdout is search('service=(absent|Disabled/Stopped)')
+          - _telemetry_state.stdout is search('appraiser=(absent|Disabled)')
+        fail_msg: >-
+          Telemetry runtime state not neutralized: {{ _telemetry_state.stdout_lines }}.
+        success_msg: >-
+          dmwappushservice and the Compatibility Appraiser task are disabled
+          (or absent on this build).
+
+    # Reserved storage read straight from DISM. Assert it reports disabled;
+    # the state flips immediately on a fresh clone with no servicing pending.
+    # (If a build ever defers the transition until the next reboot, DISM would
+    # still read "enabled" here — the role handles that without flapping, but
+    # this scenario runs against the clean golden where it takes effect.)
+    - name: Read the reserved storage state (independent read)
+      ansible.windows.win_shell: dism.exe /Online /Get-ReservedStorageState
+      register: _reserved_state
+      changed_when: false
+
+    - name: Assert reserved storage is disabled
+      ansible.builtin.assert:
+        that:
+          - _reserved_state.stdout is search('(?i)reserved storage is disabled')
+        fail_msg: "Reserved storage not reported disabled: {{ _reserved_state.stdout_lines | reject('equalto', '') | list | last | default('') }}"
+        success_msg: DISM reports reserved storage disabled.
+
+# NOTE: no Edge-removal assertion. windows_debloat_remove_edge defaults to
+# false and this scenario leaves it there — Edge browser uninstall on a live
+# host is unsupported/build-dependent (see converge.yml), so it is not part of
+# the reliably-testable surface. The role's honest-failure contract for that
+# task is preserved; it is simply not exercised here.
 
     # OneDrive.exe must be gone from both known install locations.
     - name: Read OneDrive.exe presence in both known locations (independent read)

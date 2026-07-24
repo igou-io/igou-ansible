@@ -1,43 +1,80 @@
 ---
 # Strip consumer bloat from a Windows guest: remove bloatware Appx packages,
-# disable consumer content / setup nags / suggestions / widgets / telemetry,
-# and uninstall OneDrive. Runs over psrp/WinRM (see meta/argument_specs.yml).
+# disable consumer content / sponsored apps / nags / suggestions / widgets,
+# kill telemetry collection, turn off Copilot, uninstall OneDrive, disable
+# reserved storage, and (opt-in) uninstall Edge. Runs over psrp/WinRM.
+#
+# Parity target: ntdevlabs/tiny11builder tiny11maker.ps1, which performs the
+# equivalent surgery OFFLINE on a mounted install.wim. This role ports every
+# runtime-applicable feature; the image-time-only pieces (hardware-requirement
+# bypasses, OOBE autounattend/BypassNRO, boot.wim tweaks, /ResetBase, ISO
+# build, Coremaker's WinSxS/WinRE removal) are intentionally absent — see
+# README.md for the full mapping.
+
+# try/catch per package: a package this build refuses to remove must be
+# reported as unremovable, NOT re-counted as "changed" forever — otherwise a
+# permanently-stuck package breaks idempotence on every subsequent run.
 - name: Remove bloatware Appx packages
   ansible.windows.win_shell: |
     $targets = @('{{ windows_debloat_remove_appx | join("', '") }}')
     $removed = @()
+    $failed = @()
     foreach ($name in $targets) {
       Get-AppxProvisionedPackage -Online |
         Where-Object DisplayName -eq $name |
         ForEach-Object {
-          $_ | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
-          $removed += $name
+          try {
+            $_ | Remove-AppxProvisionedPackage -Online -ErrorAction Stop | Out-Null
+            $removed += $name
+          } catch { $failed += $name }
         }
       Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue |
         ForEach-Object {
-          $_ | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-          $removed += $name
+          try {
+            $_ | Remove-AppxPackage -AllUsers -ErrorAction Stop
+            $removed += $name
+          } catch { $failed += $name }
         }
     }
-    if ($removed) { "changed: $(($removed | Select-Object -Unique) -join ', ')" } else { 'ok' }
+    $msg = if ($removed) { "changed: $(($removed | Select-Object -Unique) -join ', ')" } else { 'ok' }
+    if ($failed) { $msg += " (unremovable: $(($failed | Select-Object -Unique) -join ', '))" }
+    $msg
   register: windows_debloat_appx_removed
   changed_when: "'changed' in windows_debloat_appx_removed.stdout"
   when: windows_debloat_remove_appx | length > 0
 
-- name: Disable consumer content, setup nags, suggestions, and telemetry
+- name: Disable consumer content, sponsored apps, nags, suggestions, and pushes
   ansible.windows.win_regedit:
     path: "{{ item.path }}"
     name: "{{ item.name }}"
     data: "{{ item.data }}"
-    type: dword
+    type: "{{ item.type | default('dword') }}"
   loop:
-    # Machine: no auto-installed sponsored apps / "experiences".
+    # Machine: no auto-installed sponsored apps / "experiences" (tiny11:
+    # "Disabling Sponsored Apps").
     - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
       name: DisableWindowsConsumerFeatures
       data: 1
     - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
       name: DisableSoftLanding
       data: 1
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
+      name: DisableConsumerAccountStateContent
+      data: 1
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
+      name: DisableCloudOptimizedContent
+      data: 1
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\PushToInstall
+      name: DisablePushToInstall
+      data: 1
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\MRT
+      name: DontOfferThroughWUAU
+      data: 1
+    # Machine: empty Start-pin seed for new profiles (REG_SZ, not dword).
+    - path: HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Start
+      name: ConfigureStartPins
+      data: '{"pinnedList": [{}]}'
+      type: string
     # Machine: widgets / news-and-interests off, telemetry to Security.
     - path: HKLM:\SOFTWARE\Policies\Microsoft\Dsh
       name: AllowNewsAndInterests
@@ -45,18 +82,81 @@
     - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection
       name: AllowTelemetry
       data: 0
-    # Connect user: no Start/Settings suggestions or silent app installs.
+    # Machine: taskbar chat icon off + block Teams (consumer) and New Outlook
+    # auto-installs (tiny11: "Disabling Chat icon", "Prevents installation of
+    # Teams", "Prevent installation of New Outlook").
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Chat
+      name: ChatIcon
+      data: 3
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Teams
+      name: DisableInstallation
+      data: 1
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Mail
+      name: PreventRun
+      data: 1
+    # Machine: mark the DevHome/Outlook update-orchestrator pushes done so
+    # Windows Update never installs them (tiny11: "Prevents installation of
+    # DevHome and Outlook").
+    - path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator\UScheduler_Oobe\OutlookUpdate
+      name: workCompleted
+      data: 1
+    - path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator\UScheduler\OutlookUpdate
+      name: workCompleted
+      data: 1
+    - path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator\UScheduler\DevHomeUpdate
+      name: workCompleted
+      data: 1
+    # Connect user: the full ContentDeliveryManager sponsored/suggested/
+    # preinstalled set (tiny11 writes these to the default-user hive; this
+    # role writes the psrp connect user's HKCU — see README).
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: ContentDeliveryAllowed
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: OemPreInstalledAppsEnabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: PreInstalledAppsEnabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: PreInstalledAppsEverEnabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SoftLandingEnabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: FeatureManagementEnabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SilentInstalledAppsEnabled
+      data: 0
     - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
       name: SystemPaneSuggestionsEnabled
       data: 0
     - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
-      name: SilentInstalledAppsEnabled
+      name: SubscribedContentEnabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SubscribedContent-310093Enabled
       data: 0
     - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
       name: SubscribedContent-338388Enabled
       data: 0
     - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
       name: SubscribedContent-338389Enabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SubscribedContent-338393Enabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SubscribedContent-353694Enabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SubscribedContent-353696Enabled
+      data: 0
+    # Connect user: taskbar chat button off.
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+      name: TaskbarMn
       data: 0
     # Connect user: kill the "finish setting up your device" OOBE nag
     # and Bing suggestions in Start search.
@@ -69,6 +169,122 @@
   loop_control:
     label: "{{ item.path }}\\{{ item.name }}"
   when: windows_debloat_disable_consumer_content | bool
+
+# tiny11: "Disabling Telemetry" — per-user collection knobs. The machine
+# AllowTelemetry=0 policy lives in the consumer-content loop above.
+- name: Disable per-user telemetry and input harvesting
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: dword
+  loop:
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo
+      name: Enabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy
+      name: TailoredExperiencesWithDiagnosticDataEnabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy
+      name: HasAccepted
+      data: 0
+    - path: HKCU:\Software\Microsoft\Input\TIPC
+      name: Enabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\InputPersonalization
+      name: RestrictImplicitInkCollection
+      data: 1
+    - path: HKCU:\Software\Microsoft\InputPersonalization
+      name: RestrictImplicitTextCollection
+      data: 1
+    - path: HKCU:\Software\Microsoft\InputPersonalization\TrainedDataStore
+      name: HarvestContacts
+      data: 0
+    - path: HKCU:\Software\Microsoft\Personalization\Settings
+      name: AcceptedPrivacyPolicy
+      data: 0
+  loop_control:
+    label: "{{ item.path }}\\{{ item.name }}"
+  when: windows_debloat_disable_telemetry | bool
+
+# tiny11 sets the service's Start=4 in the offline SYSTEM hive.
+- name: Disable the device-management WAP push service (dmwappushservice)
+  ansible.windows.win_shell: |
+    $svc = Get-Service dmwappushservice -ErrorAction SilentlyContinue
+    if (-not $svc) { 'ok' } else {
+      $changed = $false
+      $mode = (Get-CimInstance Win32_Service -Filter "Name='dmwappushservice'").StartMode
+      if ($mode -ne 'Disabled') {
+        Set-Service dmwappushservice -StartupType Disabled
+        $changed = $true
+      }
+      if ($svc.Status -ne 'Stopped') {
+        Stop-Service dmwappushservice -Force
+        $changed = $true
+      }
+      if ($changed) { 'changed' } else { 'ok' }
+    }
+  register: windows_debloat_dmwappush
+  changed_when: "'changed' in windows_debloat_dmwappush.stdout"
+  when: windows_debloat_disable_telemetry | bool
+
+# tiny11 deletes these task-definition FILES from the offline image; the
+# runtime equivalent is disabling the registered tasks. Tasks are matched by
+# name + parent-folder substring instead of full TaskPath because a TaskPath
+# literal ends in a backslash right before the closing quote, which Ansible's
+# free-form argument splitter rejects as an unbalanced quote.
+- name: Disable telemetry scheduled tasks
+  ansible.windows.win_shell: |
+    $targets = @(
+      @{ Folder = 'Application Experience'; Name = 'Microsoft Compatibility Appraiser' },
+      @{ Folder = 'Application Experience'; Name = 'ProgramDataUpdater' },
+      @{ Folder = 'Chkdsk'; Name = 'Proxy' },
+      @{ Folder = 'Windows Error Reporting'; Name = 'QueueReporting' }
+    )
+    $all = Get-ScheduledTask -ErrorAction SilentlyContinue
+    $changed = @()
+    foreach ($t in $targets) {
+      $all |
+        Where-Object { $_.TaskName -eq $t.Name -and $_.TaskPath -like ('*' + $t.Folder + '*') -and $_.State -ne 'Disabled' } |
+        ForEach-Object {
+          $_ | Disable-ScheduledTask | Out-Null
+          $changed += $_.TaskName
+        }
+    }
+    $all |
+      Where-Object { $_.TaskPath -like '*Customer Experience Improvement Program*' -and $_.State -ne 'Disabled' } |
+      ForEach-Object {
+        $_ | Disable-ScheduledTask | Out-Null
+        $changed += $_.TaskName
+      }
+    if ($changed) { "changed: $($changed -join ', ')" } else { 'ok' }
+  register: windows_debloat_telemetry_tasks
+  changed_when: "'changed' in windows_debloat_telemetry_tasks.stdout"
+  when: windows_debloat_disable_telemetry | bool
+
+# tiny11: "Disabling Copilot". The Appx side (Microsoft.Copilot /
+# Microsoft.Windows.Copilot) is handled by the removal list; these are the
+# policy knobs. The HKCU DisableSearchBoxSuggestions copy lives in the
+# consumer-content loop; this one is machine-wide.
+- name: Disable Windows Copilot and Edge sidebar
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: dword
+  loop:
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot
+      name: TurnOffWindowsCopilot
+      data: 1
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Edge
+      name: HubsSidebarEnabled
+      data: 0
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer
+      name: DisableSearchBoxSuggestions
+      data: 1
+  loop_control:
+    label: "{{ item.path }}\\{{ item.name }}"
+  when: windows_debloat_disable_copilot | bool
 
 - name: Uninstall OneDrive
   ansible.windows.win_shell: |
@@ -89,3 +305,86 @@
   register: windows_debloat_onedrive
   changed_when: "'changed' in windows_debloat_onedrive.stdout"
   when: windows_debloat_remove_onedrive | bool
+
+# tiny11: "Disabling OneDrive folder backup" — keeps OneDrive from syncing /
+# reinstalling for any user, not just the one that ran the uninstall.
+- name: Disable OneDrive file sync by policy
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive
+    name: DisableFileSyncNGSC
+    data: 1
+    type: dword
+  when: windows_debloat_remove_onedrive | bool
+
+# tiny11 sets ShippedWithReserves=0 in the offline image; on a running system
+# the supported equivalent is DISM's reserved-storage switch. DISM prints
+# "Reserved storage is disabled." (not "...state: Disabled"), so match that
+# phrasing. Idempotent: skip when already disabled; after issuing the Set,
+# re-query and only report changed if the state actually flipped — if the
+# transition is deferred (reserves in use until the next servicing/reboot)
+# report ok so a re-run does not flap. The Set is a harmless no-op once the
+# target is already requested.
+- name: Disable Windows reserved storage
+  ansible.windows.win_shell: |
+    function Get-ReservedState { (& dism.exe /Online /Get-ReservedStorageState) -join ' ' }
+    if ((Get-ReservedState) -match '(?i)reserved storage is disabled') {
+      'ok'
+    } else {
+      & dism.exe /Online /Set-ReservedStorageState /State:Disabled | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "dism /Set-ReservedStorageState failed (rc=$LASTEXITCODE)" }
+      if ((Get-ReservedState) -match '(?i)reserved storage is disabled') { 'changed' } else { 'ok' }
+    }
+  register: windows_debloat_reserved_storage
+  changed_when: "'changed' in windows_debloat_reserved_storage.stdout"
+  when: windows_debloat_disable_reserved_storage | bool
+
+# tiny11 deletes the Edge directories from the offline image; at runtime the
+# only supported path is Edge's own installer. Edge honors --force-uninstall
+# only for EEA regions (live-hit: US-region clone kept msedge.exe), so the
+# invoking user's Geo is temporarily set to an EEA country for the
+# uninstaller's region probe and restored in the finally block. If the build
+# still refuses, this FAILS rather than pretending. The WebView2 runtime is
+# deliberately untouched — MSIX/Store apps depend on it.
+- name: Uninstall Microsoft Edge
+  ansible.windows.win_shell: |
+    $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+    if (-not (Test-Path $edge)) {
+      'ok'
+    } else {
+      New-Item -Path 'HKLM:\SOFTWARE\Microsoft\EdgeUpdateDev' -Force | Out-Null
+      Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\EdgeUpdateDev' -Name AllowUninstall -Value 1 -Type DWord
+      Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue
+      $setup = Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\*\Installer\setup.exe" -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | Select-Object -First 1
+      if (-not $setup) { throw 'msedge.exe present but Installer\setup.exe not found' }
+      # EdgeUpdate (SYSTEM) runs its own setup right after boot and holds the
+      # setup singleton mutex — the uninstall then dies with "SetupSingleton
+      # setup_mutex create failed: Access is denied" (live-hit on a fresh
+      # clone). Stop its services/process first, and retry while the mutex
+      # frees up.
+      foreach ($s in 'edgeupdate', 'edgeupdatem') {
+        Stop-Service -Name $s -Force -ErrorAction SilentlyContinue
+      }
+      Stop-Process -Name MicrosoftEdgeUpdate -Force -ErrorAction SilentlyContinue
+      $geoKey = 'HKCU:\Control Panel\International\Geo'
+      $oldGeo = Get-ItemProperty -Path $geoKey
+      try {
+        Set-ItemProperty -Path $geoKey -Name Name -Value 'FR'
+        Set-ItemProperty -Path $geoKey -Name Nation -Value '84'
+        for ($i = 0; ($i -lt 5) -and (Test-Path $edge); $i++) {
+          & $setup.FullName --uninstall --system-level --verbose-logging --force-uninstall 2>&1 | Out-Null
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Test-Path $edge) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
+        }
+      } finally {
+        Set-ItemProperty -Path $geoKey -Name Name -Value $oldGeo.Name
+        Set-ItemProperty -Path $geoKey -Name Nation -Value $oldGeo.Nation
+      }
+      if (Test-Path $edge) {
+        throw 'msedge.exe still present after uninstall attempt (EEA region applied) — this build refuses Edge removal'
+      }
+      'changed'
+    }
+  register: windows_debloat_edge
+  changed_when: "'changed' in windows_debloat_edge.stdout"
+  when: windows_debloat_remove_edge | bool

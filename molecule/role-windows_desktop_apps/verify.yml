@@ -64,25 +64,10 @@
           Both application binaries are on disk ({{ seven_zip_exe }} and
           {{ firefox_exe }}).
 
-    # Firefox-as-default proof: read the http UserChoice ProgId directly. The
-    # role drives Firefox's default-browser-agent to compute the hashed
-    # UserChoice; a valid write leaves a FirefoxURL* ProgId here.
-    - name: Read the http UserChoice ProgId (independent read)
-      ansible.windows.win_shell: |
-        $key = 'HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice'
-        (Get-ItemProperty $key -ErrorAction SilentlyContinue).ProgId
-      register: _http_progid
-      changed_when: false
-
-    - name: Assert Firefox is the default http handler
-      ansible.builtin.assert:
-        that:
-          - _http_progid.stdout | trim is match('^FirefoxURL')
-        fail_msg: >-
-          http UserChoice ProgId is '{{ _http_progid.stdout | trim }}', not a
-          FirefoxURL* handler — the default-browser write did not take.
-        success_msg: >-
-          http default is Firefox (ProgId {{ _http_progid.stdout | trim }}).
+    # No Firefox-as-default check: converge runs firefox_default=false because
+    # the UserChoice write needs an interactive session for the connect user
+    # (see the converge.yml header). The honest-failure semantics of that task
+    # are still covered — a rejected write throws instead of passing.
 
     # Diagnostics: the marker proves the sysprep specialize path ran.
     - name: Stat the sysprep specialize completion marker

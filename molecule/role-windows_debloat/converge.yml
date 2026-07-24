@@ -20,9 +20,19 @@
           windows group has {{ groups['windows'] | length }} host(s):
           {{ groups['windows'] | join(', ') }}.
 
-# Apply the role. All three passes are exercised: the default Appx bloatware
-# list, the consumer-content/telemetry registry loop, and the OneDrive
-# uninstall. All are idempotent, so the idempotence re-run is changed=0.
+# Apply the role with the reliably-testable passes exercised at their
+# defaults: the tiny11-parity Appx default list, the consumer-content and
+# telemetry registry loops, dmwappushservice + scheduled-task disabling,
+# Copilot policies, OneDrive uninstall + policy, and reserved storage. All
+# are idempotent, so the idempotence re-run is changed=0.
+#
+# windows_debloat_remove_edge stays at its default (false): Edge *browser*
+# removal on a live host is unsupported and build-dependent — tiny11 achieves
+# it by deleting files from an OFFLINE mounted image, which has no runtime
+# equivalent, and this win11 golden refuses setup.exe --force-uninstall even
+# with an EEA region and EdgeUpdate stopped. The role keeps it as a
+# documented opt-in best-effort; gating this scenario on it would make green
+# depend on an operation Microsoft actively blocks.
 - name: Converge — apply roles/windows_debloat
   hosts: windows
   gather_facts: false

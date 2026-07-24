@@ -15,9 +15,7 @@ collections:
   - name: kubernetes.core
     version: ">=5.0.0"
   # Windows automation modules the role + verify plays use over psrp.
-  # ansible.windows: win_regedit / win_shell / win_copy / win_stat.
-  # community.windows: win_scheduled_task (the resolution-pin logon task).
+  # ansible.windows: win_regedit / win_shell / win_copy / win_stat (the
+  # resolution-pin logon task is registered via PS cmdlets in win_shell).
   - name: ansible.windows
-    version: ">=2.0.0"
-  - name: community.windows
     version: ">=2.0.0"

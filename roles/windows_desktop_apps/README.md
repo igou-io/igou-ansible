@@ -33,7 +33,7 @@ Every task is idempotent on re-run.
 |-----|---------|---------|
 | `windows_desktop_apps_packages` | `[]` | Chocolatey packages: list of dicts `{name, version?, state?}` |
 | `windows_desktop_apps_msi_packages` | `[]` | Direct installers: list of dicts `{path, product_id?, arguments?, creates_path?}` |
-| `windows_desktop_apps_firefox_default` | `false` | Make Firefox the default browser for the connect user |
+| `windows_desktop_apps_firefox_default` | `false` | Make Firefox the default browser for the connect user. Needs an interactive session for that user (e.g. autologon console); rejected — and failed honestly — otherwise |
 | `windows_desktop_apps_retries` | `5` | Per-item retry count for the two install tasks (CDN-timeout headroom) |
 | `windows_desktop_apps_retry_delay` | `60` | Seconds between install retries |
 

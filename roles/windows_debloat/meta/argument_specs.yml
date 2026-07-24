@@ -1,68 +1,135 @@
 ---
 argument_specs:
   main:
-    short_description: "Strip consumer bloat from a Windows guest (Appx, consumer content/nags/telemetry, OneDrive)."
+    short_description: "Strip consumer bloat from a Windows guest (tiny11builder runtime parity)."
     description:
       - >-
         Runs against a Windows host over psrp/WinRM. Removes bloatware Appx
         packages (both the provisioned image copies and the all-users
-        installs), writes the machine/user registry values that turn off
-        consumer content, setup nags, Start/Settings suggestions,
-        news-and-interests widgets, and telemetry, and uninstalls the
-        per-user OneDrive client.
+        installs), disables consumer content / sponsored apps / setup nags /
+        suggestions / widgets / Start-pin seeding and the Teams, New Outlook
+        and DevHome auto-install pushes, kills telemetry collection (registry,
+        dmwappushservice, scheduled tasks), turns off Windows Copilot,
+        uninstalls the OneDrive client, disables reserved storage, and can
+        optionally uninstall the Edge browser.
       - >-
-        Each pass is independently gated and idempotent — the Appx removal
-        runs only when windows_debloat_remove_appx is non-empty, the registry
-        pass on windows_debloat_disable_consumer_content, and the OneDrive
-        uninstall on windows_debloat_remove_onedrive.
+        Feature set is a runtime port of ntdevlabs/tiny11builder
+        (tiny11maker.ps1); image-time-only features are documented as not
+        applicable in README.md. Each pass is independently gated and
+        idempotent.
     options:
       windows_debloat_remove_appx:
         type: list
         elements: str
         default:
+          - AppUp.IntelManagementandSecurityStatus
           - Clipchamp.Clipchamp
+          - DolbyLaboratories.DolbyAccess
+          - DolbyLaboratories.DolbyDigitalPlusDecoderOEM
           - Microsoft.549981C3F5F10
           - Microsoft.BingNews
           - Microsoft.BingSearch
           - Microsoft.BingWeather
+          - Microsoft.Copilot
           - Microsoft.GamingApp
           - Microsoft.GetHelp
           - Microsoft.Getstarted
+          - Microsoft.Microsoft3DViewer
           - Microsoft.MicrosoftOfficeHub
           - Microsoft.MicrosoftSolitaireCollection
           - Microsoft.MicrosoftStickyNotes
+          - Microsoft.MixedReality.Portal
+          - Microsoft.MSPaint
+          - Microsoft.Office.OneNote
+          - Microsoft.OfficePushNotificationUtility
           - Microsoft.OutlookForWindows
+          - Microsoft.Paint
           - Microsoft.People
           - Microsoft.PowerAutomateDesktop
+          - Microsoft.SkypeApp
+          - Microsoft.StartExperiencesApp
           - Microsoft.Todos
+          - Microsoft.Wallet
+          - Microsoft.Windows.Copilot
+          - Microsoft.Windows.CrossDevice
           - Microsoft.Windows.DevHome
+          - Microsoft.Windows.Teams
           - Microsoft.WindowsAlarms
+          - Microsoft.WindowsCamera
+          - microsoft.windowscommunicationsapps
           - Microsoft.WindowsFeedbackHub
+          - Microsoft.WindowsMaps
           - Microsoft.WindowsSoundRecorder
+          - Microsoft.WindowsTerminal
           - Microsoft.Xbox.TCUI
+          - Microsoft.XboxApp
+          - Microsoft.XboxGameOverlay
           - Microsoft.XboxGamingOverlay
           - Microsoft.XboxIdentityProvider
           - Microsoft.XboxSpeechToTextOverlay
           - Microsoft.YourPhone
           - Microsoft.ZuneMusic
           - Microsoft.ZuneVideo
-          - MSTeams
+          - MicrosoftCorporationII.MicrosoftFamily
           - MicrosoftCorporationII.QuickAssist
+          - MicrosoftTeams
+          - MSTeams
         description: >-
           Appx identity (DisplayName / package Name) strings to remove,
           provisioned and all-users. The removal task runs only when this list
-          is non-empty. Defaults to the desktop bloatware set (Bing, Xbox,
-          Teams, Clipchamp, Solitaire, etc.); kept off the list are Store,
-          Terminal, Notepad, Calculator, Photos, Camera, Paint,
-          DesktopAppInstaller and the runtime frameworks.
+          is non-empty. The default is the tiny11builder removal set merged
+          with the original desktop bloatware set; kept off the list (as
+          tiny11 keeps them) are Store, Notepad, Calculator, Photos,
+          DesktopAppInstaller and the runtime frameworks. Pass a narrower list
+          to keep apps such as Terminal, Paint or Camera. Packages the build
+          refuses to remove are reported as unremovable, not failed.
       windows_debloat_disable_consumer_content:
         type: bool
         default: true
         description: >-
           Write the machine + connect-user registry values that disable
-          consumer content, setup nags, suggestions, news-and-interests
-          widgets, and telemetry.
+          consumer content, sponsored/preinstalled apps
+          (ContentDeliveryManager), setup nags, suggestions,
+          news-and-interests widgets, Start-pin seeding for new profiles, the
+          taskbar chat icon, the machine telemetry policy, and the Teams / New
+          Outlook / DevHome auto-install pushes.
+      windows_debloat_disable_telemetry:
+        type: bool
+        default: true
+        description: >-
+          Disable per-user telemetry and input harvesting (advertising id,
+          tailored experiences, online speech, typing/inking collection),
+          disable and stop dmwappushservice, and disable the telemetry
+          scheduled tasks (Compatibility Appraiser, ProgramDataUpdater, the
+          CEIP task folder, Chkdsk Proxy, WER QueueReporting).
+      windows_debloat_disable_copilot:
+        type: bool
+        default: true
+        description: >-
+          Turn off Windows Copilot by policy, disable the Edge Copilot
+          sidebar, and disable Bing/search-box suggestions machine-wide. The
+          Copilot Appx packages are covered by windows_debloat_remove_appx.
       windows_debloat_remove_onedrive:
         type: bool
         default: true
-        description: "Uninstall the per-user OneDrive client via OneDriveSetup.exe /uninstall."
+        description: >-
+          Uninstall the per-user OneDrive client via OneDriveSetup.exe
+          /uninstall and set the DisableFileSyncNGSC machine policy.
+      windows_debloat_disable_reserved_storage:
+        type: bool
+        default: true
+        description: >-
+          Disable Windows reserved storage via DISM (frees ~7 GiB). Fails if a
+          servicing operation is in progress; retry once Windows Update
+          settles.
+      windows_debloat_remove_edge:
+        type: bool
+        default: false
+        description: >-
+          Opt-in, best-effort. Uninstall the Edge browser via its own
+          installer (stops EdgeUpdate, spoofs an EEA region, AllowUninstall +
+          --force-uninstall). Edge browser removal on a live host is
+          unsupported and build-dependent — current Win11 client builds refuse
+          it even so — so this fails honestly rather than reporting a false
+          success. The WebView2 runtime is always kept (MSIX/Store apps depend
+          on it).
