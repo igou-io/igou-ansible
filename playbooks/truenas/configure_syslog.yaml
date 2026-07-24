@@ -1,0 +1,85 @@
+---
+# Configure remote syslog forwarding on TrueNAS (igou-openshift#382 phase 3).
+#
+# Points syslog-ng at the central log-gateway (Alloy on ocp behind the
+# trusted-lan VIP — syslog.igou.systems, RFC3164/UDP 514) via
+# system.advanced.update. midclt is used directly: arensb.truenas has no
+# system.advanced module. The middleware regenerates and reloads syslog-ng
+# itself after the update — no service handling needed here.
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_syslogservers — list (max 2) of {host, transport, tls_certificate}
+#                           in the EXACT system.advanced.update shape, every
+#                           key explicit — the API overwrites the whole array
+#                           and the comparison below is literal.
+#   truenas_sysloglevel   — minimum severity forwarded (F_EMERG..F_DEBUG)
+#   truenas_syslog_audit  — also forward TrueNAS audit messages
+- name: Configure remote syslog forwarding on TrueNAS
+  hosts: truenas
+  gather_facts: false
+  become: false
+  tasks:
+
+    - name: Assert syslog variables are fully specified
+      ansible.builtin.assert:
+        that:
+          - truenas_syslogservers is defined
+          - truenas_syslogservers | length <= 2
+          - truenas_syslogservers
+            | rejectattr('host', 'defined') | length == 0
+          - truenas_syslogservers
+            | rejectattr('transport', 'defined') | length == 0
+          - truenas_syslogservers
+            | rejectattr('tls_certificate', 'defined') | length == 0
+        fail_msg: >-
+          truenas_syslogservers must be a list of at most two dicts with
+          host, transport, and tls_certificate all explicit.
+
+    - name: Query current advanced settings
+      ansible.builtin.command: midclt call system.advanced.config
+      register: truenas_advanced_query
+      changed_when: false
+      check_mode: false
+
+    - name: Project desired and current syslog settings
+      vars:
+        truenas_advanced_current: "{{ truenas_advanced_query.stdout | from_json }}"
+      ansible.builtin.set_fact:
+        truenas_syslog_desired:
+          syslogservers: "{{ truenas_syslogservers }}"
+          sysloglevel: "{{ truenas_sysloglevel }}"
+          syslog_audit: "{{ truenas_syslog_audit }}"
+        truenas_syslog_current:
+          syslogservers: "{{ truenas_advanced_current.syslogservers }}"
+          sysloglevel: "{{ truenas_advanced_current.sysloglevel }}"
+          syslog_audit: "{{ truenas_advanced_current.syslog_audit }}"
+
+    - name: Update remote syslog settings
+      vars:
+        truenas_syslog_in_sync: >-
+          {{ truenas_syslog_desired == truenas_syslog_current }}
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - system.advanced.update
+          - "{{ truenas_syslog_desired | to_json }}"
+      when: not truenas_syslog_in_sync
+      register: truenas_syslog_update
+      changed_when: true
+
+    - name: Verify applied settings match desired
+      ansible.builtin.command: midclt call system.advanced.config
+      register: truenas_advanced_verify
+      changed_when: false
+      check_mode: false
+
+    - name: Assert syslog settings converged
+      vars:
+        truenas_advanced_applied: "{{ truenas_advanced_verify.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - truenas_advanced_applied.syslogservers == truenas_syslog_desired.syslogservers
+          - truenas_advanced_applied.sysloglevel == truenas_syslog_desired.sysloglevel
+          - truenas_advanced_applied.syslog_audit == truenas_syslog_desired.syslog_audit
+        fail_msg: system.advanced reports different syslog settings than desired.
