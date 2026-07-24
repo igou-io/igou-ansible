@@ -8,18 +8,21 @@
 #   on api.ocp.igou.systems, drives Windows OOBE with a sysprep specialization
 #   unattend (local-admin mode, WinRM-over-HTTPS listener), exposes WinRM (5986)
 #   and RDP (3389) via NodePort Services, then provisions the guest over psrp:
-#   an execution-policy guard, a Chocolatey app set (PowerShell 7 + git +
-#   nodejs-lts + python + the Codex CLI), optional direct MSI installers, and
-#   Remote Desktop. An operator then RDPs in to complete the one-time,
-#   MANDATORY interactive Codex sign-in (ChatGPT Plus/Pro/Business OAuth — no
-#   headless path exists for the app; the CLI supports OPENAI_API_KEY auth).
+#   an execution-policy guard, power hardening (idle standby/hibernation off —
+#   a sleeping guest drops RDP/WinRM/guest-agent while the VMI still shows
+#   Ready), a Chocolatey app set (PowerShell 7 + git + nodejs-lts + python +
+#   the Codex CLI), the Codex/ChatGPT desktop app, optional direct MSI
+#   installers, and Remote Desktop. An operator then RDPs in to complete the
+#   one-time, MANDATORY interactive Codex sign-in (ChatGPT OAuth — no headless
+#   path exists for the app; the CLI supports OPENAI_API_KEY auth).
 #
-#   Codex packaging note: the *windowed* Codex desktop app ships MSIX/Store-only
-#   (package id 9PLM9XGG6VKS) with no vendor MSI/EXE and no direct URL, so it
-#   cannot be installed unattended over WinRM reliably. The robust, idempotent,
-#   headless default this playbook ships is therefore the Codex CLI via
-#   Chocolatey (`codex`), which is exactly what agent testing needs. To also get
-#   the GUI app, RDP in and install it interactively from the Microsoft Store.
+#   Codex desktop app packaging: the GUI app is MSIX/Store-distributed
+#   (product id 9PLM9XGG6VKS) and a Store session cannot be driven over WinRM,
+#   but since 2026-03 OpenAI publishes the Store-signed offline package +
+#   license for enterprise deployment (learn.chatgpt.com/docs/enterprise/
+#   windows-deployment), so this playbook provisions it machine-wide with
+#   Add-AppxProvisionedPackage — it registers into each user profile at that
+#   user's next logon.
 #
 # CLIENT-SKU / sysprep gotchas baked in (do not "simplify" away):
 #   * Win11 client SKUs DISABLE the built-in Administrator, so the unattend runs
@@ -65,6 +68,13 @@
 #   windows_desktop_msi_packages    - win_package installers: list of dicts with
 #                                     path / product_id / arguments / creates_path.
 #                                     Default empty (Chocolatey covers Codex).
+#   windows_desktop_disable_sleep   - zero the AC idle-standby timeout and turn
+#                                     hibernation off (default true)
+#   windows_desktop_codex_app       - provision the Codex/ChatGPT desktop app
+#                                     from OpenAI's offline enterprise MSIX
+#                                     (default true)
+#   windows_desktop_codex_app_url          - Store-signed MSIX URL
+#   windows_desktop_codex_app_license_url  - matching Store license XML URL
 #   windows_desktop_enable_rdp      - enable Remote Desktop (default true)
 #   windows_desktop_node_ip         - OPTIONAL NodePort target IP override. Left
 #                                     empty, the play auto-discovers a node
@@ -116,6 +126,10 @@
       - name: python
       - name: codex
     windows_desktop_msi_packages: []
+    windows_desktop_disable_sleep: true
+    windows_desktop_codex_app: true
+    windows_desktop_codex_app_url: https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix
+    windows_desktop_codex_app_license_url: https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml
     windows_desktop_unattend_template: "{{ playbook_dir }}/templates/windows-desktop-unattend.xml.j2"
   tasks:
     - name: Assert windows_desktop_state is valid
@@ -336,6 +350,10 @@
             windows_desktop_guest_mtu: "{{ windows_desktop_guest_mtu }}"
             windows_desktop_apps: "{{ windows_desktop_apps }}"
             windows_desktop_msi_packages: "{{ windows_desktop_msi_packages }}"
+            windows_desktop_disable_sleep: "{{ windows_desktop_disable_sleep }}"
+            windows_desktop_codex_app: "{{ windows_desktop_codex_app }}"
+            windows_desktop_codex_app_url: "{{ windows_desktop_codex_app_url }}"
+            windows_desktop_codex_app_license_url: "{{ windows_desktop_codex_app_license_url }}"
             windows_desktop_enable_rdp: "{{ windows_desktop_enable_rdp }}"
           no_log: true
 
@@ -416,6 +434,27 @@
       register: windows_desktop_mtu
       changed_when: "'changed' in windows_desktop_mtu.stdout"
 
+    # Win11 client SKUs sleep on idle by default; a sleeping guest drops RDP,
+    # WinRM, and the qemu guest agent while the VMI still reports Ready
+    # (live-hit 2026-07-19: guest slept and stayed unreachable for 5 days).
+    - name: Disable idle standby and hibernation
+      ansible.windows.win_shell: |
+        $changed = $false
+        $idle = powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE
+        if (-not ($idle | Select-String 'Current AC Power Setting Index: 0x00000000')) {
+          powercfg /change standby-timeout-ac 0
+          $changed = $true
+        }
+        $power = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Power'
+        if ($power.HibernateEnabled -ne 0) {
+          powercfg /hibernate off
+          $changed = $true
+        }
+        if ($changed) { 'changed' } else { 'ok' }
+      register: windows_desktop_power
+      changed_when: "'changed' in windows_desktop_power.stdout"
+      when: windows_desktop_disable_sleep | bool
+
     - name: Ensure the execution policy permits the Chocolatey bootstrap
       ansible.windows.win_shell: |
         $ok = @('RemoteSigned', 'Unrestricted', 'Bypass')
@@ -454,6 +493,60 @@
       loop: "{{ windows_desktop_msi_packages }}"
       loop_control:
         label: "{{ item.path }}"
+
+    # --- Codex/ChatGPT desktop app ---------------------------------------
+    # No Store session exists over WinRM, so install OpenAI's offline
+    # enterprise package: the Store-signed MSIX plus its license, provisioned
+    # machine-wide. It registers into a user profile at that user's next
+    # logon — after first converge, log off/on (or reboot) before expecting
+    # it in the Start menu.
+    - name: Check whether the Codex desktop app is provisioned
+      ansible.windows.win_shell: |
+        $pkg = Get-AppxProvisionedPackage -Online |
+          Where-Object PackageName -like '*ChatGPT*'
+        if ($pkg) { 'present' } else { 'absent' }
+      register: windows_desktop_codex_app_state
+      changed_when: false
+      when: windows_desktop_codex_app | bool
+
+    - name: Download the Codex desktop app MSIX and license
+      ansible.windows.win_get_url:
+        url: "{{ item.url }}"
+        dest: "{{ item.dest }}"
+      loop:
+        - url: "{{ windows_desktop_codex_app_url }}"
+          dest: C:\Windows\Temp\ChatGPT-x64.msix
+        - url: "{{ windows_desktop_codex_app_license_url }}"
+          dest: C:\Windows\Temp\ChatGPT-License.xml
+      loop_control:
+        label: "{{ item.url }}"
+      register: windows_desktop_codex_app_dl
+      until: windows_desktop_codex_app_dl is succeeded
+      retries: 5
+      delay: 60
+      when:
+        - windows_desktop_codex_app | bool
+        - "'absent' in windows_desktop_codex_app_state.stdout"
+
+    - name: Provision the Codex desktop app machine-wide
+      ansible.windows.win_shell: >-
+        Add-AppxProvisionedPackage -Online
+        -PackagePath C:\Windows\Temp\ChatGPT-x64.msix
+        -LicensePath C:\Windows\Temp\ChatGPT-License.xml
+      when:
+        - windows_desktop_codex_app | bool
+        - "'absent' in windows_desktop_codex_app_state.stdout"
+
+    - name: Remove the MSIX payload from temp
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - C:\Windows\Temp\ChatGPT-x64.msix
+        - C:\Windows\Temp\ChatGPT-License.xml
+      when:
+        - windows_desktop_codex_app | bool
+        - "'absent' in windows_desktop_codex_app_state.stdout"
 
     # --- Remote Desktop --------------------------------------------------
     - name: Allow Remote Desktop connections
@@ -503,13 +596,24 @@
           the `codex` Chocolatey package did not install.
         success_msg: Codex CLI present.
 
+    - name: Assert the Codex desktop app is provisioned
+      ansible.windows.win_shell: |
+        $pkg = Get-AppxProvisionedPackage -Online |
+          Where-Object PackageName -like '*ChatGPT*'
+        if (-not $pkg) { throw 'Codex desktop app not provisioned' }
+        $pkg.PackageName
+      changed_when: false
+      when: windows_desktop_codex_app | bool
+
     - name: Summarize the provisioned desktop
       ansible.builtin.debug:
         msg:
           - "VM:          {{ inventory_hostname }}"
           - "Admin user:  {{ windows_desktop_admin_user | default('igou') }}"
           - "Apps:        {{ windows_desktop_apps | map(attribute='name') | join(', ') }}"
+          - "Desktop app: {{ 'provisioned (registers at next logon)' if windows_desktop_codex_app | bool else 'skipped' }}"
           - "Extra pkgs:  {{ windows_desktop_msi_packages | length }}"
+          - "Sleep:       {{ 'disabled' if windows_desktop_disable_sleep | bool else 'left as-is' }}"
           - "RDP:         {{ 'enabled at ' ~ windows_desktop_rdp_endpoint if windows_desktop_enable_rdp | bool else 'left as-is' }}"
           - "Next step:   RDP in and complete the one-time interactive Codex sign-in."
 ...
