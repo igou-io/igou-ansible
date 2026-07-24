@@ -70,6 +70,9 @@
 #                                     Default empty (Chocolatey covers Codex).
 #   windows_desktop_disable_sleep   - zero the AC idle-standby timeout and turn
 #                                     hibernation off (default true)
+#   windows_desktop_firefox_default - make Firefox the default browser for the
+#                                     connect user via Firefox's
+#                                     default-browser-agent (default true)
 #   windows_desktop_codex_app       - provision the Codex/ChatGPT desktop app
 #                                     from OpenAI's offline enterprise MSIX
 #                                     (default true)
@@ -126,6 +129,7 @@
       - name: python
       - name: codex
       - name: firefox
+    windows_desktop_firefox_default: true
     windows_desktop_msi_packages: []
     windows_desktop_disable_sleep: true
     windows_desktop_codex_app: true
@@ -352,6 +356,7 @@
             windows_desktop_apps: "{{ windows_desktop_apps }}"
             windows_desktop_msi_packages: "{{ windows_desktop_msi_packages }}"
             windows_desktop_disable_sleep: "{{ windows_desktop_disable_sleep }}"
+            windows_desktop_firefox_default: "{{ windows_desktop_firefox_default }}"
             windows_desktop_codex_app: "{{ windows_desktop_codex_app }}"
             windows_desktop_codex_app_url: "{{ windows_desktop_codex_app_url }}"
             windows_desktop_codex_app_license_url: "{{ windows_desktop_codex_app_license_url }}"
@@ -495,6 +500,33 @@
       loop_control:
         label: "{{ item.path }}"
 
+    # Windows guards http/https UserChoice with a per-user hash, so plain
+    # registry writes are rejected. Firefox's own default-browser-agent
+    # computes the valid hash (it backs the in-product "Set as default"
+    # button) and works headless. Per-user: applies to the psrp connect
+    # user (windows_desktop_admin_user) only. Verified by re-reading the
+    # UserChoice ProgId — if Windows (e.g. the UCPD driver on newer builds)
+    # rejects the write, this task FAILS rather than pretending.
+    - name: Make Firefox the default browser
+      ansible.windows.win_shell: |
+        $key = 'HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice'
+        $progid = (Get-ItemProperty $key -ErrorAction SilentlyContinue).ProgId
+        if ($progid -like 'FirefoxURL*') {
+          'ok'
+        } else {
+          & "$env:ProgramFiles\Mozilla Firefox\default-browser-agent.exe" set-default-browser-user-choice
+          Start-Sleep -Seconds 3
+          $progid = (Get-ItemProperty $key -ErrorAction SilentlyContinue).ProgId
+          if ($progid -like 'FirefoxURL*') {
+            'changed'
+          } else {
+            throw "http default is '$progid', not Firefox — UserChoice write was rejected"
+          }
+        }
+      register: windows_desktop_default_browser
+      changed_when: "'changed' in windows_desktop_default_browser.stdout"
+      when: windows_desktop_firefox_default | bool
+
     # --- Codex/ChatGPT desktop app ---------------------------------------
     # No Store session exists over WinRM, so install OpenAI's offline
     # enterprise package: the Store-signed MSIX plus its license, provisioned
@@ -617,6 +649,7 @@
           - "Desktop app: {{ 'provisioned (registers at next logon)' if windows_desktop_codex_app | bool else 'skipped' }}"
           - "Extra pkgs:  {{ windows_desktop_msi_packages | length }}"
           - "Sleep:       {{ 'disabled' if windows_desktop_disable_sleep | bool else 'left as-is' }}"
+          - "Browser:     {{ 'Firefox (default for ' ~ windows_desktop_admin_user | default('igou') ~ ')' if windows_desktop_firefox_default | bool else 'left as-is' }}"
           - "RDP:         {{ 'enabled at ' ~ windows_desktop_rdp_endpoint if windows_desktop_enable_rdp | bool else 'left as-is' }}"
           - "Next step:   RDP in and complete the one-time interactive Codex sign-in."
 ...
