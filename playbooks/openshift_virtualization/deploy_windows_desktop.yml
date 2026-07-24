@@ -10,9 +10,10 @@
 #   and RDP (3389) via NodePort Services, then provisions the guest over psrp:
 #   an execution-policy guard, power hardening (idle standby/hibernation off —
 #   a sleeping guest drops RDP/WinRM/guest-agent while the VMI still shows
-#   Ready), a Chocolatey app set (PowerShell 7 + git + nodejs-lts + python +
-#   Firefox + the Codex CLI), the Codex/ChatGPT desktop app, optional direct MSI
-#   installers, and Remote Desktop. An operator then RDPs in to complete the
+#   Ready), a debloat pass (bloatware Appx, consumer content/nags, OneDrive), a
+#   Chocolatey app set (PowerShell 7 + git + nodejs-lts + python + Firefox +
+#   Chrome + the Codex CLI), Firefox as default browser, the Codex/ChatGPT
+#   desktop app, optional direct MSI installers, and Remote Desktop. An operator then RDPs in to complete the
 #   one-time, MANDATORY interactive Codex sign-in (ChatGPT OAuth — no headless
 #   path exists for the app; the CLI supports OPENAI_API_KEY auth).
 #
@@ -73,6 +74,12 @@
 #   windows_desktop_firefox_default - make Firefox the default browser for the
 #                                     connect user via Firefox's
 #                                     default-browser-agent (default true)
+#   windows_desktop_debloat         - strip consumer bloat: remove the
+#                                     windows_desktop_remove_appx packages,
+#                                     disable consumer content / setup nags /
+#                                     suggestions / widgets / telemetry, and
+#                                     uninstall OneDrive (default true)
+#   windows_desktop_remove_appx     - Appx identities the debloat pass removes
 #   windows_desktop_codex_app       - provision the Codex/ChatGPT desktop app
 #                                     from OpenAI's offline enterprise MSIX
 #                                     (default true)
@@ -129,7 +136,41 @@
       - name: python
       - name: codex
       - name: firefox
+      - name: googlechrome
     windows_desktop_firefox_default: true
+    windows_desktop_debloat: true
+    # Appx identities removed by the debloat pass (provisioned + all-users).
+    # Kept: Store, Terminal, Notepad, Calculator, Photos, Camera, Paint,
+    # DesktopAppInstaller and the runtime frameworks.
+    windows_desktop_remove_appx:
+      - Clipchamp.Clipchamp
+      - Microsoft.549981C3F5F10
+      - Microsoft.BingNews
+      - Microsoft.BingSearch
+      - Microsoft.BingWeather
+      - Microsoft.GamingApp
+      - Microsoft.GetHelp
+      - Microsoft.Getstarted
+      - Microsoft.MicrosoftOfficeHub
+      - Microsoft.MicrosoftSolitaireCollection
+      - Microsoft.MicrosoftStickyNotes
+      - Microsoft.OutlookForWindows
+      - Microsoft.People
+      - Microsoft.PowerAutomateDesktop
+      - Microsoft.Todos
+      - Microsoft.Windows.DevHome
+      - Microsoft.WindowsAlarms
+      - Microsoft.WindowsFeedbackHub
+      - Microsoft.WindowsSoundRecorder
+      - Microsoft.Xbox.TCUI
+      - Microsoft.XboxGamingOverlay
+      - Microsoft.XboxIdentityProvider
+      - Microsoft.XboxSpeechToTextOverlay
+      - Microsoft.YourPhone
+      - Microsoft.ZuneMusic
+      - Microsoft.ZuneVideo
+      - MSTeams
+      - MicrosoftCorporationII.QuickAssist
     windows_desktop_msi_packages: []
     windows_desktop_disable_sleep: true
     windows_desktop_codex_app: true
@@ -357,6 +398,8 @@
             windows_desktop_msi_packages: "{{ windows_desktop_msi_packages }}"
             windows_desktop_disable_sleep: "{{ windows_desktop_disable_sleep }}"
             windows_desktop_firefox_default: "{{ windows_desktop_firefox_default }}"
+            windows_desktop_debloat: "{{ windows_desktop_debloat }}"
+            windows_desktop_remove_appx: "{{ windows_desktop_remove_appx }}"
             windows_desktop_codex_app: "{{ windows_desktop_codex_app }}"
             windows_desktop_codex_app_url: "{{ windows_desktop_codex_app_url }}"
             windows_desktop_codex_app_license_url: "{{ windows_desktop_codex_app_license_url }}"
@@ -460,6 +503,95 @@
       register: windows_desktop_power
       changed_when: "'changed' in windows_desktop_power.stdout"
       when: windows_desktop_disable_sleep | bool
+
+    # --- Debloat ---------------------------------------------------------
+    - name: Remove bloatware Appx packages
+      ansible.windows.win_shell: |
+        $targets = @('{{ windows_desktop_remove_appx | join("', '") }}')
+        $removed = @()
+        foreach ($name in $targets) {
+          Get-AppxProvisionedPackage -Online |
+            Where-Object DisplayName -eq $name |
+            ForEach-Object {
+              $_ | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
+              $removed += $name
+            }
+          Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue |
+            ForEach-Object {
+              $_ | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+              $removed += $name
+            }
+        }
+        if ($removed) { "changed: $(($removed | Select-Object -Unique) -join ', ')" } else { 'ok' }
+      register: windows_desktop_appx_removed
+      changed_when: "'changed' in windows_desktop_appx_removed.stdout"
+      when: windows_desktop_debloat | bool
+
+    - name: Disable consumer content, setup nags, suggestions, and telemetry
+      ansible.windows.win_regedit:
+        path: "{{ item.path }}"
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: dword
+      loop:
+        # Machine: no auto-installed sponsored apps / "experiences".
+        - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
+          name: DisableWindowsConsumerFeatures
+          data: 1
+        - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
+          name: DisableSoftLanding
+          data: 1
+        # Machine: widgets / news-and-interests off, telemetry to Security.
+        - path: HKLM:\SOFTWARE\Policies\Microsoft\Dsh
+          name: AllowNewsAndInterests
+          data: 0
+        - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection
+          name: AllowTelemetry
+          data: 0
+        # Connect user: no Start/Settings suggestions or silent app installs.
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+          name: SystemPaneSuggestionsEnabled
+          data: 0
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+          name: SilentInstalledAppsEnabled
+          data: 0
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+          name: SubscribedContent-338388Enabled
+          data: 0
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+          name: SubscribedContent-338389Enabled
+          data: 0
+        # Connect user: kill the "finish setting up your device" OOBE nag
+        # and Bing suggestions in Start search.
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement
+          name: ScoobeSystemSettingEnabled
+          data: 0
+        - path: HKCU:\SOFTWARE\Policies\Microsoft\Windows\Explorer
+          name: DisableSearchBoxSuggestions
+          data: 1
+      loop_control:
+        label: "{{ item.path }}\\{{ item.name }}"
+      when: windows_desktop_debloat | bool
+
+    - name: Uninstall OneDrive
+      ansible.windows.win_shell: |
+        $setup = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
+        if (-not (Test-Path $setup)) { $setup = "$env:SystemRoot\System32\OneDriveSetup.exe" }
+        $exes = @(
+          "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe",
+          "$env:ProgramFiles\Microsoft OneDrive\OneDrive.exe"
+        )
+        $installed = $exes | Where-Object { Test-Path $_ }
+        if ($installed -and (Test-Path $setup)) {
+          Stop-Process -Name OneDrive -Force -ErrorAction SilentlyContinue
+          & $setup /uninstall
+          'changed'
+        } else {
+          'ok'
+        }
+      register: windows_desktop_onedrive
+      changed_when: "'changed' in windows_desktop_onedrive.stdout"
+      when: windows_desktop_debloat | bool
 
     - name: Ensure the execution policy permits the Chocolatey bootstrap
       ansible.windows.win_shell: |
@@ -650,6 +782,7 @@
           - "Extra pkgs:  {{ windows_desktop_msi_packages | length }}"
           - "Sleep:       {{ 'disabled' if windows_desktop_disable_sleep | bool else 'left as-is' }}"
           - "Browser:     {{ 'Firefox (default for ' ~ windows_desktop_admin_user | default('igou') ~ ')' if windows_desktop_firefox_default | bool else 'left as-is' }}"
+          - "Debloat:     {{ (windows_desktop_remove_appx | length | string) ~ ' Appx targets + consumer content/nags off + OneDrive removed' if windows_desktop_debloat | bool else 'skipped' }}"
           - "RDP:         {{ 'enabled at ' ~ windows_desktop_rdp_endpoint if windows_desktop_enable_rdp | bool else 'left as-is' }}"
           - "Next step:   RDP in and complete the one-time interactive Codex sign-in."
 ...
