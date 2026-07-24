@@ -1,0 +1,102 @@
+---
+# Configure TrueNAS native Alert Services + per-class alert tuning
+# (igou-inventory#114) via midclt alertservice.* / alertclasses.* — no arensb
+# module exists for either resource.
+#
+# Root cause this closes: pool/disk alerts fired natively during the
+# 2026-07-03 cold/sde incident but both configured destinations were dead
+# (SNMP trap → localhost with snmp stopped, E-Mail with an empty recipient),
+# so nothing reached a human.
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_alert_services — list of {name, level?, enabled?, attributes?}.
+#     name is the idempotency match key. Entries WITH attributes are fully
+#     managed (created if missing); entries WITHOUT attributes only update
+#     level/enabled on an existing service (e.g. disabling the stock ones).
+#   truenas_alert_classes  — full desired alertclasses "classes" map
+#     ({<ClassName>: {level?, policy?}}). alertclasses.update replaces the
+#     whole map, so this list is authoritative.
+#
+# Opt-in live send-test (posts a real message to every managed channel):
+#   -e truenas_alert_services_test=true
+- name: Configure TrueNAS alert services and alert classes
+  hosts: truenas
+  gather_facts: false
+  become: false
+  tasks:
+
+    - name: Manage alert services
+      when: truenas_alert_services | default([]) | length > 0
+      block:
+
+        - name: Query existing alert services
+          ansible.builtin.command: midclt call alertservice.query
+          register: truenas_alertservice_query
+          changed_when: false
+          check_mode: false
+          no_log: true  # attributes carry webhook URLs / tokens
+
+        - name: Configure alert services
+          ansible.builtin.include_tasks: tasks/truenas_alert_service.yml
+          loop: "{{ truenas_alert_services }}"
+          loop_control:
+            loop_var: alert_service
+            label: "{{ alert_service.name }}"
+
+    - name: Manage alert class tuning
+      when: truenas_alert_classes is defined
+      block:
+
+        - name: Query current alert class configuration
+          ansible.builtin.command: midclt call alertclasses.config
+          register: truenas_alertclasses_query
+          changed_when: false
+          check_mode: false
+
+        - name: Update alert classes
+          vars:
+            truenas_alertclasses_in_sync: >-
+              {{ (truenas_alertclasses_query.stdout | from_json).classes
+                 == truenas_alert_classes }}
+          ansible.builtin.command:
+            argv:
+              - midclt
+              - call
+              - alertclasses.update
+              - "{{ {'classes': truenas_alert_classes} | to_json }}"
+          when: not truenas_alertclasses_in_sync
+          changed_when: true
+
+    - name: Send a test alert through each managed channel (opt-in)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - alertservice.test
+          - >-
+            {{ {'name': item.name ~ '-test',
+                'enabled': true,
+                'level': item.level | default('WARNING'),
+                'attributes': item.attributes} | to_json }}
+      loop: "{{ truenas_alert_services }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - truenas_alert_services_test | default(false) | bool
+        - item.attributes is defined
+        - item.enabled | default(true)
+      register: truenas_alertservice_test
+      changed_when: false
+      no_log: true
+
+    - name: Report send-test outcomes
+      ansible.builtin.debug:
+        msg: >-
+          {{ truenas_alertservice_test.results
+             | selectattr('stdout', 'defined')
+             | map(attribute='item.name')
+             | zip(truenas_alertservice_test.results
+                   | selectattr('stdout', 'defined')
+                   | map(attribute='stdout'))
+             | map('join', ': ') | list }}
+      when: truenas_alert_services_test | default(false) | bool

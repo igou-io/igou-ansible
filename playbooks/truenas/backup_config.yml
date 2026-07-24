@@ -1,0 +1,104 @@
+---
+# Back up the TrueNAS configuration DB (with secret seed) to the cold pool
+# (igou-inventory#126), mirroring the artifact/retention shape of
+# playbooks/routeros/backup_s3.yaml.
+#
+# ⚠ INTERIM TARGET: the bundle lands on the box's own cold pool for now —
+# it survives ssd/boot-pool loss (the config-restore scenario this issue
+# was filed for) but dies with the host. An offsite target replaces this
+# later; the play keeps the fetch/store legs separate so only the store
+# leg changes.
+#
+# Flow:
+#   1. midclt core.download('config.save', {secretseed: true}) → transient
+#      authenticated /_download URL → curl straight into the backup dir.
+#      (config.save is a download-job; core.download is the scriptable path
+#      to its artifact. The seed makes the tarball restore secrets onto new
+#      hardware — and makes it credential-grade: dir 0700, bundle 0600.)
+#   2. Prune to the newest truenas_config_backup_retention bundles.
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_config_backup_dir       — target directory on the cold pool
+#   truenas_config_backup_retention — bundles to keep (default 30)
+- name: Back up the TrueNAS config bundle to the cold pool
+  hosts: truenas
+  gather_facts: false
+  become: true
+  vars:
+    truenas_config_backup_file: "truenas-config-{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}.tar"
+    truenas_config_backup_retention: 30
+  tasks:
+
+    - name: Ensure the backup directory exists
+      ansible.builtin.file:
+        path: "{{ truenas_config_backup_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Request a config.save download job (secret seed included)
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - core.download
+          - config.save
+          - '[{"secretseed": true}]'
+          - "{{ truenas_config_backup_file }}"
+      register: truenas_config_download
+      changed_when: true
+
+    - name: Download the bundle into the backup directory
+      vars:
+        truenas_config_download_url: "{{ (truenas_config_download.stdout | from_json)[1] }}"
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - --insecure
+          - --output
+          - "{{ truenas_config_backup_dir }}/{{ truenas_config_backup_file }}"
+          - "https://127.0.0.1{{ truenas_config_download_url }}"
+      changed_when: true
+
+    - name: Restrict the bundle to root
+      ansible.builtin.file:
+        path: "{{ truenas_config_backup_dir }}/{{ truenas_config_backup_file }}"
+        mode: "0600"
+        owner: root
+        group: root
+
+    - name: Assert the bundle is non-empty
+      ansible.builtin.stat:
+        path: "{{ truenas_config_backup_dir }}/{{ truenas_config_backup_file }}"
+      register: truenas_config_stat
+      failed_when: not truenas_config_stat.stat.exists or truenas_config_stat.stat.size == 0
+
+    - name: List stored bundles
+      ansible.builtin.find:
+        paths: "{{ truenas_config_backup_dir }}"
+        patterns: "truenas-config-*.tar"
+      register: truenas_config_stored
+
+    - name: Prune beyond retention
+      vars:
+        truenas_config_sorted: >-
+          {{ truenas_config_stored.files
+             | sort(attribute='mtime', reverse=true)
+             | map(attribute='path') | list }}
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      # range/extract instead of a jinja slice: ansible-lint's renderer
+      # can't prove a templated slice index is an integer.
+      loop: >-
+        {{ range(truenas_config_backup_retention | int,
+                 truenas_config_sorted | length)
+           | map('extract', truenas_config_sorted) | list }}
+
+    - name: Report retained bundles
+      ansible.builtin.debug:
+        msg: >-
+          {{ truenas_config_stored.files | length }} bundle(s) present before
+          prune; retention is {{ truenas_config_backup_retention }}.
