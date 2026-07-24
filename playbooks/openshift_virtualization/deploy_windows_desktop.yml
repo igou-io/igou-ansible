@@ -108,6 +108,13 @@
 #                                     (default true)
 #   windows_desktop_resolution      - WxH pinned at each logon via scheduled
 #                                     task (default 1920x1080; '' = leave alone)
+#   windows_desktop_timezone        - Windows time-zone id (default Eastern
+#                                     Standard Time)
+#   windows_desktop_perf_visuals    - visual effects tuned for performance over
+#                                     appearance: animations/fades/transparency/
+#                                     shadows/Aero Peek off, thumbnails → icons;
+#                                     ClearType stays on. Applies at next logon
+#                                     (default true)
 #   windows_desktop_codex_app       - provision the Codex/ChatGPT desktop app
 #                                     from OpenAI's offline enterprise MSIX
 #                                     (default true)
@@ -174,6 +181,8 @@
     windows_desktop_disable_notifications: true
     # WxH pinned via a logon scheduled task (empty string = leave alone).
     windows_desktop_resolution: 1920x1080
+    windows_desktop_timezone: Eastern Standard Time
+    windows_desktop_perf_visuals: true
     # Appx identities removed by the debloat pass (provisioned + all-users).
     # Kept: Store, Terminal, Notepad, Calculator, Photos, Camera, Paint,
     # DesktopAppInstaller and the runtime frameworks.
@@ -446,6 +455,8 @@
             windows_desktop_quiet_uac: "{{ windows_desktop_quiet_uac }}"
             windows_desktop_disable_notifications: "{{ windows_desktop_disable_notifications }}"
             windows_desktop_resolution: "{{ windows_desktop_resolution }}"
+            windows_desktop_timezone: "{{ windows_desktop_timezone }}"
+            windows_desktop_perf_visuals: "{{ windows_desktop_perf_visuals }}"
             windows_desktop_codex_app: "{{ windows_desktop_codex_app }}"
             windows_desktop_codex_app_url: "{{ windows_desktop_codex_app_url }}"
             windows_desktop_codex_app_license_url: "{{ windows_desktop_codex_app_license_url }}"
@@ -544,6 +555,37 @@
         windows_debloat_remove_appx: "{{ windows_desktop_remove_appx }}"
       when: windows_desktop_debloat | bool
 
+    # --- Guest clock ------------------------------------------------------
+    # KubeVirt feeds the RTC in UTC but Windows reads the RTC as LOCAL time,
+    # so with any non-UTC zone the guest's computed UTC runs hours ahead —
+    # live-hit 2026-07-24: 7h-future clock broke the Codex app's device
+    # enrollment (OAuth tokens outside their validity window) while all
+    # network paths tested clean. RealTimeIsUniversal makes Windows treat
+    # the RTC as UTC (read at boot); the NTP resync repairs the running
+    # clock immediately.
+    - name: Treat the RTC as UTC
+      ansible.windows.win_regedit:
+        path: HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation
+        name: RealTimeIsUniversal
+        data: 1
+        type: dword
+
+    - name: Set the guest time zone
+      ansible.windows.win_timezone:
+        timezone: "{{ windows_desktop_timezone }}"
+
+    - name: Sync the clock from NTP
+      ansible.windows.win_shell: |
+        Set-Service w32time -StartupType Automatic
+        Start-Service w32time
+        w32tm /config /syncfromflags:manual /manualpeerlist:"time.windows.com" /update | Out-Null
+        $before = (Get-Date).ToUniversalTime()
+        w32tm /resync /force | Out-Null
+        $after = (Get-Date).ToUniversalTime()
+        if ([Math]::Abs(($after - $before).TotalSeconds) -gt 5) { 'changed' } else { 'ok' }
+      register: windows_desktop_ntp
+      changed_when: "'changed' in windows_desktop_ntp.stdout"
+
     # --- Computer-use readiness ------------------------------------------
     # Autologon, never-lock/blank, quiet UAC, toasts off, logon resolution pin.
     # See role: windows_computer_use (autologon user/password default to the
@@ -555,6 +597,7 @@
         windows_computer_use_autologon: "{{ windows_desktop_autologon }}"
         windows_computer_use_quiet_uac: "{{ windows_desktop_quiet_uac }}"
         windows_computer_use_disable_notifications: "{{ windows_desktop_disable_notifications }}"
+        windows_computer_use_perf_visuals: "{{ windows_desktop_perf_visuals }}"
         windows_computer_use_resolution: "{{ windows_desktop_resolution }}"
 
     # --- Applications ----------------------------------------------------

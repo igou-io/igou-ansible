@@ -16,6 +16,10 @@ toasts, and holds a fixed resolution for deterministic screenshots.
   MSIX/Store apps still run (`windows_computer_use_quiet_uac`).
 - **Toast notifications off** for the connect user
   (`windows_computer_use_disable_notifications`).
+- **Visual effects tuned for performance over appearance** — animations, fades,
+  transparency, shadows, and Aero Peek off, thumbnails replaced by icons;
+  ClearType stays on so vision agents can read text
+  (`windows_computer_use_perf_visuals`).
 - **Pins the display resolution at logon** via a scheduled task running a staged
   script (resolution can only change from an interactive session, never over
   WinRM) (`windows_computer_use_resolution`).
@@ -37,6 +41,7 @@ toasts, and holds a fixed resolution for deterministic screenshots.
 | `windows_computer_use_autologon_password` | `{{ ansible_password }}` | Password written as the Winlogon `DefaultPassword` (`no_log`; passed in, never looked up) |
 | `windows_computer_use_quiet_uac` | `true` | Admins elevate silently (`ConsentPromptBehaviorAdmin=0`) off the secure desktop (`PromptOnSecureDesktop=0`); `EnableLUA` stays `1` |
 | `windows_computer_use_disable_notifications` | `true` | Disable toast notifications for the connect user |
+| `windows_computer_use_perf_visuals` | `true` | Best-performance visual-effects profile for the connect user (ClearType kept on); applies at next logon |
 | `windows_computer_use_resolution` | `1920x1080` | `WxH` pinned at each logon via a scheduled task; `''` leaves the resolution alone (skips both resolution tasks) |
 
 ## Example

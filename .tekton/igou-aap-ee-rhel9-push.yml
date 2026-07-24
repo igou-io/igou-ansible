@@ -110,3 +110,31 @@ spec:
         workspaces:
           - name: source
             workspace: shared-workspace
+
+      # Advisory RHACS policy check (igou-openshift#549). Evaluates
+      # BUILD+DEPLOY lifecycle policies against the pushed image via
+      # Central's route (egress + rhacs-ci-token secret provisioned by the
+      # pac-tenant chart). Non-blocking during the soak period: the step
+      # always exits 0 and violations land in the run log. Central's route
+      # serves the RHACS-internal cert, hence --insecure-skip-tls-verify.
+      - name: rhacs-image-check
+        runAfter:
+          - build-image
+        taskSpec:
+          steps:
+            - name: roxctl
+              image: registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel8:4.11.1
+              env:
+                - name: ROX_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: rhacs-ci-token
+                      key: rox_api_token
+              script: |
+                #!/bin/sh
+                roxctl image check \
+                  --insecure-skip-tls-verify \
+                  -e central-stackrox.apps.ocp.igou.systems:443 \
+                  --image "quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:{{ revision }}" \
+                  || echo "ADVISORY: RHACS policy violations found (non-blocking during soak, igou-openshift#549)"
+                exit 0

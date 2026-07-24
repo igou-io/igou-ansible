@@ -88,6 +88,66 @@
     label: "{{ item.path }}\\{{ item.name }}"
   when: windows_computer_use_disable_notifications | bool
 
+# Software-rendered VGA has no GPU to spend on eye candy, and animations/
+# fades blur mid-transition screenshots for computer-use agents. The
+# UserPreferencesMask value is the "adjust for best performance" set with
+# the font-smoothing bit kept ON (ClearType helps vision agents read
+# text). Per-user; applies at next logon.
+- name: Tune visual effects for performance over appearance
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: "{{ item.type }}"
+  loop:
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects
+      name: VisualFXSetting
+      data: 2
+      type: dword
+    - path: HKCU:\Control Panel\Desktop
+      name: UserPreferencesMask
+      data: hex:90,12,03,80,10,00,00,00
+      type: binary
+    - path: HKCU:\Control Panel\Desktop
+      name: DragFullWindows
+      data: '0'
+      type: string
+    - path: HKCU:\Control Panel\Desktop
+      name: MenuShowDelay
+      data: '0'
+      type: string
+    - path: HKCU:\Control Panel\Desktop\WindowMetrics
+      name: MinAnimate
+      data: '0'
+      type: string
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+      name: TaskbarAnimations
+      data: 0
+      type: dword
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+      name: ListviewAlphaSelect
+      data: 0
+      type: dword
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+      name: ListviewShadow
+      data: 0
+      type: dword
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+      name: IconsOnly
+      data: 1
+      type: dword
+    - path: HKCU:\Software\Microsoft\Windows\DWM
+      name: EnableAeroPeek
+      data: 0
+      type: dword
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize
+      name: EnableTransparency
+      data: 0
+      type: dword
+  loop_control:
+    label: "{{ item.path }}\\{{ item.name }}"
+  when: windows_computer_use_perf_visuals | bool
+
 # Resolution can only be changed from an interactive session, never over
 # WinRM (no desktop attached), so a logon scheduled task pins it in the
 # user's own session — deterministic screenshots for computer use, and it

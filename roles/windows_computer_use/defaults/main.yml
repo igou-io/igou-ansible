@@ -17,5 +17,10 @@ windows_computer_use_quiet_uac: true
 # Toast notifications off for the connect user.
 windows_computer_use_disable_notifications: true
 
+# Visual effects tuned for performance over appearance: animations, fades,
+# transparency, shadows, and Aero Peek off, thumbnails replaced by icons —
+# ClearType stays on (vision agents read text). Per-user; applies at next logon.
+windows_computer_use_perf_visuals: true
+
 # WxH pinned at each logon via a scheduled task ('' = leave the resolution alone).
 windows_computer_use_resolution: "1920x1080"

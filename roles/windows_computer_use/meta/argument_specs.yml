@@ -48,6 +48,15 @@ argument_specs:
         type: bool
         default: true
         description: "Disable toast notifications for the connect user."
+      windows_computer_use_perf_visuals:
+        type: bool
+        default: true
+        description: >-
+          Tune visual effects for performance over appearance for the connect
+          user: window/taskbar/menu animations, fades, transparency, listview
+          shadows, and Aero Peek off, thumbnails replaced by icons, zero menu
+          delay — with the font-smoothing (ClearType) bit kept on so vision
+          agents can read text. Applies at the user's next logon.
       windows_computer_use_resolution:
         type: str
         default: "1920x1080"
