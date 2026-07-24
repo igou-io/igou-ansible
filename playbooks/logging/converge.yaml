@@ -1,0 +1,13 @@
+---
+# Ship host journals to the central log-gateway (igou-openshift#382
+# phase 4). Targets the linux_logging inventory group; narrow with
+# ansible_limit as usual.
+#
+# Variables (igou-inventory group_vars/linux_logging.yml):
+#   alloy_loki_url — Loki push endpoint on the log-gateway VIP
+- name: Ship host journals to the central log-gateway
+  hosts: linux_logging
+  become: true
+  gather_facts: true
+  roles:
+    - role: alloy
