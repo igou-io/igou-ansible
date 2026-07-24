@@ -1,0 +1,41 @@
+---
+# Appx identities removed by the debloat pass (provisioned + all-users). The
+# removal task runs only when this list is non-empty.
+# Kept: Store, Terminal, Notepad, Calculator, Photos, Camera, Paint,
+# DesktopAppInstaller and the runtime frameworks.
+windows_debloat_remove_appx:
+  - Clipchamp.Clipchamp
+  - Microsoft.549981C3F5F10
+  - Microsoft.BingNews
+  - Microsoft.BingSearch
+  - Microsoft.BingWeather
+  - Microsoft.GamingApp
+  - Microsoft.GetHelp
+  - Microsoft.Getstarted
+  - Microsoft.MicrosoftOfficeHub
+  - Microsoft.MicrosoftSolitaireCollection
+  - Microsoft.MicrosoftStickyNotes
+  - Microsoft.OutlookForWindows
+  - Microsoft.People
+  - Microsoft.PowerAutomateDesktop
+  - Microsoft.Todos
+  - Microsoft.Windows.DevHome
+  - Microsoft.WindowsAlarms
+  - Microsoft.WindowsFeedbackHub
+  - Microsoft.WindowsSoundRecorder
+  - Microsoft.Xbox.TCUI
+  - Microsoft.XboxGamingOverlay
+  - Microsoft.XboxIdentityProvider
+  - Microsoft.XboxSpeechToTextOverlay
+  - Microsoft.YourPhone
+  - Microsoft.ZuneMusic
+  - Microsoft.ZuneVideo
+  - MSTeams
+  - MicrosoftCorporationII.QuickAssist
+
+# Disable consumer content, setup nags, suggestions, widgets, and telemetry
+# (the win_regedit loop).
+windows_debloat_disable_consumer_content: true
+
+# Uninstall the per-user OneDrive client.
+windows_debloat_remove_onedrive: true

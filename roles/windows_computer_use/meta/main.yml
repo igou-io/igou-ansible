@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: windows_computer_use
+  author: david-igou
+  description: >-
+    Make a Windows desktop ready for screen-driven / computer-use agents:
+    console auto-logon, never lock or blank the display, silent UAC elevation
+    off the secure desktop, toasts off, and a logon scheduled task that pins the
+    display resolution for deterministic screenshots. Drives the guest over
+    psrp/WinRM. LAB-ONLY (autologon stores the password in the registry).
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - computeruse
+    - desktop
+dependencies: []

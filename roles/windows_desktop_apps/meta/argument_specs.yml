@@ -1,0 +1,75 @@
+---
+argument_specs:
+  main:
+    short_description: "Install desktop applications on a Windows guest (Chocolatey + MSI/EXE + Firefox default)."
+    description:
+      - >-
+        Provisions the application layer of a Windows desktop over
+        psrp/WinRM. Runs an execution-policy guard first (client SKUs
+        default to Restricted, which blocks Chocolatey's downloaded
+        bootstrap .ps1), then installs a Chocolatey package set, any
+        direct MSI/EXE installers, and — optionally — makes Firefox the
+        default browser for the psrp connect user.
+      - >-
+        Every task is idempotent on re-run. The Chocolatey and MSI install
+        tasks retry per item to ride out external-CDN timeouts from the pod
+        network.
+    options:
+      windows_desktop_apps_packages:
+        type: list
+        elements: dict
+        default: []
+        description: >-
+          Chocolatey packages to install. Each entry: name (required),
+          version (optional), state (optional, default present).
+        options:
+          name:
+            type: str
+            required: true
+            description: "Chocolatey package id (e.g. firefox, git, 7zip)."
+          version:
+            type: str
+            description: "Pin a specific package version (default: latest)."
+          state:
+            type: str
+            default: present
+            description: "win_chocolatey state for this package."
+      windows_desktop_apps_msi_packages:
+        type: list
+        elements: dict
+        default: []
+        description: >-
+          Direct MSI/EXE installers applied with ansible.windows.win_package.
+          Each entry: path (required), plus optional product_id / arguments /
+          creates_path. creates_path keeps a vendor-direct installer idempotent.
+        options:
+          path:
+            type: str
+            required: true
+            description: "URL or local path to the MSI/EXE installer."
+          product_id:
+            type: str
+            description: "MSI ProductCode used to detect prior installation."
+          arguments:
+            type: raw
+            description: "Extra installer arguments (string or list)."
+          creates_path:
+            type: str
+            description: "Path that exists once installed — makes the task idempotent."
+      windows_desktop_apps_firefox_default:
+        type: bool
+        default: false
+        description: >-
+          When true, make Firefox the default browser for the psrp connect
+          user via Firefox's default-browser-agent (the only headless path
+          Windows' hashed UserChoice accepts). Fails if the write is rejected.
+      windows_desktop_apps_retries:
+        type: int
+        default: 5
+        description: >-
+          Per-item retry count for the Chocolatey and MSI install tasks
+          (external-CDN payloads intermittently time out from the pod network).
+      windows_desktop_apps_retry_delay:
+        type: int
+        default: 60
+        description: "Seconds between install retries."

@@ -1,0 +1,118 @@
+---
+# Verify = INDEPENDENT evidence the role's computer-use settings actually landed
+# — raw registry / powercfg / scheduled-task reads, never a re-read of the
+# role's own registers. The password is never asserted on or printed.
+- name: Verify — independent evidence for windows_computer_use
+  hosts: windows
+  gather_facts: false
+  vars:
+    _pin_script: 'C:\ProgramData\pin-resolution.ps1'
+    _expected_user_line: "DefaultUserName={{ ansible_user }}"
+  tasks:
+    - name: Read Winlogon autologon values (independent registry read)
+      ansible.windows.win_shell: |
+        $wl = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+        "AutoAdminLogon=$($wl.AutoAdminLogon)"
+        "DefaultUserName=$($wl.DefaultUserName)"
+      register: _winlogon
+      changed_when: false
+
+    - name: Assert console auto-logon is enabled for the connect user
+      ansible.builtin.assert:
+        that:
+          - "'AutoAdminLogon=1' in _winlogon.stdout_lines"
+          - _expected_user_line in _winlogon.stdout_lines
+        fail_msg: >-
+          Winlogon autologon not set for {{ ansible_user }}.
+          Read: {{ _winlogon.stdout_lines }}
+        success_msg: "Console auto-logon enabled for {{ ansible_user }}."
+
+    - name: Read never-lock and quiet-UAC policy values (independent registry read)
+      ansible.windows.win_shell: |
+        $per = Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization'
+        $sys = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+        "NoLockScreen=$($per.NoLockScreen)"
+        "InactivityTimeoutSecs=$($sys.InactivityTimeoutSecs)"
+        "ConsentPromptBehaviorAdmin=$($sys.ConsentPromptBehaviorAdmin)"
+        "PromptOnSecureDesktop=$($sys.PromptOnSecureDesktop)"
+      register: _policies
+      changed_when: false
+
+    - name: Assert never-lock and quiet-UAC policies are set
+      ansible.builtin.assert:
+        that:
+          - "'NoLockScreen=1' in _policies.stdout_lines"
+          - "'InactivityTimeoutSecs=0' in _policies.stdout_lines"
+          - "'ConsentPromptBehaviorAdmin=0' in _policies.stdout_lines"
+          - "'PromptOnSecureDesktop=0' in _policies.stdout_lines"
+        fail_msg: >-
+          Never-lock / quiet-UAC policies not as expected.
+          Read: {{ _policies.stdout_lines }}
+        success_msg: >-
+          NoLockScreen=1, InactivityTimeoutSecs=0, and silent-elevation UAC
+          policies confirmed.
+
+    - name: Read the connect user's toast setting (independent registry read)
+      ansible.windows.win_shell: |
+        $pn = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications'
+        "ToastEnabled=$($pn.ToastEnabled)"
+      register: _toast
+      changed_when: false
+
+    - name: Assert toast notifications are disabled for the connect user
+      ansible.builtin.assert:
+        that:
+          - "'ToastEnabled=0' in _toast.stdout_lines"
+        fail_msg: >-
+          ToastEnabled is not 0 for {{ ansible_user }}.
+          Read: {{ _toast.stdout_lines }}
+        success_msg: "Toast notifications disabled for {{ ansible_user }}."
+
+    - name: Read the display idle power setting (independent powercfg read)
+      ansible.windows.win_shell: |
+        $idle = powercfg /q SCHEME_CURRENT SUB_VIDEO VIDEOIDLE
+        if ($idle | Select-String 'Current AC Power Setting Index: 0x00000000') {
+          'videoidle=off'
+        } else {
+          'videoidle=on'
+        }
+      register: _videoidle
+      changed_when: false
+
+    - name: Assert the display never powers off on AC
+      ansible.builtin.assert:
+        that:
+          - "'videoidle=off' in _videoidle.stdout"
+        fail_msg: >-
+          The AC VIDEOIDLE index is not 0x00000000 — the display can still power
+          off. Read: {{ _videoidle.stdout }}
+        success_msg: Display idle power-off disabled on AC (VIDEOIDLE index 0).
+
+    - name: Stat the resolution-pinning script on disk (independent read)
+      ansible.windows.win_stat:
+        path: "{{ _pin_script }}"
+      register: _pin_stat
+
+    - name: Read the resolution-pin scheduled task state (independent read)
+      ansible.windows.win_shell: |
+        $t = Get-ScheduledTask -TaskName 'pin-display-resolution' -ErrorAction SilentlyContinue
+        if (-not $t) {
+          'task=missing'
+        } else {
+          "task=present enabled=$($t.Settings.Enabled)"
+        }
+      register: _pin_task
+      changed_when: false
+
+    - name: Assert the resolution pin is staged and scheduled at logon
+      ansible.builtin.assert:
+        that:
+          - _pin_stat.stat.exists
+          - "'task=present' in _pin_task.stdout"
+          - "'enabled=True' in _pin_task.stdout"
+        fail_msg: >-
+          Resolution pin not fully in place — script exists={{ _pin_stat.stat.exists }},
+          task read: {{ _pin_task.stdout }}
+        success_msg: >-
+          {{ _pin_script }} staged and the pin-display-resolution logon task is
+          present and enabled.

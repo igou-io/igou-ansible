@@ -1,0 +1,57 @@
+---
+argument_specs:
+  main:
+    short_description: "Make a Windows desktop ready for screen-driven / computer-use agents."
+    description:
+      - >-
+        Applies the computer-use readiness settings a screen-driven agent needs
+        on a Windows guest reached over psrp/WinRM: console auto-logon as the
+        connect user, never lock or blank the desktop, silent admin elevation
+        off the secure desktop (EnableLUA stays 1 so MSIX/Store apps still run),
+        toast notifications off, and a logon scheduled task that pins the
+        display resolution for deterministic screenshots.
+      - >-
+        Pure over its inputs — the autologon credentials are passed in as
+        no_log suboptions, never looked up inside the role. LAB-ONLY: autologon
+        stores the password readably in the Winlogon registry and takes effect
+        at the next boot.
+    options:
+      windows_computer_use_autologon:
+        type: bool
+        default: true
+        description: >-
+          Enable console auto-logon as windows_computer_use_autologon_user and
+          keep the desktop from ever locking or blanking. Gates the autologon,
+          never-lock, and never-power-off-the-display tasks together.
+      windows_computer_use_autologon_user:
+        type: str
+        default: "{{ ansible_user }}"
+        description: >-
+          User written as the Winlogon DefaultUserName for console auto-logon
+          (defaults to the psrp connect user).
+      windows_computer_use_autologon_password:
+        type: str
+        no_log: true
+        default: "{{ ansible_password }}"
+        description: >-
+          Password written as the Winlogon DefaultPassword for console
+          auto-logon (defaults to the psrp connection password). Passed in as a
+          value — never looked up inside the role.
+      windows_computer_use_quiet_uac:
+        type: bool
+        default: true
+        description: >-
+          Admins elevate silently (ConsentPromptBehaviorAdmin=0) and UAC prompts
+          stay off the secure desktop (PromptOnSecureDesktop=0). EnableLUA stays
+          1: MSIX/Store apps refuse to run with UAC fully disabled.
+      windows_computer_use_disable_notifications:
+        type: bool
+        default: true
+        description: "Disable toast notifications for the connect user."
+      windows_computer_use_resolution:
+        type: str
+        default: "1920x1080"
+        description: >-
+          WxH pinned at each logon via a scheduled task, for deterministic
+          computer-use screenshots. An empty string leaves the resolution alone
+          (both resolution tasks are skipped).

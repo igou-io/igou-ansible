@@ -1,0 +1,23 @@
+---
+# Test-only dependencies for this scenario. david_igou.molecule_provisioners is
+# kept out of the repo's main requirements.yml so it never lands in EE images;
+# it is pinned here as a git source so the scenario controls exactly the
+# provisioner revision it tests against.
+collections:
+  # Windows KubeVirt guest support (connection: psrp + sysprep_secret) merged
+  # to main in provisioner PR #55 (the feature branch was deleted). Installing
+  # it also pulls the provisioner's own galaxy deps (kubernetes.core,
+  # community.crypto, community.general, ...).
+  # TODO: re-pin to a Galaxy release once a version is cut.
+  - name: https://github.com/david-igou/ansible-collection-molecule_provisioners.git
+    type: git
+    version: main
+  - name: kubernetes.core
+    version: ">=5.0.0"
+  # Windows automation modules the role + verify plays use over psrp.
+  # ansible.windows: win_regedit / win_shell / win_copy / win_stat.
+  # community.windows: win_scheduled_task (the resolution-pin logon task).
+  - name: ansible.windows
+    version: ">=2.0.0"
+  - name: community.windows
+    version: ">=2.0.0"

@@ -1,0 +1,91 @@
+---
+# Strip consumer bloat from a Windows guest: remove bloatware Appx packages,
+# disable consumer content / setup nags / suggestions / widgets / telemetry,
+# and uninstall OneDrive. Runs over psrp/WinRM (see meta/argument_specs.yml).
+- name: Remove bloatware Appx packages
+  ansible.windows.win_shell: |
+    $targets = @('{{ windows_debloat_remove_appx | join("', '") }}')
+    $removed = @()
+    foreach ($name in $targets) {
+      Get-AppxProvisionedPackage -Online |
+        Where-Object DisplayName -eq $name |
+        ForEach-Object {
+          $_ | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
+          $removed += $name
+        }
+      Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue |
+        ForEach-Object {
+          $_ | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+          $removed += $name
+        }
+    }
+    if ($removed) { "changed: $(($removed | Select-Object -Unique) -join ', ')" } else { 'ok' }
+  register: windows_debloat_appx_removed
+  changed_when: "'changed' in windows_debloat_appx_removed.stdout"
+  when: windows_debloat_remove_appx | length > 0
+
+- name: Disable consumer content, setup nags, suggestions, and telemetry
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: dword
+  loop:
+    # Machine: no auto-installed sponsored apps / "experiences".
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
+      name: DisableWindowsConsumerFeatures
+      data: 1
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
+      name: DisableSoftLanding
+      data: 1
+    # Machine: widgets / news-and-interests off, telemetry to Security.
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Dsh
+      name: AllowNewsAndInterests
+      data: 0
+    - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection
+      name: AllowTelemetry
+      data: 0
+    # Connect user: no Start/Settings suggestions or silent app installs.
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SystemPaneSuggestionsEnabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SilentInstalledAppsEnabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SubscribedContent-338388Enabled
+      data: 0
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
+      name: SubscribedContent-338389Enabled
+      data: 0
+    # Connect user: kill the "finish setting up your device" OOBE nag
+    # and Bing suggestions in Start search.
+    - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement
+      name: ScoobeSystemSettingEnabled
+      data: 0
+    - path: HKCU:\SOFTWARE\Policies\Microsoft\Windows\Explorer
+      name: DisableSearchBoxSuggestions
+      data: 1
+  loop_control:
+    label: "{{ item.path }}\\{{ item.name }}"
+  when: windows_debloat_disable_consumer_content | bool
+
+- name: Uninstall OneDrive
+  ansible.windows.win_shell: |
+    $setup = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
+    if (-not (Test-Path $setup)) { $setup = "$env:SystemRoot\System32\OneDriveSetup.exe" }
+    $exes = @(
+      "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe",
+      "$env:ProgramFiles\Microsoft OneDrive\OneDrive.exe"
+    )
+    $installed = $exes | Where-Object { Test-Path $_ }
+    if ($installed -and (Test-Path $setup)) {
+      Stop-Process -Name OneDrive -Force -ErrorAction SilentlyContinue
+      & $setup /uninstall
+      'changed'
+    } else {
+      'ok'
+    }
+  register: windows_debloat_onedrive
+  changed_when: "'changed' in windows_debloat_onedrive.stdout"
+  when: windows_debloat_remove_onedrive | bool

@@ -1,0 +1,34 @@
+---
+# Converge = apply roles/windows_power to the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: a play whose pattern matches zero hosts
+# "passes" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the role play below would
+          match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# Apply the role under test. windows_power_disable_sleep defaults true; set it
+# explicitly here so the scenario documents what it exercises. The FIRST
+# converge flips standby-idle to 0 and hibernation off (changed); the
+# idempotence re-run is changed=0.
+- name: Converge — apply roles/windows_power
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Disable sleep and hibernation via windows_power
+      ansible.builtin.import_role:
+        name: windows_power
+      vars:
+        windows_power_disable_sleep: true

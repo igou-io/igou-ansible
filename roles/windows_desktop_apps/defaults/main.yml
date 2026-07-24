@@ -1,0 +1,26 @@
+---
+# Chocolatey packages to install: list of dicts with
+# name / version (opt) / state (opt, default present).
+windows_desktop_apps_packages: []
+#   - name: firefox
+#   - name: git
+#     version: "2.44.0"
+#   - name: someapp
+#     state: absent
+
+# Direct MSI/EXE installers (ansible.windows.win_package): list of dicts with
+# path / product_id (opt) / arguments (opt) / creates_path (opt). creates_path
+# keeps a vendor-direct installer idempotent.
+windows_desktop_apps_msi_packages: []
+#   - path: https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi
+#     creates_path: C:\Program Files\Google\Chrome\Application\chrome.exe
+
+# Make Firefox the default browser for the psrp connect user via Firefox's
+# own default-browser-agent (the only headless path Windows accepts).
+windows_desktop_apps_firefox_default: false
+
+# The Chocolatey and MSI install tasks retry per item — package payloads come
+# from external CDNs (GitHub releases, vendor sites) that intermittently time
+# out from the pod network, so retry before declaring the deploy failed.
+windows_desktop_apps_retries: 5
+windows_desktop_apps_retry_delay: 60

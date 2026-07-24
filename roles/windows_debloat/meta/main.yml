@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: windows_debloat
+  author: david-igou
+  description: >-
+    Strip consumer bloat from a Windows guest over psrp/WinRM — remove
+    bloatware Appx packages, disable consumer content / setup nags /
+    suggestions / widgets / telemetry, and uninstall OneDrive. Each pass is
+    independently gated and idempotent.
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - debloat
+    - desktop
+dependencies: []

@@ -1,0 +1,35 @@
+---
+# Converge = apply the windows_debloat role against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: the role play targets `hosts: windows`, and a
+# pattern that matches zero hosts would "pass" silently. Assert the windows
+# group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the role play would match
+          no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# Apply the role. All three passes are exercised: the default Appx bloatware
+# list, the consumer-content/telemetry registry loop, and the OneDrive
+# uninstall. All are idempotent, so the idempotence re-run is changed=0.
+- name: Converge — apply roles/windows_debloat
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Strip consumer bloat
+      ansible.builtin.import_role:
+        name: windows_debloat
+      vars:
+        windows_debloat_disable_consumer_content: true
+        windows_debloat_remove_onedrive: true

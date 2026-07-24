@@ -1,0 +1,68 @@
+---
+argument_specs:
+  main:
+    short_description: "Strip consumer bloat from a Windows guest (Appx, consumer content/nags/telemetry, OneDrive)."
+    description:
+      - >-
+        Runs against a Windows host over psrp/WinRM. Removes bloatware Appx
+        packages (both the provisioned image copies and the all-users
+        installs), writes the machine/user registry values that turn off
+        consumer content, setup nags, Start/Settings suggestions,
+        news-and-interests widgets, and telemetry, and uninstalls the
+        per-user OneDrive client.
+      - >-
+        Each pass is independently gated and idempotent — the Appx removal
+        runs only when windows_debloat_remove_appx is non-empty, the registry
+        pass on windows_debloat_disable_consumer_content, and the OneDrive
+        uninstall on windows_debloat_remove_onedrive.
+    options:
+      windows_debloat_remove_appx:
+        type: list
+        elements: str
+        default:
+          - Clipchamp.Clipchamp
+          - Microsoft.549981C3F5F10
+          - Microsoft.BingNews
+          - Microsoft.BingSearch
+          - Microsoft.BingWeather
+          - Microsoft.GamingApp
+          - Microsoft.GetHelp
+          - Microsoft.Getstarted
+          - Microsoft.MicrosoftOfficeHub
+          - Microsoft.MicrosoftSolitaireCollection
+          - Microsoft.MicrosoftStickyNotes
+          - Microsoft.OutlookForWindows
+          - Microsoft.People
+          - Microsoft.PowerAutomateDesktop
+          - Microsoft.Todos
+          - Microsoft.Windows.DevHome
+          - Microsoft.WindowsAlarms
+          - Microsoft.WindowsFeedbackHub
+          - Microsoft.WindowsSoundRecorder
+          - Microsoft.Xbox.TCUI
+          - Microsoft.XboxGamingOverlay
+          - Microsoft.XboxIdentityProvider
+          - Microsoft.XboxSpeechToTextOverlay
+          - Microsoft.YourPhone
+          - Microsoft.ZuneMusic
+          - Microsoft.ZuneVideo
+          - MSTeams
+          - MicrosoftCorporationII.QuickAssist
+        description: >-
+          Appx identity (DisplayName / package Name) strings to remove,
+          provisioned and all-users. The removal task runs only when this list
+          is non-empty. Defaults to the desktop bloatware set (Bing, Xbox,
+          Teams, Clipchamp, Solitaire, etc.); kept off the list are Store,
+          Terminal, Notepad, Calculator, Photos, Camera, Paint,
+          DesktopAppInstaller and the runtime frameworks.
+      windows_debloat_disable_consumer_content:
+        type: bool
+        default: true
+        description: >-
+          Write the machine + connect-user registry values that disable
+          consumer content, setup nags, suggestions, news-and-interests
+          widgets, and telemetry.
+      windows_debloat_remove_onedrive:
+        type: bool
+        default: true
+        description: "Uninstall the per-user OneDrive client via OneDriveSetup.exe /uninstall."
