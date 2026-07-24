@@ -52,7 +52,11 @@ molecule/
 │   ├── templates/
 │   │   └── windows-unattend.xml.j2  # rendered per-host into a KubeVirt sysprep Secret
 │   └── inventory/
-└── role-ghapp-e2e/
+├── role-ghapp-e2e/
+├── role-windows_computer_use/         # computer-use readiness role
+├── role-windows_debloat/              # consumer-bloat removal role
+├── role-windows_desktop_apps/         # Chocolatey/MSI/Firefox app role
+└── role-windows_power/                # idle-standby/hibernation role
 ```
 
 Each scenario is **self-contained** — no cross-scenario shared plumbing. The

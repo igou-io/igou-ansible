@@ -43,6 +43,20 @@
 #     execution policy (Restricted) blocks, so the guard sets LocalMachine to
 #     RemoteSigned first.
 #
+# ROLE DECOMPOSITION
+#   The in-guest provisioning tasks now live in four reusable roles (each with
+#   its own meta/argument_specs.yml + molecule scenario), imported below with
+#   the windows_desktop_* knobs mapped onto each role's inputs:
+#     * windows_power        - idle standby / hibernation off
+#     * windows_debloat      - bloatware Appx, consumer content/nags, OneDrive
+#     * windows_computer_use - autologon, never-lock/blank, quiet UAC, toasts
+#                              off, logon resolution pin
+#     * windows_desktop_apps - execution-policy guard + Chocolatey + MSI +
+#                              Firefox default (the guard MUST run before any
+#                              Chocolatey work, so this role owns it)
+#   The cluster-side provisioning, guest MTU clamp, Codex desktop app, Remote
+#   Desktop, and verification tasks stay in this playbook.
+#
 # VARIABLES (all prefixed windows_desktop_):
 #   windows_desktop_name            - VM / Secret / Service base name (default codex-desktop)
 #   windows_desktop_namespace       - target namespace (default windows-images)
@@ -506,9 +520,6 @@
       ansible.builtin.wait_for_connection:
         timeout: "{{ windows_desktop_wait_timeout | int }}"
 
-    # Client-SKU default execution policy (Restricted) blocks Chocolatey's
-    # downloaded bootstrap .ps1 — raise LocalMachine to RemoteSigned first.
-    # Idempotent: only writes when more restrictive than an allowed value.
     # KubeVirt masquerade guests must use the pod-network MTU (~1400), but
     # Windows ignores the DHCP-advertised MTU and stays at 1500 — full-size
     # packets can then blackhole on the overlay for some external paths.
@@ -526,114 +537,22 @@
       register: windows_desktop_mtu
       changed_when: "'changed' in windows_desktop_mtu.stdout"
 
-    # Win11 client SKUs sleep on idle by default; a sleeping guest drops RDP,
-    # WinRM, and the qemu guest agent while the VMI still reports Ready
-    # (live-hit 2026-07-19: guest slept and stayed unreachable for 5 days).
+    # --- Power hardening -------------------------------------------------
+    # Idle standby / hibernation off (a sleeping guest drops RDP/WinRM/guest
+    # agent while the VMI still reports Ready). See role: windows_power.
     - name: Disable idle standby and hibernation
-      ansible.windows.win_shell: |
-        $changed = $false
-        $idle = powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE
-        if (-not ($idle | Select-String 'Current AC Power Setting Index: 0x00000000')) {
-          powercfg /change standby-timeout-ac 0
-          $changed = $true
-        }
-        $power = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Power'
-        if ($power.HibernateEnabled -ne 0) {
-          powercfg /hibernate off
-          $changed = $true
-        }
-        if ($changed) { 'changed' } else { 'ok' }
-      register: windows_desktop_power
-      changed_when: "'changed' in windows_desktop_power.stdout"
-      when: windows_desktop_disable_sleep | bool
+      ansible.builtin.import_role:
+        name: windows_power
+      vars:
+        windows_power_disable_sleep: "{{ windows_desktop_disable_sleep }}"
 
     # --- Debloat ---------------------------------------------------------
-    - name: Remove bloatware Appx packages
-      ansible.windows.win_shell: |
-        $targets = @('{{ windows_desktop_remove_appx | join("', '") }}')
-        $removed = @()
-        foreach ($name in $targets) {
-          Get-AppxProvisionedPackage -Online |
-            Where-Object DisplayName -eq $name |
-            ForEach-Object {
-              $_ | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
-              $removed += $name
-            }
-          Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue |
-            ForEach-Object {
-              $_ | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-              $removed += $name
-            }
-        }
-        if ($removed) { "changed: $(($removed | Select-Object -Unique) -join ', ')" } else { 'ok' }
-      register: windows_desktop_appx_removed
-      changed_when: "'changed' in windows_desktop_appx_removed.stdout"
-      when: windows_desktop_debloat | bool
-
-    - name: Disable consumer content, setup nags, suggestions, and telemetry
-      ansible.windows.win_regedit:
-        path: "{{ item.path }}"
-        name: "{{ item.name }}"
-        data: "{{ item.data }}"
-        type: dword
-      loop:
-        # Machine: no auto-installed sponsored apps / "experiences".
-        - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
-          name: DisableWindowsConsumerFeatures
-          data: 1
-        - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
-          name: DisableSoftLanding
-          data: 1
-        # Machine: widgets / news-and-interests off, telemetry to Security.
-        - path: HKLM:\SOFTWARE\Policies\Microsoft\Dsh
-          name: AllowNewsAndInterests
-          data: 0
-        - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection
-          name: AllowTelemetry
-          data: 0
-        # Connect user: no Start/Settings suggestions or silent app installs.
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
-          name: SystemPaneSuggestionsEnabled
-          data: 0
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
-          name: SilentInstalledAppsEnabled
-          data: 0
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
-          name: SubscribedContent-338388Enabled
-          data: 0
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager
-          name: SubscribedContent-338389Enabled
-          data: 0
-        # Connect user: kill the "finish setting up your device" OOBE nag
-        # and Bing suggestions in Start search.
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement
-          name: ScoobeSystemSettingEnabled
-          data: 0
-        - path: HKCU:\SOFTWARE\Policies\Microsoft\Windows\Explorer
-          name: DisableSearchBoxSuggestions
-          data: 1
-      loop_control:
-        label: "{{ item.path }}\\{{ item.name }}"
-      when: windows_desktop_debloat | bool
-
-    - name: Uninstall OneDrive
-      ansible.windows.win_shell: |
-        $setup = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
-        if (-not (Test-Path $setup)) { $setup = "$env:SystemRoot\System32\OneDriveSetup.exe" }
-        $exes = @(
-          "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe",
-          "$env:ProgramFiles\Microsoft OneDrive\OneDrive.exe"
-        )
-        $installed = $exes | Where-Object { Test-Path $_ }
-        if ($installed -and (Test-Path $setup)) {
-          Stop-Process -Name OneDrive -Force -ErrorAction SilentlyContinue
-          & $setup /uninstall
-          'changed'
-        } else {
-          'ok'
-        }
-      register: windows_desktop_onedrive
-      changed_when: "'changed' in windows_desktop_onedrive.stdout"
+    # Bloatware Appx, consumer content/nags, OneDrive. See role: windows_debloat.
+    - name: Strip consumer bloat
+      ansible.builtin.import_role:
+        name: windows_debloat
+      vars:
+        windows_debloat_remove_appx: "{{ windows_desktop_remove_appx }}"
       when: windows_desktop_debloat | bool
 
     # --- Guest clock ------------------------------------------------------
@@ -668,280 +587,30 @@
       changed_when: "'changed' in windows_desktop_ntp.stdout"
 
     # --- Computer-use readiness ------------------------------------------
-    # LAB-ONLY tradeoff: Winlogon auto-logon stores the password readably in
-    # HKLM. Takes effect at next boot; rollout restarts the VM.
-    - name: Enable console auto-logon for the admin user
-      ansible.windows.win_regedit:
-        path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
-        name: "{{ item.name }}"
-        data: "{{ item.data }}"
-        type: string
-      loop:
-        - name: AutoAdminLogon
-          data: '1'
-        - name: DefaultUserName
-          data: "{{ ansible_user }}"
-        - name: DefaultPassword
-          data: "{{ ansible_password }}"
-      no_log: true
-      when: windows_desktop_autologon | bool
+    # Autologon, never-lock/blank, quiet UAC, toasts off, logon resolution pin.
+    # See role: windows_computer_use (autologon user/password default to the
+    # psrp connect identity — ansible_user / ansible_password).
+    - name: Make the desktop ready for computer-use agents
+      ansible.builtin.import_role:
+        name: windows_computer_use
+      vars:
+        windows_computer_use_autologon: "{{ windows_desktop_autologon }}"
+        windows_computer_use_quiet_uac: "{{ windows_desktop_quiet_uac }}"
+        windows_computer_use_disable_notifications: "{{ windows_desktop_disable_notifications }}"
+        windows_computer_use_perf_visuals: "{{ windows_desktop_perf_visuals }}"
+        windows_computer_use_resolution: "{{ windows_desktop_resolution }}"
 
-    - name: Never lock the desktop
-      ansible.windows.win_regedit:
-        path: "{{ item.path }}"
-        name: "{{ item.name }}"
-        data: "{{ item.data }}"
-        type: "{{ item.type }}"
-      loop:
-        - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization
-          name: NoLockScreen
-          data: 1
-          type: dword
-        - path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
-          name: InactivityTimeoutSecs
-          data: 0
-          type: dword
-        - path: HKCU:\Control Panel\Desktop
-          name: ScreenSaveActive
-          data: '0'
-          type: string
-      loop_control:
-        label: "{{ item.path }}\\{{ item.name }}"
-      when: windows_desktop_autologon | bool
-
-    - name: Never power off the display
-      ansible.windows.win_shell: |
-        $idle = powercfg /q SCHEME_CURRENT SUB_VIDEO VIDEOIDLE
-        if ($idle | Select-String 'Current AC Power Setting Index: 0x00000000') {
-          'ok'
-        } else {
-          powercfg /change monitor-timeout-ac 0
-          'changed'
-        }
-      register: windows_desktop_monitor
-      changed_when: "'changed' in windows_desktop_monitor.stdout"
-      when: windows_desktop_autologon | bool
-
-    # UAC prompts render on a separate secure desktop that screen-driven
-    # agents can't see or click, so elevation would hang a computer-use run.
-    # EnableLUA stays 1: MSIX/Store apps (including the Codex app itself)
-    # refuse to run with UAC fully disabled.
-    - name: Elevate admins silently, off the secure desktop
-      ansible.windows.win_regedit:
-        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
-        name: "{{ item.name }}"
-        data: "{{ item.data }}"
-        type: dword
-      loop:
-        - name: ConsentPromptBehaviorAdmin
-          data: 0
-        - name: PromptOnSecureDesktop
-          data: 0
-      loop_control:
-        label: "{{ item.name }}"
-      when: windows_desktop_quiet_uac | bool
-
-    - name: Disable toast notifications for the connect user
-      ansible.windows.win_regedit:
-        path: "{{ item.path }}"
-        name: "{{ item.name }}"
-        data: 0
-        type: dword
-      loop:
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications
-          name: ToastEnabled
-        - path: HKCU:\Software\Policies\Microsoft\Windows\Explorer
-          name: EnableNotificationCenter
-      loop_control:
-        label: "{{ item.path }}\\{{ item.name }}"
-      when: windows_desktop_disable_notifications | bool
-
-    # Software-rendered VGA has no GPU to spend on eye candy, and animations/
-    # fades blur mid-transition screenshots for computer-use agents. The
-    # UserPreferencesMask value is the "adjust for best performance" set with
-    # the font-smoothing bit kept ON (ClearType helps vision agents read
-    # text). Per-user; applies at next logon.
-    - name: Tune visual effects for performance over appearance
-      ansible.windows.win_regedit:
-        path: "{{ item.path }}"
-        name: "{{ item.name }}"
-        data: "{{ item.data }}"
-        type: "{{ item.type }}"
-      loop:
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects
-          name: VisualFXSetting
-          data: 2
-          type: dword
-        - path: HKCU:\Control Panel\Desktop
-          name: UserPreferencesMask
-          data: hex:90,12,03,80,10,00,00,00
-          type: binary
-        - path: HKCU:\Control Panel\Desktop
-          name: DragFullWindows
-          data: '0'
-          type: string
-        - path: HKCU:\Control Panel\Desktop
-          name: MenuShowDelay
-          data: '0'
-          type: string
-        - path: HKCU:\Control Panel\Desktop\WindowMetrics
-          name: MinAnimate
-          data: '0'
-          type: string
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
-          name: TaskbarAnimations
-          data: 0
-          type: dword
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
-          name: ListviewAlphaSelect
-          data: 0
-          type: dword
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
-          name: ListviewShadow
-          data: 0
-          type: dword
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
-          name: IconsOnly
-          data: 1
-          type: dword
-        - path: HKCU:\Software\Microsoft\Windows\DWM
-          name: EnableAeroPeek
-          data: 0
-          type: dword
-        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize
-          name: EnableTransparency
-          data: 0
-          type: dword
-      loop_control:
-        label: "{{ item.path }}\\{{ item.name }}"
-      when: windows_desktop_perf_visuals | bool
-
-    # Resolution can only be changed from an interactive session, never over
-    # WinRM (no desktop attached), so a logon scheduled task pins it in the
-    # user's own session — deterministic screenshots for computer use, and it
-    # self-heals whatever an RDP client negotiated previously.
-    - name: Stage the resolution-pinning script
-      ansible.windows.win_copy:
-        dest: C:\ProgramData\pin-resolution.ps1
-        content: |
-          $w = {{ (windows_desktop_resolution.split('x'))[0] | int }}
-          $h = {{ (windows_desktop_resolution.split('x'))[1] | int }}
-          Add-Type @'
-          using System;
-          using System.Runtime.InteropServices;
-          public class Display {
-            [DllImport("user32.dll")] public static extern int EnumDisplaySettings(string deviceName, int modeNum, ref DEVMODE devMode);
-            [DllImport("user32.dll")] public static extern int ChangeDisplaySettings(ref DEVMODE devMode, int flags);
-            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
-            public struct DEVMODE {
-              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
-              public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
-              public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
-              public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
-              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
-              public short dmLogPixels;
-              public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
-              public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
-            }
-          }
-          '@
-          $dm = New-Object Display+DEVMODE
-          $dm.dmSize = [System.Runtime.InteropServices.Marshal]::SizeOf($dm)
-          [Display]::EnumDisplaySettings($null, -1, [ref]$dm) | Out-Null
-          if ($dm.dmPelsWidth -ne $w -or $dm.dmPelsHeight -ne $h) {
-            $dm.dmPelsWidth = $w
-            $dm.dmPelsHeight = $h
-            $dm.dmFields = 0x80000 -bor 0x100000
-            [Display]::ChangeDisplaySettings([ref]$dm, 1) | Out-Null
-          }
-      when: windows_desktop_resolution | length > 0
-
-    - name: Pin the display resolution at logon
-      community.windows.win_scheduled_task:
-        name: pin-display-resolution
-        description: Managed by Ansible — pin resolution for computer-use determinism
-        actions:
-          - path: '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-            arguments: -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\pin-resolution.ps1
-        triggers:
-          - type: logon
-            user_id: "{{ ansible_user }}"
-        username: "{{ ansible_user }}"
-        logon_type: interactive_token
-        run_level: highest
-        state: present
-        enabled: true
-      when: windows_desktop_resolution | length > 0
-
-    - name: Ensure the execution policy permits the Chocolatey bootstrap
-      ansible.windows.win_shell: |
-        $ok = @('RemoteSigned', 'Unrestricted', 'Bypass')
-        if ((Get-ExecutionPolicy -Scope LocalMachine) -notin $ok) {
-          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
-          'changed'
-        } else {
-          'ok'
-        }
-      register: windows_desktop_execpolicy
-      changed_when: "'changed' in windows_desktop_execpolicy.stdout"
-
-    # Package payloads download from external CDNs (GitHub releases for
-    # powershell-core/codex) which intermittently time out from the pod
-    # network — retry per package before declaring the deploy failed.
-    - name: Install desktop applications with Chocolatey
-      chocolatey.chocolatey.win_chocolatey:
-        name: "{{ item.name }}"
-        version: "{{ item.version | default(omit) }}"
-        state: "{{ item.state | default('present') }}"
-      loop: "{{ windows_desktop_apps }}"
-      loop_control:
-        label: "{{ item.name }}"
-      register: windows_desktop_choco
-      until: windows_desktop_choco is succeeded
-      retries: 5
-      delay: 60
-
-    - name: Install extra MSI/EXE packages
-      ansible.windows.win_package:
-        path: "{{ item.path }}"
-        product_id: "{{ item.product_id | default(omit) }}"
-        arguments: "{{ item.arguments | default(omit) }}"
-        creates_path: "{{ item.creates_path | default(omit) }}"
-        state: present
-      loop: "{{ windows_desktop_msi_packages }}"
-      loop_control:
-        label: "{{ item.path }}"
-      register: windows_desktop_msi
-      until: windows_desktop_msi is succeeded
-      retries: 5
-      delay: 60
-
-    # Windows guards http/https UserChoice with a per-user hash, so plain
-    # registry writes are rejected. Firefox's own default-browser-agent
-    # computes the valid hash (it backs the in-product "Set as default"
-    # button) and works headless. Per-user: applies to the psrp connect
-    # user (windows_desktop_admin_user) only. Verified by re-reading the
-    # UserChoice ProgId — if Windows (e.g. the UCPD driver on newer builds)
-    # rejects the write, this task FAILS rather than pretending.
-    - name: Make Firefox the default browser
-      ansible.windows.win_shell: |
-        $key = 'HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice'
-        $progid = (Get-ItemProperty $key -ErrorAction SilentlyContinue).ProgId
-        if ($progid -like 'FirefoxURL*') {
-          'ok'
-        } else {
-          & "$env:ProgramFiles\Mozilla Firefox\default-browser-agent.exe" set-default-browser-user-choice
-          Start-Sleep -Seconds 3
-          $progid = (Get-ItemProperty $key -ErrorAction SilentlyContinue).ProgId
-          if ($progid -like 'FirefoxURL*') {
-            'changed'
-          } else {
-            throw "http default is '$progid', not Firefox — UserChoice write was rejected"
-          }
-        }
-      register: windows_desktop_default_browser
-      changed_when: "'changed' in windows_desktop_default_browser.stdout"
-      when: windows_desktop_firefox_default | bool
+    # --- Applications ----------------------------------------------------
+    # Execution-policy guard (MUST run before any Chocolatey work — the role
+    # owns it) + Chocolatey set + direct MSI/EXE installers + Firefox default.
+    # See role: windows_desktop_apps.
+    - name: Install desktop applications
+      ansible.builtin.import_role:
+        name: windows_desktop_apps
+      vars:
+        windows_desktop_apps_packages: "{{ windows_desktop_apps }}"
+        windows_desktop_apps_msi_packages: "{{ windows_desktop_msi_packages }}"
+        windows_desktop_apps_firefox_default: "{{ windows_desktop_firefox_default }}"
 
     # --- Codex/ChatGPT desktop app ---------------------------------------
     # No Store session exists over WinRM, so install OpenAI's offline

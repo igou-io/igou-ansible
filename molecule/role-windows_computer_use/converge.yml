@@ -1,0 +1,38 @@
+---
+# Converge = apply the REAL role against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: play 2 targets `hosts: windows`, and a
+# pattern that matches zero hosts would "pass" silently. Assert the windows
+# group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the role play would match
+          no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# Apply roles/windows_computer_use over psrp. The autologon user/password
+# default to the psrp connection identity (ansible_user / ansible_password),
+# which the provisioner wrote into the runtime inventory. Every task must be
+# idempotent — the idempotence action re-runs this and requires changed=0.
+- name: Converge — apply the windows_computer_use role
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Ready the desktop for computer use
+      ansible.builtin.import_role:
+        name: windows_computer_use
+      vars:
+        windows_computer_use_autologon: true
+        windows_computer_use_quiet_uac: true
+        windows_computer_use_disable_notifications: true
+        windows_computer_use_resolution: 1920x1080

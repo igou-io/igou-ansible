@@ -1,0 +1,78 @@
+---
+# Client-SKU default execution policy (Restricted) blocks Chocolatey's
+# downloaded bootstrap .ps1 — raise LocalMachine to RemoteSigned first.
+# Idempotent: only writes when more restrictive than an allowed value.
+# MUST stay first: the Chocolatey install below depends on it.
+- name: Ensure the execution policy permits the Chocolatey bootstrap
+  ansible.windows.win_shell: |
+    $ok = @('RemoteSigned', 'Unrestricted', 'Bypass')
+    if ((Get-ExecutionPolicy -Scope LocalMachine) -notin $ok) {
+      Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
+      'changed'
+    } else {
+      'ok'
+    }
+  register: windows_desktop_apps_execpolicy
+  changed_when: "'changed' in windows_desktop_apps_execpolicy.stdout"
+
+# Package payloads download from external CDNs (GitHub releases for
+# powershell-core/codex) which intermittently time out from the pod
+# network — retry per package before declaring the deploy failed.
+- name: Install desktop applications with Chocolatey
+  chocolatey.chocolatey.win_chocolatey:
+    name: "{{ item.name }}"
+    version: "{{ item.version | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ windows_desktop_apps_packages }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: windows_desktop_apps_choco
+  until: windows_desktop_apps_choco is succeeded
+  retries: "{{ windows_desktop_apps_retries }}"
+  delay: "{{ windows_desktop_apps_retry_delay }}"
+
+- name: Install extra MSI/EXE packages
+  ansible.windows.win_package:
+    path: "{{ item.path }}"
+    product_id: "{{ item.product_id | default(omit) }}"
+    arguments: "{{ item.arguments | default(omit) }}"
+    creates_path: "{{ item.creates_path | default(omit) }}"
+    state: present
+  loop: "{{ windows_desktop_apps_msi_packages }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: windows_desktop_apps_msi
+  until: windows_desktop_apps_msi is succeeded
+  retries: "{{ windows_desktop_apps_retries }}"
+  delay: "{{ windows_desktop_apps_retry_delay }}"
+
+# Windows guards http/https UserChoice with a per-user hash, so plain
+# registry writes are rejected. Firefox's own default-browser-agent
+# computes the valid hash (it backs the in-product "Set as default"
+# button) and works headless. Per-user: applies to the psrp connect
+# user (ansible_user) only. CONSTRAINT: the write only takes when the
+# connect user has an interactive session (e.g. an autologon console
+# session, as deploy_windows_desktop configures) — on a host where the
+# user has never logged on interactively Windows rejects it (live-hit:
+# molecule clone kept ProgId MSEdgeHTM). Verified by re-reading the
+# UserChoice ProgId — if Windows (e.g. the UCPD driver on newer builds)
+# rejects the write, this task FAILS rather than pretending.
+- name: Make Firefox the default browser
+  ansible.windows.win_shell: |
+    $key = 'HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice'
+    $progid = (Get-ItemProperty $key -ErrorAction SilentlyContinue).ProgId
+    if ($progid -like 'FirefoxURL*') {
+      'ok'
+    } else {
+      & "$env:ProgramFiles\Mozilla Firefox\default-browser-agent.exe" set-default-browser-user-choice
+      Start-Sleep -Seconds 3
+      $progid = (Get-ItemProperty $key -ErrorAction SilentlyContinue).ProgId
+      if ($progid -like 'FirefoxURL*') {
+        'changed'
+      } else {
+        throw "http default is '$progid', not Firefox — UserChoice write was rejected"
+      }
+    }
+  register: windows_desktop_apps_default_browser
+  changed_when: "'changed' in windows_desktop_apps_default_browser.stdout"
+  when: windows_desktop_apps_firefox_default | bool

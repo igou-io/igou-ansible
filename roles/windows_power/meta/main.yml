@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: windows_power
+  author: david-igou
+  description: >-
+    Disable idle standby and hibernation on a Windows guest so a KubeVirt VM
+    stays reachable over RDP/WinRM/guest-agent (a sleeping guest drops all
+    three while the VMI still reports Ready). Tiny single-concern role.
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - power
+    - kubevirt
+dependencies: []

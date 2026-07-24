@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: windows_desktop_apps
+  author: david-igou
+  description: >-
+    Provision desktop applications on a Windows guest over psrp/WinRM:
+    a Chocolatey app set, direct MSI/EXE installers, and (optionally)
+    Firefox as the default browser. Extracted from the
+    deploy_windows_desktop playbook; generic and reusable.
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - chocolatey
+    - desktop
+    - applications
+dependencies: []

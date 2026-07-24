@@ -1,0 +1,26 @@
+---
+# Computer-use readiness: screen-driven agents (e.g. Codex computer use) need a
+# desktop that is always logged on, never locks, never blanks, and never loses
+# focus to prompts/toasts it cannot see.
+
+# Console auto-logon as the connect user + never lock/blank the desktop.
+# LAB-ONLY: stores the password readably in the Winlogon registry; takes effect
+# next boot. Gates the autologon, never-lock, and never-blank-display tasks.
+windows_computer_use_autologon: true
+windows_computer_use_autologon_user: "{{ ansible_user }}"
+windows_computer_use_autologon_password: "{{ ansible_password }}"
+
+# Admins elevate silently and UAC prompts stay off the secure desktop.
+# EnableLUA stays 1 — MSIX/Store apps (incl. the Codex app) break without UAC.
+windows_computer_use_quiet_uac: true
+
+# Toast notifications off for the connect user.
+windows_computer_use_disable_notifications: true
+
+# Visual effects tuned for performance over appearance: animations, fades,
+# transparency, shadows, and Aero Peek off, thumbnails replaced by icons —
+# ClearType stays on (vision agents read text). Per-user; applies at next logon.
+windows_computer_use_perf_visuals: true
+
+# WxH pinned at each logon via a scheduled task ('' = leave the resolution alone).
+windows_computer_use_resolution: "1920x1080"

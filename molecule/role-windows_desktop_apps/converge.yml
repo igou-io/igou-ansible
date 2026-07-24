@@ -1,0 +1,46 @@
+---
+# Converge = apply the role under test against the provisioned VM.
+#
+# Play 1 is the vacuous-pass trap: a play whose host pattern matches zero hosts
+# "passes" silently. Assert the windows group is non-empty first.
+- name: Converge — assert the windows group will match at least one host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert the windows inventory group is non-empty
+      ansible.builtin.assert:
+        that:
+          - groups['windows'] | default([]) | length > 0
+        fail_msg: >-
+          The `windows` inventory group is empty, so the converge play below
+          would match no hosts and pass vacuously. Check inventory/hosts.yml.
+        success_msg: >-
+          windows group has {{ groups['windows'] | length }} host(s):
+          {{ groups['windows'] | join(', ') }}.
+
+# Apply roles/windows_desktop_apps with a small, deterministic app set:
+# 7zip + firefox (both put a well-known binary on disk that verify checks
+# independently) and no MSI packages. The MSI path is exercised in production
+# by the deploy_windows_desktop playbook's Chrome MSI, so it is left empty
+# here. firefox_default stays FALSE: the default-browser-agent UserChoice
+# write is rejected on a host whose connect user has never had an interactive
+# session (live-hit on this scenario: ProgId stayed MSEdgeHTM), and the
+# role's honest-failure contract makes that a hard fail. Production
+# (deploy_windows_desktop) runs it under an autologon console session, where
+# it is proven. The FIRST converge bootstraps Chocolatey itself from
+# community.chocolatey.org (the cluster has egress), so it is slow; the
+# idempotence re-run is fast and changed=0.
+- name: Converge — apply the windows_desktop_apps role
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Import the windows_desktop_apps role
+      ansible.builtin.import_role:
+        name: windows_desktop_apps
+      vars:
+        windows_desktop_apps_packages:
+          - name: 7zip
+          - name: firefox
+        windows_desktop_apps_firefox_default: false
+        windows_desktop_apps_msi_packages: []

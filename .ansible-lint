@@ -46,3 +46,29 @@ exclude_paths:
   - molecule/playbook-windows-*/create.yml
   - molecule/playbook-windows-*/destroy.yml
   - molecule/playbook-windows-*/prepare.yml
+  # role-windows_debloat: same david_igou.molecule_provisioners shim situation.
+  # converge/verify/windows-sysprep-secrets stay linted.
+  - molecule/role-windows_debloat/create.yml
+  - molecule/role-windows_debloat/destroy.yml
+  - molecule/role-windows_debloat/prepare.yml
+  # role-windows_power provisioner shims: same david_igou.molecule_provisioners
+  # situation as above. create carries a real preflight play and imports the
+  # sysprep-secret play; all three only import_playbook the external collection.
+  # converge/verify stay linted in CI.
+  - molecule/role-windows_power/create.yml
+  - molecule/role-windows_power/destroy.yml
+  - molecule/role-windows_power/prepare.yml
+  # role-windows_computer_use provisioner shims: same david_igou.molecule_provisioners
+  # situation as above. create carries a real preflight play and imports the
+  # sysprep-secret play; all three only import_playbook the external collection.
+  # converge/verify stay linted in CI.
+  - molecule/role-windows_computer_use/create.yml
+  - molecule/role-windows_computer_use/destroy.yml
+  - molecule/role-windows_computer_use/prepare.yml
+  # role-windows_desktop_apps provisioner shims: same david_igou.molecule_provisioners
+  # situation as above. create carries a real preflight play and imports the
+  # sysprep-secret play; all three only import_playbook the external collection.
+  # converge/verify/windows-sysprep-secrets stay linted in CI.
+  - molecule/role-windows_desktop_apps/create.yml
+  - molecule/role-windows_desktop_apps/destroy.yml
+  - molecule/role-windows_desktop_apps/prepare.yml

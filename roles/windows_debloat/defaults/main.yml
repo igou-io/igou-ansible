@@ -1,0 +1,89 @@
+---
+# Appx identities removed by the debloat pass (provisioned + all-users). The
+# removal task runs only when this list is non-empty.
+# Default = runtime parity with ntdevlabs/tiny11builder (tiny11maker.ps1)
+# merged with the original desktop bloatware set. Kept (also kept by tiny11):
+# Store, Notepad, Calculator, Photos, DesktopAppInstaller and the runtime
+# frameworks. Pass a narrower list to keep apps — e.g. the
+# deploy_windows_desktop playbook keeps Terminal, Paint and Camera.
+windows_debloat_remove_appx:
+  - AppUp.IntelManagementandSecurityStatus
+  - Clipchamp.Clipchamp
+  - DolbyLaboratories.DolbyAccess
+  - DolbyLaboratories.DolbyDigitalPlusDecoderOEM
+  - Microsoft.549981C3F5F10
+  - Microsoft.BingNews
+  - Microsoft.BingSearch
+  - Microsoft.BingWeather
+  - Microsoft.Copilot
+  - Microsoft.GamingApp
+  - Microsoft.GetHelp
+  - Microsoft.Getstarted
+  - Microsoft.Microsoft3DViewer
+  - Microsoft.MicrosoftOfficeHub
+  - Microsoft.MicrosoftSolitaireCollection
+  - Microsoft.MicrosoftStickyNotes
+  - Microsoft.MixedReality.Portal
+  - Microsoft.MSPaint
+  - Microsoft.Office.OneNote
+  - Microsoft.OfficePushNotificationUtility
+  - Microsoft.OutlookForWindows
+  - Microsoft.Paint
+  - Microsoft.People
+  - Microsoft.PowerAutomateDesktop
+  - Microsoft.SkypeApp
+  - Microsoft.StartExperiencesApp
+  - Microsoft.Todos
+  - Microsoft.Wallet
+  - Microsoft.Windows.Copilot
+  - Microsoft.Windows.CrossDevice
+  - Microsoft.Windows.DevHome
+  - Microsoft.Windows.Teams
+  - Microsoft.WindowsAlarms
+  - Microsoft.WindowsCamera
+  - microsoft.windowscommunicationsapps
+  - Microsoft.WindowsFeedbackHub
+  - Microsoft.WindowsMaps
+  - Microsoft.WindowsSoundRecorder
+  - Microsoft.WindowsTerminal
+  - Microsoft.Xbox.TCUI
+  - Microsoft.XboxApp
+  - Microsoft.XboxGameOverlay
+  - Microsoft.XboxGamingOverlay
+  - Microsoft.XboxIdentityProvider
+  - Microsoft.XboxSpeechToTextOverlay
+  - Microsoft.YourPhone
+  - Microsoft.ZuneMusic
+  - Microsoft.ZuneVideo
+  - MicrosoftCorporationII.MicrosoftFamily
+  - MicrosoftCorporationII.QuickAssist
+  - MicrosoftTeams
+  - MSTeams
+
+# Disable consumer content, sponsored apps, setup nags, suggestions, widgets,
+# Start-pin seeding, chat/Teams/New-Outlook/DevHome pushes, and the machine
+# telemetry policy (the win_regedit loop).
+windows_debloat_disable_consumer_content: true
+
+# Disable per-user telemetry/privacy collection (advertising id, tailored
+# experiences, speech/ink/typing harvesting), the dmwappushservice, and the
+# telemetry scheduled tasks (Compatibility Appraiser, CEIP, ProgramDataUpdater,
+# Chkdsk Proxy, WER QueueReporting).
+windows_debloat_disable_telemetry: true
+
+# Turn off Windows Copilot (policy), the Edge Copilot sidebar, and Bing/search
+# box suggestions machine-wide.
+windows_debloat_disable_copilot: true
+
+# Uninstall the per-user OneDrive client and set the DisableFileSyncNGSC
+# policy so it stays gone for every user.
+windows_debloat_remove_onedrive: true
+
+# Disable Windows reserved storage (frees ~7 GiB; tiny11 does this image-time
+# via ShippedWithReserves=0).
+windows_debloat_disable_reserved_storage: true
+
+# Uninstall the Edge browser via its own installer (--force-uninstall).
+# Opt-in: newer Win11 builds gate Edge removal, and the WebView2 runtime is
+# deliberately kept either way (MSIX/Store apps depend on it).
+windows_debloat_remove_edge: false

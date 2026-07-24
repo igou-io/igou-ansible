@@ -1,0 +1,21 @@
+---
+# Win11 client SKUs sleep on idle by default; a sleeping guest drops RDP,
+# WinRM, and the qemu guest agent while the VMI still reports Ready
+# (live-hit 2026-07-19: guest slept and stayed unreachable for 5 days).
+- name: Disable idle standby and hibernation
+  ansible.windows.win_shell: |
+    $changed = $false
+    $idle = powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE
+    if (-not ($idle | Select-String 'Current AC Power Setting Index: 0x00000000')) {
+      powercfg /change standby-timeout-ac 0
+      $changed = $true
+    }
+    $power = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Power'
+    if ($power.HibernateEnabled -ne 0) {
+      powercfg /hibernate off
+      $changed = $true
+    }
+    if ($changed) { 'changed' } else { 'ok' }
+  register: windows_power_result
+  changed_when: "'changed' in windows_power_result.stdout"
+  when: windows_power_disable_sleep | bool

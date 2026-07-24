@@ -1,0 +1,12 @@
+---
+# Destroy = tear down the VM + NodePort service (provisioner), then delete the
+# per-host sysprep Secrets this scenario created. state: absent is idempotent,
+# so a second destroy (or a destroy after a failed create) is a safe no-op. The
+# molecule namespace must end empty of scenario resources.
+- name: Destroy — tear down molecule instances
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
+
+- name: Destroy — remove the per-host sysprep Secrets
+  ansible.builtin.import_playbook: windows-sysprep-secrets.yml
+  vars:
+    windows_sysprep_state: absent

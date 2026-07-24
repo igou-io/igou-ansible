@@ -1,0 +1,85 @@
+---
+# Verify = INDEPENDENT evidence the role actually installed the apps and set the
+# default browser — not a re-read of the facts the role itself registered. Three
+# independent angles: what Chocolatey's OWN database reports, what is on disk,
+# and what Windows recorded as the http UserChoice ProgId.
+- name: Verify — independent evidence for windows_desktop_apps
+  hosts: windows
+  gather_facts: false
+  vars:
+    # Well-known install locations for the two packages (x64 Program Files).
+    seven_zip_exe: 'C:\Program Files\7-Zip\7z.exe'
+    firefox_exe: 'C:\Program Files\Mozilla Firefox\firefox.exe'
+  tasks:
+    # `choco list` lists installed (local) packages. Chocolatey v2 made that the
+    # default and deprecated/removed the v1 `--local-only` flag; v1 needs
+    # `--local-only` (bare `choco list` there hits the remote feed). Try the v1
+    # form first and fall back to the v2 form if it errors, so this read reports
+    # LOCALLY INSTALLED packages regardless of the golden's choco version.
+    # Resolve choco.exe by absolute path, not PATH: Chocolatey's install adds
+    # its bin dir to the MACHINE PATH, but the WinRM service's environment
+    # block was cached at service start (before the bootstrap), so a fresh
+    # psrp session does NOT see `choco` on PATH until the service restarts or
+    # the box reboots. The win_chocolatey module sidesteps this by calling
+    # choco.exe by absolute path; this independent read does the same.
+    - name: List locally installed Chocolatey packages (independent read)
+      ansible.windows.win_shell: |
+        $choco = Join-Path $env:ProgramData 'chocolatey\bin\choco.exe'
+        $out = & $choco list --local-only --limit-output 2>$null
+        if ($LASTEXITCODE -ne 0) { $out = & $choco list --limit-output 2>$null }
+        $out
+      register: _choco_list
+      changed_when: false
+
+    - name: Assert both packages are installed per Chocolatey's own database
+      ansible.builtin.assert:
+        that:
+          - "'7zip' in (_choco_list.stdout | lower)"
+          - "'firefox' in (_choco_list.stdout | lower)"
+        fail_msg: >-
+          `choco list` did not report both packages. Output was:
+          {{ _choco_list.stdout }}
+        success_msg: Chocolatey reports both 7zip and firefox installed.
+
+    - name: Stat the 7-Zip binary on disk (independent read)
+      ansible.windows.win_stat:
+        path: "{{ seven_zip_exe }}"
+      register: _7z_stat
+
+    - name: Stat the Firefox binary on disk (independent read)
+      ansible.windows.win_stat:
+        path: "{{ firefox_exe }}"
+      register: _firefox_stat
+
+    - name: Assert both application binaries exist on disk
+      ansible.builtin.assert:
+        that:
+          - _7z_stat.stat.exists
+          - _firefox_stat.stat.exists
+        fail_msg: >-
+          Expected installed binaries missing:
+          7-Zip exists={{ _7z_stat.stat.exists }},
+          Firefox exists={{ _firefox_stat.stat.exists }}.
+        success_msg: >-
+          Both application binaries are on disk ({{ seven_zip_exe }} and
+          {{ firefox_exe }}).
+
+    # No Firefox-as-default check: converge runs firefox_default=false because
+    # the UserChoice write needs an interactive session for the connect user
+    # (see the converge.yml header). The honest-failure semantics of that task
+    # are still covered — a rejected write throws instead of passing.
+
+    # Diagnostics: the marker proves the sysprep specialize path ran.
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: 'C:\molecule-specialize-done.txt'
+      register: _marker
+
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _marker.stat.exists
+        fail_msg: >-
+          C:\molecule-specialize-done.txt is missing — the sysprep unattend
+          FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.

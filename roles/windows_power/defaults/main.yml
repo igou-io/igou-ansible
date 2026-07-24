@@ -1,0 +1,3 @@
+---
+# Gate the idle-standby/hibernation hardening task. Default true.
+windows_power_disable_sleep: true

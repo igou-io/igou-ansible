@@ -1,0 +1,58 @@
+---
+# Verify = INDEPENDENT evidence the role actually disabled sleep + hibernation,
+# not a re-read of the register the role itself populated. Two independent
+# angles: what powercfg reports for the AC standby-idle timeout, and the raw
+# HibernateEnabled registry value.
+- name: Verify — independent evidence for windows_power
+  hosts: windows
+  gather_facts: false
+  tasks:
+    # powercfg /q dumps the active scheme's SUB_SLEEP/STANDBYIDLE setting;
+    # a zeroed AC idle standby-timeout shows AC index 0x00000000. This is the
+    # role's own probe run independently, reading live power config.
+    - name: Query the AC idle standby-timeout (independent read)
+      ansible.windows.win_shell: powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE
+      register: _standby
+      changed_when: false
+
+    - name: Assert the AC idle standby-timeout is zeroed
+      ansible.builtin.assert:
+        that:
+          - "'Current AC Power Setting Index: 0x00000000' in _standby.stdout"
+        fail_msg: >-
+          powercfg does not report a zeroed AC standby-idle index. Output was:
+          {{ _standby.stdout }}
+        success_msg: AC idle standby-timeout is 0x00000000 (disabled).
+
+    # Raw registry read of the hibernation flag — HibernateEnabled = 0 means
+    # `powercfg /hibernate off` took effect.
+    - name: Read HibernateEnabled from the Power control key (independent read)
+      ansible.windows.win_reg_stat:
+        path: HKLM:\SYSTEM\CurrentControlSet\Control\Power
+        name: HibernateEnabled
+      register: _hibernate
+
+    - name: Assert hibernation is disabled
+      ansible.builtin.assert:
+        that:
+          - _hibernate.exists
+          - _hibernate.value | int == 0
+        fail_msg: >-
+          HKLM:\SYSTEM\CurrentControlSet\Control\Power HibernateEnabled is
+          "{{ _hibernate.value | default('<absent>') }}", expected 0.
+        success_msg: HibernateEnabled = 0 (hibernation disabled).
+
+    # Diagnostics: the marker proves the sysprep specialize path ran.
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: 'C:\molecule-specialize-done.txt'
+      register: _marker
+
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _marker.stat.exists
+        fail_msg: >-
+          C:\molecule-specialize-done.txt is missing — the sysprep unattend
+          FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.
