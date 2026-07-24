@@ -11,7 +11,7 @@
 #   an execution-policy guard, power hardening (idle standby/hibernation off —
 #   a sleeping guest drops RDP/WinRM/guest-agent while the VMI still shows
 #   Ready), a Chocolatey app set (PowerShell 7 + git + nodejs-lts + python +
-#   the Codex CLI), the Codex/ChatGPT desktop app, optional direct MSI
+#   Firefox + the Codex CLI), the Codex/ChatGPT desktop app, optional direct MSI
 #   installers, and Remote Desktop. An operator then RDPs in to complete the
 #   one-time, MANDATORY interactive Codex sign-in (ChatGPT OAuth — no headless
 #   path exists for the app; the CLI supports OPENAI_API_KEY auth).
@@ -125,6 +125,7 @@
       - name: nodejs-lts
       - name: python
       - name: codex
+      - name: firefox
     windows_desktop_msi_packages: []
     windows_desktop_disable_sleep: true
     windows_desktop_codex_app: true
