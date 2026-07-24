@@ -500,10 +500,12 @@
     # machine-wide. It registers into a user profile at that user's next
     # logon — after first converge, log off/on (or reboot) before expecting
     # it in the Start menu.
+    # The MSIX file is named ChatGPT-x64 but the package identity is
+    # OpenAI.Codex (live-verified: OpenAI.Codex_26.715.10079.0_x64_...).
     - name: Check whether the Codex desktop app is provisioned
       ansible.windows.win_shell: |
         $pkg = Get-AppxProvisionedPackage -Online |
-          Where-Object PackageName -like '*ChatGPT*'
+          Where-Object PackageName -like 'OpenAI.Codex_*'
         if ($pkg) { 'present' } else { 'absent' }
       register: windows_desktop_codex_app_state
       changed_when: false
@@ -599,7 +601,7 @@
     - name: Assert the Codex desktop app is provisioned
       ansible.windows.win_shell: |
         $pkg = Get-AppxProvisionedPackage -Online |
-          Where-Object PackageName -like '*ChatGPT*'
+          Where-Object PackageName -like 'OpenAI.Codex_*'
         if (-not $pkg) { throw 'Codex desktop app not provisioned' }
         $pkg.PackageName
       changed_when: false
