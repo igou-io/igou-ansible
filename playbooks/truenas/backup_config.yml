@@ -1,45 +1,39 @@
 ---
-# Back up the TrueNAS configuration DB (with secret seed) off-box to igounas
-# (igou-inventory#126), mirroring the shape of playbooks/routeros/backup_s3.yaml.
+# Back up the TrueNAS configuration DB (with secret seed) to the cold pool
+# (igou-inventory#126), mirroring the artifact/retention shape of
+# playbooks/routeros/backup_s3.yaml.
 #
-# Why igounas: the bundle must not land on the TrueNAS host itself — BOTH
-# rustfs S3 instances live there, so the lab's usual S3 targets share the
-# blast radius. The Synology is the only storage that survives losing the
-# TrueNAS box.
+# ⚠ INTERIM TARGET: the bundle lands on the box's own cold pool for now —
+# it survives ssd/boot-pool loss (the config-restore scenario this issue
+# was filed for) but dies with the host. An offsite target replaces this
+# later; the play keeps the fetch/store legs separate so only the store
+# leg changes.
 #
 # Flow:
-#   1. On truenas: midclt core.download('config.save', {secretseed: true})
-#      → transient authenticated /_download URL → curl to a /tmp staging file.
+#   1. midclt core.download('config.save', {secretseed: true}) → transient
+#      authenticated /_download URL → curl straight into the backup dir.
 #      (config.save is a download-job; core.download is the scriptable path
 #      to its artifact. The seed makes the tarball restore secrets onto new
-#      hardware — and makes it credential-grade: it never lingers on truenas
-#      and lands 0600 on the target.)
-#   2. Fetch the bundle to the controller, remove it from truenas.
-#   3. On igounas: upload (checksum-verified by copy), prune to the newest
-#      truenas_config_backup_retention bundles, list what's kept.
-#
-# igounas is DSM 7: no sftp/scp subsystem (ansible uses ssh+python, which
-# works), python 3.8, single `igou` user.
+#      hardware — and makes it credential-grade: dir 0700, bundle 0600.)
+#   2. Prune to the newest truenas_config_backup_retention bundles.
 #
 # Variables (igou-inventory group_vars/truenas.yml):
-#   truenas_config_backup_dir       — target directory on igounas
+#   truenas_config_backup_dir       — target directory on the cold pool
 #   truenas_config_backup_retention — bundles to keep (default 30)
-- name: Export the TrueNAS config bundle
+- name: Back up the TrueNAS config bundle to the cold pool
   hosts: truenas
   gather_facts: false
-  become: false
+  become: true
   vars:
     truenas_config_backup_file: "truenas-config-{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}.tar"
+    truenas_config_backup_retention: 30
   tasks:
 
-    - name: Create staging directory on the control node
-      ansible.builtin.tempfile:
+    - name: Ensure the backup directory exists
+      ansible.builtin.file:
+        path: "{{ truenas_config_backup_dir }}"
         state: directory
-        prefix: truenas-config-backup-
-      register: truenas_config_stage
-      delegate_to: localhost
-      connection: local
-      changed_when: false
+        mode: "0700"
 
     - name: Request a config.save download job (secret seed included)
       ansible.builtin.command:
@@ -53,7 +47,7 @@
       register: truenas_config_download
       changed_when: true
 
-    - name: Download the bundle to /tmp on truenas
+    - name: Download the bundle into the backup directory
       vars:
         truenas_config_download_url: "{{ (truenas_config_download.stdout | from_json)[1] }}"
       ansible.builtin.command:
@@ -64,59 +58,26 @@
           - --fail
           - --insecure
           - --output
-          - "/tmp/{{ truenas_config_backup_file }}"
+          - "{{ truenas_config_backup_dir }}/{{ truenas_config_backup_file }}"
           - "https://127.0.0.1{{ truenas_config_download_url }}"
       changed_when: true
 
-    - name: Fetch the bundle to the controller
-      ansible.builtin.fetch:
-        src: "/tmp/{{ truenas_config_backup_file }}"
-        dest: "{{ truenas_config_stage.path }}/{{ truenas_config_backup_file }}"
-        flat: true
-
-    - name: Remove the bundle from truenas /tmp
+    - name: Restrict the bundle to root
       ansible.builtin.file:
-        path: "/tmp/{{ truenas_config_backup_file }}"
-        state: absent
-      changed_when: false
-
-    - name: Assert the fetched bundle is non-empty
-      ansible.builtin.stat:
-        path: "{{ truenas_config_stage.path }}/{{ truenas_config_backup_file }}"
-      register: truenas_config_stat
-      delegate_to: localhost
-      connection: local
-      failed_when: not truenas_config_stat.stat.exists or truenas_config_stat.stat.size == 0
-
-# Backup dir/retention live in group_vars/truenas.yml (the backup is
-# truenas's concern); resolved here via hostvars since igounas is a
-# different group.
-- name: Store the bundle on igounas with retention
-  hosts: igounas
-  gather_facts: false
-  become: false
-  vars:
-    _stage: "{{ hostvars[groups['truenas'][0]].truenas_config_stage.path }}"
-    _file: "{{ hostvars[groups['truenas'][0]].truenas_config_backup_file }}"
-    _dir: "{{ hostvars[groups['truenas'][0]].truenas_config_backup_dir }}"
-    _retention: "{{ hostvars[groups['truenas'][0]].truenas_config_backup_retention | default(30) }}"
-  tasks:
-
-    - name: Ensure the backup directory exists
-      ansible.builtin.file:
-        path: "{{ _dir }}"
-        state: directory
-        mode: "0700"
-
-    - name: Upload the config bundle
-      ansible.builtin.copy:
-        src: "{{ _stage }}/{{ _file }}"
-        dest: "{{ _dir }}/{{ _file }}"
+        path: "{{ truenas_config_backup_dir }}/{{ truenas_config_backup_file }}"
         mode: "0600"
+        owner: root
+        group: root
+
+    - name: Assert the bundle is non-empty
+      ansible.builtin.stat:
+        path: "{{ truenas_config_backup_dir }}/{{ truenas_config_backup_file }}"
+      register: truenas_config_stat
+      failed_when: not truenas_config_stat.stat.exists or truenas_config_stat.stat.size == 0
 
     - name: List stored bundles
       ansible.builtin.find:
-        paths: "{{ _dir }}"
+        paths: "{{ truenas_config_backup_dir }}"
         patterns: "truenas-config-*.tar"
       register: truenas_config_stored
 
@@ -132,19 +93,12 @@
       # range/extract instead of a jinja slice: ansible-lint's renderer
       # can't prove a templated slice index is an integer.
       loop: >-
-        {{ range(_retention | int, truenas_config_sorted | length)
+        {{ range(truenas_config_backup_retention | int,
+                 truenas_config_sorted | length)
            | map('extract', truenas_config_sorted) | list }}
 
     - name: Report retained bundles
       ansible.builtin.debug:
         msg: >-
           {{ truenas_config_stored.files | length }} bundle(s) present before
-          prune; retention is {{ _retention }}.
-
-    - name: Remove controller staging directory
-      ansible.builtin.file:
-        path: "{{ _stage }}"
-        state: absent
-      delegate_to: localhost
-      connection: local
-      changed_when: false
+          prune; retention is {{ truenas_config_backup_retention }}.
