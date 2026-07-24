@@ -82,6 +82,18 @@
 #                                     suggestions / widgets / telemetry, and
 #                                     uninstall OneDrive (default true)
 #   windows_desktop_remove_appx     - Appx identities the debloat pass removes
+#   windows_desktop_autologon       - console auto-logon as the admin user +
+#                                     never lock/blank the desktop (default
+#                                     true; LAB-ONLY: stores the password in
+#                                     Winlogon registry; takes effect next boot)
+#   windows_desktop_quiet_uac       - admins elevate silently and UAC prompts
+#                                     stay off the secure desktop (default
+#                                     true; EnableLUA stays 1 — MSIX/Store
+#                                     apps, incl. the Codex app, break without UAC)
+#   windows_desktop_disable_notifications - toasts off for the connect user
+#                                     (default true)
+#   windows_desktop_resolution      - WxH pinned at each logon via scheduled
+#                                     task (default 1920x1080; '' = leave alone)
 #   windows_desktop_codex_app       - provision the Codex/ChatGPT desktop app
 #                                     from OpenAI's offline enterprise MSIX
 #                                     (default true)
@@ -140,6 +152,14 @@
       - name: firefox
     windows_desktop_firefox_default: true
     windows_desktop_debloat: true
+    # Computer-use readiness: screen-driven agents (Codex computer use) need a
+    # desktop that is always logged on, never locks, never blanks, and never
+    # loses focus to prompts/toasts it cannot see.
+    windows_desktop_autologon: true
+    windows_desktop_quiet_uac: true
+    windows_desktop_disable_notifications: true
+    # WxH pinned via a logon scheduled task (empty string = leave alone).
+    windows_desktop_resolution: 1920x1080
     # Appx identities removed by the debloat pass (provisioned + all-users).
     # Kept: Store, Terminal, Notepad, Calculator, Photos, Camera, Paint,
     # DesktopAppInstaller and the runtime frameworks.
@@ -408,6 +428,10 @@
             windows_desktop_firefox_default: "{{ windows_desktop_firefox_default }}"
             windows_desktop_debloat: "{{ windows_desktop_debloat }}"
             windows_desktop_remove_appx: "{{ windows_desktop_remove_appx }}"
+            windows_desktop_autologon: "{{ windows_desktop_autologon }}"
+            windows_desktop_quiet_uac: "{{ windows_desktop_quiet_uac }}"
+            windows_desktop_disable_notifications: "{{ windows_desktop_disable_notifications }}"
+            windows_desktop_resolution: "{{ windows_desktop_resolution }}"
             windows_desktop_codex_app: "{{ windows_desktop_codex_app }}"
             windows_desktop_codex_app_url: "{{ windows_desktop_codex_app_url }}"
             windows_desktop_codex_app_license_url: "{{ windows_desktop_codex_app_license_url }}"
@@ -600,6 +624,152 @@
       register: windows_desktop_onedrive
       changed_when: "'changed' in windows_desktop_onedrive.stdout"
       when: windows_desktop_debloat | bool
+
+    # --- Computer-use readiness ------------------------------------------
+    # LAB-ONLY tradeoff: Winlogon auto-logon stores the password readably in
+    # HKLM. Takes effect at next boot; rollout restarts the VM.
+    - name: Enable console auto-logon for the admin user
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: string
+      loop:
+        - name: AutoAdminLogon
+          data: '1'
+        - name: DefaultUserName
+          data: "{{ ansible_user }}"
+        - name: DefaultPassword
+          data: "{{ ansible_password }}"
+      no_log: true
+      when: windows_desktop_autologon | bool
+
+    - name: Never lock the desktop
+      ansible.windows.win_regedit:
+        path: "{{ item.path }}"
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: "{{ item.type }}"
+      loop:
+        - path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization
+          name: NoLockScreen
+          data: 1
+          type: dword
+        - path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+          name: InactivityTimeoutSecs
+          data: 0
+          type: dword
+        - path: HKCU:\Control Panel\Desktop
+          name: ScreenSaveActive
+          data: '0'
+          type: string
+      loop_control:
+        label: "{{ item.path }}\\{{ item.name }}"
+      when: windows_desktop_autologon | bool
+
+    - name: Never power off the display
+      ansible.windows.win_shell: |
+        $idle = powercfg /q SCHEME_CURRENT SUB_VIDEO VIDEOIDLE
+        if ($idle | Select-String 'Current AC Power Setting Index: 0x00000000') {
+          'ok'
+        } else {
+          powercfg /change monitor-timeout-ac 0
+          'changed'
+        }
+      register: windows_desktop_monitor
+      changed_when: "'changed' in windows_desktop_monitor.stdout"
+      when: windows_desktop_autologon | bool
+
+    # UAC prompts render on a separate secure desktop that screen-driven
+    # agents can't see or click, so elevation would hang a computer-use run.
+    # EnableLUA stays 1: MSIX/Store apps (including the Codex app itself)
+    # refuse to run with UAC fully disabled.
+    - name: Elevate admins silently, off the secure desktop
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: dword
+      loop:
+        - name: ConsentPromptBehaviorAdmin
+          data: 0
+        - name: PromptOnSecureDesktop
+          data: 0
+      loop_control:
+        label: "{{ item.name }}"
+      when: windows_desktop_quiet_uac | bool
+
+    - name: Disable toast notifications for the connect user
+      ansible.windows.win_regedit:
+        path: "{{ item.path }}"
+        name: "{{ item.name }}"
+        data: 0
+        type: dword
+      loop:
+        - path: HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications
+          name: ToastEnabled
+        - path: HKCU:\Software\Policies\Microsoft\Windows\Explorer
+          name: EnableNotificationCenter
+      loop_control:
+        label: "{{ item.path }}\\{{ item.name }}"
+      when: windows_desktop_disable_notifications | bool
+
+    # Resolution can only be changed from an interactive session, never over
+    # WinRM (no desktop attached), so a logon scheduled task pins it in the
+    # user's own session — deterministic screenshots for computer use, and it
+    # self-heals whatever an RDP client negotiated previously.
+    - name: Stage the resolution-pinning script
+      ansible.windows.win_copy:
+        dest: C:\ProgramData\pin-resolution.ps1
+        content: |
+          $w = {{ (windows_desktop_resolution.split('x'))[0] | int }}
+          $h = {{ (windows_desktop_resolution.split('x'))[1] | int }}
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public class Display {
+            [DllImport("user32.dll")] public static extern int EnumDisplaySettings(string deviceName, int modeNum, ref DEVMODE devMode);
+            [DllImport("user32.dll")] public static extern int ChangeDisplaySettings(ref DEVMODE devMode, int flags);
+            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+            public struct DEVMODE {
+              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+              public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+              public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+              public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+              public short dmLogPixels;
+              public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+              public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
+            }
+          }
+          '@
+          $dm = New-Object Display+DEVMODE
+          $dm.dmSize = [System.Runtime.InteropServices.Marshal]::SizeOf($dm)
+          [Display]::EnumDisplaySettings($null, -1, [ref]$dm) | Out-Null
+          if ($dm.dmPelsWidth -ne $w -or $dm.dmPelsHeight -ne $h) {
+            $dm.dmPelsWidth = $w
+            $dm.dmPelsHeight = $h
+            $dm.dmFields = 0x80000 -bor 0x100000
+            [Display]::ChangeDisplaySettings([ref]$dm, 1) | Out-Null
+          }
+      when: windows_desktop_resolution | length > 0
+
+    - name: Pin the display resolution at logon
+      community.windows.win_scheduled_task:
+        name: pin-display-resolution
+        description: Managed by Ansible — pin resolution for computer-use determinism
+        actions:
+          - path: '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
+            arguments: -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\pin-resolution.ps1
+        triggers:
+          - type: logon
+            user_id: "{{ ansible_user }}"
+        username: "{{ ansible_user }}"
+        logon_type: interactive_token
+        run_level: highest
+        state: present
+        enabled: true
+      when: windows_desktop_resolution | length > 0
 
     - name: Ensure the execution policy permits the Chocolatey bootstrap
       ansible.windows.win_shell: |
@@ -795,6 +965,7 @@
           - "Sleep:       {{ 'disabled' if windows_desktop_disable_sleep | bool else 'left as-is' }}"
           - "Browser:     {{ 'Firefox (default for ' ~ windows_desktop_admin_user | default('igou') ~ ')' if windows_desktop_firefox_default | bool else 'left as-is' }}"
           - "Debloat:     {{ (windows_desktop_remove_appx | length | string) ~ ' Appx targets + consumer content/nags off + OneDrive removed' if windows_desktop_debloat | bool else 'skipped' }}"
+          - "Computer-use: autologon={{ windows_desktop_autologon | bool }} quiet_uac={{ windows_desktop_quiet_uac | bool }} no_toasts={{ windows_desktop_disable_notifications | bool }} resolution={{ windows_desktop_resolution | default('unpinned', true) }} (autologon needs a reboot)"
           - "RDP:         {{ 'enabled at ' ~ windows_desktop_rdp_endpoint if windows_desktop_enable_rdp | bool else 'left as-is' }}"
           - "Next step:   RDP in and complete the one-time interactive Codex sign-in."
 ...
