@@ -11,7 +11,7 @@
 #   an execution-policy guard, power hardening (idle standby/hibernation off —
 #   a sleeping guest drops RDP/WinRM/guest-agent while the VMI still shows
 #   Ready), a Chocolatey app set (PowerShell 7 + git + nodejs-lts + python +
-#   the Codex CLI), the Codex/ChatGPT desktop app, optional direct MSI
+#   Firefox + the Codex CLI), the Codex/ChatGPT desktop app, optional direct MSI
 #   installers, and Remote Desktop. An operator then RDPs in to complete the
 #   one-time, MANDATORY interactive Codex sign-in (ChatGPT OAuth — no headless
 #   path exists for the app; the CLI supports OPENAI_API_KEY auth).
@@ -125,6 +125,7 @@
       - name: nodejs-lts
       - name: python
       - name: codex
+      - name: firefox
     windows_desktop_msi_packages: []
     windows_desktop_disable_sleep: true
     windows_desktop_codex_app: true
@@ -500,10 +501,12 @@
     # machine-wide. It registers into a user profile at that user's next
     # logon — after first converge, log off/on (or reboot) before expecting
     # it in the Start menu.
+    # The MSIX file is named ChatGPT-x64 but the package identity is
+    # OpenAI.Codex (live-verified: OpenAI.Codex_26.715.10079.0_x64_...).
     - name: Check whether the Codex desktop app is provisioned
       ansible.windows.win_shell: |
         $pkg = Get-AppxProvisionedPackage -Online |
-          Where-Object PackageName -like '*ChatGPT*'
+          Where-Object PackageName -like 'OpenAI.Codex_*'
         if ($pkg) { 'present' } else { 'absent' }
       register: windows_desktop_codex_app_state
       changed_when: false
@@ -599,7 +602,7 @@
     - name: Assert the Codex desktop app is provisioned
       ansible.windows.win_shell: |
         $pkg = Get-AppxProvisionedPackage -Online |
-          Where-Object PackageName -like '*ChatGPT*'
+          Where-Object PackageName -like 'OpenAI.Codex_*'
         if (-not $pkg) { throw 'Codex desktop app not provisioned' }
         $pkg.PackageName
       changed_when: false
