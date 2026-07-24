@@ -29,6 +29,9 @@
     # In-guest nftables coarse egress backstop CIDR (OVN EgressFirewall is the real
     # control); allowed on tcp/8080 for the in-cluster LLM service.
     hermes_cluster_service_cidr: "172.30.0.0/16"
+    # log-gateway pinned VIP (igou-openshift#382) — the guest backstop must
+    # pass Alloy's journal push alongside the OVN-side allowances.
+    hermes_log_gateway_vip: "10.10.150.16"
     # Dashboard hardening: native BasicAuthProvider (scrypt password gate, no OAuth
     # IDP / Nous Portal) + file-browser confinement. Auth values are sourced from
     # `hermes_env_values` in group_vars/hermes.yml. Empty username = the auth

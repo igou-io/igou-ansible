@@ -41,6 +41,11 @@ table inet hermes_egress {
     # pod-level control is the hermes-egress NetworkPolicy in igou-openshift)
     ip daddr {{ hermes_cluster_service_cidr }} tcp dport 80 accept
 
+    # Central log shipping (igou-openshift#382): Alloy pushes the journal
+    # to the log-gateway VIP (pinned trusted-lan address — see the
+    # pinned-VIP registry in igou-inventory/docs/network-topology.md).
+    ip daddr {{ hermes_log_gateway_vip }} tcp dport 3500 accept
+
     # External HTTPS (OVN EgressFirewall already pins this to api.telegram.org)
     tcp dport 443 accept
   }
