@@ -26,7 +26,7 @@ roles:
     version: 1.4.1
 collections:
   - name: community.general
-    version: 13.1.0
+    version: 13.2.0
   - name: ansible.posix
     version: 2.2.2
   - name: kubernetes.core
@@ -42,7 +42,7 @@ collections:
   - name: felixfontein.acme
     version: 0.11.1
   - name: community.crypto
-    version: 3.2.2
+    version: 3.3.0
   - name: artis3n.tailscale
     version: 1.2.1
   - name: https://github.com/david-igou/ansible-truenas.git
@@ -53,7 +53,7 @@ collections:
   - name: vkhitrin.libguestfs
     version: 1.1.5
   - name: ansible.netcommon
-    version: 8.5.3
+    version: 8.6.0
   - name: community.routeros
     version: 3.21.0
   - name: david_igou.routeros_configuration
@@ -72,11 +72,11 @@ collections:
     version: 27.1.3
   # Windows automation (playbooks/windows/)
   - name: ansible.windows
-    version: 3.6.1
+    version: 3.7.0
   - name: community.windows
-    version: 3.2.0
+    version: 3.3.0
   - name: microsoft.ad
-    version: 1.11.0
+    version: 1.12.0
   - name: microsoft.iis
     version: 1.2.1
   - name: chocolatey.chocolatey
