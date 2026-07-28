@@ -54,6 +54,9 @@
     name:
       - zfs-dkms
       - zfsutils-linux
+      # ZED is a separate package on Debian; without it
+      # zfs-zed.service does not exist and the enable task fails.
+      - zfs-zed
     default_release: "{{ zfs_pool_apt_suite }}"
     update_cache: true
     state: present
