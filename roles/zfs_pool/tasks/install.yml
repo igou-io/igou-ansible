@@ -10,6 +10,9 @@
       - contrib
     signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
     state: present
+    # minimal Armbian images ship without python3-debian, which this
+    # module needs on the target; let it install it.
+    install_python_debian: true
 
 # Backports default to Pin-Priority 100 (< 500), so apt would never
 # select them without this. src:zfs-linux pins the whole source package
