@@ -1,0 +1,30 @@
+---
+# Build (or import) the ZFS pool that backs the k3s data-dir and wire
+# the systemd .mount units k3s.service hard-depends on
+# (k3s_service_requires in inventory). Hosts declare everything via
+# zfs_pool_* vars — see cm3588-nas-01 in igou-inventory inventory.yaml.
+#
+# Run AFTER the control-plane board is reimaged and BEFORE
+# install-k3s-cluster.yml. Idempotent: an existing pool is left alone
+# and an importable pool is adopted (the reimage path — the drives keep
+# the pool when the rootfs is wiped); creating a pool from bare drives
+# WIPES them and therefore requires an explicit -e zfs_pool_wipe=true.
+#
+#   ansible-playbook playbooks/kubernetes/prepare-k3s-datastore.yml \
+#     -i igou-inventory/inventory.yaml -e ansible_limit=rk8s_control_plane
+#
+# AAP template: k3s_prepare_datastore (igou-inventory job_templates.yml).
+- name: Prepare the ZFS datastore for k3s
+  hosts: "{{ ansible_limit | default('none') }}"
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Note hosts with no declared pool
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} declares no zfs_pool_name — skipping."
+      when: zfs_pool_name is not defined
+
+    - name: Converge the ZFS pool and k3s datasets
+      ansible.builtin.include_role:
+        name: zfs_pool
+      when: zfs_pool_name is defined

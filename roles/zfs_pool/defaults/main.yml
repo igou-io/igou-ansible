@@ -1,0 +1,7 @@
+---
+zfs_pool_vdev_type: raidz1
+zfs_pool_properties: {}
+zfs_pool_root_properties: {}
+zfs_pool_datasets: []
+zfs_pool_wipe: false
+zfs_pool_apt_suite: trixie-backports

@@ -1,0 +1,107 @@
+---
+- name: Check whether the pool already exists
+  ansible.builtin.command:
+    argv:
+      - zpool
+      - list
+      - -H
+      - -o
+      - name
+      - "{{ zfs_pool_name }}"
+  register: __zfs_pool_present
+  changed_when: false
+  failed_when: false
+
+# The reprovision path: a reimaged rootfs loses /etc/zfs/zpool.cache
+# but the drives still carry the pool. Import, never recreate.
+- name: Import an existing pool from the member drives
+  ansible.builtin.command:
+    argv:
+      - zpool
+      - import
+      - -N
+      - -d
+      - /dev/disk/by-id
+      - "{{ zfs_pool_name }}"
+  register: __zfs_pool_import
+  changed_when: __zfs_pool_import.rc == 0
+  failed_when: false
+  when: __zfs_pool_present.rc != 0
+
+- name: Re-check pool presence after import attempt
+  ansible.builtin.command:
+    argv:
+      - zpool
+      - list
+      - -H
+      - -o
+      - name
+      - "{{ zfs_pool_name }}"
+  register: __zfs_pool_present2
+  changed_when: false
+  failed_when: false
+
+- name: Refuse to create silently
+  ansible.builtin.fail:
+    msg: >-
+      Pool '{{ zfs_pool_name }}' neither exists nor imports from
+      {{ zfs_pool_devices | join(', ') }}. Creating it wipes all member
+      drives — re-run with -e zfs_pool_wipe=true if that is what you
+      want.
+  when:
+    - __zfs_pool_present2.rc != 0
+    - not zfs_pool_wipe | bool
+
+- name: Wipe stale signatures and create the pool
+  when:
+    - __zfs_pool_present2.rc != 0
+    - zfs_pool_wipe | bool
+  block:
+    - name: Wipe filesystem signatures on each member
+      ansible.builtin.command:
+        argv:
+          - wipefs
+          - -a
+          - "{{ item }}"
+      loop: "{{ zfs_pool_devices }}"
+      changed_when: true
+
+    - name: Clear stale ZFS labels on each member
+      ansible.builtin.command:
+        argv:
+          - zpool
+          - labelclear
+          - -f
+          - "{{ item }}"
+      loop: "{{ zfs_pool_devices }}"
+      changed_when: true
+      failed_when: false
+
+    - name: TRIM each member
+      ansible.builtin.command:
+        argv:
+          - blkdiscard
+          - -f
+          - "{{ item }}"
+      loop: "{{ zfs_pool_devices }}"
+      changed_when: true
+      failed_when: false
+
+    - name: Create the pool
+      ansible.builtin.command: >-
+        zpool create -f
+        {% for k, v in zfs_pool_properties.items() %}-o {{ k }}={{ v }}{% if not loop.last %} {% endif %}{% endfor %}
+        {% for k, v in zfs_pool_root_properties.items() %}-O {{ k }}={{ v }}{% if not loop.last %} {% endif %}{% endfor %}
+        {{ zfs_pool_name }}
+        {{ zfs_pool_vdev_type }}
+        {{ zfs_pool_devices | join(' ') }}
+      changed_when: true
+
+- name: Pin the pool into the import cachefile
+  ansible.builtin.command:
+    argv:
+      - zpool
+      - set
+      - cachefile=/etc/zfs/zpool.cache
+      - "{{ zfs_pool_name }}"
+  changed_when: true

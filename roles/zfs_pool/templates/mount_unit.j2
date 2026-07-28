@@ -1,0 +1,20 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=ZFS dataset {{ _zfs_pool_ds.name }} at {{ _zfs_pool_ds.mount.where }}
+Requires=zfs-import.target
+After=zfs-import.target
+{% for unit in _zfs_pool_ds.mount.before | default([]) %}
+Before={{ unit }}
+{% endfor %}
+{% for unit in _zfs_pool_ds.mount.requires | default([]) %}
+Requires={{ unit }}
+{% endfor %}
+
+[Mount]
+What={{ _zfs_pool_ds.name }}
+Where={{ _zfs_pool_ds.mount.where }}
+Type=zfs
+Options=defaults
+
+[Install]
+WantedBy=local-fs.target

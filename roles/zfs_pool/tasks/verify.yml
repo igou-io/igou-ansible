@@ -1,0 +1,38 @@
+---
+- name: Check pool health
+  ansible.builtin.command:
+    argv:
+      - zpool
+      - status
+      - -x
+      - "{{ zfs_pool_name }}"
+  register: __zfs_pool_health
+  changed_when: false
+
+- name: Assert pool is healthy
+  ansible.builtin.assert:
+    that:
+      - "'is healthy' in __zfs_pool_health.stdout"
+    fail_msg: "zpool status -x: {{ __zfs_pool_health.stdout }}"
+
+- name: Read fstype of each declared mountpoint
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - -no
+      - FSTYPE
+      - "{{ item.mount.where }}"
+  register: __zfs_pool_findmnt
+  changed_when: false
+  loop: "{{ zfs_pool_datasets | selectattr('mount', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.mount.where }}"
+
+- name: Assert every declared mountpoint is zfs
+  ansible.builtin.assert:
+    that:
+      - item.stdout | trim == 'zfs'
+    fail_msg: "{{ item.item.mount.where }} is '{{ item.stdout }}', expected zfs."
+  loop: "{{ __zfs_pool_findmnt.results }}"
+  loop_control:
+    label: "{{ item.item.mount.where }}"
