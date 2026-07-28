@@ -84,15 +84,23 @@ match no hosts.
 ## Per-board notes
 
 - **cm3588-nas-01** is on `local_kernel` with the NVMe→eMMC fallback
-  chain (see above). Its u-boot lives on the SD carrier (eMMC has no
-  room for the 8MiB ITB offset); re-baking the chain means dd'ing
-  fresh `idbloader.img`/`u-boot.itb` to `/dev/mmcblk1` sectors
-  64/16384. **It is NOT PoE-powered** (crs328 ether13 reports
-  `short-circuit`, board runs from its DC supply), so
+  chain (see above). **Root is permanently on eMMC since 2026-07**: all
+  four NVMe drives are members of the `rk8s` raidz1 ZFS pool backing
+  the k3s data-dir (see igou-docs "Bootstrapping the rk8s Cluster" §0
+  and `playbooks/kubernetes/prepare-k3s-datastore.yml`) — u-boot's
+  `ext4load nvme 0:1` finds no ext4 superblock on a ZFS member and
+  falls through to eMMC every boot, which `board_boot_verify` now
+  asserts (`verify_match: ^/dev/mmcblk0`). Its u-boot lives on the SD
+  carrier (eMMC has no room for the 8MiB ITB offset); re-baking the
+  chain means dd'ing fresh `idbloader.img`/`u-boot.itb` to
+  `/dev/mmcblk1` sectors 64/16384. **It is NOT PoE-powered** (crs328
+  ether13 reports `short-circuit`, board runs from its DC supply), so
   `armbian_cycle_board` cannot actually power-cycle it — the playbook
   reports success while the board never reboots. Use a warm reboot
   (the rtl8125 WoL udev rule keeps the PHY up so u-boot can fetch the
-  pin) or pull power physically.
+  pin) or pull power physically. After ANY reimage, re-run AAP
+  `k3s_prepare_datastore` (imports the surviving pool, re-renders the
+  systemd mount units) before reinstalling k3s.
 - **rock-5b-01** runs the Armbian *vendor* kernel
   (`linux-image-vendor-rk35xx`) for the rk-llama NPU workload
   (igou-kubernetes `apps/rk-llama/`). In `local_kernel` mode this is
