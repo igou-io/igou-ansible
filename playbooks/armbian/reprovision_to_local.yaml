@@ -58,7 +58,7 @@
       ansible.builtin.include_role:
         name: david_igou.armbian.disk_provision
       vars:
-        disk_binding: "{{ item }}"
+        disk_provision_disk_binding: "{{ item }}"
       loop: "{{ armbian_local_disks }}"
       loop_control:
         label: "{{ item.device }}"

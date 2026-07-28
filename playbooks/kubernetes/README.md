@@ -16,7 +16,7 @@ cluster lifetime, don't mix.
 
 ```
 rk8s
-├── rk8s_control_plane    -> rock-5b-01
+├── rk8s_control_plane    -> cm3588-nas-01
 └── rk8s_workers          -> opi5pro-01, rock-5a-01, orange-pi-5-01, orange-pi-5-max-01
 ```
 

@@ -49,9 +49,8 @@
         name: david_igou.armbian.disk_provision
       vars:
         disk_provision_source: "/"
-        disk_binding:
+        disk_provision_disk_binding:
           device: "{{ armbian_local_disk_device }}"
-          wipe: true
           fast_wipe: "{{ armbian_local_disk_fast_wipe | bool }}"
           force: "{{ armbian_local_disk_force | bool }}"
           layout:

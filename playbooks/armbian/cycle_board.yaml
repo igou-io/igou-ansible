@@ -27,9 +27,19 @@
         _phase_label: "cycle[{{ armbian_boot_mode }}]"
         _wait_timeout: "{{ armbian_post_boot_wait_timeout | default(300) }}"
 
+    # board_boot_verify (collection >= v0.0.5-alpha) reads
+    # armbian_board_config.local_kernel.verify_match for its
+    # local_kernel assertion — resolve the merged board config first or
+    # boards with non-NVMe roots (cm3588-nas: eMMC) fail against the
+    # role's ^/dev/nvme default.
+    - name: Resolve effective armbian_board_config
+      ansible.builtin.include_tasks: tasks/_resolve_board_config.yml
+      when: armbian_verify_state | default(true) | bool
+
     - name: Verify rootfs matches declared mode
       ansible.builtin.include_role:
         name: david_igou.armbian.board_boot_verify
       vars:
-        boot_mode: "{{ armbian_boot_mode }}"
+        board_boot_verify_mode: "{{ armbian_boot_mode }}"
+        board_boot_verify_extra_modes: "{{ armbian_extra_modes | default({}) }}"
       when: armbian_verify_state | default(true) | bool

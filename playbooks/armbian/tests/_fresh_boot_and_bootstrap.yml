@@ -53,4 +53,5 @@
   ansible.builtin.include_role:
     name: david_igou.armbian.board_boot_verify
   vars:
-    boot_mode: "{{ _e2e_boot_mode }}"
+    board_boot_verify_mode: "{{ _e2e_boot_mode }}"
+    board_boot_verify_extra_modes: "{{ armbian_extra_modes | default({}) }}"
