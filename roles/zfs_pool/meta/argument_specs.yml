@@ -1,0 +1,90 @@
+---
+argument_specs:
+  main:
+    short_description: "Create-or-import a ZFS pool and converge legacy-mounted datasets with systemd .mount units."
+    description:
+      - >-
+        Runs ON the target host. Installs ZFS from a configurable apt
+        suite (default trixie-backports — Debian trixie main ships
+        zfs 2.3.2 whose Linux-Maximum is 6.14, too old for the
+        Armbian edge kernels this fleet runs), DKMS-builds the module
+        against the running kernel (the image must ship matching
+        linux-headers — see INSTALL_HEADERS in the board's
+        armbian_build profile), then converges the pool: an existing
+        pool is left alone, an importable pool is imported (the
+        reprovision path — a reimaged rootfs loses /etc/zfs but the
+        drives still carry the pool), and creation from bare drives
+        happens ONLY when zfs_pool_wipe=true because it wipefs +
+        labelclears + blkdiscards every member first.
+      - >-
+        Datasets use mountpoint=legacy plus a rendered systemd .mount
+        unit (Requires=zfs-import.target) so consumers like
+        k3s.service can express a HARD dependency via
+        Requires=<unit>.mount — if the pool fails to import, the
+        consumer refuses to start instead of silently writing into the
+        empty directory under the mountpoint. /etc/fstab is not used:
+        the armbian disk_provision role owns that file wholesale.
+    options:
+      zfs_pool_name:
+        type: str
+        required: true
+        description: "Pool name, e.g. rk8s."
+      zfs_pool_vdev_type:
+        type: str
+        default: raidz1
+        description: >-
+          Vdev topology keyword inserted between the pool name and the
+          member devices: raidz1, raidz2, raidz3, or mirror. Empty
+          string means a plain stripe.
+      zfs_pool_devices:
+        type: list
+        elements: path
+        required: true
+        description: >-
+          Member block devices. MUST be /dev/disk/by-id/ paths (asserted):
+          by-id follows the drive, by-path follows the slot. Use the
+          nvme-<MODEL>_<SERIAL> links, never the _1 namespace-suffixed
+          duplicates of the same device (preflight rejects duplicates by
+          resolved target).
+      zfs_pool_properties:
+        type: dict
+        default: {}
+        description: "zpool create -o pool properties, e.g. {ashift: '12', autotrim: 'on'}. Only applied at creation."
+      zfs_pool_root_properties:
+        type: dict
+        default: {}
+        description: >-
+          zpool create -O root-dataset properties inherited by every
+          dataset (compression, xattr, acltype, ...). Only applied at
+          creation; per-dataset properties converge on every run.
+      zfs_pool_datasets:
+        type: list
+        elements: dict
+        default: []
+        description: >-
+          Datasets to converge in declared order (parents before
+          children). Shape: {name, properties: {..}, mount: {where,
+          before: [units], requires: [units]}}. When mount.where is set
+          the dataset must use mountpoint=legacy and gets a rendered
+          systemd .mount unit; nested mounts are auto-ordered by
+          systemd via path prefix.
+      zfs_pool_arc_max_bytes:
+        type: int
+        required: false
+        description: >-
+          Cap ARC via /etc/modprobe.d/zfs.conf and live via
+          /sys/module/zfs/parameters. Set this on k8s nodes: ARC is
+          invisible to MemAvailable, so an uncapped ARC reads as
+          memory pressure to the kubelet.
+      zfs_pool_wipe:
+        type: bool
+        default: false
+        description: >-
+          DESTRUCTIVE. Allow pool creation from bare drives by first
+          running wipefs -a, zpool labelclear -f, and blkdiscard on
+          every member. Without it the role fails loudly when the pool
+          neither exists nor imports.
+      zfs_pool_apt_suite:
+        type: str
+        default: trixie-backports
+        description: "Apt suite providing zfs-dkms/zfsutils-linux; pinned to priority 990 for src:zfs-linux."

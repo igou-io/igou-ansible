@@ -1,0 +1,110 @@
+---
+- name: Enable the backports apt suite (zfs lives in contrib)
+  ansible.builtin.deb822_repository:
+    name: debian-backports
+    types: deb
+    uris: http://deb.debian.org/debian
+    suites: "{{ zfs_pool_apt_suite }}"
+    components:
+      - main
+      - contrib
+    signed_by: /usr/share/keyrings/debian-archive-keyring.gpg
+    state: present
+
+# Backports default to Pin-Priority 100 (< 500), so apt would never
+# select them without this. src:zfs-linux pins the whole source package
+# instead of enumerating the shifting libzfs/libzpool binary names.
+- name: Pin src:zfs-linux to the backports suite
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/90-zfs-backports.pref
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Package: src:zfs-linux
+      Pin: release n={{ zfs_pool_apt_suite }}
+      Pin-Priority: 990
+
+- name: Stat kernel headers for the running kernel
+  ansible.builtin.stat:
+    path: "/usr/src/linux-headers-{{ ansible_facts['kernel'] }}"
+  register: __zfs_pool_headers
+
+# Catch this before apt: without headers the zfs-dkms postinst "fails"
+# 20 minutes in with a much less obvious error.
+- name: Assert kernel headers are installed (DKMS prerequisite)
+  ansible.builtin.assert:
+    that:
+      - __zfs_pool_headers.stat.exists
+    fail_msg: >-
+      /usr/src/linux-headers-{{ ansible_facts['kernel'] }} is missing —
+      zfs-dkms cannot build against the running kernel. The Armbian
+      image must ship its own headers package: set
+      armbian_build_model.compile_args.INSTALL_HEADERS="yes" for this
+      board (see group_vars/cm3588_nas.yml), rebuild with
+      armbian_build_force=true, and reimage.
+
+# DKMS build of zfs on the RK3588 takes ~10-15 min; async keeps the
+# task alive across any SSH hiccup instead of dying mid-build.
+- name: Install zfs-dkms + zfsutils-linux from backports (long DKMS build)
+  ansible.builtin.apt:
+    name:
+      - zfs-dkms
+      - zfsutils-linux
+    default_release: "{{ zfs_pool_apt_suite }}"
+    update_cache: true
+    state: present
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  async: 2700
+  poll: 30
+
+- name: Cap ARC via modprobe options
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/zfs.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      options zfs zfs_arc_max={{ zfs_pool_arc_max_bytes }}
+  when: zfs_pool_arc_max_bytes is defined
+
+- name: Load the zfs module at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/zfs.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      zfs
+
+- name: Load the zfs module now
+  community.general.modprobe:
+    name: zfs
+    state: present
+
+- name: Read live zfs_arc_max
+  ansible.builtin.command: cat /sys/module/zfs/parameters/zfs_arc_max
+  register: __zfs_pool_arc_live
+  changed_when: false
+  when: zfs_pool_arc_max_bytes is defined
+
+- name: Apply zfs_arc_max live
+  ansible.builtin.copy:
+    dest: /sys/module/zfs/parameters/zfs_arc_max
+    content: "{{ zfs_pool_arc_max_bytes }}"
+    unsafe_writes: true
+  when:
+    - zfs_pool_arc_max_bytes is defined
+    - __zfs_pool_arc_live.stdout | trim != zfs_pool_arc_max_bytes | string
+
+- name: Enable ZFS boot-time import/mount services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - zfs-import-cache.service
+    - zfs-import.target
+    - zfs-mount.service
+    - zfs.target
+    - zfs-zed.service

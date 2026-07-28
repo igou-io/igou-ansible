@@ -1,0 +1,74 @@
+---
+- name: Assert every member is a /dev/disk/by-id/ path
+  ansible.builtin.assert:
+    that:
+      - zfs_pool_devices | length > 0
+      - zfs_pool_devices | reject('match', '^/dev/disk/by-id/') | length == 0
+    fail_msg: >-
+      zfs_pool_devices must all be /dev/disk/by-id/ paths (by-id follows
+      the drive; by-path follows the slot). Got:
+      {{ zfs_pool_devices | join(', ') }}
+
+- name: Resolve members to their device nodes
+  ansible.builtin.command:
+    argv:
+      - realpath
+      - --canonicalize-existing
+      - "{{ item }}"
+  register: __zfs_pool_realpath
+  changed_when: false
+  loop: "{{ zfs_pool_devices }}"
+
+- name: Collect resolved device nodes
+  ansible.builtin.set_fact:
+    __zfs_pool_resolved: "{{ __zfs_pool_realpath.results | map(attribute='stdout') | list }}"
+
+# Two by-id links (e.g. the plain and the _1 namespace-suffixed form)
+# can point at the SAME device — that would silently build a broken
+# "4-way" vdev out of fewer drives.
+- name: Assert resolved members are distinct block devices
+  ansible.builtin.assert:
+    that:
+      - __zfs_pool_resolved | unique | length == zfs_pool_devices | length
+    fail_msg: >-
+      zfs_pool_devices resolve to duplicate device nodes:
+      {{ __zfs_pool_resolved | join(', ') }}. You probably listed both
+      a nvme-<MODEL>_<SERIAL> link and its _1 duplicate.
+
+- name: Stat each resolved device node
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: __zfs_pool_devstat
+  loop: "{{ __zfs_pool_resolved }}"
+
+- name: Assert each member is a real block device
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isblk
+    fail_msg: "{{ item.item }} is not a block device."
+  loop: "{{ __zfs_pool_devstat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# The guard that makes zfs_pool_wipe survivable: never let a pool
+# member alias the disk carrying /, /boot, or any armbian_local_disks
+# root device.
+- name: Compute protected devices
+  ansible.builtin.set_fact:
+    __zfs_pool_protected: >-
+      {{
+        (ansible_facts['mounts']
+         | selectattr('mount', 'in', ['/', '/boot'])
+         | map(attribute='device') | list)
+        + (armbian_local_disks | default([]) | map(attribute='device') | list)
+      }}
+
+- name: Assert no member backs the OS disks
+  ansible.builtin.assert:
+    that:
+      - __zfs_pool_protected | select('search', '^' ~ item) | length == 0
+    fail_msg: >-
+      {{ item }} backs one of {{ __zfs_pool_protected | join(', ') }}
+      (rootfs / boot / armbian_local_disks) — refusing to touch it.
+  loop: "{{ __zfs_pool_resolved }}"

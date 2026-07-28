@@ -1,0 +1,40 @@
+---
+# Converge one entry of zfs_pool_datasets (loop_var: _zfs_pool_ds).
+# community.general.zfs is idempotent for both creation and property
+# changes, so re-runs converge drifted properties too.
+- name: "Converge dataset {{ _zfs_pool_ds.name }}"
+  community.general.zfs:
+    name: "{{ _zfs_pool_ds.name }}"
+    state: present
+    extra_zfs_properties: "{{ _zfs_pool_ds.properties | default({}) }}"
+
+- name: "Converge mount unit for {{ _zfs_pool_ds.name }}"
+  when: _zfs_pool_ds.mount is defined
+  vars:
+    __zfs_pool_unit: "{{ _zfs_pool_ds.mount.where | regex_replace('^/', '') | regex_replace('/', '-') }}.mount"
+  block:
+    - name: "Ensure mountpoint directory {{ _zfs_pool_ds.mount.where }}"
+      ansible.builtin.file:
+        path: "{{ _zfs_pool_ds.mount.where }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Render {{ __zfs_pool_unit }}"
+      ansible.builtin.template:
+        src: mount_unit.j2
+        dest: "/etc/systemd/system/{{ __zfs_pool_unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: zfs_pool | daemon-reload
+
+    - name: Reload systemd before mounting
+      ansible.builtin.meta: flush_handlers
+
+    - name: "Enable and mount {{ __zfs_pool_unit }}"
+      ansible.builtin.systemd_service:
+        name: "{{ __zfs_pool_unit }}"
+        enabled: true
+        state: started

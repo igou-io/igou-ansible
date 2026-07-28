@@ -1,0 +1,19 @@
+---
+- name: Install ZFS userland + DKMS module
+  ansible.builtin.import_tasks: install.yml
+
+- name: Preflight device-safety asserts
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Converge the pool (exists -> import -> create)
+  ansible.builtin.import_tasks: pool.yml
+
+- name: Converge datasets and mount units
+  ansible.builtin.include_tasks: dataset.yml
+  loop: "{{ zfs_pool_datasets }}"
+  loop_control:
+    loop_var: _zfs_pool_ds
+    label: "{{ _zfs_pool_ds.name }}"
+
+- name: Verify pool health and mounts
+  ansible.builtin.import_tasks: verify.yml

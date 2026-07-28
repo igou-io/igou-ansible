@@ -7,6 +7,7 @@ cluster lifetime, don't mix.
 | File                              | Purpose                                                        |
 | --------------------------------- | -------------------------------------------------------------- |
 | `install-k3s-cluster.yml`         | **Primary.** Install k3s via `xanmanning.k3s`.                 |
+| `prepare-k3s-datastore.yml`       | ZFS pool + data-dir mounts on the control plane (run first).   |
 | `install-kubernetes-cluster.yml`  | Alternative. Install kubeadm-based kubernetes via `geerlingguy.kubernetes` (+ `geerlingguy.containerd`). |
 | `bootstrap-gitops.yaml`           | Post-install: seeds the ESO Connect token, installs argocd, applies the igou-kubernetes app-of-apps root. Runs against `localhost`, talks to whatever `KUBECONFIG` points at. |
 
@@ -98,3 +99,16 @@ mirroring `playbooks/openshift/bootstrap_gitops.yaml`. The
   router, not a dedicated HAProxy box.
 - No serviceaccount-creation playbook. Robot tokens are provisioned
   by the cluster's GitOps overlays, not by Ansible.
+
+## ZFS datastore (control plane)
+
+`prepare-k3s-datastore.yml` (AAP: `k3s_prepare_datastore`) builds or
+imports the `rk8s` raidz1 pool over cm3588-nas-01's four NVMe drives
+and mounts `/var/lib/rancher/k3s` (+ `server/db`) as legacy-mountpoint
+ZFS datasets with systemd `.mount` units. `k3s.service` hard-requires
+`var-lib-rancher-k3s.mount` via `k3s_service_requires` in inventory, so
+a failed pool import stops k3s instead of letting it write cluster
+state into the empty eMMC directory. Run it after every reimage of the
+control plane (the pool imports; the mount units re-render) and before
+`install-k3s-cluster.yml`. First-ever creation needs
+`-e zfs_pool_wipe=true`, which wipes all four NVMe drives.
