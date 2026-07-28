@@ -28,7 +28,7 @@
         owner: root
         group: root
         mode: "0644"
-      notify: zfs_pool | daemon-reload
+      notify: Reload systemd (zfs_pool)
 
     - name: Reload systemd before mounting
       ansible.builtin.meta: flush_handlers

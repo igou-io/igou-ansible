@@ -94,6 +94,7 @@
     dest: /sys/module/zfs/parameters/zfs_arc_max
     content: "{{ zfs_pool_arc_max_bytes }}"
     unsafe_writes: true
+    mode: "0644"
   when:
     - zfs_pool_arc_max_bytes is defined
     - __zfs_pool_arc_live.stdout | trim != zfs_pool_arc_max_bytes | string

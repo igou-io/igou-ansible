@@ -1,4 +1,4 @@
 ---
-- name: zfs_pool | daemon-reload
+- name: Reload systemd (zfs_pool)
   ansible.builtin.systemd_service:
     daemon_reload: true
