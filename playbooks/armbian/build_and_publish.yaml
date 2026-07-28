@@ -51,6 +51,13 @@
         armbian_build_min_free_gb: "{{ hostvars[item].armbian_build.min_free_gb }}"
       loop: "{{ __build_hosts }}"
 
+    # hostvars[inventory_hostname] on purpose: under delegate_to,
+    # bare {{ ansible_host }}/{{ ansible_user }} resolve from the
+    # DELEGATE (localhost) — in an AAP EE that rendered
+    # igou@localhost:22 (connection refused; only a local devcontainer
+    # run, where localhost happens to be the builder, masked it). No
+    # IdentityAgent=none either: the EE's only key is the runner
+    # ssh-agent one injected by the machine credential.
     - name: Stage per-host build dir on controller via direct rsync
       ansible.builtin.command:
         argv:
@@ -60,8 +67,8 @@
           - --delete
           - --mkpath
           - --rsh
-          - "ssh -p {{ ansible_port | default(22) }} -o IdentityAgent=none -o StrictHostKeyChecking=accept-new"
-          - "{{ ansible_user }}@{{ ansible_host | default(inventory_hostname) }}:{{ armbian_build_output_dir }}/{{ item }}/"
+          - "ssh -p {{ hostvars[inventory_hostname].ansible_port | default(22) }} -o StrictHostKeyChecking=accept-new"
+          - "{{ hostvars[inventory_hostname].ansible_user | default('igou') }}@{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ armbian_build_output_dir }}/{{ item }}/"
           - "/tmp/armbian_publish/{{ item }}/"
       delegate_to: localhost
       connection: local
@@ -72,6 +79,9 @@
   hosts: "{{ armbian_netboot_server_group | default('netboot_server') }}"
   gather_facts: false
   tasks:
+    # Same delegation gotcha as the staging task above: pin user/port
+    # to the netboot server's OWN hostvars, and let the EE runner
+    # agent supply the key.
     - name: Push staged per-host image + manifest (sudo on receive)
       ansible.builtin.command:
         argv:
@@ -81,9 +91,9 @@
           - --mkpath
           - --rsync-path=sudo rsync
           - --rsh
-          - "ssh -p {{ ansible_port | default(22) }} -o IdentityAgent=none -o StrictHostKeyChecking=accept-new"
+          - "ssh -p {{ hostvars[inventory_hostname].ansible_port | default(22) }} -o StrictHostKeyChecking=accept-new"
           - "/tmp/armbian_publish/{{ item }}/"
-          - "{{ ansible_user }}@{{ inventory_hostname }}:{{ armbian_nfs_assets_export }}/images/{{ item }}/"
+          - "{{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ armbian_nfs_assets_export }}/images/{{ item }}/"
       delegate_to: localhost
       connection: local
       changed_when: true
