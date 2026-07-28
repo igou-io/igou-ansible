@@ -82,8 +82,8 @@
       ansible.builtin.include_role:
         name: david_igou.armbian.disk_image
       vars:
-        image_source: "{{ armbian_rootfs_src }}"
-        target_device: "{{ armbian_sd_device | default('/dev/mmcblk0') }}"
+        disk_image_source: "{{ armbian_rootfs_src }}"
+        disk_image_target_device: "{{ armbian_sd_device | default('/dev/mmcblk0') }}"
 
 - name: Phase 4 - SD boot + bootstrap + verify
   hosts: "{{ target_hosts | default('board_e2e_canaries') }}"
