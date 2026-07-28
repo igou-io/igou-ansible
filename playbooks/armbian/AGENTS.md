@@ -82,12 +82,16 @@ group, is the inverse — it takes `ansible_limit`.)
 ## Per-board quirks (see the doc for the full list)
 
 - **cm3588-nas-01** — `local_kernel` with an NVMe→eMMC `localcmd`
-  fallback chain (root currently on eMMC while a dead NVMe batch awaits
-  replacement). **Not PoE-powered** (crs328 ether13 reports
+  fallback chain. Root is PERMANENTLY eMMC (since 2026-07 the four NVMe
+  are the `rk8s` raidz1 ZFS pool backing the k3s data-dir — never add
+  them to `armbian_local_disks`; `prepare-k3s-datastore.yml` owns
+  them). **Not PoE-powered** (crs328 ether13 reports
   short-circuit; runs off its DC supply), so `cycle_board.yaml` cannot
   actually power-cycle it — it reports success while the board never
   reboots. Use a warm reboot (rtl8125 WoL udev rule keeps the PHY up for
-  u-boot) or pull power physically.
+  u-boot) or pull power physically. After any reimage, run AAP
+  `k3s_prepare_datastore` (pool IMPORTS; only bare-drive creation needs
+  zfs_pool_wipe=true) before `k3s_install_cluster`.
 - U-boot `localcmd` is baked at image-build time (`persist_via: hook`,
   edge branch only) for most boards; changing the chain means rebuilding
   the image and re-flashing the board's u-boot carrier.
