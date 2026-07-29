@@ -9,6 +9,15 @@
       the drive; by-path follows the slot). Got:
       {{ zfs_pool_devices | join(', ') }}
 
+- name: Assert member count divides evenly into vdev groups
+  ansible.builtin.assert:
+    that:
+      - (zfs_pool_devices | length) % (zfs_pool_vdev_width | int) == 0
+    fail_msg: >-
+      zfs_pool_vdev_width={{ zfs_pool_vdev_width }} does not divide
+      {{ zfs_pool_devices | length }} member devices into whole vdevs.
+  when: zfs_pool_vdev_width | int > 0
+
 - name: Resolve members to their device nodes
   ansible.builtin.command:
     argv:

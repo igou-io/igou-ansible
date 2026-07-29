@@ -36,6 +36,15 @@ argument_specs:
           Vdev topology keyword inserted between the pool name and the
           member devices: raidz1, raidz2, raidz3, or mirror. Empty
           string means a plain stripe.
+      zfs_pool_vdev_width:
+        type: int
+        default: 0
+        description: >-
+          Split zfs_pool_devices into consecutive groups of this many
+          members, each forming one vdev of zfs_pool_vdev_type — e.g.
+          vdev_type=mirror + width=2 over four drives builds striped
+          mirrors (RAID10). 0 (default) puts every device in a single
+          vdev. Device count must divide evenly by the width.
       zfs_pool_devices:
         type: list
         elements: path
