@@ -93,8 +93,12 @@
         {% for k, v in zfs_pool_properties.items() %}-o {{ k }}={{ v }}{% if not loop.last %} {% endif %}{% endfor %}
         {% for k, v in zfs_pool_root_properties.items() %}-O {{ k }}={{ v }}{% if not loop.last %} {% endif %}{% endfor %}
         {{ zfs_pool_name }}
+        {% if zfs_pool_vdev_width | int > 0 %}
+        {% for chunk in zfs_pool_devices | batch(zfs_pool_vdev_width | int) %}{{ zfs_pool_vdev_type }} {{ chunk | join(' ') }}{% if not loop.last %} {% endif %}{% endfor %}
+        {% else %}
         {{ zfs_pool_vdev_type }}
         {{ zfs_pool_devices | join(' ') }}
+        {% endif %}
       changed_when: true
 
 - name: Pin the pool into the import cachefile
