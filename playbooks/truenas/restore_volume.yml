@@ -81,13 +81,33 @@
           {{ truenas_restore_search_roots }}. Check `zfs get -r k8s:pvc_name`
           on TrueNAS.
 
-    - name: Prefer a live source over a cold replica
+    - name: Split candidates into live sources and cold replicas
+      ansible.builtin.set_fact:
+        truenas_restore_live: >-
+          {{ truenas_restore_candidates
+             | reject('search', '^' ~ (truenas_k8s_replication_target | default('cold/backups/k8s')) ~ '/')
+             | list }}
+        truenas_restore_replicas: >-
+          {{ truenas_restore_candidates
+             | select('search', '^' ~ (truenas_k8s_replication_target | default('cold/backups/k8s')) ~ '/')
+             | list }}
+
+    - name: Refuse ambiguous live sources
+      ansible.builtin.assert:
+        that:
+          - truenas_restore_live | length <= 1
+          - truenas_restore_replicas | length <= 1
+        fail_msg: >-
+          More than one dataset claims {{ volume_cluster }}/{{ volume_namespace }}/{{ volume_pvc }}:
+          live={{ truenas_restore_live }} replicas={{ truenas_restore_replicas }}.
+          A stale twin usually means a deleted PVC whose zvol is still
+          pending destroy (Released PV retry) — wait for it to clear or
+          resolve manually, then re-run. Refusing to guess.
+
+    - name: Prefer the live source over the cold replica
       ansible.builtin.set_fact:
         truenas_restore_source: >-
-          {{ (truenas_restore_candidates
-              | reject('search', '^' ~ (truenas_k8s_replication_target | default('cold/backups/k8s')) ~ '/')
-              | list | first)
-             | default(truenas_restore_candidates | first) }}
+          {{ (truenas_restore_live | first) | default(truenas_restore_replicas | first) }}
 
     - name: Find the newest snapshot on the chosen source
       ansible.builtin.command: >-
