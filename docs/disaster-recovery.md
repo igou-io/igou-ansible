@@ -96,7 +96,9 @@ The hardest to rebuild from scratch. Most homelab services live here.
 
 ### What's on truenas
 
-- ZFS pools: `ssd` (warm/services), and possibly `tank` (cold/bulk).
+- ZFS pools: `ssd` (warm/services, the inventory default) and `cold` (bulk).
+  There is no `tank` pool — confirm with `zpool list` before typing a path
+  into a recovery command.
 - Datasets under `ssd/containers/<service>/` for every Docker container.
 - The public nginx container (`ix-public-public-1`) and its bind-mount at
   `/mnt/ssd/public/` — serves netboot HTTPS assets (and other public-facing
@@ -159,8 +161,9 @@ Two storage layers, both recoverable from inventory + playbooks:
   images/, iso/). Container = `ix-public-public-1` (TrueCharts/compose),
   declarative spec in `igou-inventory/group_vars/truenas.yml`.
 - **rb5009 TFTP files** at `flash:/netboot/` (iPXE binaries + `per-host/`
-  pin files), with matching `/ip tftp` rows. Declarative spec across
-  `igou-inventory/group_vars/{routeros,all}/netboot.yml` and the routeros
+  pin files), with matching `/ip tftp` rows. Declarative spec in
+  `igou-inventory/group_vars/all/netboot.yml` (plus
+  `group_vars/routeros.yml` for the device connection vars) and the routeros
   build playbook.
 
 ### Restore
@@ -227,18 +230,31 @@ See [`netboot-operations.md`](netboot-operations.md) for details.
 
 ### Save before you lose it
 
-The cluster's auth files (`kubeconfig`, `kubeadmin-password`) live in
-1Password under the `awx` vault, written by
-`agent-install/deploy_pxe_assets.yml` at install time. Verify they're there
-periodically:
+**Nightly etcd backup.** Since 2026-07-31 the cluster has an `etcd-backup`
+CronJob (namespace `etcd-backup`, 05:00 America/New_York) shipping snapshots
+to `s3://etcd-backups/<z-stream>/<timestamp>/` on rustfs-cold, with a 3-day
+cap. Mined PV→zvol catalogs land in `s3://etcd-backups/catalogs/`. Both the
+snapshot-restore procedure and the catalog-mining procedure live in
+`igou-openshift` `docs/runbooks/etcd-backup-restore.md` — read that **before**
+choosing a full rebuild, since a snapshot restore is usually the shorter path.
+
+**Cluster auth.** `agent-install/deploy_pxe_assets.yml` writes the kubeconfig
+to 1Password at install time, as a new timestamped item
+`<cluster>-kubeconfig-<YYYYMMDDHHMM>` in the **`ansible-push`** vault (fields
+`kubeconfig` / `kubeconfig_self_signed`, base64-encoded, plus
+`client_certificate_data`, `client_key_data`, `api_url`). The kubeadmin
+password is **not** saved by the playbook. Because each run creates a new
+item, confirm you are reading the newest one:
 
 ```bash
-op read "op://awx/<cluster>-kubeconfig/credential" | head -3
+op item list --vault ansible-push | grep '<cluster>-kubeconfig-'
 ```
 
-The `ansible` ServiceAccount token (used by AAP/AWX) is at
-`onepassword-sdk-<cluster>-push-token` — written by
-`bootstrap_openshift_gitops.yaml`.
+**Break-glass bootstrap credential.** Re-bootstrapping GitOps needs the
+read-only `ocp-bootstrap` 1Password service-account token (`ops_…`, scoped to
+the `ocp-connect-bootstrap` vault). It is deliberately **not** stored anywhere
+automation can read — keep it in your personal/admin vault or emergency kit.
+Without it the cluster cannot be rebootstrapped.
 
 ### Rebuild from scratch
 
@@ -249,14 +265,22 @@ If the cluster is unrecoverable:
    plan, rendezvous MAC).
 3. Run the full agent-install flow — see
    [`openshift-operations.md`](openshift-operations.md#initial-cluster-agent-install).
-4. After ready, re-bootstrap GitOps:
+4. After ready, re-bootstrap GitOps. `playbooks/openshift/bootstrap_gitops.yaml`
+   is the only bootstrap playbook (the old `bootstrap_openshift_gitops.yaml`
+   and `hub-cluster/` variant are gone), and it codifies the ArgoCD
+   repo-server tuning the 2026-07-03 DR needed — do not hand-patch that live:
    ```bash
    export KUBECONFIG=~/openshift-agent-install/<cluster>/cluster-manifests/auth/kubeconfig
-   ansible-playbook playbooks/openshift/bootstrap_openshift_gitops.yaml \
+   export OP_SERVICE_ACCOUNT_TOKEN=ops_...   # ocp-bootstrap SA, see above
+   ansible-playbook playbooks/openshift/bootstrap_gitops.yaml \
      -i igou-inventory/inventory.yaml -e target_cluster=<cluster>
    ```
-5. Re-add workers via `add_node_iso.yml` for each one in
-   `openshift_workers_<cluster>`.
+   Longer form, including the ArgoCD/ESO convergence checks:
+   `igou-openshift` `docs/runbooks/gitops-bootstrap-from-scratch.md`.
+5. Re-add the bare-metal workers (`hpg5`, `p330`) via `add_node_iso.yml`.
+   The TrueNAS VM worker `truenas-w1` is **not** on that path — rebuild it
+   with `playbooks/openshift/vm_worker_reprovision.yaml` (see
+   [`openshift-operations.md`](openshift-operations.md#vm-worker-lifecycle)).
 
 ### Lost a single worker
 

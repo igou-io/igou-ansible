@@ -8,9 +8,13 @@ how X worked" two weeks from now.
 | Doc | What it covers |
 |---|---|
 | [`netboot-operations.md`](netboot-operations.md) | netboot.xyz menu, host pins, ISOs, kickstart/cloud-init, OpenShift PXE assets, rb5009 iPXE binaries, smoke testing, troubleshooting |
-| [`openshift-operations.md`](openshift-operations.md) | Initial cluster (agent-install), GitOps bootstrap, secret sync to 1Password, SNO ISO, add-node (link), CSR approval, common breaks |
-| [`truenas-operations.md`](truenas-operations.md) | Docker containers, users, NFS netboot, API smoke test, deprecated playbooks |
+| [`openshift-operations.md`](openshift-operations.md) | Initial cluster (agent-install), GitOps bootstrap, add-node (link), TrueNAS VM worker lifecycle, etcd defrag + backup pointer, CSR approval, common breaks |
+| [`truenas-operations.md`](truenas-operations.md) | Docker containers, users, NFS netboot, KVM guests (incl. the `truenas-w1` OCP worker), API smoke test |
 | [`hermes-vm-lifecycle.md`](hermes-vm-lifecycle.md) | Hermes KubeVirt VM: provision/rebuild/deprovision (`hermes-state` survives), snapshot create/list/prune/restore (double-guarded), AAP templates + nightly schedule |
+| [`hermes-agent-runtime.md`](hermes-agent-runtime.md) | Hermes agent runtime overlay |
+| [`armbian-boot-modes.md`](armbian-boot-modes.md) | ARM SBC fleet boot modes (`local_kernel`/`nfs`/`sd`/`local`), job templates ↔ playbooks, per-board quirks |
+| [`rpi-netboot-operations.md`](rpi-netboot-operations.md) | Raspberry Pi netboot: EEPROM enroll, NFS rootfs staging, cmdline pins |
+| [`vps-lifecycle.md`](vps-lifecycle.md) | igou.io VPS: declarative layers and the AAP templates/workflow that maintain them |
 | [`execution-environments.md`](execution-environments.md) | What each EE is for, when to rebuild, manual rebuild + push |
 | [`disaster-recovery.md`](disaster-recovery.md) | "X is dead, what do I run?" per component (rb5009, truenas, netbootxyz container, OCP cluster, OCP worker, homelab pets) |
 | [`troubleshooting.md`](troubleshooting.md) | Symptom-keyed cross-cutting issues (PXE, DHCP, container, secrets, lint, CI) |
@@ -43,6 +47,7 @@ work are kept; specs of abandoned work are deleted.
   brevity; `ansible-navigator` adds the EE container layer.
 - Lint everywhere: `ansible-lint --profile=production` and `yamllint`. Both
   must be clean before a commit.
-- The `syntax-check` GitHub workflow currently fails project-wide because it
-  doesn't skip task-include files. One-line fix is the standing follow-up;
-  the rest of CI (lint, GitGuardian) is green.
+- CI (lint, `syntax-check`, GitGuardian) is green on `main`. `syntax-check`
+  prunes task-include sidecars (`tasks/`, `transport/`, `files/`, `_*.yml`)
+  and skips the two playbooks it cannot parse (`aap/ansible-navigator.yml`,
+  `rhel/rhsm-system-register.yml`).

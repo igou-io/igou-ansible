@@ -50,10 +50,10 @@ If you are being building a new collection, that will live as its own project un
 
 Playbooks are organized by infrastructure domain under `playbooks/`:
 - `kubernetes/` - k3s bootstrap, cluster config, service accounts
-- `openshift/` - cluster operations, virtualization
-- `kubevirt/` - VM deployment and management
-- `truenas/` - storage configuration
-- `terraform/` - plan/apply workflows
+- `openshift/` - cluster operations (GitOps bootstrap, add-node, etcd defrag, TrueNAS VM worker lifecycle)
+- `openshift_virtualization/` - KubeVirt VMs on OpenShift (golden images, datasources, VM management)
+- `kubevirt/` - VM deployment and PXE test harness
+- `truenas/` - storage, container, and KVM-guest configuration
 - `linux/`, `rhel/` - system-level operations
 - `windows/` - Windows host automation (WinRM/SSH): app provisioning, users, updates, IIS, AD join
 - `aap/` - automation platform configuration
@@ -86,7 +86,7 @@ Built with `ansible-builder`, defined in `execution-environments/`. Each has `ex
 
 ### Roles
 
-Mix of community galaxy roles (pinned versions in `requirements.yml`) and custom roles in `roles/`. Custom roles include `kubevirt_create_datavolume`, `kubevirt_provision_survey`, `kubevirt_vm_launch`, `lvm`, `raid`.
+Mix of community galaxy roles (pinned versions in `requirements.yml`) and custom roles in `roles/`: `alloy`, `kubevirt_vm_provision`, `kubevirt_vm_snapshot`, `rpi_boot_render`, `rpi_eeprom`, `rpi_rootfs`, `windows_computer_use`, `windows_debloat`, `windows_desktop_apps`, `windows_power`, `zfs_pool`.
 
 **Roles are pure functions.** A role is pure over its declared inputs, with
 `meta/argument_specs.yml` as its signature. Do **not** put secret lookups
@@ -94,8 +94,8 @@ Mix of community galaxy roles (pinned versions in `requirements.yml`) and custom
 untested production path, makes a 1Password outage indistinguishable from a
 real role failure (worse under `no_log`), and hard-couples the role to one
 secret backend. Resolved credential values are passed in as `no_log`
-suboptions; the `op://` lookup expressions live as *values* in inventory
-`group_vars` (e.g. `igou-inventory/group_vars/rustfs.yml`).
+suboptions; the lookup expressions live as *values* in inventory
+`group_vars`/`host_vars` (e.g. `igou-inventory/host_vars/rustfs.yml`).
 
 ### Molecule testing
 

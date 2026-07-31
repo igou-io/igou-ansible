@@ -1,8 +1,8 @@
 # OpenShift operations runbook
 
 End-to-end lifecycle for the OpenShift cluster `ocp` (and any future
-clusters) — initial install via agent-based, GitOps bootstrap, secret
-sync, add-node, SNO ISO, and CSR approval.
+clusters) — initial install via agent-based, GitOps bootstrap, add-node,
+TrueNAS VM worker lifecycle, etcd maintenance, and CSR approval.
 
 ## What's in this homelab
 
@@ -11,7 +11,9 @@ sync, add-node, SNO ISO, and CSR approval.
 | `ocp` | Multi-node (started from agent-based) | `ocp` (in `openshift_clusters`) | The current cluster. `host_vars/ocp.yml` has the agent-install + add-node config |
 
 `openshift_workers_<cluster>` is the per-cluster worker group. `ocp`'s
-worker group currently has `hpg5.igou.systems`.
+worker group is `hpg5.igou.systems`, `p330.igou.systems`, and
+`truenas-w1.igou.systems` (a KVM guest on TrueNAS, not bare metal — see
+[VM worker lifecycle](#vm-worker-lifecycle)).
 
 ## Playbooks
 
@@ -19,10 +21,10 @@ worker group currently has `hpg5.igou.systems`.
 |---|---|
 | [`agent-install/deploy_pxe_assets.yml`](#initial-cluster-agent-install) | Render the agent-based install ISO/PXE kit + push to TrueNAS |
 | [`add_node_iso.yml`](#add-a-worker) | Generate `oc adm node-image create --pxe` artifacts for a new worker (links to `netboot-operations.md`) |
-| [`sno_iso_provision.yml`](#sno-iso) | Generate a single-node OpenShift ISO |
-| [`bootstrap_openshift_gitops.yaml`](#gitops-bootstrap) | Install OpenShift GitOps + external-secrets, register `ansible` SA token in 1Password |
-| [`hub-cluster/bootstrap_gitops.yaml`](#hub-cluster-bootstrap) | Same but for a hub-cluster pattern (separate config tree) |
-| [`sync_1pasword_secrets.yml`](#sync-secrets-back-to-1password) | Pull serviceaccount tokens out of OCP and update 1Password records |
+| [`bootstrap_gitops.yaml`](#gitops-bootstrap) | Install OpenShift GitOps + external-secrets + 1Password Connect, apply the `root-applications` app-of-apps |
+| [`vm_worker_reprovision.yaml`](#vm-worker-lifecycle) | Rebuild the TrueNAS VM worker (`truenas-w1`) end to end |
+| [`vm_worker_destroy.yaml`](#vm-worker-lifecycle) | Drain, remove, and delete the TrueNAS VM worker |
+| [`etcd_defrag.yaml`](#etcd-maintenance) | Defragment etcd members (weekly `openshift_etcd_defrag` job template) |
 
 ## Initial cluster (agent-install)
 
@@ -61,14 +63,14 @@ openshift_agent_install_config:
     clusterNetwork: ...
     serviceNetwork: ...
     machineNetwork: ...
-
-# 1Password tokens read into in-cluster secrets after bootstrap
-onepassword_tokens:
-  - name: onepassword-sdk-ocp-pull-token
-    contents: "{{ lookup('community.general.onepassword', 'onepassword-sdk-ocp-pull-token', field='credential', vault='awx') }}"
-  - name: onepassword-sdk-ocp-push-token
-    contents: "{{ lookup('community.general.onepassword', 'onepassword-sdk-ocp-push-token', field='credential', vault='awx') }}"
 ```
+
+`host_vars/ocp.yml` still carries an `onepassword_tokens` list from the
+pre-Connect secret model. **No playbook or role in this repo reads it any
+more** — the bootstrap playbook seeds 1Password Connect from the
+`ocp-connect-bootstrap` vault instead (see
+[GitOps bootstrap](#gitops-bootstrap)). Do not copy it into a new cluster's
+host_vars.
 
 ### Initial install flow
 
@@ -82,14 +84,21 @@ onepassword_tokens:
      -e target_cluster=<cluster>
    ```
    This runs the `david-igou.openshift_agent_install` role to generate
-   `agent.x86_64-{vmlinuz,initrd.img,rootfs.img}` plus the iPXE script,
-   then pushes them to `/mnt/ssd/containers/netbootxyz/assets/<cluster>/`.
-3. Save the cluster auth files to 1Password (the playbook does this
-   automatically with `OP_SERVICE_ACCOUNT_TOKEN` set):
-   ```bash
-   export OP_SERVICE_ACCOUNT_TOKEN=$(op read "op://awx/onepassword-sdk-claude-container-token/credential")
-   # already happens inside the playbook; rerun with --tags op-save if needed
-   ```
+   `agent.x86_64-{vmlinuz,initrd.img,rootfs.img}`, then rsyncs them to the
+   public nginx share on TrueNAS at `/mnt/ssd/public/boot-files/<cluster>/`
+   (served as `https://public.igou.systems/boot-files/<cluster>/`) and
+   HEAD-checks all three over HTTPS. The retired netbootxyz container paths
+   (`/mnt/ssd/containers/netbootxyz/…`) are no longer used. The iPXE script
+   is deliberately **not** published — the boot flow is the rb5009 per-host
+   pin, which carries its own kernel/initrd/rootfs URLs.
+3. Save the cluster auth files to 1Password — the `op-save` block does this
+   automatically when `OP_SERVICE_ACCOUNT_TOKEN` is set (rerun with
+   `--tags op-save` if needed). It creates a **new, timestamped** item
+   `<cluster>-kubeconfig-<YYYYMMDDHHMM>` in the **`ansible-push`** vault,
+   with fields `kubeconfig`, `kubeconfig_self_signed` (both base64),
+   `client_certificate_data`, `client_key_data`, `api_url`. The
+   kubeadmin password is **not** saved — copy it out of the auth dir
+   yourself if you want it kept.
 4. PXE-boot the rendezvous host (e.g. `5847ca77098a` for `ocp`).
 5. Watch progress: `oc adm wait-for install-complete --dir <work_dir>` from
    the cluster host.
@@ -112,79 +121,101 @@ Short version:
 4. PXE-boot the worker.
 5. `oc get csr` / `oc adm certificate approve <name>`.
 
-## SNO ISO
+## VM worker lifecycle
 
-`sno_iso_provision.yml` generates a single-node OpenShift install ISO without
-the PXE flow — useful for offline or USB installs.
+`truenas-w1.igou.systems` is a KVM guest on TrueNAS, not a PXE-booted bare
+metal host, so it does **not** go through `add_node_iso.yml` + a netboot pin.
+Its lifecycle is two dedicated playbooks, both gated by
+`vm_worker_state` (`create` | `rebuild` | `destroy`, default `rebuild`) so
+they can sit in the linear `ocp-truenas-worker-node-manage` AAP workflow:
 
 ```bash
-ansible-playbook playbooks/openshift/sno_iso_provision.yml \
-  -i igou-inventory/inventory.yaml \
-  -e target_cluster=<cluster>
+export KUBECONFIG=<cluster kubeconfig>
+
+# Drain + remove the Node, power off and delete the VM (and its zvol)
+ansible-playbook playbooks/openshift/vm_worker_destroy.yaml \
+  -i igou-inventory/inventory.yaml -e vm_worker=truenas-w1.igou.systems
+
+# Recreate the VM, build a full add-node ISO, boot it, approve CSRs
+ansible-playbook playbooks/openshift/vm_worker_reprovision.yaml \
+  -i igou-inventory/inventory.yaml -e vm_worker=truenas-w1.igou.systems
 ```
 
-The output ISO lands in the cluster's work dir
-(`~/openshift-agent-install/<cluster>/`). Burn it to USB or attach to a
-BMC virtual media device.
+In `rebuild` mode the reprovision playbook asserts the node is absent — run
+the destroy playbook first (or use the `ocp-truenasw1-rebuild` workflow,
+which chains both). The VM itself is declared in `truenas_vms`
+(`igou-inventory/group_vars/truenas.yml`) and created by
+`playbooks/truenas/configure_vms.yaml`.
+
+## etcd maintenance
+
+The cluster-etcd-operator's `DefragController` skips SingleReplica
+topologies, so this SNO cluster never self-defrags.
+`playbooks/openshift/etcd_defrag.yaml` is the scheduled substitute (a no-op
+below the operator's own thresholds: >=45% fragmented AND db >=100MB). It
+runs weekly via the `openshift_etcd_defrag` job template
+(`openshift_etcd_defrag_weekly` schedule).
+
+Backups are separate and live in `igou-openshift`: a nightly `etcd-backup`
+CronJob (namespace `etcd-backup`) ships snapshots to
+`s3://etcd-backups/<z-stream>/<timestamp>/` on rustfs-cold. Restore
+procedure: `igou-openshift` `docs/runbooks/etcd-backup-restore.md`.
 
 ## GitOps bootstrap
 
 After a fresh cluster is up, install OpenShift GitOps + external-secrets +
-register the `ansible` ServiceAccount token in 1Password.
+1Password Connect, then hand the cluster over to the GitOps tree.
+`playbooks/openshift/bootstrap_gitops.yaml` is the **only** bootstrap
+playbook — the former `bootstrap_openshift_gitops.yaml` and the
+`hub-cluster/` variant were consolidated into it (#329).
 
 ### Required env
 
 - `KUBECONFIG` pointing at the new cluster.
-- `OP_SERVICE_ACCOUNT_TOKEN` — 1Password Service Account token with write
-  to the `awx` vault.
+- `OP_SERVICE_ACCOUNT_TOKEN` — the read-only `ocp-bootstrap` 1Password
+  service-account token (`ops_…`), scoped to the `ocp-connect-bootstrap`
+  vault. It is a break-glass credential held in your **personal/admin**
+  vault; there is deliberately no automation-readable 1Password item for it,
+  so it cannot be fetched with `op read`. The playbook's `vars_prompt` was
+  removed on purpose (it returns empty under ansible-navigator/AAP), so the
+  env var must be exported before the run.
 
 ### Run
 
 ```bash
-ansible-playbook playbooks/openshift/bootstrap_openshift_gitops.yaml \
+export OP_SERVICE_ACCOUNT_TOKEN=ops_...
+ansible-playbook playbooks/openshift/bootstrap_gitops.yaml \
   -i igou-inventory/inventory.yaml \
   -e target_cluster=<cluster>
 ```
 
 What it does:
-1. Creates `openshift-gitops-operator` namespace + OperatorGroup +
-   Subscription. Waits for the operator to converge.
-2. Creates the `external-secrets` namespace + Subscription. Waits.
-3. Creates a `1password-credentials` secret from the SDK token in 1Password
-   (`onepassword-sdk-<cluster>-pull-token`).
-4. Creates an `ansible` ServiceAccount with cluster-admin, generates a token
-   secret, and writes the token back to 1Password as
-   `onepassword-sdk-<cluster>-push-token` (so AAP/AWX can re-read it later).
-5. Applies a top-level `Application` named `cluster-config` that points at
-   the GitOps tree (e.g. `igou-openshift` repo).
+1. Asserts `OP_SERVICE_ACCOUNT_TOKEN` is set.
+2. Creates `openshift-gitops-operator` namespace + OperatorGroup +
+   Subscription, and the `external-secrets-operator` **namespace only**
+   (it exists to receive the seeded Connect token Secret — ESO itself is
+   installed by GitOps at sync-wave 0, not by this playbook).
+3. Creates the `onepassword-connect` namespace and seeds two secrets from
+   the `ocp-connect-bootstrap` vault: the Connect server credentials
+   (`ocp-connect-credentials`) and the Connect access token
+   (`ocp-connect-token`, used by ESO).
+4. Binds `cluster-admin` to the ArgoCD application controller
+   (`gitops-cluster-admin` ClusterRoleBinding).
+5. Creates the `ArgoCD` CR. **This CR carries the recovery-critical tuning
+   folded in after the 2026-07-03 DR** — repo-server `ARGOCD_EXEC_TIMEOUT=3m`
+   and `cpu: 2` limits, without which heavy helm-in-kustomize renders trip
+   `ComparisonError: DeadlineExceeded` and stall the whole app-of-apps. Do
+   not hand-patch these live; they live in this playbook so a re-run cannot
+   revert them.
+6. Creates the `setenv-cmp-plugin` and `environment-variables` ConfigMaps
+   (cluster name + base domains, discovered from the `Ingress` CR).
+7. Applies the top-level `Application` **`root-applications`**, pointing at
+   `clusters/<target_cluster>` in `igou-openshift`.
 
 ### Tags
 
-- `--tags create-objects` — only creates namespaces/CRs (skip the 1Password
-  read/write).
-- `--tags op-save` — only saves the SA token to 1Password.
-
-### Hub-cluster variant
-
-`hub-cluster/bootstrap_gitops.yaml` is a near-identical playbook for a hub
-cluster pattern (different `Application` target, different vault layout).
-Use it instead when bringing up the hub.
-
-## Sync secrets back to 1Password
-
-`sync_1pasword_secrets.yml` walks `serviceaccount_token_secrets` (defined per
-cluster in inventory) and updates the matching 1Password records with current
-token values. Run after token rotation or after bootstrap_openshift_gitops if
-you need to re-sync.
-
-```bash
-export OP_SERVICE_ACCOUNT_TOKEN=...
-ansible-playbook playbooks/openshift/sync_1pasword_secrets.yml \
-  -i igou-inventory/inventory.yaml
-```
-
-Note the typo in the filename (`1pasword` not `1password`); fix in a future
-cleanup pass.
+`--tags create-objects` is the only tag on this playbook (it covers the whole
+task block).
 
 ## CSR approval
 
@@ -203,9 +234,11 @@ manually).
 
 ## Common breaks
 
-- **`OP_SERVICE_ACCOUNT_TOKEN` not set** → the bootstrap_gitops playbook
-  fails at `Validate OP_SERVICE_ACCOUNT_TOKEN is set`. Fetch from 1Password:
-  `op read "op://awx/onepassword-sdk-claude-container-token/credential"`.
+- **`OP_SERVICE_ACCOUNT_TOKEN` not set** → `bootstrap_gitops.yaml` fails at
+  `Assert the bootstrap service-account token is present`. This is the
+  `ocp-bootstrap` SA token from your personal/admin vault; it is not
+  readable by `op read` from automation (see
+  [Required env](#required-env)).
 - **`KUBECONFIG` not set** → multiple playbooks `assert` it; export the
   path from the cluster's auth dir.
 - **Old install lingering in work dir** → `deploy_pxe_assets.yml` wipes the
