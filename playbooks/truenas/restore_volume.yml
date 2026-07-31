@@ -135,6 +135,9 @@
         set -o pipefail;
         sudo zfs send {{ truenas_restore_snaps.stdout_lines | first | quote }}
         | sudo zfs recv -F {{ target_dataset | quote }}
+      args:
+        # TrueNAS /bin/sh is dash — no pipefail.
+        executable: /bin/bash
       changed_when: true
 
     - name: Verify the target now carries the restored snapshot
