@@ -3,8 +3,12 @@
 # Machines" / vm.* API) from the truenas_vms list, via midclt over SSH
 # (arensb.truenas has no vm modules).
 #
-# Create-only: VMs are matched by name; existing ones are reported and
-# left untouched (no cpu/memory/device reconciliation). Each pending VM
+# Create-only by default: VMs are matched by name; existing ones are
+# reported and left untouched. With truenas_vm_allow_resize=true, the
+# cpu topology / memory of EXISTING VMs is additionally reconciled to
+# their definition via tasks/truenas_vm_resize.yml — this STOPS AND
+# RESTARTS a drifted VM, so drain any Kubernetes node it backs first
+# (devices are still never reconciled). Each pending VM
 # is created atomically by tasks/truenas_vm_present.yml — on a mid-chain
 # device failure the partial VM is deleted so a re-run can retry. VMs are
 # NOT started — first boot is operator-attended: start the VM, open its
@@ -43,6 +47,8 @@
 #                        display_password?}
 #   truenas_vm_netboot_image_src — optional control-node path to the
 #                        netboot.xyz EFI disk image to stage onto the host
+#   truenas_vm_allow_resize — opt-in (default false): stop/resize/start
+#                        existing VMs whose cpu/memory drift from truenas_vms
 #
 # ── Example invocations ────────────────────────────────────────────────
 #
@@ -176,6 +182,14 @@
     - name: Report VMs already present (left untouched)
       ansible.builtin.debug:
         msg: "{{ _vm_list | map(attribute='name') | select('in', _existing_vms) | list }}"
+
+    - name: Reconcile cpu/memory of existing VMs (opt-in, stops drifted VMs)
+      when: truenas_vm_allow_resize | default(false) | bool
+      ansible.builtin.include_tasks: tasks/truenas_vm_resize.yml
+      loop: "{{ _vm_list | selectattr('name', 'in', _existing_vms) | list }}"
+      loop_control:
+        loop_var: vm_def
+        label: "{{ vm_def.name }}"
 
     - name: Query existing zvols backing pending VM disks
       ansible.builtin.command:

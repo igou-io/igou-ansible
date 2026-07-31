@@ -1,0 +1,90 @@
+---
+# Reconcile CPU topology / memory of one EXISTING VM to its truenas_vms
+# definition. Included per VM by configure_vms.yaml (loop_var: vm_def)
+# only when truenas_vm_allow_resize=true — a resize STOPS AND RESTARTS
+# the VM, so drain any Kubernetes node it backs first. Devices (disks,
+# NICs, boot media) are never reconciled; a changed disk_zvol here does
+# NOT follow — move zvols out-of-band and repoint with vm.device.update.
+
+- name: Read current definition of {{ vm_def.name }}
+  ansible.builtin.set_fact:
+    _vm_cur: >-
+      {{ _vmquery.stdout | from_json
+         | selectattr('name', '==', vm_def.name) | first }}
+
+- name: Determine cpu/memory drift for {{ vm_def.name }}
+  ansible.builtin.set_fact:
+    _vm_drift: >-
+      {{ _vm_cur.vcpus != vm_def.vcpus
+         or _vm_cur.cores != vm_def.cores
+         or _vm_cur.threads != vm_def.threads
+         or _vm_cur.memory != vm_def.memory_mib }}
+
+- name: Report in-sync VM {{ vm_def.name }}
+  when: not (_vm_drift | bool)
+  ansible.builtin.debug:
+    msg: >-
+      {{ vm_def.name }}: cpu topology and memory already match — no resize.
+
+- name: Resize VM {{ vm_def.name }}
+  when: _vm_drift | bool
+  block:
+
+    - name: Stop VM {{ vm_def.name }}
+      when: _vm_cur.status.state == 'RUNNING'
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - --job
+          - vm.stop
+          - "{{ _vm_cur.id }}"
+          - '{"force_after_timeout": true}'
+      changed_when: true
+
+    - name: Wait for stop of {{ vm_def.name }}
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.query
+          - "{{ [['id', '=', _vm_cur.id]] | to_json }}"
+      register: _vm_stop_poll
+      changed_when: false
+      retries: 24
+      delay: 5
+      until: (_vm_stop_poll.stdout | from_json | first).status.state == 'STOPPED'
+
+    - name: Update cpu/memory of {{ vm_def.name }}
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.update
+          - "{{ _vm_cur.id }}"
+          - >-
+            {{ {'vcpus': vm_def.vcpus,
+                'cores': vm_def.cores,
+                'threads': vm_def.threads,
+                'memory': vm_def.memory_mib} | to_json }}
+      changed_when: true
+
+    - name: Start previously-running VM {{ vm_def.name }}
+      when: _vm_cur.status.state == 'RUNNING'
+      ansible.builtin.command:
+        argv: [midclt, call, vm.start, "{{ _vm_cur.id }}"]
+      changed_when: true
+
+    - name: Wait for running state of {{ vm_def.name }}
+      when: _vm_cur.status.state == 'RUNNING'
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - vm.query
+          - "{{ [['id', '=', _vm_cur.id]] | to_json }}"
+      register: _vm_start_poll
+      changed_when: false
+      retries: 12
+      delay: 5
+      until: (_vm_start_poll.stdout | from_json | first).status.state == 'RUNNING'
