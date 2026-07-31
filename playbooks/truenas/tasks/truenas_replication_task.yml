@@ -45,6 +45,10 @@
       lifetime_value: "{{ repl.lifetime_value }}"
       lifetime_unit: "{{ repl.lifetime_unit }}"
       readonly: "{{ repl.readonly | default('SET') }}"
+      # Preserve ZFS user properties on replicas so the k8s:* identity
+      # stamps survive onto cold copies (restore-by-name works even if
+      # the source pool is lost).
+      properties: "{{ repl.properties | default(true) }}"
       enabled: "{{ repl.enabled | default(true) }}"
 
 - name: "Create replication task — {{ repl.name }}"
@@ -74,6 +78,7 @@
       lifetime_value: "{{ truenas_repl_existing[0].lifetime_value }}"
       lifetime_unit: "{{ truenas_repl_existing[0].lifetime_unit }}"
       readonly: "{{ truenas_repl_existing[0].readonly }}"
+      properties: "{{ truenas_repl_existing[0].properties }}"
       enabled: "{{ truenas_repl_existing[0].enabled }}"
     truenas_repl_in_sync: "{{ truenas_repl_current == truenas_repl_desired }}"
   ansible.builtin.command:
