@@ -2,9 +2,12 @@
 # Destroy a TrueNAS-hosted VM worker: drain + remove the cluster Node,
 # then delete the backing KVM VM (and, by default, its zvol).
 #
-# !! UNTESTED (2026-07-03): written during the truenas-w1 build-out but
-# deliberately NOT executed yet — the cluster's democratic-csi driver
-# migration is in flight. Supervise the first run.
+# Lifecycle gating: vm_worker_state (create|rebuild|destroy, default
+# rebuild) lets this playbook sit in the linear
+# ocp-truenas-worker-node-manage workflow — with vm_worker_state=create
+# every play no-ops so an existing node is never destroyed;
+# rebuild/destroy run the teardown normally. E2E tested via AAP
+# 2026-07-31 (3 rebuild cycles).
 #
 # Ordering rationale: drain first; power the VM off BEFORE deleting the
 # Node object (a live kubelet re-registers the node on its next
@@ -19,7 +22,9 @@
 #   ansible-playbook playbooks/openshift/vm_worker_destroy.yaml \
 #     -i igou-inventory/inventory.yaml -e vm_worker=truenas-w1.igou.systems
 #
-# Vars: vm_worker (default truenas-w1.igou.systems), drain_timeout
+# Vars: vm_worker_state (create|rebuild|destroy, default rebuild —
+#   create skips this playbook entirely),
+#   vm_worker (default truenas-w1.igou.systems), drain_timeout
 #   (300s), drain_force (true — evicts unmanaged pods),
 #   drain_ignore_errors (false — a PDB-blocked drain fails the play and
 #   leaves the node cordoned for manual resolution; set true to proceed
@@ -38,6 +43,17 @@
     drain_timeout: 300
     drain_force: true
   tasks:
+
+    - name: Assert vm_worker_state is valid
+      ansible.builtin.assert:
+        that: vm_worker_state | default('rebuild', true) in ['create', 'rebuild', 'destroy']
+        fail_msg: >-
+          vm_worker_state must be create, rebuild or destroy
+          (got '{{ vm_worker_state }}').
+
+    - name: End play — vm_worker_state=create never destroys existing state
+      ansible.builtin.meta: end_play
+      when: vm_worker_state | default('rebuild', true) == 'create'
 
     - name: Assert KUBECONFIG is set in the environment
       ansible.builtin.assert:
@@ -107,6 +123,10 @@
   vars:
     worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
   tasks:
+
+    - name: End play — vm_worker_state=create never destroys existing state
+      ansible.builtin.meta: end_play
+      when: vm_worker_state | default('rebuild', true) == 'create'
 
     - name: Resolve the VM definition for this worker
       ansible.builtin.set_fact:
@@ -205,6 +225,10 @@
   vars:
     worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
   tasks:
+
+    - name: End play — vm_worker_state=create never destroys existing state
+      ansible.builtin.meta: end_play
+      when: vm_worker_state | default('rebuild', true) == 'create'
 
     # Delete both name forms — registration may have used the short
     # hostname (see the resolution note in the drain play).
