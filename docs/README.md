@@ -9,7 +9,7 @@ how X worked" two weeks from now.
 |---|---|
 | [`netboot-operations.md`](netboot-operations.md) | netboot.xyz menu, host pins, ISOs, kickstart/cloud-init, OpenShift PXE assets, rb5009 iPXE binaries, smoke testing, troubleshooting |
 | [`openshift-operations.md`](openshift-operations.md) | Initial cluster (agent-install), GitOps bootstrap, add-node (link), TrueNAS VM worker lifecycle, etcd defrag + backup pointer, CSR approval, common breaks |
-| [`truenas-operations.md`](truenas-operations.md) | Docker containers, users, NFS netboot, API smoke test, deprecated playbooks |
+| [`truenas-operations.md`](truenas-operations.md) | Docker containers, users, NFS netboot, KVM guests (incl. the `truenas-w1` OCP worker), API smoke test |
 | [`hermes-vm-lifecycle.md`](hermes-vm-lifecycle.md) | Hermes KubeVirt VM: provision/rebuild/deprovision (`hermes-state` survives), snapshot create/list/prune/restore (double-guarded), AAP templates + nightly schedule |
 | [`hermes-agent-runtime.md`](hermes-agent-runtime.md) | Hermes agent runtime overlay |
 | [`armbian-boot-modes.md`](armbian-boot-modes.md) | ARM SBC fleet boot modes (`local_kernel`/`nfs`/`sd`/`local`), job templates ↔ playbooks, per-board quirks |

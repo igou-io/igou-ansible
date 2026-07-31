@@ -1,8 +1,8 @@
 # OpenShift operations runbook
 
 End-to-end lifecycle for the OpenShift cluster `ocp` (and any future
-clusters) — initial install via agent-based, GitOps bootstrap, secret
-sync, add-node, SNO ISO, and CSR approval.
+clusters) — initial install via agent-based, GitOps bootstrap, add-node,
+TrueNAS VM worker lifecycle, etcd maintenance, and CSR approval.
 
 ## What's in this homelab
 

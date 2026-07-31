@@ -96,7 +96,9 @@ The hardest to rebuild from scratch. Most homelab services live here.
 
 ### What's on truenas
 
-- ZFS pools: `ssd` (warm/services), and possibly `tank` (cold/bulk).
+- ZFS pools: `ssd` (warm/services, the inventory default) and `cold` (bulk).
+  There is no `tank` pool — confirm with `zpool list` before typing a path
+  into a recovery command.
 - Datasets under `ssd/containers/<service>/` for every Docker container.
 - The public nginx container (`ix-public-public-1`) and its bind-mount at
   `/mnt/ssd/public/` — serves netboot HTTPS assets (and other public-facing
