@@ -192,7 +192,9 @@ ansible-playbook playbooks/openshift/bootstrap_gitops.yaml \
 What it does:
 1. Asserts `OP_SERVICE_ACCOUNT_TOKEN` is set.
 2. Creates `openshift-gitops-operator` namespace + OperatorGroup +
-   Subscription, and the `external-secrets` namespace + Subscription.
+   Subscription, and the `external-secrets-operator` **namespace only**
+   (it exists to receive the seeded Connect token Secret — ESO itself is
+   installed by GitOps at sync-wave 0, not by this playbook).
 3. Creates the `onepassword-connect` namespace and seeds two secrets from
    the `ocp-connect-bootstrap` vault: the Connect server credentials
    (`ocp-connect-credentials`) and the Connect access token

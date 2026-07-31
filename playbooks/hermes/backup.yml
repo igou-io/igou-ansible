@@ -27,7 +27,7 @@
 #        --prefix hermes/dot-hermes.tar.gz   (pick a VersionId)
 #   2. aws s3api get-object --version-id <id> ... dot-hermes.tar.gz
 #   3. systemctl --user stop hermes-gateway hermes-dashboard (as hermes)
-#   4. tar xzf --numeric-owner -C /home/hermes ./.hermes ; re-assert
+#   4. tar xzf --numeric-owner -C /home/hermes .hermes ; re-assert (members are .hermes/... — the operand ./.hermes matches nothing)
 #      0700 on /home/hermes ; systemctl --user start ...
 - name: Back up hermes state to rustfs-cold
   hosts: "{{ ansible_limit | default('hermes-hermes') }}"
