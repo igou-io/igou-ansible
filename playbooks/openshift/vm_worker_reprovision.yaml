@@ -379,7 +379,7 @@
           - >-
             {{ {'order': 1004,
                 'attributes': item.attributes | combine({'exists': true})}
-               | to_json }}"
+               | to_json }}
       loop: >-
         {{ _devq.stdout | from_json
            | selectattr('attributes.dtype', 'defined')
