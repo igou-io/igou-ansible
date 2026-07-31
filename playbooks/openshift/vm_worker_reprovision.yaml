@@ -11,9 +11,16 @@
 #      subjects) until the node is Ready, then restore the netboot RAW
 #      to its steady-state boot order
 #
-# !! UNTESTED (2026-07-03): written during the truenas-w1 build-out but
-# deliberately NOT executed yet — the cluster's democratic-csi driver
-# migration is in flight. Supervise the first run.
+# Lifecycle gating: vm_worker_state (create|rebuild|destroy, default
+# rebuild) lets this playbook sit in the linear
+# ocp-truenas-worker-node-manage workflow:
+#   destroy — every play here no-ops (teardown already happened)
+#   create  — reconcile: if the worker is already a Ready cluster node
+#             the run ends green without touching it; otherwise it is
+#             provisioned from scratch (configure_vms is create-only,
+#             so an existing VM is left untouched either way)
+#   rebuild — full reprovision; the node must be absent (asserted)
+# E2E tested via AAP 2026-07-31 (3 rebuild cycles).
 #
 # Boot design — no netboot-pin changes required: with the zvol blank,
 # the install boot falls through disk(1001, blank) -> agent ISO CDROM
@@ -31,13 +38,26 @@
 #     -i igou-inventory/inventory.yaml -e vm_worker=truenas-w1.igou.systems
 #
 # Notes:
-# - The node must NOT currently exist in the cluster (run
-#   vm_worker_destroy.yaml first); asserted below.
+# - In rebuild mode the node must NOT currently exist in the cluster
+#   (run vm_worker_destroy.yaml first); asserted below.
 # - No CSI smoke test here by design — validate storage manually once
 #   the democratic-csi driver migration completes.
 
+- name: Validate vm_worker_state before touching anything
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Assert vm_worker_state is valid
+      ansible.builtin.assert:
+        that: vm_worker_state | default('rebuild', true) in ['create', 'rebuild', 'destroy']
+        fail_msg: >-
+          vm_worker_state must be create, rebuild or destroy
+          (got '{{ vm_worker_state }}').
+
 - name: Recreate the VM with a blank zvol (create-only, scoped to this worker)
   import_playbook: ../truenas/configure_vms.yaml
+  when: vm_worker_state | default('rebuild', true) != 'destroy'
   vars:
     truenas_vms_only: >-
       {{ truenas_vms | selectattr('openshift_node', 'defined')
@@ -58,6 +78,10 @@
     openshift_add_node_pxe: false
   pre_tasks:
 
+    - name: End play — vm_worker_state=destroy has nothing to provision
+      ansible.builtin.meta: end_play
+      when: vm_worker_state | default('rebuild', true) == 'destroy'
+
     - name: Assert KUBECONFIG is set in the environment
       ansible.builtin.assert:
         that: lookup('env', 'KUBECONFIG') | length > 0
@@ -69,18 +93,33 @@
       register: _existing_nodes
       changed_when: false
 
-    - name: Assert the worker is not currently a cluster node
+    # Persisted as a fact (not task vars) so the later truenas-hosted
+    # plays can gate on hostvars[<cluster>]._worker_joined.
+    - name: Record whether the worker is already a cluster node
       vars:
         _joined: "{{ _existing_nodes.stdout.split() }}"
         _joined_short: "{{ _existing_nodes.stdout.split() | map('regex_replace', '[.].*$', '') | list }}"
         _worker_short: "{{ worker.split('.') | first }}"
+      ansible.builtin.set_fact:
+        _worker_joined: >-
+          {{ (([worker] | intersect(_joined))
+              + ([_worker_short] | intersect(_joined_short)))
+             | length > 0 }}
+
+    - name: Assert the worker is not currently a cluster node (rebuild mode)
       ansible.builtin.assert:
-        that:
-          - worker not in _joined
-          - _worker_short not in _joined_short
+        that: not _worker_joined
         fail_msg: >-
           {{ worker }} is still a node in the cluster — run
-          playbooks/openshift/vm_worker_destroy.yaml first.
+          playbooks/openshift/vm_worker_destroy.yaml first (or launch
+          with vm_worker_state=rebuild via the workflow).
+      when: vm_worker_state | default('rebuild', true) != 'create'
+
+    - name: End play — create mode and the worker is already joined (no-op)
+      ansible.builtin.meta: end_play
+      when:
+        - vm_worker_state | default('rebuild', true) == 'create'
+        - _worker_joined
 
     - name: Restrict nodes-config rendering to this worker
       ansible.builtin.set_fact:
@@ -151,6 +190,12 @@
     _iso_src: "{{ hostvars[_cluster]['openshift_add_node_iso']['path'] }}"
     _images_dir: /mnt/ssd/vms/images
   tasks:
+
+    - name: End play — nothing to provision (destroy mode or node already joined)
+      ansible.builtin.meta: end_play
+      when: >-
+        vm_worker_state | default('rebuild', true) == 'destroy'
+        or hostvars[_cluster]._worker_joined | default(false)
 
     - name: Resolve the VM definition for this worker
       ansible.builtin.set_fact:
@@ -291,6 +336,12 @@
     join_timeout_minutes: 30
   tasks:
 
+    - name: End play — nothing to provision (destroy mode or node already joined)
+      ansible.builtin.meta: end_play
+      when: >-
+        vm_worker_state | default('rebuild', true) == 'destroy'
+        or _worker_joined | default(false)
+
     - name: Approve this node's pending CSRs and probe readiness
       # Scoped approval only. Kubelet serving CSRs carry the node in
       # spec.username (system:node:<worker>). Bootstrapper client CSRs
@@ -339,6 +390,12 @@
   vars:
     worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
   tasks:
+
+    - name: End play — nothing to provision (destroy mode or node already joined)
+      ansible.builtin.meta: end_play
+      when: >-
+        vm_worker_state | default('rebuild', true) == 'destroy'
+        or hostvars[target_cluster | default('ocp')]._worker_joined | default(false)
 
     - name: Resolve the VM definition for this worker
       ansible.builtin.set_fact:
