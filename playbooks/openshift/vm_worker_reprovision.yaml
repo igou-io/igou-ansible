@@ -259,7 +259,14 @@
           - call
           - vm.device.update
           - "{{ item.id }}"
-          - "{{ {'order': 1006} | to_json }}"
+          # TrueNAS 25.10 re-validates stored attributes on partial
+          # updates and rejects a RAW device whose image exists while
+          # attributes.exists is unset ("Path must not exist...") —
+          # resend the attributes with exists=true alongside the order.
+          - >-
+            {{ {'order': 1006,
+                'attributes': item.attributes | combine({'exists': true})}
+               | to_json }}
       loop: "{{ _netboot_raws }}"
       loop_control:
         label: "device {{ item.id }} (order {{ item.order }})"
@@ -367,7 +374,12 @@
           - call
           - vm.device.update
           - "{{ item.id }}"
-          - "{{ {'order': 1004} | to_json }}"
+          # See the demote task: partial updates must resend RAW
+          # attributes with exists=true or 25.10 validation rejects.
+          - >-
+            {{ {'order': 1004,
+                'attributes': item.attributes | combine({'exists': true})}
+               | to_json }}"
       loop: >-
         {{ _devq.stdout | from_json
            | selectattr('attributes.dtype', 'defined')
