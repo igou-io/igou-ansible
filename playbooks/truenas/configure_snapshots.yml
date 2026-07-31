@@ -118,7 +118,7 @@
                   | map('combine', {
                       'name_format': truenas_k8s_name_format,
                       'lifetime_value': truenas_k8s_snapshot_lifetime_value | default(7),
-                      'lifetime_unit': 'DAY',
+                      'lifetime_unit': 'DAYS',
                       'recursive': false,
                       'minute': '20', 'hour': '0'
                     }) | list) }}
