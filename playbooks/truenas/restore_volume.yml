@@ -1,0 +1,125 @@
+---
+# Restore a k8s volume BY NAME from its TrueNAS protection copies
+# (DR gap #2 companion to configure_snapshots.yml).
+#
+#   ansible-navigator run playbooks/truenas/restore_volume.yml \
+#     -e volume_cluster=ocp -e volume_namespace=forgejo \
+#     -e volume_pvc=forgejo-shared-storage \
+#     -e target_dataset=ssd/k8s/vols/pvc-<new-uuid>
+#
+# Resolution order:
+#   1. the newest auto-daily-* snapshot on the LIVE source dataset (found
+#      via its stamped k8s:* properties) — covers "the app corrupted its
+#      own data";
+#   2. if the live source is gone (pool loss / PVC deleted), the newest
+#      snapshot on the cold replica under the replication target — replicas
+#      carry the same stamped properties (replication preserves them).
+#
+# The restore is a full `zfs send | zfs recv -F` into target_dataset —
+# typically the zvol/dataset of a FRESHLY provisioned PVC (scale the app
+# to zero first; the target's contents are replaced). Volume mode/size
+# must be compatible (same-or-larger target volsize).
+- name: Restore a k8s volume by name
+  hosts: truenas
+  gather_facts: false
+  become: false
+  vars:
+    truenas_restore_search_roots:
+      - ssd/k8s/vols
+      - fast/k8s/vols
+      - cold/k8s/vols
+      - ssd/rk8s/vols
+      - "{{ truenas_k8s_replication_target | default('cold/backups/k8s') }}"
+  tasks:
+
+    - name: Assert required parameters
+      ansible.builtin.assert:
+        that:
+          - volume_cluster is defined
+          - volume_namespace is defined
+          - volume_pvc is defined
+          - target_dataset is defined
+        fail_msg: >-
+          Required: -e volume_cluster=<ocp|rk8s> -e volume_namespace=<ns>
+          -e volume_pvc=<name> -e target_dataset=<dataset of the fresh PVC>
+
+    - name: Query stamped identities across sources and replicas
+      ansible.builtin.command: >-
+        zfs get -H -r -s local,received -o name,property,value
+        k8s:cluster,k8s:pvc_namespace,k8s:pvc_name
+        {{ truenas_restore_search_roots | join(' ') }}
+      register: truenas_restore_prop_query
+      changed_when: false
+
+    - name: Resolve candidate datasets for the named volume
+      ansible.builtin.set_fact:
+        truenas_restore_candidates: >-
+          {%- set rows = truenas_restore_prop_query.stdout_lines | map('split', '\t') | list -%}
+          {%- set by_ds = {} -%}
+          {%- for r in rows -%}
+          {%-   set _ = by_ds.setdefault(r[0], {}).update({r[1]: r[2]}) -%}
+          {%- endfor -%}
+          {%- set out = [] -%}
+          {%- for ds, props in by_ds.items() -%}
+          {%-   if props.get('k8s:cluster') == volume_cluster
+                   and props.get('k8s:pvc_namespace') == volume_namespace
+                   and props.get('k8s:pvc_name') == volume_pvc
+                   and ds != target_dataset -%}
+          {%-     set _ = out.append(ds) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out | sort }}
+
+    - name: Assert the named volume was found
+      ansible.builtin.assert:
+        that:
+          - truenas_restore_candidates | length > 0
+        fail_msg: >-
+          No dataset carries k8s:cluster={{ volume_cluster }},
+          k8s:pvc_namespace={{ volume_namespace }},
+          k8s:pvc_name={{ volume_pvc }} under
+          {{ truenas_restore_search_roots }}. Check `zfs get -r k8s:pvc_name`
+          on TrueNAS.
+
+    - name: Prefer a live source over a cold replica
+      ansible.builtin.set_fact:
+        truenas_restore_source: >-
+          {{ (truenas_restore_candidates
+              | reject('search', '^' ~ (truenas_k8s_replication_target | default('cold/backups/k8s')) ~ '/')
+              | list | first)
+             | default(truenas_restore_candidates | first) }}
+
+    - name: Find the newest snapshot on the chosen source
+      ansible.builtin.command: >-
+        zfs list -H -t snapshot -o name -S creation -d 1 {{ truenas_restore_source }}
+      register: truenas_restore_snaps
+      changed_when: false
+
+    - name: Assert a snapshot exists
+      ansible.builtin.assert:
+        that:
+          - truenas_restore_snaps.stdout_lines | length > 0
+        fail_msg: >-
+          {{ truenas_restore_source }} has no snapshots — the daily task has
+          not fired yet. Take one manually
+          (midclt call pool.snapshottask.run or zfs snapshot) and retry.
+
+    - name: Show the restore that is about to happen
+      ansible.builtin.debug:
+        msg: >-
+          {{ truenas_restore_snaps.stdout_lines | first }}
+          -> {{ target_dataset }} (target contents will be REPLACED)
+
+    - name: Restore into the target dataset
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        sudo zfs send {{ truenas_restore_snaps.stdout_lines | first | quote }}
+        | sudo zfs recv -F {{ target_dataset | quote }}
+      changed_when: true
+
+    - name: Verify the target now carries the restored snapshot
+      ansible.builtin.command: >-
+        zfs list -H -t snapshot -o name -d 1 {{ target_dataset }}
+      register: truenas_restore_verify
+      changed_when: false
+      failed_when: truenas_restore_verify.stdout_lines | length == 0

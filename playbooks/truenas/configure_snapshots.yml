@@ -22,6 +22,12 @@
   hosts: truenas
   gather_facts: false
   become: false
+  vars:
+    # Name-addressed protection: entries in truenas_k8s_protected_volumes
+    # ({cluster, namespace, pvc}) are resolved to datasets at run time via
+    # the k8s:* ZFS user properties democratic-csi stamps on every volume,
+    # so pvc-UUID churn self-heals on the next converge.
+    truenas_k8s_name_format: auto-daily-%Y-%m-%d_%H-%M
   tasks:
 
     - name: Ensure replication target parent datasets exist
@@ -30,6 +36,95 @@
         state: present
         type: FILESYSTEM
       loop: "{{ truenas_snapshot_parent_datasets | default([]) }}"
+
+    - name: Resolve k8s-protected volumes by stamped identity
+      when: truenas_k8s_protected_volumes | default([]) | length > 0
+      block:
+
+        - name: Query stamped cluster property
+          ansible.builtin.command: >-
+            zfs get -H -r -s local -o name,value k8s:cluster
+            {{ truenas_k8s_volume_parents | join(' ') }}
+          register: truenas_k8s_cluster_query
+          changed_when: false
+          check_mode: false
+
+        - name: Query stamped namespace property
+          ansible.builtin.command: >-
+            zfs get -H -r -s local -o name,value k8s:pvc_namespace
+            {{ truenas_k8s_volume_parents | join(' ') }}
+          register: truenas_k8s_namespace_query
+          changed_when: false
+          check_mode: false
+
+        - name: Query stamped pvc-name property
+          ansible.builtin.command: >-
+            zfs get -H -r -s local -o name,value k8s:pvc_name
+            {{ truenas_k8s_volume_parents | join(' ') }}
+          register: truenas_k8s_pvcname_query
+          changed_when: false
+          check_mode: false
+
+        - name: Resolve each protected volume to exactly one dataset
+          vars:
+            truenas_k8s_cluster_map: "{{ dict(truenas_k8s_cluster_query.stdout_lines | map('split', '\t')) }}"
+            truenas_k8s_namespace_map: "{{ dict(truenas_k8s_namespace_query.stdout_lines | map('split', '\t')) }}"
+            truenas_k8s_pvcname_map: "{{ dict(truenas_k8s_pvcname_query.stdout_lines | map('split', '\t')) }}"
+          ansible.builtin.set_fact:
+            truenas_k8s_resolved: >-
+              {%- set out = [] -%}
+              {%- for v in truenas_k8s_protected_volumes -%}
+              {%-   set matches = truenas_k8s_cluster_map | dict2items
+                      | selectattr('value', 'equalto', v.cluster)
+                      | map(attribute='key')
+                      | select('in', truenas_k8s_namespace_map | dict2items
+                          | selectattr('value', 'equalto', v.namespace)
+                          | map(attribute='key') | list)
+                      | select('in', truenas_k8s_pvcname_map | dict2items
+                          | selectattr('value', 'equalto', v.pvc)
+                          | map(attribute='key') | list)
+                      | list -%}
+              {%-   set _ = out.append({'volume': v, 'datasets': matches}) -%}
+              {%- endfor -%}
+              {{ out }}
+
+        - name: Assert every protected volume resolved to exactly one dataset
+          ansible.builtin.assert:
+            that:
+              - truenas_k8s_resolved | rejectattr('datasets', 'length_is', 1) | list | length == 0
+            fail_msg: >-
+              Unresolved or ambiguous protected volumes:
+              {{ truenas_k8s_resolved | rejectattr('datasets', 'length_is', 1)
+                 | map(attribute='volume') | list }}.
+              Check the k8s:* properties on TrueNAS (recreated PVCs are
+              stamped automatically at provision time; a vanished name means
+              the PVC no longer exists on that cluster) and update
+              truenas_k8s_protected_volumes in igou-inventory.
+
+        - name: Append per-volume snapshot tasks and the replication task
+          ansible.builtin.set_fact:
+            truenas_snapshot_tasks: >-
+              {{ (truenas_snapshot_tasks | default([])) +
+                 (truenas_k8s_resolved | map(attribute='datasets') | map('first')
+                  | map('community.general.dict_kv', 'dataset')
+                  | map('combine', {
+                      'name_format': truenas_k8s_name_format,
+                      'lifetime_value': truenas_k8s_snapshot_lifetime_value | default(7),
+                      'lifetime_unit': 'DAY',
+                      'recursive': false,
+                      'minute': '20', 'hour': '0'
+                    }) | list) }}
+            truenas_replication_tasks: >-
+              {{ (truenas_replication_tasks | default([])) + [ {
+                   'name': 'k8s-valuable-to-cold',
+                   'source_datasets': truenas_k8s_resolved | map(attribute='datasets') | map('first') | sort | list,
+                   'target_dataset': truenas_k8s_replication_target,
+                   'snapshot_name_formats': [truenas_k8s_name_format],
+                   'lifetime_value': truenas_k8s_replication_lifetime_value | default(30),
+                   'lifetime_unit': 'DAY',
+                   'recursive': false,
+                   'properties': true
+                 } ] }}
 
     - name: Configure periodic snapshot tasks
       arensb.truenas.pool_snapshot_task:
