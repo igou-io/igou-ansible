@@ -73,8 +73,11 @@
       vars:
         _joined: "{{ _existing_nodes.stdout.split() }}"
         _joined_short: "{{ _existing_nodes.stdout.split() | map('regex_replace', '[.].*$', '') | list }}"
+        _worker_short: "{{ worker.split('.') | first }}"
       ansible.builtin.assert:
-        that: worker not in (_joined + _joined_short)
+        that:
+          - worker not in _joined
+          - _worker_short not in _joined_short
         fail_msg: >-
           {{ worker }} is still a node in the cluster — run
           playbooks/openshift/vm_worker_destroy.yaml first.
@@ -293,12 +296,14 @@
         approve=""
         while read -r name user; do
           [ -z "$name" ] && continue
-          if [ "$user" = "system:node:{{ worker }}" ]; then
+          if [ "$user" = "system:node:{{ worker }}" ] \
+             || [ "$user" = "system:node:{{ worker.split('.') | first }}" ]; then
             approve="$approve $name"
           elif [ "$user" = "system:serviceaccount:openshift-machine-config-operator:node-bootstrapper" ]; then
             subject=$(oc get csr "$name" -o jsonpath='{.spec.request}' | base64 -d | openssl req -noout -subject)
             case "$subject" in
-              *"system:node:{{ worker }}"*) approve="$approve $name" ;;
+              *"system:node:{{ worker }}"* | *"system:node:{{ worker.split('.') | first }}"*)
+                approve="$approve $name" ;;
             esac
           fi
         done <<EOF
@@ -307,9 +312,12 @@
         if [ -n "$approve" ]; then
           oc adm certificate approve $approve
         fi
-        if [ "$(oc get node {{ worker }} -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null)" = "True" ]; then
-          echo JOINED-READY
-        fi
+        for n in {{ worker }} {{ worker.split('.') | first }}; do
+          if [ "$(oc get node "$n" -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null)" = "True" ]; then
+            echo JOINED-READY
+            break
+          fi
+        done
       args:
         executable: /bin/bash
       register: _join
