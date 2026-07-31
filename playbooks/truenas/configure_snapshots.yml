@@ -89,13 +89,21 @@
               {{ out }}
 
         - name: Assert every protected volume resolved to exactly one dataset
+          vars:
+            truenas_k8s_unresolved: >-
+              {%- set out = [] -%}
+              {%- for r in truenas_k8s_resolved -%}
+              {%-   if r.datasets | length != 1 -%}
+              {%-     set _ = out.append(r.volume) -%}
+              {%-   endif -%}
+              {%- endfor -%}
+              {{ out }}
           ansible.builtin.assert:
             that:
-              - truenas_k8s_resolved | rejectattr('datasets', 'length_is', 1) | list | length == 0
+              - truenas_k8s_unresolved | length == 0
             fail_msg: >-
               Unresolved or ambiguous protected volumes:
-              {{ truenas_k8s_resolved | rejectattr('datasets', 'length_is', 1)
-                 | map(attribute='volume') | list }}.
+              {{ truenas_k8s_unresolved }}.
               Check the k8s:* properties on TrueNAS (recreated PVCs are
               stamped automatically at provision time; a vanished name means
               the PVC no longer exists on that cluster) and update
