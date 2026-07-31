@@ -160,6 +160,9 @@
           - --job
           - pool.dataset.delete
           - "{{ _vm_def.disk_zvol | to_json }}"
+          # recursive: snapshots on the zvol (e.g. migration checkpoints)
+          # are children and block a plain destroy.
+          - '{"recursive": true}'
       when:
         - destroy_zvol | default(true) | bool
         - _zvolq.stdout | from_json | length > 0
