@@ -150,10 +150,27 @@
       ansible.builtin.set_fact:
         _existing_vms: "{{ _vmquery.stdout | from_json | map(attribute='name') | list }}"
 
+    # The build-cache source only exists on a devhost checkout that has run
+    # deploy_netboot_binaries; inside the AAP execution environment it is
+    # absent. Staging is therefore conditional on the source being present
+    # (keeps devhost runs in lockstep with rebuilds) — the host-side assert
+    # below still guarantees each VM's image exists on the TrueNAS host.
+    - name: Check the netboot image build-cache source on the controller
+      when:
+        - truenas_vm_netboot_image_src is defined
+        - _vm_list | selectattr('netboot_image', 'defined') | list | length > 0
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+      ansible.builtin.stat:
+        path: "{{ (playbook_dir, truenas_vm_netboot_image_src) | path_join }}"
+      register: _netboot_src
+
     - name: Stage netboot fallback images referenced by VM definitions
       when:
         - truenas_vm_netboot_image_src is defined
         - _vm_list | selectattr('netboot_image', 'defined') | list | length > 0
+        - _netboot_src.stat.exists | default(false)
       become: true
       ansible.builtin.copy:
         src: "{{ truenas_vm_netboot_image_src }}"
