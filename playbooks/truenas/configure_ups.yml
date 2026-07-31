@@ -1,0 +1,100 @@
+---
+# Configure the TrueNAS built-in UPS service as a NUT netclient (SLAVE)
+# against the upsmonitor Pi's NUT netserver (igou-inventory#124).
+#
+# The Pi (10.10.9.32) drives both rack UPSes over USB and its upsd already
+# serves VLAN9 with a `monitor` secondary account
+# (igou-ansible playbooks/upsmonitor/setup-nut.yml, upsd.users.j2).
+# TrueNAS joins as a netclient and walks its own shutdown sequence
+# (VMs get their shutdown_timeout, then services, then poweroff) when the
+# monitored UPS reaches the configured shutdown condition.
+#
+# midclt ups.* is used directly — no arensb module manages the UPS service
+# config; arensb.truenas.service handles enable/start.
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_ups — {identifier, remotehost, remoteport?, shutdown?,
+#                  shutdowntimer?, monuser, op_item, op_field, op_vault}
+#   The monuser password is resolved here from the 1Password coordinates
+#   (op_item/op_field/op_vault) — same indirection as
+#   playbooks/upsmonitor/setup-nut.yml.
+- name: Configure TrueNAS UPS netclient against the upsmonitor Pi
+  hosts: truenas
+  gather_facts: false
+  become: false
+  tasks:
+
+    - name: Assert UPS variables are present
+      ansible.builtin.assert:
+        that:
+          - truenas_ups is defined
+          - truenas_ups.identifier is defined
+          - truenas_ups.remotehost is defined
+          - truenas_ups.monuser is defined
+          - truenas_ups.op_item is defined
+          - truenas_ups.op_field is defined
+          - truenas_ups.op_vault is defined
+        fail_msg: >-
+          truenas_ups must define identifier, remotehost, monuser and the
+          op_item/op_field/op_vault 1Password coordinates
+          (see igou-inventory group_vars/truenas.yml).
+
+    - name: Query current UPS service configuration
+      ansible.builtin.command: midclt call ups.config
+      register: truenas_ups_query
+      changed_when: false
+      check_mode: false
+      no_log: true  # config carries monpwd
+
+    - name: Project desired UPS configuration
+      ansible.builtin.set_fact:
+        truenas_ups_desired:
+          mode: SLAVE
+          identifier: "{{ truenas_ups.identifier }}"
+          remotehost: "{{ truenas_ups.remotehost }}"
+          remoteport: "{{ truenas_ups.remoteport | default(3493) }}"
+          shutdown: "{{ truenas_ups.shutdown | default('LOWBATT') }}"
+          shutdowntimer: "{{ truenas_ups.shutdowntimer | default(30) }}"
+          monuser: "{{ truenas_ups.monuser }}"
+          monpwd: >-
+            {{ lookup('community.general.onepassword', truenas_ups.op_item,
+               field=truenas_ups.op_field, vault=truenas_ups.op_vault) }}
+      no_log: true
+
+    - name: Update UPS service configuration
+      vars:
+        truenas_ups_in_sync: >-
+          {{ (truenas_ups_query.stdout | from_json
+              | dict2items
+              | selectattr('key', 'in', truenas_ups_desired.keys() | list)
+              | items2dict) == truenas_ups_desired }}
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - ups.update
+          - "{{ truenas_ups_desired | to_json }}"
+      when: not truenas_ups_in_sync
+      changed_when: true
+      no_log: true
+
+    - name: Enable and start the UPS service
+      arensb.truenas.service:
+        name: ups
+        enabled: true
+        state: started
+
+    - name: Verify the monitored UPS is reachable through upsd
+      ansible.builtin.command: >-
+        upsc {{ truenas_ups.identifier }}@{{ truenas_ups.remotehost }}:{{
+          truenas_ups.remoteport | default(3493) }} ups.status
+      register: truenas_ups_upsc
+      changed_when: false
+      # upsmon needs a few seconds after a config change / service start.
+      retries: 5
+      delay: 5
+      until: truenas_ups_upsc.rc == 0
+
+    - name: Report UPS status
+      ansible.builtin.debug:
+        msg: "{{ truenas_ups.identifier }}: {{ truenas_ups_upsc.stdout }}"

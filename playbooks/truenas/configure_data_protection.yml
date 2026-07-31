@@ -1,0 +1,85 @@
+---
+# Configure ZFS data-protection primitives on TrueNAS
+# (igou-inventory#115 scrub/SMART schedules, igou-inventory#153 TRIM):
+#
+#   * pool scrub tasks           — arensb.truenas.pool_scrub_task
+#   * SMART LONG self-tests      — native Cron Tasks via midclt cronjob.*
+#     (25.10 REMOVED the smart.test.* API and DB — schedules migrate to
+#     Cron Tasks per iX; arensb.truenas.smart_test_task is broken on 25.10
+#     and must not be used. See igou-inventory#115 research comment.)
+#   * monthly zpool TRIM         — same native Cron Task mechanism
+#   * pool autotrim              — midclt pool.update (kept in the middleware
+#     config DB, NOT raw `zpool set`, so config backups capture it)
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_scrub_tasks   — list of arensb.truenas.pool_scrub_task params
+#   truenas_cron_tasks    — list of {description, command, user?, enabled?,
+#                           schedule{minute,hour,dom,month,dow}} — description
+#                           is the idempotency match key
+#   truenas_pool_autotrim — list of {pool, autotrim} ("ON"/"OFF")
+- name: Configure TrueNAS scrub, SMART self-test, and TRIM schedules
+  hosts: truenas
+  gather_facts: false
+  become: false
+  tasks:
+
+    - name: Configure pool scrub tasks
+      arensb.truenas.pool_scrub_task:
+        pool: "{{ item.pool }}"
+        description: "{{ item.description | default(omit) }}"
+        threshold: "{{ item.threshold | default(omit) }}"
+        enabled: "{{ item.enabled | default(true) }}"
+        state: "{{ item.state | default('present') }}"
+        minute: "{{ item.minute | default(omit) }}"
+        hour: "{{ item.hour | default(omit) }}"
+        day: "{{ item.day | default(omit) }}"
+        month: "{{ item.month | default(omit) }}"
+        weekday: "{{ item.weekday | default(omit) }}"
+      loop: "{{ truenas_scrub_tasks | default([]) }}"
+      loop_control:
+        label: "{{ item.pool }}"
+
+    - name: Manage native cron tasks (SMART LONG tests, monthly TRIM)
+      when: truenas_cron_tasks | default([]) | length > 0
+      block:
+
+        - name: Query existing cron tasks
+          ansible.builtin.command: midclt call cronjob.query
+          register: truenas_cronjob_query
+          changed_when: false
+          check_mode: false
+
+        - name: Configure cron tasks
+          ansible.builtin.include_tasks: tasks/truenas_cron_task.yml
+          loop: "{{ truenas_cron_tasks }}"
+          loop_control:
+            loop_var: cron
+            label: "{{ cron.description }}"
+
+    - name: Manage pool autotrim
+      when: truenas_pool_autotrim | default([]) | length > 0
+      block:
+
+        - name: Query pools
+          ansible.builtin.command: midclt call pool.query
+          register: truenas_pool_query
+          changed_when: false
+          check_mode: false
+
+        - name: Set pool autotrim
+          vars:
+            truenas_pool_current: >-
+              {{ truenas_pool_query.stdout | from_json
+                 | selectattr('name', 'equalto', item.pool) | list }}
+          ansible.builtin.command:
+            argv:
+              - midclt
+              - call
+              - --job
+              - pool.update
+              - "{{ truenas_pool_current[0].id }}"
+              - "{{ {'autotrim': item.autotrim} | to_json }}"
+          when: truenas_pool_current[0].autotrim.value != item.autotrim
+          changed_when: true
+      # pool.update validates the payload; a wrong pool name fails loudly on
+      # the [0] index above rather than silently skipping.

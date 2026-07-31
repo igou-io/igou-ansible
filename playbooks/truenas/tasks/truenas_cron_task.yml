@@ -1,0 +1,64 @@
+---
+# Converge one native TrueNAS Cron Task (midclt cronjob.* — no arensb module).
+# Expects:
+#   cron                  — {description, command, user?, enabled?, schedule}
+#   truenas_cronjob_query — registered `midclt call cronjob.query` output
+# The description is the idempotency match key — keep it stable in group_vars.
+
+- name: "Project desired cron task — {{ cron.description }}"
+  ansible.builtin.set_fact:
+    truenas_cron_desired:
+      enabled: "{{ cron.enabled | default(true) }}"
+      # stdout/stderr false = don't mail command output to root on every run.
+      stdout: false
+      stderr: false
+      user: "{{ cron.user | default('root') }}"
+      command: "{{ cron.command }}"
+      description: "{{ cron.description }}"
+      schedule:
+        minute: "{{ cron.schedule.minute | default('0') }}"
+        hour: "{{ cron.schedule.hour | default('*') }}"
+        dom: "{{ cron.schedule.dom | default('*') }}"
+        month: "{{ cron.schedule.month | default('*') }}"
+        dow: "{{ cron.schedule.dow | default('*') }}"
+    truenas_cron_existing: >-
+      {{ truenas_cronjob_query.stdout | from_json
+         | selectattr('description', 'equalto', cron.description) | list }}
+
+- name: "Create cron task — {{ cron.description }}"
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - cronjob.create
+      - "{{ truenas_cron_desired | to_json }}"
+  when: truenas_cron_existing | length == 0
+  changed_when: true
+
+- name: "Update cron task — {{ cron.description }}"
+  vars:
+    truenas_cron_current:
+      enabled: "{{ truenas_cron_existing[0].enabled }}"
+      stdout: "{{ truenas_cron_existing[0].stdout }}"
+      stderr: "{{ truenas_cron_existing[0].stderr }}"
+      user: "{{ truenas_cron_existing[0].user }}"
+      command: "{{ truenas_cron_existing[0].command }}"
+      description: "{{ truenas_cron_existing[0].description }}"
+      schedule:
+        minute: "{{ truenas_cron_existing[0].schedule.minute }}"
+        hour: "{{ truenas_cron_existing[0].schedule.hour }}"
+        dom: "{{ truenas_cron_existing[0].schedule.dom }}"
+        month: "{{ truenas_cron_existing[0].schedule.month }}"
+        dow: "{{ truenas_cron_existing[0].schedule.dow }}"
+    truenas_cron_in_sync: "{{ truenas_cron_current == truenas_cron_desired }}"
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - cronjob.update
+      - "{{ truenas_cron_existing[0].id }}"
+      - "{{ truenas_cron_desired | to_json }}"
+  when:
+    - truenas_cron_existing | length > 0
+    - not truenas_cron_in_sync
+  changed_when: true

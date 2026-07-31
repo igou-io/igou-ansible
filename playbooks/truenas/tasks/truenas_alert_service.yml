@@ -1,0 +1,69 @@
+---
+# Converge one TrueNAS Alert Service (midclt alertservice.*). Expects:
+#   alert_service              — {name, level?, enabled?, attributes?}
+#   truenas_alertservice_query — registered alertservice.query output
+# Match key: name. Entries without attributes are level/enabled-only updates
+# of an existing service and are never created.
+# no_log throughout: attributes carry webhook URLs / bot tokens.
+
+- name: "Locate existing alert service — {{ alert_service.name }}"
+  ansible.builtin.set_fact:
+    truenas_alertsvc_existing: >-
+      {{ truenas_alertservice_query.stdout | from_json
+         | selectattr('name', 'equalto', alert_service.name) | list }}
+  no_log: true
+
+- name: "Create alert service — {{ alert_service.name }}"
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - alertservice.create
+      - >-
+        {{ {'name': alert_service.name,
+            'enabled': alert_service.enabled | default(true),
+            'level': alert_service.level | default('WARNING'),
+            'attributes': alert_service.attributes} | to_json }}
+  when:
+    - truenas_alertsvc_existing | length == 0
+    - alert_service.attributes is defined
+  changed_when: true
+  no_log: true
+
+- name: "Fail if a level/enabled-only entry has no existing service — {{ alert_service.name }}"
+  ansible.builtin.fail:
+    msg: >-
+      Alert service {{ alert_service.name }} has no attributes in group_vars
+      and does not exist on the box — nothing to update. Add attributes to
+      manage it fully, or fix the name.
+  when:
+    - truenas_alertsvc_existing | length == 0
+    - alert_service.attributes is not defined
+
+- name: "Update alert service — {{ alert_service.name }}"
+  vars:
+    truenas_alertsvc_desired: >-
+      {{ {'enabled': alert_service.enabled | default(true),
+          'level': alert_service.level
+                   | default(truenas_alertsvc_existing[0].level)}
+         | combine({'attributes': alert_service.attributes}
+                   if alert_service.attributes is defined else {}) }}
+    truenas_alertsvc_current: >-
+      {{ {'enabled': truenas_alertsvc_existing[0].enabled,
+          'level': truenas_alertsvc_existing[0].level}
+         | combine({'attributes': truenas_alertsvc_existing[0].attributes}
+                   if alert_service.attributes is defined else {}) }}
+    truenas_alertsvc_in_sync: >-
+      {{ truenas_alertsvc_current == truenas_alertsvc_desired }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - alertservice.update
+      - "{{ truenas_alertsvc_existing[0].id }}"
+      - "{{ truenas_alertsvc_desired | to_json }}"
+  when:
+    - truenas_alertsvc_existing | length > 0
+    - not truenas_alertsvc_in_sync
+  changed_when: true
+  no_log: true

@@ -1,0 +1,78 @@
+---
+# Configure periodic ZFS snapshot tasks + intra-box replication on TrueNAS
+# (igou-inventory#125):
+#
+#   * periodic snapshot tasks — arensb.truenas.pool_snapshot_task
+#     (matched by dataset + name_format)
+#   * replication tasks       — midclt replication.* (no arensb module),
+#     phase 1: LOCAL transport, ssd → cold, linked to the periodic snapshot
+#     tasks so each new snapshot replicates automatically. Matched by name.
+#
+# Off-box replication (phase 2, igounas rsync) is deliberately NOT here —
+# target/tooling decision is still open on the issue.
+#
+# Variables (igou-inventory group_vars/truenas.yml):
+#   truenas_snapshot_parent_datasets — datasets to ensure exist (replication
+#                                      target parents), arensb.truenas.filesystem
+#   truenas_snapshot_tasks           — list of pool_snapshot_task params
+#   truenas_replication_tasks        — list of {name, source_datasets,
+#                                      target_dataset, snapshot_name_formats,
+#                                      lifetime_value, lifetime_unit, ...}
+- name: Configure TrueNAS periodic snapshots and replication
+  hosts: truenas
+  gather_facts: false
+  become: false
+  tasks:
+
+    - name: Ensure replication target parent datasets exist
+      arensb.truenas.filesystem:
+        name: "{{ item }}"
+        state: present
+        type: FILESYSTEM
+      loop: "{{ truenas_snapshot_parent_datasets | default([]) }}"
+
+    - name: Configure periodic snapshot tasks
+      arensb.truenas.pool_snapshot_task:
+        match:
+          dataset: "{{ item.dataset }}"
+          name_format: "{{ item.name_format }}"
+        state: "{{ item.state | default('present') }}"
+        dataset: "{{ item.dataset }}"
+        recursive: "{{ item.recursive | default(true) }}"
+        lifetime_value: "{{ item.lifetime_value }}"
+        lifetime_unit: "{{ item.lifetime_unit }}"
+        name_format: "{{ item.name_format }}"
+        exclude: "{{ item.exclude | default(omit) }}"
+        allow_empty: "{{ item.allow_empty | default(omit) }}"
+        enabled: "{{ item.enabled | default(true) }}"
+        minute: "{{ item.minute | default(omit) }}"
+        hour: "{{ item.hour | default(omit) }}"
+        day: "{{ item.day | default(omit) }}"
+        month: "{{ item.month | default(omit) }}"
+        weekday: "{{ item.weekday | default(omit) }}"
+      loop: "{{ truenas_snapshot_tasks | default([]) }}"
+      loop_control:
+        label: "{{ item.dataset }} ({{ item.name_format }})"
+
+    - name: Manage replication tasks
+      when: truenas_replication_tasks | default([]) | length > 0
+      block:
+
+        - name: Query periodic snapshot tasks (for replication linkage)
+          ansible.builtin.command: midclt call pool.snapshottask.query
+          register: truenas_snapshottask_query
+          changed_when: false
+          check_mode: false
+
+        - name: Query existing replication tasks
+          ansible.builtin.command: midclt call replication.query
+          register: truenas_replication_query
+          changed_when: false
+          check_mode: false
+
+        - name: Configure replication tasks
+          ansible.builtin.include_tasks: tasks/truenas_replication_task.yml
+          loop: "{{ truenas_replication_tasks }}"
+          loop_control:
+            loop_var: repl
+            label: "{{ repl.name }}"

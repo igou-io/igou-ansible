@@ -1,0 +1,89 @@
+---
+# Converge one TrueNAS replication task (midclt replication.* — no arensb
+# module). Expects:
+#   repl                        — the truenas_replication_tasks entry
+#   truenas_snapshottask_query  — registered pool.snapshottask.query output
+#   truenas_replication_query   — registered replication.query output
+# The task name is the idempotency match key. Linked periodic snapshot tasks
+# are resolved at runtime from (source dataset, snapshot_name_formats) so
+# group_vars never carries database ids.
+
+- name: "Resolve linked snapshot task ids — {{ repl.name }}"
+  ansible.builtin.set_fact:
+    truenas_repl_pst_ids: >-
+      {{ truenas_snapshottask_query.stdout | from_json
+         | selectattr('dataset', 'in', repl.source_datasets)
+         | selectattr('naming_schema', 'in', repl.snapshot_name_formats)
+         | map(attribute='id') | sort | list }}
+    truenas_repl_existing: >-
+      {{ truenas_replication_query.stdout | from_json
+         | selectattr('name', 'equalto', repl.name) | list }}
+
+- name: "Assert the linked snapshot tasks exist — {{ repl.name }}"
+  ansible.builtin.assert:
+    that:
+      - truenas_repl_pst_ids | length == (repl.source_datasets | length) * (repl.snapshot_name_formats | length)
+    fail_msg: >-
+      Expected one periodic snapshot task per
+      source dataset × name format for {{ repl.name }};
+      found ids {{ truenas_repl_pst_ids }}. Run the snapshot-task section
+      first and check truenas_snapshot_tasks covers
+      {{ repl.source_datasets }} with {{ repl.snapshot_name_formats }}.
+
+- name: "Project desired replication task — {{ repl.name }}"
+  ansible.builtin.set_fact:
+    truenas_repl_desired:
+      name: "{{ repl.name }}"
+      direction: PUSH
+      transport: LOCAL
+      source_datasets: "{{ repl.source_datasets }}"
+      target_dataset: "{{ repl.target_dataset }}"
+      recursive: "{{ repl.recursive | default(true) }}"
+      periodic_snapshot_tasks: "{{ truenas_repl_pst_ids }}"
+      auto: true
+      retention_policy: CUSTOM
+      lifetime_value: "{{ repl.lifetime_value }}"
+      lifetime_unit: "{{ repl.lifetime_unit }}"
+      readonly: "{{ repl.readonly | default('SET') }}"
+      enabled: "{{ repl.enabled | default(true) }}"
+
+- name: "Create replication task — {{ repl.name }}"
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - replication.create
+      - "{{ truenas_repl_desired | to_json }}"
+  when: truenas_repl_existing | length == 0
+  changed_when: true
+
+- name: "Update replication task — {{ repl.name }}"
+  vars:
+    truenas_repl_current:
+      name: "{{ truenas_repl_existing[0].name }}"
+      direction: "{{ truenas_repl_existing[0].direction }}"
+      transport: "{{ truenas_repl_existing[0].transport }}"
+      source_datasets: "{{ truenas_repl_existing[0].source_datasets }}"
+      target_dataset: "{{ truenas_repl_existing[0].target_dataset }}"
+      recursive: "{{ truenas_repl_existing[0].recursive }}"
+      periodic_snapshot_tasks: >-
+        {{ truenas_repl_existing[0].periodic_snapshot_tasks
+           | map(attribute='id') | sort | list }}
+      auto: "{{ truenas_repl_existing[0].auto }}"
+      retention_policy: "{{ truenas_repl_existing[0].retention_policy }}"
+      lifetime_value: "{{ truenas_repl_existing[0].lifetime_value }}"
+      lifetime_unit: "{{ truenas_repl_existing[0].lifetime_unit }}"
+      readonly: "{{ truenas_repl_existing[0].readonly }}"
+      enabled: "{{ truenas_repl_existing[0].enabled }}"
+    truenas_repl_in_sync: "{{ truenas_repl_current == truenas_repl_desired }}"
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - replication.update
+      - "{{ truenas_repl_existing[0].id }}"
+      - "{{ truenas_repl_desired | to_json }}"
+  when:
+    - truenas_repl_existing | length > 0
+    - not truenas_repl_in_sync
+  changed_when: true
