@@ -138,13 +138,18 @@ ssh truenas 'docker inspect <name> | jq ".[0].NetworkSettings.Networks"'
 
 ### `OP_SERVICE_ACCOUNT_TOKEN` not set
 
-```bash
-op read "op://awx/onepassword-sdk-claude-container-token/credential" \
-  | head -1
-```
+`export OP_SERVICE_ACCOUNT_TOKEN=ops_...` before the run — there is no
+`op read` recipe for it.
 
-- If `op` says "no token" → `op signin` first, or use a service account
-  token directly: `export OP_SERVICE_ACCOUNT_TOKEN=ops_...`.
+- The only playbook that needs it is
+  `playbooks/openshift/bootstrap_gitops.yaml`, and the token it wants is the
+  read-only `ocp-bootstrap` service account (scoped to the
+  `ocp-connect-bootstrap` vault). That token is break-glass: it is
+  deliberately **not** stored in any vault automation can read, so keep it in
+  your personal/admin vault or emergency kit.
+- Do not add a `vars_prompt` back to the playbook — it silently returns empty
+  under ansible-navigator/AAP (no TTY wired to the lookup) and the lookup then
+  falls through to an interactive sign-in.
 - The token rotates; if it's expired, generate a new one in the 1Password
   UI under Service Accounts.
 
@@ -152,9 +157,13 @@ op read "op://awx/onepassword-sdk-claude-container-token/credential" \
 
 - The `op` CLI is doing biometric / password prompt. For headless contexts
   always use a service account token (`OP_SERVICE_ACCOUNT_TOKEN` env).
-- Vault name typo → `vault='awx'` is the canonical homelab vault. If the
-  lookup says "item not found," double-check the field name (`credential`
-  vs `password` — depends on the item type).
+- Vault name typo → there is no single canonical vault any more. Secrets are
+  split per entity (`lab_routeros`, `lab_agents`, `lab_s3`,
+  `lab_external_api_keys`, `ocp-connect-bootstrap`, `ansible-push`, …); `awx`
+  survives on exactly one lookup (`playbooks/tailscale/tailscale.yml`). Grep
+  the repo for the item name rather than guessing the vault. If the lookup
+  says "item not found," also double-check the field name (`credential` vs
+  `password` — depends on the item type).
 
 ### Token appears empty after lookup
 

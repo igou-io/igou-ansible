@@ -1,8 +1,8 @@
 # TrueNAS operations runbook
 
 Day-2 operations on `truenas.igou.systems` (the homelab's primary TrueNAS
-SCALE host). Covers Docker container management, users, NFS netboot, API
-sanity, and the deprecated playbooks.
+SCALE host). Covers Docker container management, users, NFS netboot, KVM
+guests, and API sanity.
 
 ## Connection facts
 
@@ -13,7 +13,7 @@ sanity, and the deprecated playbooks.
 | Container runtime | **Docker** (TrueNAS SCALE; not podman) |
 | Container naming | TrueCharts: `ix-<app>-<service>-<n>` (e.g. `ix-netbootxyz-netbootxyz-1`) |
 | Bind-mount root | `/mnt/<pool>/containers/<service>/` |
-| Pool | `ssd` for warm storage; `tank` for cold (verify in inventory before assuming) |
+| Pool | `ssd` is the default (`truenas_docker_containers_default_pool`); `cold` for bulk. There is no `tank` pool — check `zpool list` before assuming any other name |
 
 ## Playbooks
 
@@ -23,8 +23,14 @@ sanity, and the deprecated playbooks.
 | [`configure_users.yml`](#users) | Manages local TrueNAS users via `arensb.truenas.user` | Rare; run after adding/removing users |
 | [`configure_netboot_nfs.yml`](#nfs-netboot) | NFS export + service for armbian rootfs hosting | Once for setup; rare after |
 | [`api_test.yml`](#api-smoke-test) | Smoke-test `midclt` against the TrueNAS middleware | When debugging connection issues |
-| `configure_netbootxyz.yml` | **DEPRECATED** — replaced by `playbooks/netboot/deploy_assets.yml` | Don't run; left for reference |
-| `sync_boot_files.yml` | **DEPRECATED** — folded into `deploy_assets.yml` | Don't run |
+| `configure_vm_bridge.yaml` | Creates the bridge interface the KVM guests attach to | Once for setup |
+| `configure_vms.yaml` | Declarative KVM guests from `truenas_vms` (incl. the `truenas-w1` OpenShift worker) | On VM add/resize |
+| `configure_syslog.yaml` | Ships TrueNAS syslog to central logging | Rare |
+| `publish_windows_isos.yml` | Publishes Windows ISOs to the public share | Rare |
+
+The old `configure_netbootxyz.yml` and `sync_boot_files.yml` playbooks were
+deleted — netboot asset delivery is `playbooks/netboot/deploy_assets.yml`
+(see [`netboot-operations.md`](netboot-operations.md)).
 
 ## Docker containers
 
