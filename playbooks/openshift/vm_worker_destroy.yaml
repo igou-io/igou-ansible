@@ -155,6 +155,8 @@
     - name: Destroy the backing zvol (slow under pool config-lock congestion)
       ansible.builtin.command:
         argv:
+          - timeout
+          - '300'
           - midclt
           - call
           - --job
@@ -166,7 +168,28 @@
       when:
         - destroy_zvol | default(true) | bool
         - _zvolq.stdout | from_json | length > 0
+      register: _zvol_del
+      # rc 124 = the midclt job-event wait wedged; observed (AAP job 1021)
+      # AFTER the delete itself had completed. The verify task below is the
+      # authoritative gate, so a wedged wait is tolerated here.
+      failed_when: _zvol_del.rc not in [0, 124]
       changed_when: true
+
+    - name: Verify the backing zvol is gone
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - pool.dataset.query
+          - "{{ [['id', '=', _vm_def.disk_zvol], ['type', '=', 'VOLUME']] | to_json }}"
+      when:
+        - destroy_zvol | default(true) | bool
+        - _zvolq.stdout | from_json | length > 0
+      register: _zvol_gone
+      changed_when: false
+      retries: 18
+      delay: 10
+      until: _zvol_gone.stdout | from_json | length == 0
 
 - name: Remove the Node object from the cluster
   hosts: "{{ target_cluster | default('ocp') }}"
