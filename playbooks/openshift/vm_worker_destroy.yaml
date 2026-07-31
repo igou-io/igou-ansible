@@ -63,20 +63,27 @@
           refusing to touch the node. Add the mapping in
           group_vars/truenas.yml if this really is a TrueNAS VM worker.
 
-    - name: Check whether the node exists
+    - name: List cluster node names
       ansible.builtin.command:
-        argv: [oc, get, node, "{{ worker }}", --no-headers]
-      register: _node_check
+        argv: [oc, get, nodes, -o, "jsonpath={.items[*].metadata.name}"]
+      register: _node_list
       changed_when: false
-      failed_when: false
 
-    - name: Record node presence
+    # Nodes installed via the manual netboot flow can register with the
+    # SHORT hostname (live 2026-07-31: node 'truenas-w1' vs inventory
+    # 'truenas-w1.igou.systems'), so resolve whichever form exists.
+    - name: Resolve the cluster Node object name
+      vars:
+        _matched: >-
+          {{ [worker, worker.split('.') | first]
+             | intersect(_node_list.stdout.split()) }}
       ansible.builtin.set_fact:
-        _node_present: "{{ _node_check.rc == 0 }}"
+        _node_name: "{{ _matched | first | default(worker.split('.') | first) }}"
+        _node_present: "{{ _matched | length > 0 }}"
 
     - name: Cordon the node
       ansible.builtin.command:
-        argv: [oc, adm, cordon, "{{ worker }}"]
+        argv: [oc, adm, cordon, "{{ _node_name }}"]
       when: _node_present
       changed_when: true
 
@@ -85,7 +92,7 @@
     # -e drain_ignore_errors=true proceeds to poweroff regardless.
     - name: Drain the node
       ansible.builtin.command:
-        argv: "{{ ['oc', 'adm', 'drain', worker, '--ignore-daemonsets', '--delete-emptydir-data', '--timeout=' ~ drain_timeout ~ 's'] + (['--force'] if drain_force | bool else []) }}"
+        argv: "{{ ['oc', 'adm', 'drain', _node_name, '--ignore-daemonsets', '--delete-emptydir-data', '--timeout=' ~ drain_timeout ~ 's'] + (['--force'] if drain_force | bool else []) }}"
       when: _node_present
       register: _drain
       changed_when: true
@@ -199,9 +206,12 @@
     worker: "{{ vm_worker | default('truenas-w1.igou.systems', true) }}"
   tasks:
 
+    # Delete both name forms — registration may have used the short
+    # hostname (see the resolution note in the drain play).
     - name: Delete the Node object
       ansible.builtin.command:
-        argv: [oc, delete, node, "{{ worker }}", --ignore-not-found]
+        argv: [oc, delete, node, "{{ item }}", --ignore-not-found]
+      loop: "{{ [worker, worker.split('.') | first] | unique }}"
       register: _node_del
       changed_when: "'deleted' in _node_del.stdout"
 
