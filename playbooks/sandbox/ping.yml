@@ -1,0 +1,14 @@
+---
+# Demo workload for the AAP `sandbox` organization (dev1 persona showcase).
+# Deliberately trivial and side-effect free: the point is demonstrating
+# org-scoped RBAC through the AAP MCP server, not the automation itself.
+- name: Sandbox ping
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ping the target
+      ansible.builtin.ping:
+
+    - name: Say hello
+      ansible.builtin.debug:
+        msg: "Hello from the sandbox organization on {{ inventory_hostname }}"

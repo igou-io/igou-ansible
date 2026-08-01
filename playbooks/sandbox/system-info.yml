@@ -1,0 +1,14 @@
+---
+# Demo workload for the AAP `sandbox` organization (dev1 persona showcase).
+# Read-only fact gathering so a sandbox user can launch something that
+# produces real output without touching anything.
+- name: Sandbox system info
+  hosts: all
+  tasks:
+    - name: Report basic system facts
+      ansible.builtin.debug:
+        msg:
+          - "Distribution: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - "Python: {{ ansible_python_version }}"
+          - "Processor count: {{ ansible_processor_vcpus | default('n/a') }}"
