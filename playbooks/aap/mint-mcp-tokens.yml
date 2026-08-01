@@ -1,0 +1,113 @@
+---
+# Mint AAP gateway OAuth tokens for MCP clients and publish them to
+# 1Password (lab_aap vault) via Connect REST, one item per persona:
+#
+#   admin (igou persona) -> aap-mcp-token-igou   full-platform RBAC
+#   dev1                 -> aap-mcp-token-dev1   sandbox-org RBAC only
+#
+# The tokens authenticate the Ansible MCP server's streamable-HTTP endpoint
+# (Authorization: Bearer <token>); what a token can see/do through MCP is
+# exactly its owner's AAP RBAC — that asymmetry is the dev1 showcase.
+#
+# Runs on localhost ON PURPOSE (same rationale as
+# bootstrap-connect-credential.yml): it never loads group_vars/aap, and it
+# talks to the gateway tokens API with per-user basic auth because AAP 2.6
+# removed controller-local token minting; gateway tokens are shown once at
+# creation, hence the immediate 1Password upsert.
+#
+# Re-running mints fresh tokens and replaces the 1P items (old tokens keep
+# working in AAP until deleted in the UI — prune old "mcp-client" tokens
+# there when rotating).
+#
+# Prereqs: OP_CONNECT_HOST + OP_CONNECT_TOKEN in the runner env (devcontainer
+# default), Connect token able to read/write lab_aap.
+#
+# Run:
+#   ANSIBLE_NAVIGATOR_CONFIG=playbooks/aap/ansible-navigator.yml \
+#     ansible-navigator run playbooks/aap/mint-mcp-tokens.yml --mode stdout
+- name: Mint AAP MCP gateway tokens and publish to 1Password
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    aap_hostname: "{{ lookup('community.general.onepassword', 'aap', field='host', vault='lab_aap') }}"
+    op_connect_host: "{{ lookup('ansible.builtin.env', 'OP_CONNECT_HOST') }}"
+    op_connect_token: "{{ lookup('ansible.builtin.env', 'OP_CONNECT_TOKEN') }}"
+    mcp_token_users:
+      - persona: igou
+        aap_username: "{{ lookup('community.general.onepassword', 'aap', field='username', vault='lab_aap') }}"
+        aap_password: "{{ lookup('community.general.onepassword', 'aap', field='password', vault='lab_aap') }}"
+        op_item: aap-mcp-token-igou
+      - persona: dev1
+        aap_username: "{{ lookup('community.general.onepassword', 'aap-dev1', field='username', vault='lab_aap') }}"
+        aap_password: "{{ lookup('community.general.onepassword', 'aap-dev1', field='password', vault='lab_aap') }}"
+        op_item: aap-mcp-token-dev1
+  tasks:
+    - name: Mint a gateway OAuth token per persona
+      ansible.builtin.uri:
+        url: "https://{{ aap_hostname }}/api/gateway/v1/tokens/"
+        method: POST
+        url_username: "{{ item.aap_username }}"
+        url_password: "{{ item.aap_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          description: "mcp-client ({{ item.persona }})"
+          # write includes read; launching templates through MCP needs it.
+          # dev1's lock-down comes from RBAC (sandbox org only), not scope.
+          scope: write
+        status_code: [201]
+      loop: "{{ mcp_token_users }}"
+      loop_control:
+        label: "{{ item.persona }}"
+      register: minted
+      no_log: true
+
+    - name: Resolve lab_aap vault id
+      ansible.builtin.uri:
+        url: "{{ op_connect_host }}/v1/vaults?filter=name eq \"lab_aap\""
+        headers:
+          Authorization: "Bearer {{ op_connect_token }}"
+      register: op_vault
+      no_log: true
+
+    - name: Look up existing token items
+      ansible.builtin.uri:
+        url: "{{ op_connect_host }}/v1/vaults/{{ op_vault.json[0].id }}/items?filter=title eq \"{{ item.item.op_item }}\""
+        headers:
+          Authorization: "Bearer {{ op_connect_token }}"
+      loop: "{{ minted.results }}"
+      loop_control:
+        label: "{{ item.item.op_item }}"
+      register: op_existing
+      no_log: true
+
+    - name: Create or replace the 1Password token items
+      ansible.builtin.uri:
+        url: >-
+          {{ op_connect_host }}/v1/vaults/{{ op_vault.json[0].id }}/items{{
+            '/' + item.1.json[0].id if item.1.json | length > 0 else '' }}
+        method: "{{ 'PUT' if item.1.json | length > 0 else 'POST' }}"
+        headers:
+          Authorization: "Bearer {{ op_connect_token }}"
+        body_format: json
+        body:
+          id: "{{ item.1.json[0].id if item.1.json | length > 0 else omit }}"
+          title: "{{ item.0.item.op_item }}"
+          category: API_CREDENTIAL
+          vault:
+            id: "{{ op_vault.json[0].id }}"
+          fields:
+            - id: token
+              label: token
+              type: CONCEALED
+              value: "{{ item.0.json.token }}"
+        status_code: [200, 201]
+      loop: "{{ minted.results | zip(op_existing.results) | list }}"
+      loop_control:
+        label: "{{ item.0.item.op_item }}"
+      no_log: true
+
+    - name: Report published items
+      ansible.builtin.debug:
+        msg: "Published {{ mcp_token_users | map(attribute='op_item') | join(', ') }} to lab_aap"
