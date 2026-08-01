@@ -67,6 +67,40 @@
             postStart:
               - install-agents
   tasks:
+    # e2e-learned: DWO creates the per-user common PVC lazily and treats the
+    # transient FailedScheduling (pod racing an Immediate-binding PVC) as
+    # unrecoverable for raw DevWorkspaces (the ignore list lives in the
+    # Che-managed DWOC, which only dashboard workspaces reference). And DWO
+    # garbage-collects the PVC with the last workspace, so every fresh run
+    # would race again. Pre-create it Bound before the workspace.
+    - name: Pre-create the per-user workspace PVC (avoids first-start race)
+      when: dw_state == 'present'
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: claim-devworkspace
+            namespace: "{{ dw_namespace }}"
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 10Gi
+    - name: Wait for the PVC to bind (Immediate binding, external provisioner)
+      when: dw_state == 'present'
+      kubernetes.core.k8s_info:
+        kind: PersistentVolumeClaim
+        namespace: "{{ dw_namespace }}"
+        name: claim-devworkspace
+      register: dw_pvc
+      until: >-
+        dw_pvc.resources | length > 0 and
+        dw_pvc.resources[0].status.phase | default('') == 'Bound'
+      retries: 24
+      delay: 5
+
     - name: Apply / remove the DevWorkspace
       kubernetes.core.k8s:
         state: "{{ dw_state }}"
