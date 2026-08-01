@@ -551,9 +551,15 @@
           # Ansible managed (igou-ansible playbooks/devenv/bootstrap.yml)
           [Unit]
           Description=igou-devenv devcontainer (code-server IDE)
-          Wants=network-online.target
+          # Wants= (not Requires=) for docker.service: Requires= propagates
+          # docker restarts to this unit, so a docker-ce RPM upgrade
+          # (%systemd_postun_with_restart) stopped this unit first — ExecStop
+          # `docker rm -f`ed the devcontainer before dockerd even got SIGTERM,
+          # defeating the daemon's live-restore. With Wants=+After= boot
+          # ordering is unchanged, but a docker restart leaves this unit alone
+          # and live-restore carries the running container through it.
+          Wants=network-online.target docker.service
           After=network-online.target docker.service
-          Requires=docker.service
 
           [Service]
           Type=oneshot
