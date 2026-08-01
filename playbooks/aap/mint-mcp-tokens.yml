@@ -30,7 +30,8 @@
   connection: local
   gather_facts: false
   vars:
-    aap_hostname: "{{ lookup('community.general.onepassword', 'aap', field='host', vault='lab_aap') }}"
+    # the 1P host field carries the scheme — strip it so the url below works
+    aap_hostname: "{{ lookup('community.general.onepassword', 'aap', field='host', vault='lab_aap') | regex_replace('^https?://', '') }}"
     op_connect_host: "{{ lookup('ansible.builtin.env', 'OP_CONNECT_HOST') }}"
     op_connect_token: "{{ lookup('ansible.builtin.env', 'OP_CONNECT_TOKEN') }}"
     mcp_token_users:
@@ -65,7 +66,7 @@
 
     - name: Resolve lab_aap vault id
       ansible.builtin.uri:
-        url: "{{ op_connect_host }}/v1/vaults?filter=name eq \"lab_aap\""
+        url: "{{ op_connect_host }}/v1/vaults?filter={{ 'name eq \"lab_aap\"' | urlencode }}"
         headers:
           Authorization: "Bearer {{ op_connect_token }}"
       register: op_vault
@@ -73,7 +74,7 @@
 
     - name: Look up existing token items
       ansible.builtin.uri:
-        url: "{{ op_connect_host }}/v1/vaults/{{ op_vault.json[0].id }}/items?filter=title eq \"{{ item.item.op_item }}\""
+        url: "{{ op_connect_host }}/v1/vaults/{{ op_vault.json[0].id }}/items?filter={{ ('title eq \"' ~ item.item.op_item ~ '\"') | urlencode }}"
         headers:
           Authorization: "Bearer {{ op_connect_token }}"
       loop: "{{ minted.results }}"
