@@ -130,6 +130,13 @@
           {{ truenas_restore_snaps.stdout_lines | first }}
           -> {{ target_dataset }} (target contents will be REPLACED)
 
+    - name: Capture the target's own local identity before recv
+      ansible.builtin.command: >-
+        zfs get -H -s local -o property,value
+        k8s:cluster,k8s:pvc_namespace,k8s:pvc_name {{ target_dataset | quote }}
+      register: truenas_restore_target_identity
+      changed_when: false
+
     - name: Restore into the target dataset
       ansible.builtin.shell: >-
         set -o pipefail;
@@ -138,6 +145,20 @@
       args:
         # TrueNAS /bin/sh is dash — no pipefail.
         executable: /bin/bash
+      changed_when: true
+
+    # zfs recv -F replaces the dataset: the target's creation-time LOCAL
+    # identity properties are lost and only the stream's RECEIVED (source)
+    # properties remain — which the converge's `-s local` resolution
+    # deliberately ignores, silently dropping the restored volume out of
+    # protection (caught live 2026-08-01). Re-apply the target's own
+    # identity so the next converge re-protects it under its real name.
+    - name: Re-stamp the target's local identity after recv
+      ansible.builtin.command: >-
+        sudo zfs set {{ truenas_restore_target_identity.stdout_lines
+          | map('split', '\t') | map('join', '=') | map('quote') | join(' ') }}
+        {{ target_dataset | quote }}
+      when: truenas_restore_target_identity.stdout_lines | length > 0
       changed_when: true
 
     - name: Verify the target now carries the restored snapshot
