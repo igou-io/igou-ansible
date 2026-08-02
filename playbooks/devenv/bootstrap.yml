@@ -632,10 +632,17 @@
 # requires TLS and `t3 serve` has no native cert support, so tailscaled
 # proxies https://<magicdns-name>/ (tailnet only, auto-provisioned cert) to
 # the plain-HTTP t3 listener on 127.0.0.1:{{ tailscale_serve_port }}.
-# Gated on tailscale_serve_port (group_vars/devenv/tailscale.yml); skips
-# hosts without it. Adoptive: re-running against an already-configured host
-# reports ok. Requires the tailnet HTTPS-certificates feature (enabled
-# 2026-08-02). Manual rollback: `tailscale serve --https=443 off`.
+#
+# The work lives in the local roles/tailscale_serve role, NOT in the
+# artis3n.tailscale collection that owns the join above: that collection has no
+# serve capability at all (checked v1.2.1, latest, 2026-08-02). Ordering
+# matters — serve needs the tailscaled the play above joined.
+#
+# Gated on tailscale_serve_port (group_vars/devenv/tailscale.yml); the role is
+# a clean no-op on hosts without it, which is why it has no default. Adoptive:
+# re-running against an already-configured host reports ok. Requires the
+# tailnet HTTPS-certificates feature (enabled 2026-08-02). Manual rollback:
+# `tailscale serve --https=443 off`.
 # ---------------------------------------------------------------------------
 - name: Configure Tailscale Serve for devenv services
   hosts: "{{ ansible_limit | default('devenv') }}"
@@ -643,19 +650,6 @@
   gather_facts: false
 
   tasks:
-    - name: Read current tailscale serve config
-      ansible.builtin.command: tailscale serve status --json
-      register: devenv_tailscale_serve_status
-      changed_when: false
-      failed_when: false
-      when: tailscale_serve_port is defined
-
-    - name: Serve tailnet HTTPS 443 to the local T3 Code port
-      ansible.builtin.command: >-
-        tailscale serve --bg {{ tailscale_serve_port }}
-      when:
-        - tailscale_serve_port is defined
-        - devenv_tailscale_serve_status.rc == 0
-        - ('127.0.0.1:' ~ tailscale_serve_port) not in
-          (devenv_tailscale_serve_status.stdout | default(''))
-      changed_when: true
+    - name: Configure Tailscale Serve
+      ansible.builtin.include_role:
+        name: tailscale_serve

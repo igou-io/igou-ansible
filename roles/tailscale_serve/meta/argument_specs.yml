@@ -1,0 +1,26 @@
+---
+argument_specs:
+  main:
+    short_description: "Configure Tailscale Serve on an already-joined tailnet node."
+    description:
+      - >-
+        Points tailnet HTTPS :443 at a plain-HTTP listener on 127.0.0.1, so
+        tailscaled terminates TLS with an auto-provisioned cert for services
+        (T3 Code) that cannot do it themselves. Must run AFTER the tailnet
+        join (playbooks/tailscale/tailscale.yml) — it needs a live tailscaled.
+      - >-
+        Adoptive and idempotent: the applied state is detected by matching
+        127.0.0.1:<port> in `tailscale serve status --json`, so re-running
+        against an already-configured host reports ok. If tailscaled is down
+        or absent the status read fails soft and the apply skips, so the role
+        never fails a host without a live tailnet.
+    options:
+      tailscale_serve_port:
+        type: int
+        required: false
+        description: >-
+          Local plain-HTTP port to proxy https://<magicdns-name>/ to.
+          DELIBERATELY has no default — when it is undefined the role does
+          nothing at all, which is the contract that lets it run against every
+          devenv host (and molecule containers) unconditionally. Supplied from
+          inventory, igou-inventory group_vars/devenv/tailscale.yml.

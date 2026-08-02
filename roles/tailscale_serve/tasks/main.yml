@@ -1,0 +1,26 @@
+---
+# tasks file for tailscale_serve
+
+# `failed_when: false` on the read: if tailscaled is down or absent (e.g. a
+# molecule container), rc != 0 and the apply task's `rc == 0` guard skips it —
+# the role never fails on hosts without a live tailnet.
+- name: Read current tailscale serve config
+  ansible.builtin.command: tailscale serve status --json
+  register: tailscale_serve_status
+  changed_when: false
+  failed_when: false
+  when: tailscale_serve_port is defined
+
+# Idempotency/adoption check: a substring match on the JSON serve config. An
+# existing proxy to 127.0.0.1:<port> appears verbatim in
+# `tailscale serve status --json` output, so a re-run against an
+# already-configured host reports ok instead of changed.
+- name: Serve tailnet HTTPS 443 to the local T3 Code port
+  ansible.builtin.command: >-
+    tailscale serve --bg {{ tailscale_serve_port }}
+  when:
+    - tailscale_serve_port is defined
+    - tailscale_serve_status.rc == 0
+    - ('127.0.0.1:' ~ tailscale_serve_port) not in
+      (tailscale_serve_status.stdout | default(''))
+  changed_when: true

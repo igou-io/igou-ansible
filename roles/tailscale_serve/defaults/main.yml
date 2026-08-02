@@ -1,0 +1,13 @@
+---
+# defaults file for tailscale_serve
+
+# Required from caller — DELIBERATELY NOT DEFAULTED HERE:
+#   tailscale_serve_port
+#
+# The whole no-op contract of this role is "undefined means do nothing".
+# Defining a default (even a falsy one) would break that: the role's tasks
+# gate on `tailscale_serve_port is defined`, so a default would make every
+# devenv host — including molecule containers with no tailscaled — attempt a
+# serve configuration. The variable comes from inventory
+# (igou-inventory group_vars/devenv/tailscale.yml); hosts that do not set it
+# skip both tasks cleanly.

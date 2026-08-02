@@ -1,0 +1,24 @@
+---
+galaxy_info:
+  role_name: tailscale_serve
+  author: david-igou
+  description: >-
+    Configure Tailscale Serve on an already-joined tailnet node so tailscaled
+    terminates tailnet HTTPS on :443 and proxies to a plain-HTTP listener on
+    127.0.0.1. Exists because artis3n.tailscale (v1.2.1, the collection that
+    owns the tailnet join) has no serve capability at all. Tiny single-concern
+    role; adoptive and a clean no-op when tailscale_serve_port is undefined.
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+  galaxy_tags:
+    - tailscale
+    - serve
+    - https
+dependencies: []
