@@ -202,14 +202,22 @@ it via SSH + `become: true`.
 
 ## Snapshots and backups
 
-Not driven by Ansible. Configured in the TrueNAS UI under Periodic Snapshot
-Tasks and Replication Tasks. **Currently (2026-05-10) not documented here**
-— if you find yourself needing to recover, check the UI directly.
+Config-as-code since igou-inventory#125 (updated 2026-08-02):
 
-Common datasets to verify retention on:
-- `ssd/containers/*` (compose state, persistent volumes)
-- `ssd/home/*` (per-user homes if any)
-- `ssd/<service>` for important services
+- **Generic host-side tasks** — `playbooks/truenas/configure_snapshots.yml`
+  (AAP JT `truenas_configure_snapshots`) converges
+  `truenas_snapshot_tasks` / `truenas_replication_tasks` from
+  igou-inventory `group_vars/truenas.yml`: `ssd/containers` hourly×24 +
+  daily×14, `cold/media` weekly×4, and the `containers-to-cold`
+  replication. The play creates/updates but does **not prune** — removing
+  an entry from inventory requires a manual
+  `midclt call pool.snapshottask.delete` / `replication.delete`.
+- **k8s volume backups are NOT here** — they are OADP/Velero on the ocp
+  cluster (igou-openshift `clusters/ocp/oadp`; the former per-volume
+  snapshot/replication layer was removed 2026-08-02). Single-volume
+  restores by stamped name: `playbooks/truenas/restore_volume.yml`
+  (JT `truenas_restore_volume`) — take a manual `zfs snapshot` on the
+  live dataset first.
 
 ## Cross-references
 

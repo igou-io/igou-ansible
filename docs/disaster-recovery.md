@@ -108,9 +108,13 @@ The hardest to rebuild from scratch. Most homelab services live here.
 
 ### Backup
 
-Snapshot tasks configured in the TrueNAS UI. **As of 2026-05-10, the
-retention policy and replication targets are not documented in this repo
-— check the UI under Periodic Snapshot Tasks and Replication Tasks.**
+Snapshot/replication tasks are config-as-code
+(`playbooks/truenas/configure_snapshots.yml` from igou-inventory
+`truenas_snapshot_tasks`/`truenas_replication_tasks`: containers
+hourly/daily, media weekly, `containers-to-cold`). Kubernetes app data is
+backed up by OADP/Velero to rustfs-cold (igou-openshift
+`clusters/ocp/oadp` + `docs/runbooks/oadp-restore.md`), not by TrueNAS
+snapshot tasks.
 
 Inventory side is also a "backup": `igou-inventory` repo has the desired
 state of containers, users, NFS exports, etc. Re-running the configure_*
