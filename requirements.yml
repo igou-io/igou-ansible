@@ -53,7 +53,7 @@ collections:
   - name: vkhitrin.libguestfs
     version: 1.1.5
   - name: ansible.netcommon
-    version: 8.6.0
+    version: 8.6.1
   - name: community.routeros
     version: 3.21.0
   - name: david_igou.routeros_configuration
