@@ -153,7 +153,10 @@
     - name: Open the devenv service ports in firewalld
       # 8080: code-server (post-start in the devcontainer, host network,
       #       password auth + self-signed TLS). 9100: node_exporter (role
-      #       below), scraped by UWM/Prometheus.
+      #       below), scraped by UWM/Prometheus. 3773: T3 Code (t3 serve in
+      #       the devcontainer post-start, host network, plain HTTP on the
+      #       LAN — pairing-token auth; tailnet clients use the Tailscale
+      #       Serve HTTPS proxy configured at the end of this playbook).
       become: true
       ansible.posix.firewalld:
         port: "{{ item }}"
@@ -161,6 +164,7 @@
         immediate: true
         state: enabled
       loop:
+        - 3773/tcp
         - 8080/tcp
         - 9100/tcp
       when:
@@ -622,3 +626,30 @@
   ansible.builtin.import_playbook: ../tailscale/tailscale.yml
   vars:
     tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-oauth-pettingzoo', field='token', vault='lab_external_api_keys') }}"
+
+# ---------------------------------------------------------------------------
+# Tailscale Serve: terminate tailnet HTTPS for T3 Code. The t3 desktop app
+# requires TLS and `t3 serve` has no native cert support, so tailscaled
+# proxies https://<magicdns-name>/ (tailnet only, auto-provisioned cert) to
+# the plain-HTTP t3 listener on 127.0.0.1:{{ tailscale_serve_port }}.
+#
+# The work lives in the local roles/tailscale_serve role, NOT in the
+# artis3n.tailscale collection that owns the join above: that collection has no
+# serve capability at all (checked v1.2.1, latest, 2026-08-02). Ordering
+# matters — serve needs the tailscaled the play above joined.
+#
+# Gated on tailscale_serve_port (group_vars/devenv/tailscale.yml); the role is
+# a clean no-op on hosts without it, which is why it has no default. Adoptive:
+# re-running against an already-configured host reports ok. Requires the
+# tailnet HTTPS-certificates feature (enabled 2026-08-02). Manual rollback:
+# `tailscale serve --https=443 off`.
+# ---------------------------------------------------------------------------
+- name: Configure Tailscale Serve for devenv services
+  hosts: "{{ ansible_limit | default('devenv') }}"
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Configure Tailscale Serve
+      ansible.builtin.include_role:
+        name: tailscale_serve

@@ -86,7 +86,7 @@ Built with `ansible-builder`, defined in `execution-environments/`. Each has `ex
 
 ### Roles
 
-Mix of community galaxy roles (pinned versions in `requirements.yml`) and custom roles in `roles/`: `alloy`, `kubevirt_vm_provision`, `kubevirt_vm_snapshot`, `rpi_boot_render`, `rpi_eeprom`, `rpi_rootfs`, `windows_computer_use`, `windows_debloat`, `windows_desktop_apps`, `windows_power`, `zfs_pool`.
+Mix of community galaxy roles (pinned versions in `requirements.yml`) and custom roles in `roles/`: `alloy`, `kubevirt_vm_provision`, `kubevirt_vm_snapshot`, `rpi_boot_render`, `rpi_eeprom`, `rpi_rootfs`, `tailscale_serve`, `windows_computer_use`, `windows_debloat`, `windows_desktop_apps`, `windows_power`, `zfs_pool`.
 
 **Roles are pure functions.** A role is pure over its declared inputs, with
 `meta/argument_specs.yml` as its signature. Do **not** put secret lookups
