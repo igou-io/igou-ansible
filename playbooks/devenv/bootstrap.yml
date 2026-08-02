@@ -51,10 +51,12 @@
     # Pinned to the igou-devenv release cut for this rebuild (git tag +
     # container image promoted by digest from the tested :latest). Bump both
     # together when adopting a newer release.
-    # v2026.07.12-2 carries the post-create guard that lets the VM's
-    # read-only file-based ghapp config mount win over the op-based seed.
-    devenv_repo_version: v2026.07.12-2
-    devenv_image: ghcr.io/igou-io/igou-devenv:2026.07.12-2
+    # v2026.08.02 carries the always-on T3 Code service (t3 serve on
+    # 0.0.0.0:3773 with persistent ~/.t3 pairing state, fronted on the
+    # tailnet by the tailscale_serve role below) plus the ghapp post-create
+    # guard from v2026.07.12-2.
+    devenv_repo_version: v2026.08.02
+    devenv_image: ghcr.io/igou-io/igou-devenv:2026.08.02
     devenv_launch_devcontainer: true
 
     # GitHub App runtime tokens (ghapp, local-mint mode). ON by default so the
