@@ -153,7 +153,10 @@
     - name: Open the devenv service ports in firewalld
       # 8080: code-server (post-start in the devcontainer, host network,
       #       password auth + self-signed TLS). 9100: node_exporter (role
-      #       below), scraped by UWM/Prometheus.
+      #       below), scraped by UWM/Prometheus. 3773: T3 Code (t3 serve in
+      #       the devcontainer post-start, host network, plain HTTP on the
+      #       LAN — pairing-token auth; tailnet clients use the Tailscale
+      #       Serve HTTPS proxy configured at the end of this playbook).
       become: true
       ansible.posix.firewalld:
         port: "{{ item }}"
@@ -161,6 +164,7 @@
         immediate: true
         state: enabled
       loop:
+        - 3773/tcp
         - 8080/tcp
         - 9100/tcp
       when:
