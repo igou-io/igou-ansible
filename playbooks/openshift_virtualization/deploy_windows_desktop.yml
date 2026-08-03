@@ -25,6 +25,22 @@
 #   Add-AppxProvisionedPackage — it registers into each user profile at that
 #   user's next logon.
 #
+#   Fleet-parity additions (devenv-host treatment for this VM):
+#   * Metrics: node_exporter has NO Windows build and the prometheus.prometheus
+#     collection ships Linux-only roles, so the guest runs the supported
+#     equivalent — prometheus-community/windows_exporter — installed through
+#     the chocolatey.chocolatey collection (service windows_exporter, :9182),
+#     firewall opened, plus a ClusterIP `<vm>-metrics` Service so in-cluster
+#     Prometheus (UWM) can scrape it.
+#   * T3 Code: the `t3` npm package, pinned to the same version igou-devenv
+#     pins in mise.toml. Its native dep node-pty ships win32-x64 prebuilds in
+#     the npm tarball, so no MSVC toolchain is needed in the guest.
+#   * Tailnet: `tailscale up --unattended` with the tailscale-oauth-codex
+#     OAuth client secret (1P lab_external_api_keys, resolved lazily on the
+#     controller/EE — the secret never lands on the guest disk). Joins
+#     advertise designated tags; the tailnet ACL must let the OAuth client
+#     own each tag (same contract as playbooks/tailscale/tailscale.yml).
+#
 # CLIENT-SKU / sysprep gotchas baked in (do not "simplify" away):
 #   * Win11 client SKUs DISABLE the built-in Administrator, so the unattend runs
 #     in local_account mode: it creates windows_desktop_admin_user as a local
@@ -115,6 +131,18 @@
 #                                     shadows/Aero Peek off, thumbnails → icons;
 #                                     ClearType stays on. Applies at next logon
 #                                     (default true)
+#   windows_desktop_t3_version      - T3 Code npm package pin (default matches
+#                                     the igou-devenv mise.toml pin)
+#   windows_desktop_tailscale       - join the guest to the tailnet (default true)
+#   windows_desktop_tailscale_tags  - designated tags to advertise, no tag:
+#                                     prefix (default [codex]); the tailnet ACL
+#                                     must let the tailscale-oauth-codex OAuth
+#                                     client own each tag
+#   windows_desktop_tailscale_authkey - auth key / OAuth client secret; defaults
+#                                     to a controller-side 1P lookup of
+#                                     op://lab_external_api_keys/tailscale-oauth-codex/client-secret
+#                                     (needs OP_CONNECT_* on the EE — the AAP
+#                                     template attaches onepassword-connect-token)
 #   windows_desktop_codex_app       - provision the Codex/ChatGPT desktop app
 #                                     from OpenAI's offline enterprise MSIX
 #                                     (default true)
@@ -138,6 +166,8 @@
 #     unset KUBECONFIG
 #     export K8S_AUTH_HOST=https://api.ocp.igou.systems:6443
 #     export K8S_AUTH_API_KEY="$(op read op://service-accounts/virtualmachine-ops/token)"
+#     # tailnet join only: the authkey lookup resolves via 1P Connect
+#     export OP_CONNECT_HOST=... OP_CONNECT_TOKEN=...   # or -e windows_desktop_tailscale=false
 #     ansible-playbook playbooks/openshift_virtualization/deploy_windows_desktop.yml \
 #       -e windows_desktop_admin_password="$(op read op://lab_agents/windows-administrator/password)" \
 #       -e windows_desktop_node_ip=<schedulable-worker-InternalIP>
@@ -171,7 +201,24 @@
       - name: python
       - name: codex
       - name: firefox
+      # node_exporter has no Windows build — prometheus-windows-exporter is
+      # the supported equivalent (service windows_exporter, metrics :9182).
+      - name: prometheus-windows-exporter.install
+      - name: tailscale
     windows_desktop_firefox_default: true
+    # T3 Code npm pin — keep in step with the [tools."npm:t3"] pin in
+    # igou-devenv/mise.toml.
+    windows_desktop_t3_version: "0.0.31"
+    # Tailnet membership. The authkey default resolves lazily on the
+    # controller/EE (1P Connect) and only when the present-path add_host
+    # runs with tailscale enabled — teardown and tailscale-disabled runs
+    # need no 1Password auth.
+    windows_desktop_tailscale: true
+    windows_desktop_tailscale_tags:
+      - codex
+    windows_desktop_tailscale_authkey: >-
+      {{ lookup('community.general.onepassword', 'tailscale-oauth-codex',
+                field='client-secret', vault='lab_external_api_keys') }}
     windows_desktop_debloat: true
     # Computer-use readiness: screen-driven agents (Codex computer use) need a
     # desktop that is always logged on, never locks, never blanks, and never
@@ -371,6 +418,24 @@
                 ports: >-
                   {{ [{'name': 'rdp', 'port': 3389, 'protocol': 'TCP', 'targetPort': 3389}] }}
 
+        # In-cluster scrape path for the guest's windows_exporter: ClusterIP
+        # only (metrics stay off the node network; UWM reaches the Service DNS
+        # name <vm>-metrics.<ns>.svc:9182).
+        - name: Create the metrics (9182) ClusterIP Service
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: "{{ windows_desktop_name }}-metrics"
+                namespace: "{{ windows_desktop_namespace }}"
+              spec:
+                selector:
+                  kubevirt.io/domain: "{{ windows_desktop_name }}"
+                ports: >-
+                  {{ [{'name': 'metrics', 'port': 9182, 'protocol': 'TCP', 'targetPort': 9182}] }}
+
         # NodePort target IP: prefer the explicit override; otherwise discover a
         # node InternalIP (needs `nodes [get,list]` RBAC the scoped SA lacks).
         # The deployer SA usually cannot list nodes (403) — tolerate that and
@@ -461,6 +526,11 @@
             windows_desktop_codex_app_url: "{{ windows_desktop_codex_app_url }}"
             windows_desktop_codex_app_license_url: "{{ windows_desktop_codex_app_license_url }}"
             windows_desktop_enable_rdp: "{{ windows_desktop_enable_rdp }}"
+            windows_desktop_t3_version: "{{ windows_desktop_t3_version }}"
+            windows_desktop_tailscale: "{{ windows_desktop_tailscale }}"
+            windows_desktop_tailscale_tags: "{{ windows_desktop_tailscale_tags }}"
+            # Inline-if keeps the 1P lookup unevaluated when tailscale is off.
+            windows_desktop_tailscale_authkey: "{{ windows_desktop_tailscale_authkey if windows_desktop_tailscale | bool else '' }}"
           no_log: true
 
     # --- Teardown (state: absent) ----------------------------------------
@@ -497,6 +567,14 @@
             api_version: v1
             kind: Service
             name: "{{ windows_desktop_name }}-rdp"
+            namespace: "{{ windows_desktop_namespace }}"
+
+        - name: Delete the metrics ClusterIP Service
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Service
+            name: "{{ windows_desktop_name }}-metrics"
             namespace: "{{ windows_desktop_namespace }}"
 
         - name: Delete the sysprep Secret
@@ -611,6 +689,115 @@
         windows_desktop_apps_packages: "{{ windows_desktop_apps }}"
         windows_desktop_apps_msi_packages: "{{ windows_desktop_msi_packages }}"
         windows_desktop_apps_firefox_default: "{{ windows_desktop_firefox_default }}"
+
+    # --- Metrics exporter -------------------------------------------------
+    # node_exporter has no Windows build (prometheus.prometheus ships
+    # Linux-only roles), so the Chocolatey set above installed
+    # prometheus-community/windows_exporter instead — same machine-metric
+    # families, service name windows_exporter, listener :9182. The scrape
+    # path is in-cluster via the <vm>-metrics ClusterIP Service.
+    - name: Ensure the windows_exporter service is running
+      ansible.windows.win_service:
+        name: windows_exporter
+        start_mode: auto
+        state: started
+
+    - name: Open the firewall for windows_exporter scrapes on all profiles
+      community.windows.win_firewall_rule:
+        name: windows_exporter (managed by Ansible)
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "9182"
+        profiles:
+          - domain
+          - private
+          # Fresh KubeVirt NICs classify as Public (same story as RDP below).
+          - public
+        state: present
+        enabled: true
+
+    - name: Verify the metrics endpoint answers
+      ansible.windows.win_shell: |
+        $r = Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:9182/metrics
+        if ($r.StatusCode -ne 200) { throw "windows_exporter answered $($r.StatusCode)" }
+        'ok'
+      register: windows_desktop_exporter_check
+      until: windows_desktop_exporter_check is succeeded
+      retries: 5
+      delay: 5
+      changed_when: false
+
+    # --- T3 Code ----------------------------------------------------------
+    # npm-only distribution, pinned to the igou-devenv mise.toml version. Its
+    # native dep node-pty ships win32-x64 prebuilds inside the npm tarball, so
+    # the install needs no MSVC toolchain. Full paths throughout: the
+    # persistent psrp runspace can predate the nodejs-lts install and carry a
+    # stale PATH. npm global installs land in the connect user's %APPDATA%\npm.
+    - name: Check the installed T3 Code version
+      ansible.windows.win_shell: |
+        $npm = "$env:ProgramFiles\nodejs\npm.cmd"
+        if (-not (Test-Path $npm)) { throw 'npm.cmd not found - did the nodejs-lts package install?' }
+        & $npm ls --global t3 --depth=0 2>$null
+        exit 0
+      register: windows_desktop_t3_current
+      changed_when: false
+
+    - name: Install the T3 Code CLI
+      ansible.windows.win_shell: >-
+        & "$env:ProgramFiles\nodejs\npm.cmd" install --global "t3@{{ windows_desktop_t3_version }}"
+      when: "'t3@' ~ windows_desktop_t3_version not in windows_desktop_t3_current.stdout"
+      register: windows_desktop_t3_install
+      until: windows_desktop_t3_install is succeeded
+      retries: 5
+      delay: 60
+
+    - name: Assert the T3 Code CLI is installed
+      ansible.windows.win_shell: |
+        $out = & "$env:ProgramFiles\nodejs\npm.cmd" ls --global t3 --depth=0 2>$null
+        if (-not ($out -match [regex]::Escape('t3@{{ windows_desktop_t3_version }}'))) {
+          throw "t3@{{ windows_desktop_t3_version }} not in npm -g (got: $out)"
+        }
+        'ok'
+      changed_when: false
+
+    # --- Tailnet membership ----------------------------------------------
+    # `tailscale up` with the tailscale-oauth-codex OAuth client secret
+    # (resolved controller-side, carried in as a no_log hostvar — never
+    # written to the guest disk). --unattended keeps tailscaled connected
+    # with nobody logged on; ephemeral=false + preauthorized=true mirror the
+    # Linux joins (playbooks/tailscale/tailscale.yml). Joins advertise
+    # designated tags — the tailnet ACL must let the OAuth client own them.
+    - name: Read the Tailscale backend state
+      ansible.windows.win_shell: |
+        $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+        try { (& $ts status --json 2>$null | ConvertFrom-Json).BackendState } catch { 'Unknown' }
+      register: windows_desktop_tailscale_state
+      changed_when: false
+      when: windows_desktop_tailscale | bool
+
+    - name: Join the tailnet
+      ansible.windows.win_shell: >-
+        & "$env:ProgramFiles\Tailscale\tailscale.exe" up
+        --unattended
+        --authkey "{{ windows_desktop_tailscale_authkey }}?ephemeral=false&preauthorized=true"
+        --advertise-tags "{{ windows_desktop_tailscale_tags | map('regex_replace', '^', 'tag:') | join(',') }}"
+      no_log: true
+      # Guarded by the backend-state check above: this task only runs when the
+      # node is not already joined, so a run here is always a change.
+      changed_when: true
+      when:
+        - windows_desktop_tailscale | bool
+        - "'Running' not in windows_desktop_tailscale_state.stdout"
+
+    - name: Verify tailnet membership
+      ansible.windows.win_shell: |
+        $st = & "$env:ProgramFiles\Tailscale\tailscale.exe" status --json | ConvertFrom-Json
+        if ($st.BackendState -ne 'Running') { throw "Tailscale backend state is $($st.BackendState)" }
+        $st.Self.TailscaleIPs -join ','
+      register: windows_desktop_tailscale_status
+      changed_when: false
+      when: windows_desktop_tailscale | bool
 
     # --- Codex/ChatGPT desktop app ---------------------------------------
     # No Store session exists over WinRM, so install OpenAI's offline
@@ -737,6 +924,9 @@
           - "Browser:     {{ 'Firefox (default for ' ~ windows_desktop_admin_user | default('igou') ~ ')' if windows_desktop_firefox_default | bool else 'left as-is' }}"
           - "Debloat:     {{ (windows_desktop_remove_appx | length | string) ~ ' Appx targets + consumer content/nags off + OneDrive removed' if windows_desktop_debloat | bool else 'skipped' }}"
           - "Computer-use: autologon={{ windows_desktop_autologon | bool }} quiet_uac={{ windows_desktop_quiet_uac | bool }} no_toasts={{ windows_desktop_disable_notifications | bool }} resolution={{ windows_desktop_resolution | default('unpinned', true) }} (autologon needs a reboot)"
+          - "Metrics:     windows_exporter on :9182 (ClusterIP {{ inventory_hostname }}-metrics)"
+          - "T3 Code:     t3@{{ windows_desktop_t3_version }} (npm global)"
+          - "Tailnet:     {{ (windows_desktop_tailscale_status.stdout | default('') | trim) if windows_desktop_tailscale | bool else 'skipped' }}"
           - "RDP:         {{ 'enabled at ' ~ windows_desktop_rdp_endpoint if windows_desktop_enable_rdp | bool else 'left as-is' }}"
           - "Next step:   RDP in and complete the one-time interactive Codex sign-in."
 ...
