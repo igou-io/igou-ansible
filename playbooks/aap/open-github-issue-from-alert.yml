@@ -129,15 +129,21 @@
         label: "{{ item.title }}"
       when: not (github_issue_write_enabled | bool)
 
+    # Titles that are also firing in this payload are dropped here for the same
+    # reason as in "Select open issues to close" below, so the preview does not
+    # promise a close that the write path would skip. Whether an open issue
+    # actually exists is unknowable without the API call, hence close-if-open.
     - name: Preview incident issues that would be closed (dry run)
       ansible.builtin.debug:
         msg:
           github_repo: "{{ github_repo }}"
           title: "{{ item.title }}"
-          action: close
+          action: close-if-open
           resolved_at: "{{ item.ends_at }}"
         verbosity: 1
-      loop: "{{ resolution_records }}"
+      loop: >-
+        {{ resolution_records |
+           rejectattr('title', 'in', incident_records | map(attribute='title') | list) | list }}
       loop_control:
         label: "{{ item.title }}"
       when: not (github_issue_write_enabled | bool)
