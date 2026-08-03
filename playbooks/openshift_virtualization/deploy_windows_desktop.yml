@@ -34,7 +34,10 @@
 #     Prometheus (UWM) can scrape it.
 #   * T3 Code: the `t3` npm package, pinned to the same version igou-devenv
 #     pins in mise.toml. Its native dep node-pty ships win32-x64 prebuilds in
-#     the npm tarball, so no MSVC toolchain is needed in the guest.
+#     the npm tarball, so no MSVC toolchain is needed in the guest. `t3 serve`
+#     runs always-on (hidden boot scheduled task, loopback bind) fronted by
+#     tailnet HTTPS via tailscale serve, so the t3 desktop app can use the VM
+#     as a remote environment at https://<vm>.<tailnet>.ts.net.
 #   * Tailnet: `tailscale up --unattended` with the tailscale-oauth-codex
 #     OAuth client secret (1P lab_external_api_keys, resolved lazily on the
 #     controller/EE — the secret never lands on the guest disk). Joins
@@ -133,6 +136,16 @@
 #                                     (default true)
 #   windows_desktop_t3_version      - T3 Code npm package pin (default matches
 #                                     the igou-devenv mise.toml pin)
+#   windows_desktop_t3_serve        - run `t3 serve` always-on (hidden boot
+#                                     scheduled task, loopback bind) and front
+#                                     it with tailnet HTTPS via tailscale serve
+#                                     so the t3 desktop app can use this VM as
+#                                     a remote environment (default true;
+#                                     the TLS front needs windows_desktop_tailscale)
+#   windows_desktop_t3_serve_port   - t3 serve listener port (default 3773 —
+#                                     t3's own default; the port is not passed
+#                                     to t3, only used for the checks and the
+#                                     tailscale serve proxy target)
 #   windows_desktop_tailscale       - join the guest to the tailnet (default true)
 #   windows_desktop_tailscale_tags  - designated tags to advertise, no tag:
 #                                     prefix (default [codex]); the tailnet ACL
@@ -209,6 +222,11 @@
     # T3 Code npm pin — keep in step with the [tools."npm:t3"] pin in
     # igou-devenv/mise.toml.
     windows_desktop_t3_version: "0.0.31"
+    # Always-on `t3 serve` fronted by tailnet HTTPS so the t3 desktop app can
+    # use this VM as a remote environment. Loopback-bound: reachable ONLY via
+    # the tailscale serve front (needs windows_desktop_tailscale).
+    windows_desktop_t3_serve: true
+    windows_desktop_t3_serve_port: 3773
     # Tailnet membership. The authkey default resolves lazily on the
     # controller/EE (1P Connect) and only when the present-path add_host
     # runs with tailscale enabled — teardown and tailscale-disabled runs
@@ -527,6 +545,8 @@
             windows_desktop_codex_app_license_url: "{{ windows_desktop_codex_app_license_url }}"
             windows_desktop_enable_rdp: "{{ windows_desktop_enable_rdp }}"
             windows_desktop_t3_version: "{{ windows_desktop_t3_version }}"
+            windows_desktop_t3_serve: "{{ windows_desktop_t3_serve }}"
+            windows_desktop_t3_serve_port: "{{ windows_desktop_t3_serve_port }}"
             windows_desktop_tailscale: "{{ windows_desktop_tailscale }}"
             windows_desktop_tailscale_tags: "{{ windows_desktop_tailscale_tags }}"
             # Inline-if keeps the 1P lookup unevaluated when tailscale is off.
@@ -799,6 +819,103 @@
       changed_when: false
       when: windows_desktop_tailscale | bool
 
+    - name: Read the tailnet DNS name
+      ansible.windows.win_shell: |
+        $st = & "$env:ProgramFiles\Tailscale\tailscale.exe" status --json | ConvertFrom-Json
+        $st.Self.DNSName.TrimEnd('.')
+      register: windows_desktop_tailscale_dnsname
+      changed_when: false
+      when: windows_desktop_tailscale | bool
+
+    # --- T3 Code serve (remote environment) -------------------------------
+    # Always-on `t3 serve` so the t3 desktop app can use this VM as a remote
+    # environment. The app requires TLS and t3 serve has no native cert
+    # support, so tailscale serve terminates tailnet HTTPS on 443 and proxies
+    # to the loopback-bound listener — the same split as the devenv hosts
+    # (roles/tailscale_serve + igou-devenv post-start). The serve process runs
+    # as a hidden scheduled task under the admin account (password logon so it
+    # runs with nobody at the console, boot trigger, no execution time limit,
+    # auto-restart). Pairing state and thread history live in
+    # %USERPROFILE%\.t3; the pairing URL + QR land in .t3\serve.log on first
+    # start — manage/revoke devices with `t3 auth`. Loopback bind means the
+    # only way in is the tailnet HTTPS front (pairing is the only auth gate,
+    # and a paired session runs arbitrary commands as the admin user).
+    - name: Create the .t3 state directory
+      ansible.windows.win_file:
+        path: C:\Users\{{ ansible_user }}\.t3
+        state: directory
+      when: windows_desktop_t3_serve | bool
+
+    # A wrapper script sidesteps cmd.exe /c quote-stripping around the
+    # redirect; %APPDATA%/%USERPROFILE% expand at run time in the task's
+    # user context.
+    - name: Install the t3 serve launcher script
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          "%APPDATA%\npm\t3.cmd" serve --host 127.0.0.1 >> "%USERPROFILE%\.t3\serve.log" 2>&1
+        dest: C:\Users\{{ ansible_user }}\.t3\t3-serve.cmd
+      when: windows_desktop_t3_serve | bool
+
+    - name: Register the t3 serve scheduled task
+      community.windows.win_scheduled_task:
+        name: t3-serve
+        description: T3 Code serve (managed by Ansible)
+        actions:
+          - path: C:\Windows\System32\cmd.exe
+            arguments: /c "C:\Users\{{ ansible_user }}\.t3\t3-serve.cmd"
+        triggers:
+          - type: boot
+        username: "{{ ansible_user }}"
+        password: "{{ ansible_password }}"
+        logon_type: password
+        run_level: highest
+        hidden: true
+        # PT0S disables the default 72h execution cap; restart_* revives a
+        # crashed serve; multiple_instances 2 = never start a second copy.
+        execution_time_limit: PT0S
+        restart_count: 3
+        restart_interval: PT1M
+        multiple_instances: 2
+        enabled: true
+        state: present
+      no_log: true
+      when: windows_desktop_t3_serve | bool
+
+    - name: Start t3 serve and wait for its listener
+      ansible.windows.win_shell: |
+        if (Get-NetTCPConnection -State Listen -LocalPort {{ windows_desktop_t3_serve_port }} -ErrorAction SilentlyContinue) { 'ok'; exit 0 }
+        Start-ScheduledTask -TaskName 't3-serve'
+        foreach ($i in 1..30) {
+          Start-Sleep -Seconds 2
+          if (Get-NetTCPConnection -State Listen -LocalPort {{ windows_desktop_t3_serve_port }} -ErrorAction SilentlyContinue) { 'changed'; exit 0 }
+        }
+        throw 't3 serve not listening on :{{ windows_desktop_t3_serve_port }} after 60s - check C:\Users\{{ ansible_user }}\.t3\serve.log'
+      register: windows_desktop_t3_serve_start
+      changed_when: "'changed' in windows_desktop_t3_serve_start.stdout"
+      when: windows_desktop_t3_serve | bool
+
+    # Idempotency mirrors roles/tailscale_serve: an existing proxy to
+    # 127.0.0.1:<port> appears verbatim in `serve status --json`.
+    - name: Read current tailscale serve config
+      ansible.windows.win_shell: |
+        & "$env:ProgramFiles\Tailscale\tailscale.exe" serve status --json
+      register: windows_desktop_ts_serve_status
+      changed_when: false
+      failed_when: false
+      when:
+        - windows_desktop_t3_serve | bool
+        - windows_desktop_tailscale | bool
+
+    - name: Serve tailnet HTTPS 443 to the local T3 Code port
+      ansible.windows.win_shell: >-
+        & "$env:ProgramFiles\Tailscale\tailscale.exe" serve --bg {{ windows_desktop_t3_serve_port }}
+      changed_when: true
+      when:
+        - windows_desktop_t3_serve | bool
+        - windows_desktop_tailscale | bool
+        - ('127.0.0.1:' ~ windows_desktop_t3_serve_port) not in (windows_desktop_ts_serve_status.stdout | default(''))
+
     # --- Codex/ChatGPT desktop app ---------------------------------------
     # No Store session exists over WinRM, so install OpenAI's offline
     # enterprise package: the Store-signed MSIX plus its license, provisioned
@@ -926,6 +1043,7 @@
           - "Computer-use: autologon={{ windows_desktop_autologon | bool }} quiet_uac={{ windows_desktop_quiet_uac | bool }} no_toasts={{ windows_desktop_disable_notifications | bool }} resolution={{ windows_desktop_resolution | default('unpinned', true) }} (autologon needs a reboot)"
           - "Metrics:     windows_exporter on :9182 (ClusterIP {{ inventory_hostname }}-metrics)"
           - "T3 Code:     t3@{{ windows_desktop_t3_version }} (npm global)"
+          - "T3 remote:   {{ 'https://' ~ (windows_desktop_tailscale_dnsname.stdout | default('') | trim) ~ ' (pairing URL in %USERPROFILE%/.t3/serve.log)' if (windows_desktop_t3_serve | bool and windows_desktop_tailscale | bool) else 'skipped' }}"
           - "Tailnet:     {{ (windows_desktop_tailscale_status.stdout | default('') | trim) if windows_desktop_tailscale | bool else 'skipped' }}"
           - "RDP:         {{ 'enabled at ' ~ windows_desktop_rdp_endpoint if windows_desktop_enable_rdp | bool else 'left as-is' }}"
           - "Next step:   RDP in and complete the one-time interactive Codex sign-in."
