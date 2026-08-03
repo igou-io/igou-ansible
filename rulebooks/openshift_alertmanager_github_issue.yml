@@ -1,7 +1,7 @@
 ---
 # The rulebook activation swaps this placeholder webhook source for the
 # "alertmanager" EDA event stream via source mappings in AAP config-as-code.
-- name: Open GitHub issues for firing OpenShift alerts
+- name: Open and close GitHub issues for OpenShift alerts
   hosts: all
   sources:
     - name: alertmanager
@@ -9,8 +9,12 @@
         host: 0.0.0.0
         port: 5000
   rules:
-    - name: Open or update an incident issue on firing alerts
-      condition: event.payload.status == "firing"
+    # Both statuses go to the same job template: the playbook re-reads the
+    # per-alert status, so a group payload that mixes firing and resolved
+    # alerts is handled in one run. Alertmanager only sends "resolved" groups
+    # when send_resolved is true on the eda-github-issue receiver.
+    - name: Open, update, or close incident issues on alert events
+      condition: event.payload.status in ["firing", "resolved"]
       action:
         run_job_template:
           name: openshift_alert_to_github_issue

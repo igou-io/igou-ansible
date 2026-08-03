@@ -1,5 +1,5 @@
 ---
-- name: Open GitHub issues from Alertmanager alerts
+- name: Open and close GitHub issues from Alertmanager alerts
   hosts: localhost
   gather_facts: false
   vars:
@@ -9,13 +9,11 @@
       - eda-alert
       - incident
     # Safety gate. When false (default) the play only PREVIEWS the issues it
-    # would file, so it is safe to run against live alerts. Set true — e.g. via
-    # the job template extra_vars — to actually create/update GitHub issues.
+    # would file or close, so it is safe to run against live alerts. Set true —
+    # e.g. via the job template extra_vars — to actually create/update/close
+    # GitHub issues.
     github_issue_write_enabled: false
     alert_group_status: "{{ alert_payload.status | default('unknown') }}"
-    firing_alerts: >-
-      {{ alert_payload.alerts | default([]) |
-         selectattr('status', 'equalto', 'firing') | list }}
   tasks:
     - name: Require an Alertmanager payload
       ansible.builtin.assert:
@@ -35,9 +33,9 @@
           template, or set github_issue_write_enabled=false for a dry run.
       when: github_issue_write_enabled | bool
 
-    - name: Build incident records
+    - name: Build alert records
       ansible.builtin.set_fact:
-        incident_records: "{{ incident_records | default([]) + [incident_record] }}"
+        alert_records: "{{ alert_records | default([]) + [alert_record] }}"
       vars:
         labels: "{{ item.labels | default({}) }}"
         annotations: "{{ item.annotations | default({}) }}"
@@ -87,19 +85,36 @@
           ```json
           {{ annotations | to_nice_json }}
           ```
-        incident_record:
+        alert_record:
+          status: "{{ item.status | default(alert_group_status) }}"
           title: "{{ issue_title }}"
           body: "{{ issue_body }}"
           alert_name: "{{ alert_name }}"
           namespace: "{{ alert_namespace }}"
           target: "{{ alert_target }}"
-      loop: "{{ firing_alerts }}"
+          ends_at: "{{ item.endsAt | default('n/a') }}"
+      loop: "{{ alert_payload.alerts | default([]) }}"
       loop_control:
         label: "{{ item.labels.alertname | default('unknown-alert') }}"
 
-    - name: End cleanly when no firing alerts are present
+    # One Alertmanager payload can carry several alerts that render the SAME
+    # issue title (they differ only in labels the title does not use). Without
+    # unique() every one of them misses the open-issue index below and files its
+    # own duplicate — igou-inventory#247-#256 were ten copies filed in 7s.
+    - name: Split alert records into incidents and resolutions
+      ansible.builtin.set_fact:
+        incident_records: >-
+          {{ alert_records | default([]) |
+             selectattr('status', 'equalto', 'firing') |
+             unique(attribute='title') | list }}
+        resolution_records: >-
+          {{ alert_records | default([]) |
+             selectattr('status', 'equalto', 'resolved') |
+             unique(attribute='title') | list }}
+
+    - name: End cleanly when no actionable alerts are present
       ansible.builtin.meta: end_play
-      when: incident_records | default([]) | length == 0
+      when: (incident_records | length) + (resolution_records | length) == 0
 
     - name: Preview incident issues that would be filed (dry run)
       ansible.builtin.debug:
@@ -110,6 +125,19 @@
           body: "{{ item.body }}"
         verbosity: 1
       loop: "{{ incident_records }}"
+      loop_control:
+        label: "{{ item.title }}"
+      when: not (github_issue_write_enabled | bool)
+
+    - name: Preview incident issues that would be closed (dry run)
+      ansible.builtin.debug:
+        msg:
+          github_repo: "{{ github_repo }}"
+          title: "{{ item.title }}"
+          action: close
+          resolved_at: "{{ item.ends_at }}"
+        verbosity: 1
+      loop: "{{ resolution_records }}"
       loop_control:
         label: "{{ item.title }}"
       when: not (github_issue_write_enabled | bool)
@@ -180,6 +208,59 @@
             label: "{{ item.title }}"
           when: item.title in (open_issue_by_title | default({}))
           register: gh_issue_comments
+
+        # A payload can carry a resolved alert whose title collides with a still
+        # firing one; the firing side wins so the issue stays open.
+        - name: Select open issues to close
+          ansible.builtin.set_fact:
+            closeable_records: >-
+              {{ resolution_records |
+                 rejectattr('title', 'in', incident_records | map(attribute='title') | list) |
+                 selectattr('title', 'in', open_issue_by_title | default({})) | list }}
+
+        - name: Comment the resolution on open incident issues
+          ansible.builtin.uri:
+            url: >-
+              https://api.github.com/repos/{{ github_repo }}/issues/{{ open_issue_by_title[item.title].number }}/comments
+            method: POST
+            headers:
+              Authorization: "Bearer {{ github_token }}"
+              Accept: application/vnd.github+json
+              X-GitHub-Api-Version: "2022-11-28"
+            body_format: json
+            status_code: 201
+            body:
+              body: |
+                Alert `{{ item.alert_name }}` resolved in Alertmanager — closing.
+
+                | Field | Value |
+                |---|---|
+                | Alert | `{{ item.alert_name }}` |
+                | Target | `{{ item.namespace }}/{{ item.target }}` |
+                | Ended | `{{ item.ends_at }}` |
+                | AAP job | `{{ awx_job_id | default('n/a') }}` |
+          loop: "{{ closeable_records }}"
+          loop_control:
+            label: "{{ item.title }}"
+
+        - name: Close resolved incident issues
+          ansible.builtin.uri:
+            url: >-
+              https://api.github.com/repos/{{ github_repo }}/issues/{{ open_issue_by_title[item.title].number }}
+            method: PATCH
+            headers:
+              Authorization: "Bearer {{ github_token }}"
+              Accept: application/vnd.github+json
+              X-GitHub-Api-Version: "2022-11-28"
+            body_format: json
+            status_code: 200
+            body:
+              state: closed
+              state_reason: completed
+          loop: "{{ closeable_records }}"
+          loop_control:
+            label: "{{ item.title }}"
+          register: gh_closed_issues
       rescue:
         - name: Record that GitHub issue filing failed
           ansible.builtin.set_fact:
@@ -188,8 +269,9 @@
         - name: Report the GitHub issue API failure
           ansible.builtin.debug:
             msg: >-
-              GitHub issue filing failed for {{ incident_records | length }}
-              alert(s): {{ ansible_failed_result.msg | default('unknown error') }}
+              GitHub issue writes failed for {{ incident_records | length }}
+              firing and {{ resolution_records | length }} resolved alert(s):
+              {{ ansible_failed_result.msg | default('unknown error') }}
 
     - name: Collect created issue URLs
       ansible.builtin.set_fact:
@@ -205,12 +287,21 @@
              selectattr('skipped', 'undefined') |
              map(attribute='json.html_url') | list }}
 
+    - name: Collect closed issue URLs
+      ansible.builtin.set_fact:
+        closed_issue_urls: >-
+          {{ (gh_closed_issues.results | default([])) |
+             selectattr('skipped', 'undefined') |
+             map(attribute='json.html_url') | list }}
+
     - name: Publish GitHub issue artifacts
       ansible.builtin.set_stats:
         data:
-          eda_alert_issue_urls: "{{ created_issue_urls + updated_issue_urls }}"
+          eda_alert_issue_urls: "{{ created_issue_urls + updated_issue_urls + closed_issue_urls }}"
           eda_alert_created_issue_urls: "{{ created_issue_urls }}"
           eda_alert_updated_issue_urls: "{{ updated_issue_urls }}"
+          eda_alert_closed_issue_urls: "{{ closed_issue_urls }}"
           eda_alert_count: "{{ incident_records | length }}"
+          eda_alert_resolved_count: "{{ resolution_records | length }}"
           eda_alert_write_enabled: "{{ github_issue_write_enabled | bool }}"
           eda_alert_write_failed: "{{ github_issue_write_failed | default(false) }}"
