@@ -81,5 +81,8 @@
               - "{{ {'autotrim': item.autotrim} | to_json }}"
           when: truenas_pool_current[0].autotrim.value != item.autotrim
           changed_when: true
+          loop: "{{ truenas_pool_autotrim }}"
+          loop_control:
+            label: "{{ item.pool }}"
       # pool.update validates the payload; a wrong pool name fails loudly on
       # the [0] index above rather than silently skipping.
