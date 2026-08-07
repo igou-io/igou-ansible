@@ -151,13 +151,19 @@
         state: mounted
       become: true
 
-    - name: Ensure Hermes state mount is owned by hermes
+    # setype _default relabels the xfs root from the unlabeled_t mkfs leaves
+    # behind to the path's matchpathcon default (user_home_t). virt_qemu_ga_t
+    # has no allow rules on unlabeled_t (and the denial is dontaudited), so an
+    # unlabeled mount root makes guest-fsfreeze-freeze fail with EACCES and
+    # every OADP backup of the VM goes PartiallyFailed (igou-openshift#636).
+    - name: Ensure Hermes state mount is owned by hermes and labeled
       ansible.builtin.file:
         path: "{{ hermes_state_mount }}"
         state: directory
         owner: "{{ hermes_user }}"
         group: "{{ hermes_user }}"
         mode: "0700"
+        setype: _default
       become: true
 
     - name: Check existing CentOS repo files before pinning mirrors
