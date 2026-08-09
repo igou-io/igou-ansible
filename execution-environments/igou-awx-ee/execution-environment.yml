@@ -80,7 +80,7 @@ additional_build_steps:
     # virtctl for KubeVirt VM ops driven from playbooks. Version tracks the
     # cluster's OpenShift Virtualization KubeVirt release.
     # renovate: datasource=github-releases depName=kubevirt/kubevirt
-    ARG VIRTCTL_VERSION="v1.8.4"
+    ARG VIRTCTL_VERSION="v1.9.0"
     RUN curl -L -o /usr/local/bin/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-amd64" && \
         chmod +x /usr/local/bin/virtctl
     RUN oc version && virtctl version --client && python -V && ansible --version && ansible-galaxy collection list
