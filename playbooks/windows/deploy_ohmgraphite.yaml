@@ -1,0 +1,120 @@
+---
+# Deploy OhmGraphite (https://github.com/nickbabcock/OhmGraphite) as a
+# Windows service exposing hardware sensors on a Prometheus endpoint.
+#
+# Why not windows_exporter? It has no fan support at all, and its
+# thermalzone collector only reads ACPI zones. Fan tachometers and per-core
+# CPU / GPU / motherboard temperatures live behind LibreHardwareMonitor's
+# ring-0 driver, which OhmGraphite wraps.
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables:
+#   ohmgraphite_version     - pinned release (no choco package exists;
+#                             installed from the GitHub release zip).
+#                             Upgrading: bump this AND delete the old
+#                             install dir on the host first - the unzip is
+#                             guarded by the exe's existence, and the
+#                             service locks its files while running.
+#   ohmgraphite_install_dir - install location
+#   ohmgraphite_port        - Prometheus listen port
+#   ohmgraphite_scrape_cidr - remote scope allowed through the firewall
+#
+# Run:
+#   ansible-navigator run playbooks/windows/deploy_ohmgraphite.yaml \
+#     -i ../igou-inventory/inventory.yaml -e ansible_limit=<host>
+- name: Deploy the OhmGraphite hardware-sensor exporter
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    ohmgraphite_version: 0.38.0
+    ohmgraphite_install_dir: C:\Program Files\OhmGraphite
+    ohmgraphite_port: 4445
+    ohmgraphite_scrape_cidr: 10.10.9.0/24
+
+  tasks:
+    - name: Ensure the install directory exists
+      ansible.windows.win_file:
+        path: "{{ ohmgraphite_install_dir }}"
+        state: directory
+
+    - name: Download the pinned release zip
+      ansible.windows.win_get_url:
+        url: "https://github.com/nickbabcock/OhmGraphite/releases/download/v{{ ohmgraphite_version }}/OhmGraphite-{{ ohmgraphite_version }}.zip"
+        dest: C:\Windows\Temp\OhmGraphite-{{ ohmgraphite_version }}.zip
+        force: false
+
+    - name: Unpack into the install directory
+      community.windows.win_unzip:
+        src: C:\Windows\Temp\OhmGraphite-{{ ohmgraphite_version }}.zip
+        dest: "{{ ohmgraphite_install_dir }}"
+        creates: "{{ ohmgraphite_install_dir }}\\OhmGraphite.exe"
+
+    # The zip may nest its payload one directory deep depending on release;
+    # resolve the real exe location instead of assuming.
+    - name: Locate OhmGraphite.exe
+      ansible.windows.win_find:
+        paths: "{{ ohmgraphite_install_dir }}"
+        recurse: true
+        patterns: OhmGraphite.exe
+      register: ohmgraphite_find
+      failed_when: ohmgraphite_find.matched == 0
+
+    - name: Resolve exe and config paths
+      ansible.builtin.set_fact:
+        ohmgraphite_exe: "{{ ohmgraphite_find.files[0].path }}"
+
+    - name: Configure the Prometheus endpoint
+      ansible.windows.win_copy:
+        content: |
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <appSettings>
+              <add key="type" value="prometheus" />
+              <add key="prometheus_port" value="{{ ohmgraphite_port }}" />
+              <add key="prometheus_host" value="*" />
+            </appSettings>
+          </configuration>
+        dest: "{{ ohmgraphite_exe }}.config"
+      register: ohmgraphite_config
+
+    - name: Check whether the service is registered
+      ansible.windows.win_service_info:
+        name: OhmGraphite
+      register: ohmgraphite_service
+
+    # TopShelf self-registration; only on first deploy.
+    - name: Register the OhmGraphite Windows service
+      ansible.windows.win_command:
+        argv:
+          - "{{ ohmgraphite_exe }}"
+          - install
+      when: not ohmgraphite_service.exists
+
+    - name: Allow Prometheus scrapes through the firewall
+      community.windows.win_firewall_rule:
+        name: "OhmGraphite {{ ohmgraphite_port }} ({{ ohmgraphite_scrape_cidr }})"
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "{{ ohmgraphite_port }}"
+        remoteip: "{{ ohmgraphite_scrape_cidr }}"
+        state: present
+
+    - name: Ensure the service is running (restart on config change)
+      ansible.windows.win_service:
+        name: OhmGraphite
+        start_mode: auto
+        state: "{{ 'restarted' if ohmgraphite_config is changed else 'started' }}"
+
+    # LibreHardwareMonitor's sensor init takes a few seconds on first start.
+    - name: Verify the metrics endpoint answers
+      ansible.windows.win_uri:
+        url: "http://localhost:{{ ohmgraphite_port }}/metrics"
+        status_code: 200
+      register: ohmgraphite_metrics
+      retries: 6
+      delay: 5
+      until: ohmgraphite_metrics.status_code | default(0) == 200
