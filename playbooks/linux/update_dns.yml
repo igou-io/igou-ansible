@@ -1,0 +1,50 @@
+---
+# Updates dns servers
+#
+# Targeting: pass ansible_limit=<host-or-group> at launch. The play falls back
+# to 'linux' and never to 'all', so a bare run cannot
+# silently fan out across the whole inventory. The AAP job template's
+# extra_vars must set ansible_limit or the play matches no hosts.
+#
+# Variables:
+#   (none yet - document every launch-time input here, one per line)
+#
+# AAP registration is a MANUAL follow-up: the scaffolder cannot append to an
+# existing file. Splice the entry below into the controller_templates list in
+# igou-inventory/group_vars/aap/job_templates.yml (pick the matching
+# "# ===== <section> =====" block), then run `make aap-sync-templates` from
+# igou-ansible with ANSIBLE_INVENTORY pointing at igou-inventory/inventory.yaml.
+#
+#   - name: linux_update_dns
+#     description: >-
+#       Updates dns servers
+#     labels:
+#       - linux
+#     project: igou_ansible
+#     job_type: run
+#     playbook: playbooks/linux/update_dns.yml
+#     inventory: igou_inventory
+#     execution_environment: igou-awx-ee
+#     concurrent_jobs_enabled: false
+#     ask_variables_on_launch: true
+#     verbosity: 2
+#     credentials:
+#       - ansible_user_ed25519
+#       # Add onepassword-connect-token if this play does
+#       # community.general.onepassword lookups.
+#     extra_vars:
+#       ansible_limit: changeme
+- name: Update DNS servers
+  hosts: "{{ ansible_limit | default('linux') }}"
+  become: true
+  gather_facts: true
+
+  tasks:
+    # TODO: replace this placeholder with the real automation. Task names are
+    # imperative and Title-cased (ansible-lint production: name[casing]) and
+    # every module is FQCN'd (fqcn[action-core]). Secret lookups belong in the
+    # play vars or inventory, never inside a role's tasks (see AGENTS.md
+    # "Roles are pure functions").
+    - name: Report the resolved target
+      ansible.builtin.debug:
+        msg: "Update DNS servers would run on {{ inventory_hostname }}"
