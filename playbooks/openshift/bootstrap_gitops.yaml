@@ -169,6 +169,11 @@
                 extraConfig:
                   resource.compareoptions: |
                     ignoreAggregatedRoles: true
+                  # Read-only apiKey account for the homepage dashboard's
+                  # ArgoCD widget (token minted manually, stored in 1P
+                  # lab_openshift/homepage-argocd, consumed via
+                  # ExternalSecret in applications/homepage).
+                  accounts.homepage: apiKey
                 server:
                   autoscale:
                     enabled: false
@@ -448,6 +453,7 @@
                     g, system:cluster-admins, role:admin
                     g, cluster-admins, role:admin
                     g, admin, role:admin
+                    g, homepage, role:readonly
                   scopes: "[groups]"
                 repo:
                   sidecarContainers:
