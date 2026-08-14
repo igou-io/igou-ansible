@@ -1,0 +1,46 @@
+---
+# wave3 aap PR e2e probe
+#
+# Targeting: runs on the control node (the execution environment itself). This
+# play drives an API rather than managed hosts, so ansible_limit does not
+# apply. `connection: local` is set at the play level - never pin
+# ansible_connection: local on an inventory host.
+#
+# Variables:
+#   (none yet - document every launch-time input here, one per line)
+#
+# AAP registration is a MANUAL follow-up: the scaffolder cannot append to an
+# existing file. Splice the entry below into the controller_templates list in
+# igou-inventory/group_vars/aap/job_templates.yml (pick the matching
+# "# ===== <section> =====" block), then run `make aap-sync-templates` from
+# igou-ansible with ANSIBLE_INVENTORY pointing at igou-inventory/inventory.yaml.
+#
+#   - name: aap_wave3_probe
+#     description: >-
+#       wave3 aap PR e2e probe
+#     labels:
+#       - aap
+#     project: igou_ansible
+#     job_type: run
+#     playbook: playbooks/aap/wave3_probe.yml
+#     inventory: igou_inventory
+#     execution_environment: igou-awx-ee
+#     concurrent_jobs_enabled: false
+#     ask_variables_on_launch: true
+#     verbosity: 1
+#     credentials:
+#       - onepassword-connect-token
+#       # Add aap_admin for AAP config-as-code plays, kubernetes/kubevirt for
+#       # cluster API plays.
+- name: Probe The Wave Three Path
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    # TODO: replace this placeholder with the real automation. Task names are
+    # imperative and Title-cased (ansible-lint production: name[casing]) and
+    # every module is FQCN'd (fqcn[action-core]).
+    - name: Report what this play will do
+      ansible.builtin.debug:
+        msg: "Probe The Wave Three Path"
