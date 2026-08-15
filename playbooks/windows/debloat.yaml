@@ -1,0 +1,156 @@
+---
+# Debloat a Windows host: the windows_debloat role (Appx bloat, consumer
+# content, telemetry, Copilot policy, OneDrive, reserved storage) plus the
+# three things the role does not cover:
+#
+#   * Win32 program uninstalls (vendor telemetry, unwanted apps) - searched
+#     across HKLM and every loaded user hive, so per-user installs (e.g.
+#     Squirrel/Electron apps) are found too.
+#   * Machine-wide OneDrive removal - the role uninstalls the CONNECT user's
+#     per-user client, but Win11 ships OneDrive per-machine under Program
+#     Files; that copy needs its own /uninstall /allusers.
+#   * Per-user Run-key cleanup via HKU - auto-launch entries (Copilot, Edge
+#     startup boost, OneDrive, app self-registrations) live in the
+#     INTERACTIVE user's hive, which the role never touches because it only
+#     writes the psrp connect user's HKCU.
+#
+# Host-specific curation (what to remove, what to keep) belongs in
+# igou-inventory host_vars/<host>.yml - see mx3d.igou.systems.yml for the
+# reference set. The role's own windows_debloat_* variables flow in from
+# inventory as well.
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables (playbook-level, all default to "do nothing"):
+#   windows_debloat_uninstall_programs - list of Win32 apps to remove:
+#                                          match: DisplayName -like pattern
+#                                          args:  extra silent flags for
+#                                                 non-MSI, non-quiet
+#                                                 uninstallers (e.g. /S)
+#   windows_debloat_user_run_keys      - Run-value name patterns to delete
+#                                        from every user hive (HKU) and HKLM
+#
+# Run:
+#   ansible-navigator run playbooks/windows/debloat.yaml \
+#     -i ../igou-inventory/inventory.yaml -e ansible_limit=<host>
+- name: Debloat Windows
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  # NOTE: no play-level vars block on purpose - play vars outrank inventory
+  # host_vars, so defaults here would silently mask per-host curation. The
+  # two playbook-level lists default to [] at their use sites instead.
+  tasks:
+    - name: Strip consumer bloat (windows_debloat role)
+      ansible.builtin.import_role:
+        name: windows_debloat
+
+    # Win11 installs OneDrive per-machine under Program Files; the role's
+    # per-user uninstall misses it. Gate on the same role flag.
+    - name: Uninstall the machine-wide OneDrive client
+      ansible.windows.win_shell: |
+        $changed = @()
+        $setup = Join-Path $env:ProgramFiles 'Microsoft OneDrive\OneDriveSetup.exe'
+        if (Test-Path $setup) {
+          Start-Process $setup -ArgumentList '/uninstall', '/allusers' -Wait
+          $changed += 'machine-wide client uninstalled'
+        }
+        # A copy already running in a user session survives the uninstall;
+        # with the Run keys gone and sync disabled by policy it will not
+        # come back after this.
+        $proc = Get-Process -Name OneDrive -ErrorAction SilentlyContinue
+        if ($proc) { $proc | Stop-Process -Force; $changed += 'running instance stopped' }
+        if ($changed) { "changed: $($changed -join '; ')" } else { 'ok' }
+      register: windows_debloat_onedrive_machine
+      changed_when: "'changed:' in windows_debloat_onedrive_machine.stdout"
+      when: windows_debloat_remove_onedrive | default(true) | bool
+
+    - name: Uninstall unwanted Win32 programs
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        $roots = @(
+          'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+          'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
+        if (-not (Get-PSDrive HKU -ErrorAction SilentlyContinue)) {
+          New-PSDrive -Name HKU -PSProvider Registry -Root HKEY_USERS | Out-Null
+        }
+        Get-ChildItem HKU:\ | Where-Object { $_.PSChildName -notmatch '_Classes$|^\.DEFAULT$' } |
+          ForEach-Object { $roots += "HKU:\$($_.PSChildName)\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" }
+        $apps = Get-ItemProperty $roots -ErrorAction SilentlyContinue |
+          Where-Object { $_.DisplayName -like '{{ item.match }}' }
+        if (-not $apps) { 'ok'; exit 0 }
+        $done = @()
+        foreach ($a in $apps) {
+          $cmd = if ($a.QuietUninstallString) { $a.QuietUninstallString } else { $a.UninstallString }
+          if (-not $cmd) { continue }
+          if ($cmd -match 'msiexec') {
+            $guid = [regex]::Match($cmd, '\{[0-9A-Fa-f-]+\}').Value
+            Start-Process msiexec.exe -ArgumentList "/x $guid /qn /norestart" -Wait
+          } else {
+            # NSIS-style exe uninstaller (the dominant non-MSI format,
+            # incl. electron-builder): the shipped Uninstall.exe re-spawns
+            # itself from temp and exits immediately, so -Wait on it never
+            # covers the real uninstall. Canonical fix: run a temp COPY
+            # synchronously against the install dir via _?=<dir>.
+            $exe = [regex]::Match($cmd, '^"?([^"]+?\.[eE][xX][eE])').Groups[1].Value
+            if (-not (Test-Path $exe)) { continue }
+            $dir = Split-Path $exe -Parent
+            $tail = $cmd.Substring($cmd.IndexOf($exe) + $exe.Length).TrimStart('"', ' ')
+            if (-not ($tail -match '/S')) { $tail = "$tail {{ item.args | default('/S') }}" }
+            $tmp = Join-Path $env:TEMP ('un_' + [IO.Path]::GetFileName($exe))
+            Copy-Item -LiteralPath $exe -Destination $tmp -Force
+            Start-Process $tmp -ArgumentList "$tail _?=$dir" -Wait
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+          }
+          $done += $a.DisplayName
+        }
+        # Per-user uninstallers run from the service context clean their
+        # files but may leave the OWNING user's registration behind (they
+        # write the invoker's hive). Drop registrations whose uninstaller
+        # exe no longer exists - by then the app is verifiably gone.
+        foreach ($a in (Get-ItemProperty $roots -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like '{{ item.match }}' })) {
+          $cmd = if ($a.QuietUninstallString) { $a.QuietUninstallString } else { $a.UninstallString }
+          $exe = [regex]::Match("$cmd", '^"?([^"]+?\.[eE][xX][eE])').Groups[1].Value
+          if ($exe -and -not (Test-Path $exe)) {
+            Remove-Item -LiteralPath $a.PSPath -Recurse -Force
+            $done += "$($a.DisplayName) (stale key)"
+          }
+        }
+        if ($done) { "changed: $(($done | Select-Object -Unique) -join ', ')" } else { 'ok' }
+      loop: "{{ windows_debloat_uninstall_programs | default([]) }}"
+      loop_control:
+        label: "{{ item.match }}"
+      register: windows_debloat_win32
+      changed_when: "'changed:' in windows_debloat_win32.stdout"
+
+    - name: Remove auto-launch Run entries from every user hive
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        $patterns = @({{ windows_debloat_user_run_keys | default([]) | map('to_json') | join(', ') }})
+        if (-not (Get-PSDrive HKU -ErrorAction SilentlyContinue)) {
+          New-PSDrive -Name HKU -PSProvider Registry -Root HKEY_USERS | Out-Null
+        }
+        $runKeys = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run')
+        Get-ChildItem HKU:\ | Where-Object { $_.PSChildName -notmatch '_Classes$|^\.DEFAULT$' } |
+          ForEach-Object { $runKeys += "HKU:\$($_.PSChildName)\Software\Microsoft\Windows\CurrentVersion\Run" }
+        $removed = @()
+        foreach ($key in $runKeys) {
+          if (-not (Test-Path $key)) { continue }
+          $props = (Get-Item $key).Property
+          foreach ($name in $props) {
+            foreach ($p in $patterns) {
+              if ($name -like $p) {
+                Remove-ItemProperty -Path $key -Name $name
+                $removed += $name
+                break
+              }
+            }
+          }
+        }
+        if ($removed) { "changed: $(($removed | Select-Object -Unique) -join ', ')" } else { 'ok' }
+      register: windows_debloat_runkeys
+      changed_when: "'changed:' in windows_debloat_runkeys.stdout"
+      when: windows_debloat_user_run_keys | default([]) | length > 0
