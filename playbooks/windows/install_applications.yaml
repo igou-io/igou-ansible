@@ -15,6 +15,10 @@
 #                            version: exact version to pin    (optional)
 #                            state:   present|latest|absent   (optional,
 #                                     default present)
+#                            params:  chocolatey package parameters
+#                                     (optional), e.g. /StartMenu to
+#                                     install only that open-shell
+#                                     component
 #                          Pinning a version keeps runs deterministic;
 #                          'latest' upgrades on every run when the feed has
 #                          something newer.
@@ -29,12 +33,12 @@
   hosts: "{{ ansible_limit | default('windows') }}"
   gather_facts: false
 
-  vars:
-    windows_apps:
-      - name: git
-      - name: 7zip
-      - name: notepadplusplus
-
+  # NOTE: no play-level windows_apps default - play vars outrank inventory
+  # host_vars, so an example list here would silently override per-host
+  # curation AND install demo apps on any bare run (live-hit on mx3d:
+  # git/7zip/notepadplusplus went on instead of the host's list). The
+  # loop defaults to [] at the use site; define windows_apps in
+  # host_vars/group_vars or pass -e.
   tasks:
     # Chocolatey's bootstrap runs a downloaded .ps1, which the default
     # execution policy on Windows CLIENT SKUs (Restricted) blocks — the
@@ -75,10 +79,11 @@
         name: "{{ item.name }}"
         version: "{{ item.version | default(omit) }}"
         state: "{{ item.state | default('present') }}"
+        package_params: "{{ item.params | default(omit) }}"
         # Install from the internal feed when configured; omitted otherwise
         # so default behaviour (community feed) is unchanged.
         source: "{{ windows_choco_source | default(omit) }}"
-      loop: "{{ windows_apps }}"
+      loop: "{{ windows_apps | default([]) }}"
       loop_control:
         label: "{{ item.name }} ({{ item.state | default('present') }})"
 
