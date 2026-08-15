@@ -1,0 +1,78 @@
+---
+# Set the classic "Performance Options -> Visual Effects" preset to
+# "Adjust for best performance" for every real user profile: kill window/
+# taskbar/menu animations, Aero Peek, thumbnail caching, shadows, the
+# translucent selection rectangle, transparency effects, and (optionally)
+# font smoothing. Every checkbox in that dialog is per-user registry
+# state, so this writes through HKU to reach the INTERACTIVE users' hives
+# (the psrp connect user's HKCU would be the wrong profile).
+#
+# The UserPreferencesMask bitmask covers the animation/fade/shadow
+# checkboxes in one value; the rest are individual named values. Changes
+# take effect at the next sign-in (no way to broadcast
+# WM_SETTINGCHANGE into a user session from the service context).
+#
+# Targeting: pass ansible_limit=<host-or-group>. Defaults to the 'windows'
+# inventory group.
+#
+# Variables:
+#   windows_visual_fx_drag_full_windows - keep "Show window contents while
+#                                         dragging" ON (default true; the
+#                                         one effect worth its cost)
+#   windows_visual_fx_font_smoothing    - keep "Smooth edges of screen
+#                                         fonts" ON (default false =
+#                                         strict best-performance; flip to
+#                                         true if text looks too jagged)
+#
+# Run:
+#   ansible-navigator run playbooks/windows/configure_visual_effects.yaml \
+#     -i ../igou-inventory/inventory.yaml -e ansible_limit=<host>
+- name: Configure Windows visual effects for best performance
+  hosts: "{{ ansible_limit | default('windows') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Apply the best-performance visual-effects preset per user hive
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        if (-not (Get-PSDrive HKU -ErrorAction SilentlyContinue)) {
+          New-PSDrive -Name HKU -PSProvider Registry -Root HKEY_USERS | Out-Null
+        }
+        # 'Adjust for best performance' mask: every animation/fade/shadow
+        # bit off (the dialog stores these 8 bytes in one bitmask).
+        $mask = [byte[]](0x90, 0x12, 0x03, 0x80, 0x10, 0x00, 0x00, 0x00)
+        $dragFull = if ('{{ windows_visual_fx_drag_full_windows | default(true) }}' -eq 'True') { '1' } else { '0' }
+        $fontSmooth = if ('{{ windows_visual_fx_font_smoothing | default(false) }}' -eq 'True') { '2' } else { '0' }
+        $changed = @()
+        $hives = Get-ChildItem HKU:\ | Where-Object {
+          $_.PSChildName -match '^S-1-5-21' -and $_.PSChildName -notmatch '_Classes$'
+        }
+        foreach ($h in $hives) {
+          $sid = $h.PSChildName
+          $set = {
+            param($path, $name, $value, $type)
+            $full = "HKU:\$sid\$path"
+            if (-not (Test-Path $full)) { New-Item -Path $full -Force | Out-Null }
+            $cur = (Get-ItemProperty -Path $full -Name $name -ErrorAction SilentlyContinue).$name
+            $same = if ($type -eq 'Binary') { ($cur -join ',') -eq ($value -join ',') } else { "$cur" -eq "$value" }
+            if (-not $same) {
+              Set-ItemProperty -Path $full -Name $name -Value $value -Type $type
+              $script:changed += "${sid}:$name"
+            }
+          }
+          & $set 'Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' 'VisualFXSetting' 3 'DWord'
+          & $set 'Control Panel\Desktop' 'UserPreferencesMask' $mask 'Binary'
+          & $set 'Control Panel\Desktop' 'DragFullWindows' $dragFull 'String'
+          & $set 'Control Panel\Desktop' 'FontSmoothing' $fontSmooth 'String'
+          & $set 'Control Panel\Desktop\WindowMetrics' 'MinAnimate' '0' 'String'
+          & $set 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ListviewAlphaSelect' 0 'DWord'
+          & $set 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ListviewShadow' 0 'DWord'
+          & $set 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarAnimations' 0 'DWord'
+          & $set 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'IconsOnly' 1 'DWord'
+          & $set 'Software\Microsoft\Windows\DWM' 'EnableAeroPeek' 0 'DWord'
+          & $set 'Software\Microsoft\Windows\DWM' 'AlwaysHibernateThumbnails' 0 'DWord'
+          & $set 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'EnableTransparency' 0 'DWord'
+        }
+        if ($changed) { "changed: $($changed -join ', ')" } else { 'ok' }
+      register: windows_visual_fx_result
+      changed_when: "'changed:' in windows_visual_fx_result.stdout"
