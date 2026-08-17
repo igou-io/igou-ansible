@@ -355,6 +355,16 @@
             labels:
               # REQUIRED — the NodePort Services select on this label.
               kubevirt.io/domain: "{{ windows_desktop_name }}"
+            annotations:
+              # Windows VSS releases its writer hold after ~10s, so
+              # Velero's post-backup virt-freezer thaw hook always fails
+              # ("couldn't hold writes") and marks the backup
+              # PartiallyFailed. Downgrade that hook failure to a
+              # warning; the pre-backup freeze still runs and succeeds.
+              # Propagates VM template -> VMI -> virt-launcher pod,
+              # where Velero reads it (kubevirt has no per-VM freeze
+              # opt-out: kubevirt/kubevirt#14056).
+              post.hook.backup.velero.io/on-error: Continue
             instancetype:
               kind: virtualmachineclusterinstancetype
               name: "{{ windows_desktop_instancetype }}"
