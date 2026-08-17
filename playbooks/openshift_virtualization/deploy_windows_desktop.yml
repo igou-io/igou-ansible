@@ -355,6 +355,19 @@
             labels:
               # REQUIRED — the NodePort Services select on this label.
               kubevirt.io/domain: "{{ windows_desktop_name }}"
+              # Keep the VM, VMI, and virt-launcher pod out of Velero
+              # backups (label propagates VM -> template -> VMI -> pod).
+              # Windows VSS releases its writer hold after ~10s, so the
+              # KubeVirt virt-freezer thaw hook structurally always
+              # fails and marks weekly-heavy PartiallyFailed; Velero
+              # counts hook failures as backup errors even with
+              # on-error=Continue, KubeVirt reconciles away any command
+              # override, and its velero plugin rejects a running VM
+              # whose pod is excluded any other way (kubevirt#14056).
+              # The boot + persistent-state PVCs are still backed up
+              # (crash-consistent); the VM object itself is rebuilt by
+              # this playbook, not restored.
+              velero.io/exclude-from-backup: "true"
             instancetype:
               kind: virtualmachineclusterinstancetype
               name: "{{ windows_desktop_instancetype }}"
