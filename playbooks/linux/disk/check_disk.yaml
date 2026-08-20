@@ -1,0 +1,66 @@
+---
+# Measure disk utilization on one mount and publish structured artifacts for
+# the automation orchestrator disk-utilization workflow (AAP template:
+# disk_check). The orchestrator's switch node routes on disk_use_percent /
+# disk_tier; see igou-docs "AO Artifacts for Structured Output".
+#
+# Targeting: pass ansible_limit=<host> (defaults to 'none' — never 'all').
+# Single-host runs only: set_stats artifacts are workflow-scoped, so a
+# multi-host limit would clobber per-host values. The orchestrator loops
+# hosts by launching one job per host.
+#
+# Variables:
+#   disk_mount - mount point to measure (default '/')
+#
+# Artifacts (set_stats -> AAP job artifacts -> orchestrator step output):
+#   disk_host, disk_mount, disk_use_percent (int), disk_tier
+#   (healthy|warning|critical), disk_detail (top space consumers, text)
+- name: Check disk utilization and publish tier artifacts
+  hosts: "{{ ansible_limit | default('none') }}"
+  become: true
+  gather_facts: true
+  vars:
+    disk_mount: /
+    disk_warn_percent: 80
+    disk_crit_percent: 95
+  tasks:
+    - name: Locate the requested mount in gathered facts
+      ansible.builtin.set_fact:
+        disk_mount_info: >-
+          {{ ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first }}
+
+    - name: Compute utilization percentage
+      ansible.builtin.set_fact:
+        disk_use_percent: >-
+          {{ (100 - (disk_mount_info.size_available * 100 / disk_mount_info.size_total)) | round(0, 'ceil') | int }}
+
+    - name: Classify tier
+      ansible.builtin.set_fact:
+        disk_tier: >-
+          {{ 'critical' if disk_use_percent | int > disk_crit_percent
+             else 'warning' if disk_use_percent | int >= disk_warn_percent
+             else 'healthy' }}
+
+    - name: Collect top space consumers under /var (for the summary step)
+      ansible.builtin.shell:
+        cmd: set -o pipefail; du -xm --max-depth=2 /var 2>/dev/null | sort -rn | head -12
+        executable: /bin/bash
+      register: disk_du
+      changed_when: false
+      failed_when: false
+
+    - name: Publish artifacts for the orchestrator
+      ansible.builtin.set_stats:
+        data:
+          disk_host: "{{ inventory_hostname }}"
+          disk_mount: "{{ disk_mount }}"
+          disk_use_percent: "{{ disk_use_percent | int }}"
+          disk_tier: "{{ disk_tier }}"
+          disk_detail: "{{ disk_du.stdout | default('unavailable') }}"
+        per_host: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} {{ disk_mount }}:
+          {{ disk_use_percent }}% used -> tier {{ disk_tier }}

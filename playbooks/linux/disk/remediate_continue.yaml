@@ -1,0 +1,32 @@
+---
+# Healthy-tier branch of the orchestrator disk-utilization workflow (AAP
+# template: disk_remediate_continue). Logs status, changes nothing, and
+# republishes after-stats so the notify/summary steps have a uniform shape
+# across all remediation branches.
+#
+# Targeting: pass ansible_limit=<host> (defaults to 'none').
+- name: Log healthy disk status (no changes)
+  hosts: "{{ ansible_limit | default('none') }}"
+  become: false
+  gather_facts: true
+  vars:
+    disk_mount: /
+  tasks:
+    - name: Recompute utilization
+      ansible.builtin.set_fact:
+        disk_use_percent_after: >-
+          {{ (100 - (ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_available * 100
+             / (ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_total) | round(0, 'ceil') | int }}
+
+    - name: Publish remediation artifacts
+      ansible.builtin.set_stats:
+        data:
+          remediation_action: none
+          freed_mb: 0
+          disk_use_percent_after: "{{ disk_use_percent_after | int }}"
+          escalate: false
+        per_host: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} healthy at {{ disk_use_percent_after }}% — no action taken"

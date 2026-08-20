@@ -1,0 +1,41 @@
+---
+# Converged notify step of the orchestrator disk-utilization workflow (AAP
+# template: disk_notify_slack). Posts a tier-templated summary to Slack.
+# All context arrives as extra_vars from the orchestrator (artifacts of the
+# upstream check/remediate steps plus the optional task-agent summary).
+#
+# Requires the Onepassword Connect credential (community.general.onepassword
+# lookup for the Slack token — same item the AAP notification templates use).
+#
+# Variables (all provided by the orchestrator; defaults keep manual runs sane):
+#   disk_host, disk_mount, disk_use_percent, disk_tier,
+#   remediation_action, actions_taken, freed_mb, disk_use_percent_after,
+#   escalate, agent_summary
+- name: Post disk-utilization summary to Slack
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    slack_channel: "#igoucloud-aap-logs"
+    tier_emoji:
+      healthy: ":large_green_circle:"
+      warning: ":large_yellow_circle:"
+      critical: ":red_circle:"
+    disk_tier: unknown
+    escalate: false
+  tasks:
+    - name: Post summary
+      community.general.slack:
+        token: "{{ lookup('community.general.onepassword', 'slack_notification_password', field='password', vault='lab_external_api_keys') }}"
+        channel: "{{ slack_channel }}"
+        msg: >-
+          {{ tier_emoji[disk_tier] | default(':white_circle:') }}
+          disk-utilization {{ disk_host | default('unknown-host') }}
+          {{ disk_mount | default('/') }}:
+          {{ disk_use_percent | default('?') }}% ({{ disk_tier }})
+          -> {{ remediation_action | default('none') }}
+          {% if freed_mb | default(0) | int > 0 %}freed {{ freed_mb }} MB, {% endif %}
+          now {{ disk_use_percent_after | default(disk_use_percent) | default('?') }}%.
+          {% if escalate | default(false) | bool %}:rotating_light: STILL CRITICAL after reclaim — human needed.{% endif %}
+          {% if agent_summary is defined and agent_summary | length > 0 %}
+          {{ agent_summary }}{% endif %}
