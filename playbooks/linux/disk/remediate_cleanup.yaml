@@ -1,0 +1,103 @@
+---
+# Warning-tier (80-95%) branch of the orchestrator disk-utilization workflow
+# (AAP template: disk_remediate_cleanup). Safe, non-disruptive reclaim only:
+#
+#   - package manager cache (dnf or apt)
+#   - journald vacuum to 500M
+#   - rotated/compressed logs older than 30 days
+#   - DANGLING podman images only (podman image prune WITHOUT -a)
+#
+# Devcontainer safety (vscode.igou.systems runs the primary devcontainer):
+# never prune containers or volumes, never prune tagged/unused images (-a),
+# never touch /tmp (agent scratchpads live there), never restart services.
+#
+# Targeting: pass ansible_limit=<host> (defaults to 'none').
+#
+# Artifacts: remediation_action, actions_taken, freed_mb,
+#            disk_use_percent_after, escalate (always false on this tier)
+- name: Safe disk cleanup (cache, journals, rotated logs, dangling images)
+  hosts: "{{ ansible_limit | default('none') }}"
+  become: true
+  gather_facts: true
+  vars:
+    disk_mount: /
+    journal_vacuum_size: 500M
+    rotated_log_age: 30d
+  tasks:
+    - name: Record utilization before cleanup
+      ansible.builtin.set_fact:
+        disk_before_mb: >-
+          {{ ((ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_available / 1048576) | int }}
+
+    - name: Clean dnf cache
+      ansible.builtin.command:
+        argv: [dnf, clean, packages]
+      when: ansible_facts.pkg_mgr in ['dnf', 'dnf5']
+      register: cleanup_dnf
+      changed_when: true
+
+    - name: Clean apt cache
+      ansible.builtin.apt:
+        clean: true
+      when: ansible_facts.pkg_mgr == 'apt'
+      register: cleanup_apt
+
+    - name: Vacuum journald
+      ansible.builtin.command:
+        argv: [journalctl, "--vacuum-size={{ journal_vacuum_size }}"]
+      register: cleanup_journal
+      changed_when: true
+
+    - name: Find rotated logs older than {{ rotated_log_age }}
+      ansible.builtin.find:
+        paths: /var/log
+        recurse: true
+        age: "{{ rotated_log_age }}"
+        patterns: ['*.gz', '*.xz', '*.old', '*.[0-9]']
+      register: cleanup_rotated
+
+    - name: Remove old rotated logs
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ cleanup_rotated.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Prune dangling podman images (never -a, never volumes)
+      ansible.builtin.command:
+        argv: [podman, image, prune, -f]
+      register: cleanup_podman
+      changed_when: cleanup_podman.stdout | default('') | length > 0
+      failed_when: false # hosts without podman just skip the reclaim
+
+    - name: Re-gather mount facts
+      ansible.builtin.setup:
+        gather_subset: [hardware]
+
+    - name: Record utilization after cleanup
+      ansible.builtin.set_fact:
+        disk_after_mb: >-
+          {{ ((ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_available / 1048576) | int }}
+        disk_use_percent_after: >-
+          {{ (100 - (ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_available * 100
+             / (ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_total) | round(0, 'ceil') | int }}
+
+    - name: Publish remediation artifacts
+      ansible.builtin.set_stats:
+        data:
+          remediation_action: cleanup
+          actions_taken: >-
+            package cache, journald vacuum ({{ journal_vacuum_size }}),
+            {{ cleanup_rotated.files | length }} rotated logs, dangling podman images
+          freed_mb: "{{ [disk_after_mb | int - disk_before_mb | int, 0] | max }}"
+          disk_use_percent_after: "{{ disk_use_percent_after | int }}"
+          escalate: false
+        per_host: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: cleanup freed
+          {{ [disk_after_mb | int - disk_before_mb | int, 0] | max }} MB,
+          now {{ disk_use_percent_after }}%

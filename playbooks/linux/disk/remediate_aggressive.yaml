@@ -1,0 +1,102 @@
+---
+# Critical-tier (>95%) branch of the orchestrator disk-utilization workflow
+# (AAP template: disk_remediate_aggressive). Runs ONLY behind an orchestrator
+# approval step. No disk-expansion tier exists in this lab (bare metal + VPS,
+# no elastic storage) — this deeper reclaim plus escalation replaces it.
+#
+# Beyond the safe tier:
+#   - journald vacuum to 200M
+#   - unused podman images older than 30 days (podman image prune -a
+#     --filter until=720h; images backing RUNNING containers are always
+#     protected by podman, so the live devcontainer is untouchable — worst
+#     case a future rebuild re-pulls)
+#   - old kernels (dnf) — SKIPPED on hosts with a pinned local kernel
+#     (armbian_local_kernel) and on non-dnf hosts
+#
+# Still never: container/volume prune, /tmp, service restarts.
+# If usage stays above disk_crit_percent afterwards, escalate=true so the
+# workflow flags the host for a human (Slack summary calls it out).
+#
+# Targeting: pass ansible_limit=<host> (defaults to 'none').
+- name: Aggressive disk reclaim (approval-gated)
+  hosts: "{{ ansible_limit | default('none') }}"
+  become: true
+  gather_facts: true
+  vars:
+    disk_mount: /
+    disk_crit_percent: 95
+    journal_vacuum_size: 200M
+    unused_image_age: 720h
+  tasks:
+    - name: Record utilization before reclaim
+      ansible.builtin.set_fact:
+        disk_before_mb: >-
+          {{ ((ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_available / 1048576) | int }}
+
+    - name: Clean dnf cache
+      ansible.builtin.command:
+        argv: [dnf, clean, packages]
+      when: ansible_facts.pkg_mgr in ['dnf', 'dnf5']
+      register: aggressive_dnf
+      changed_when: true
+
+    - name: Clean apt cache
+      ansible.builtin.apt:
+        clean: true
+      when: ansible_facts.pkg_mgr == 'apt'
+
+    - name: Rotate and vacuum journald to {{ journal_vacuum_size }}
+      ansible.builtin.command:
+        argv: [journalctl, --rotate, "--vacuum-size={{ journal_vacuum_size }}"]
+      register: aggressive_journal
+      changed_when: true
+
+    - name: Prune unused podman images older than {{ unused_image_age }}
+      ansible.builtin.command:
+        argv: [podman, image, prune, -af, --filter, "until={{ unused_image_age }}"]
+      register: aggressive_podman
+      changed_when: aggressive_podman.stdout | length > 0
+      failed_when: false
+
+    - name: Remove old kernels (dnf hosts without a pinned local kernel)
+      ansible.builtin.command:
+        argv: [dnf, -y, remove, --oldinstallonly]
+      when:
+        - ansible_facts.pkg_mgr in ['dnf', 'dnf5']
+        - armbian_local_kernel is not defined
+      register: aggressive_kernels
+      changed_when: "'Removed' in aggressive_kernels.stdout | default('')"
+      failed_when: false
+
+    - name: Re-gather mount facts
+      ansible.builtin.setup:
+        gather_subset: [hardware]
+
+    - name: Record utilization after reclaim
+      ansible.builtin.set_fact:
+        disk_after_mb: >-
+          {{ ((ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_available / 1048576) | int }}
+        disk_use_percent_after: >-
+          {{ (100 - (ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_available * 100
+             / (ansible_facts.mounts | selectattr('mount', 'equalto', disk_mount) | first).size_total) | round(0, 'ceil') | int }}
+
+    - name: Publish remediation artifacts
+      ansible.builtin.set_stats:
+        data:
+          remediation_action: aggressive
+          actions_taken: >-
+            package cache, journald vacuum ({{ journal_vacuum_size }}),
+            unused images >{{ unused_image_age }},
+            old kernels{{ '' if armbian_local_kernel is not defined else ' (skipped: pinned kernel)' }}
+          freed_mb: "{{ [disk_after_mb | int - disk_before_mb | int, 0] | max }}"
+          disk_use_percent_after: "{{ disk_use_percent_after | int }}"
+          escalate: "{{ disk_use_percent_after | int > disk_crit_percent }}"
+        per_host: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: aggressive reclaim freed
+          {{ [disk_after_mb | int - disk_before_mb | int, 0] | max }} MB,
+          now {{ disk_use_percent_after }}%
+          {{ '- STILL CRITICAL, escalating' if disk_use_percent_after | int > disk_crit_percent else '' }}
