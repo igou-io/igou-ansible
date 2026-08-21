@@ -1,7 +1,13 @@
 ---
-# Mint a short-lived AO (automation-orchestrator) bearer token using the
-# OAuth 2.0 client-credentials grant (RFC 6749 §4.4), and publish it as
-# `ao_token` for the including play.
+# Mint a short-lived AO (automation-orchestrator) bearer token and publish it
+# as `ao_token` for the including play. Two grants, selected by
+# `ao_auth_grant` (default client_credentials):
+#   client_credentials -> POST /api/v1/auth/token  (service account; digest)
+#   password           -> POST /api/v1/auth/login  (local user; decide -
+#     REQUIRED for decisions: AO's resolve_approvers drops service accounts
+#     from approver_users, so only a real user can be an authorized approver
+#     in 2026.8. The `approvals-bridge-bot` local user, member of `admins`,
+#     exists for exactly this.)
 #
 # 1Password contract (item `ao-approvals-bridge`, vault `lab_aap`):
 #   field `username` -> OAuth client_id
@@ -29,15 +35,17 @@
       yield both a `username` (client_id) and a `password` (client_secret).
     success_msg: "Client credentials resolved from op://{{ ao_op_vault }}/{{ ao_op_item }}"
 
-- name: Exchange the client credentials for an access token
+- name: Exchange the credentials for an access token
   ansible.builtin.uri:
-    url: "{{ ao_api_url }}/api/v1/auth/token"
+    url: "{{ ao_api_url }}{{ '/api/v1/auth/login' if ao_auth_grant | default('client_credentials') == 'password' else '/api/v1/auth/token' }}"
     method: POST
-    body_format: form-urlencoded
-    body:
-      grant_type: client_credentials
-      client_id: "{{ _ao_client_id }}"
-      client_secret: "{{ _ao_client_secret }}"
+    body_format: "{{ 'json' if ao_auth_grant | default('client_credentials') == 'password' else 'form-urlencoded' }}"
+    body: >-
+      {{ {'username': _ao_client_id, 'password': _ao_client_secret}
+         if ao_auth_grant | default('client_credentials') == 'password'
+         else {'grant_type': 'client_credentials',
+               'client_id': _ao_client_id,
+               'client_secret': _ao_client_secret} }}
     return_content: true
     status_code: [200]
   register: _ao_token_result

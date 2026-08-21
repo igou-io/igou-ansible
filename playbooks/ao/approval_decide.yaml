@@ -58,7 +58,12 @@
 
   vars:
     ao_api_url: https://orchestrator.apps.ocp.igou.systems
-    ao_op_item: ao-approvals-bridge
+    # Decisions authenticate as the approvals-bridge-bot LOCAL USER (member of
+    # `admins`) via the password grant: AO 2026.8's approver resolution drops
+    # service accounts from approver_users, so the SA can list but never
+    # decide. Validated live 2026-08-21 (decided_by "Approvals Bridge").
+    ao_auth_grant: password
+    ao_op_item: ao-approvals-bridge-user
     ao_op_vault: lab_aap
 
   tasks:
