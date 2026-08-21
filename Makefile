@@ -1,6 +1,6 @@
 AAP_NAV_CFG := playbooks/aap/ansible-navigator.yml
 
-.PHONY: lint yamllint syntax-check ee _check-inv aap-configure aap-sync-credentials aap-sync-templates aap-bootstrap-connect
+.PHONY: lint yamllint syntax-check ee _check-inv aap-configure aap-sync-credentials aap-sync-templates aap-bootstrap-connect ao-export
 
 lint:
 	ansible-lint --profile=production
@@ -10,7 +10,8 @@ yamllint:
 
 syntax-check:
 	@failed=0; \
-	for playbook in $$(find playbooks -name '*.yml' -o -name '*.yaml' | sort); do \
+	for playbook in $$(find playbooks \( -name '*.yml' -o -name '*.yaml' \) \
+	    ! -name 'orchestrator-workflow.yml' | sort); do \
 		echo "Checking $${playbook}..."; \
 		if ! ansible-playbook --syntax-check "$${playbook}"; then \
 			failed=1; \
@@ -46,3 +47,6 @@ aap-sync-templates: _check-inv ## Sync only AAP job templates / projects / workf
 aap-bootstrap-connect: _check-inv ## Seed the Onepassword Connect credential (needs OP_SERVICE_ACCOUNT_TOKEN)
 	ANSIBLE_NAVIGATOR_CONFIG=$(AAP_NAV_CFG) \
 	  ansible-navigator run playbooks/aap/bootstrap-connect-credential.yml
+
+ao-export: ## Export a published Automation Orchestrator workflow version to YAML (WF=<workflow-id> VER=<version>)
+	@WF="$(WF)" VER="$(VER)" ./hack/ao-export.sh

@@ -78,6 +78,19 @@
       changed_when: false
 
   tasks:
+    # Restore-drill groundwork: publish the outcome as an AAP job artifact so an
+    # Automation Orchestrator workflow can branch on it (a drill only makes
+    # sense against a backup that actually landed). Pessimistic default -
+    # anything that fails below leaves 'failed' standing as the published label,
+    # since a failed play never reaches the success task in post_tasks.
+    # aggregate: false so that overwrite replaces rather than concatenates.
+    - name: Default the backup label to failed until the upload is confirmed
+      ansible.builtin.set_stats:
+        data:
+          backup_label: failed
+        per_host: false
+        aggregate: false
+
     - name: Stat each candidate backup path on the target
       ansible.builtin.stat:
         path: "{{ devenv_backup_home }}/{{ item }}"
@@ -201,6 +214,14 @@
                       | default('n/a') }})
 
   post_tasks:
+    - name: Publish the successful backup outcome for the orchestrator
+      ansible.builtin.set_stats:
+        data:
+          backup_label: ok
+          backup_bytes: "{{ _archive_stat.stat.size | int }}"
+        per_host: false
+        aggregate: false
+
     - name: Remove the control-node scratch file
       ansible.builtin.file:
         path: "{{ _local_archive.path }}"
