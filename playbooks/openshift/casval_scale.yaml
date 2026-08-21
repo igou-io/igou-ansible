@@ -1,0 +1,247 @@
+---
+# Lease (scale up) or release (scale down) the `casval` on-demand bare-metal
+# GPU burst worker on the `ocp` cluster.
+#
+# Discovered scale mechanism (verified live 2026-08-20):
+#   object : MachineSet cluster.x-k8s.io/v1beta2 `casval-worker`
+#   ns     : openshift-cluster-api
+#   field  : .spec.replicas (0 at rest, max 1)
+# There is NO MachineDeployment in this cluster — the MachineSet *is* the
+# CAPI node group, so it is the object both the autoscaler and this play
+# scale. Chain: replicas 0->1 -> CAPM3 claims BareMetalHost `casval`,
+# powers it on over Redfish virtual-media, installs RHCOS, the node joins
+# as `casval.igou.systems` with label node-role.kubernetes.io/burst and
+# taint workload=burst:NoSchedule.
+#
+# Autoscaler interaction — why .spec.replicas and not an annotation:
+#   * components/cluster-api-autoscaler runs upstream cluster-autoscaler
+#     with --cloud-provider=clusterapi. It owns .spec.replicas for this
+#     node group and writes it through the machinesets/scale subresource,
+#     which is exactly the field patched here. Writing replicas is
+#     therefore cooperative, not a fight: the autoscaler re-reads the live
+#     value as the current group size on its next loop.
+#   * The ArgoCD `cluster-api` app declares ignoreDifferences for
+#     MachineSet /spec/replicas (clusters/ocp/values.yaml), so a scale set
+#     here is NOT reverted by selfHeal. The autoscaler bound annotations
+#     (…-node-group-min-size / -max-size) are NOT ignored by ArgoCD, so
+#     leasing by bumping min-size would be reverted on the next sync —
+#     hence replicas, deliberately.
+#   * Bound respected: max-size is "1", so 'up' never sets more than 1.
+#   * Caveat (documented, not worked around): min-size is "0" and the
+#     autoscaler runs --scale-down-unneeded-time=10m. A lease that carries
+#     no burst-eligible workload is "unneeded" and the autoscaler will
+#     scale it back to 0 roughly 10 minutes after the node goes Ready.
+#     Schedule the GPU workload against the lease; do not expect an idle
+#     lease to persist. Pinning would require min-size=1 in git, which is
+#     a GitOps PR against igou-openshift, not an AAP job.
+#
+# Safety: the target object name/namespace are FIXED in vars and asserted
+# against a live fingerprint (name, namespace, infrastructureRef template,
+# autoscaler max-size bound) before anything is patched. There is no var
+# that lets a caller point this play at a different MachineSet.
+#
+# Auth: KUBECONFIG injected by the `ocp-kubeconfig` AAP credential
+# (credential type "Kubeconfig File"), same as the openshift_vm_worker_*
+# templates. kubernetes.core reads KUBECONFIG from the environment.
+#
+# Usage:
+#   export KUBECONFIG=<ocp kubeconfig>
+#   ansible-playbook playbooks/openshift/casval_scale.yaml \
+#     -i igou-inventory/inventory.yaml -e casval_state=up
+#
+# Publishes set_stats (per_host: false) for downstream workflow nodes:
+#   casval_label  up | down | failed | timeout
+#   casval_node   node name, or '' when there is no node
+#   casval_detail short human-readable outcome
+
+- name: Scale the casval bare-metal GPU burst worker
+  hosts: "{{ target_cluster | default('ocp') }}"
+  connection: local
+  gather_facts: false
+  vars:
+    # FIXED target — do not parameterise. Asserted against the live object.
+    casval_machineset_name: casval-worker
+    casval_machineset_namespace: openshift-cluster-api
+    casval_machineset_api_version: cluster.x-k8s.io/v1beta2
+    casval_infra_template_name: casval-worker-template
+    casval_set_selector: cluster.x-k8s.io/set-name=casval-worker
+    casval_node_selector: node-role.kubernetes.io/burst
+    # Bounded wait: 30 x 30s = 15 minutes. Bare-metal RHCOS provisioning
+    # normally lands in 8-12 minutes; a timeout is reported, not fatal.
+    casval_wait_retries: 30
+    casval_wait_delay: 30
+    casval_replica_map:
+      up: 1
+      down: 0
+  tasks:
+
+    - name: Assert casval_state is up or down
+      ansible.builtin.assert:
+        that: casval_state | default('', true) in ['up', 'down']
+        fail_msg: >-
+          casval_state must be 'up' or 'down'
+          (got '{{ casval_state | default('<undefined>') }}').
+
+    - name: Read the casval-worker MachineSet
+      kubernetes.core.k8s_info:
+        api_version: "{{ casval_machineset_api_version }}"
+        kind: MachineSet
+        name: "{{ casval_machineset_name }}"
+        namespace: "{{ casval_machineset_namespace }}"
+      register: casval_machineset
+
+    # Hard safety gate. Every field below is part of the casval burst node
+    # group's identity; if any one of them fails to match, this is not the
+    # object this playbook is allowed to scale.
+    - name: Assert the MachineSet is the casval burst node group
+      vars:
+        casval_ms: "{{ (casval_machineset.resources | first) | default({}, true) }}"
+      ansible.builtin.assert:
+        that:
+          - casval_machineset.resources | length == 1
+          - casval_ms.metadata.name == casval_machineset_name
+          - casval_ms.metadata.namespace == casval_machineset_namespace
+          - casval_ms.spec.template.spec.infrastructureRef.name == casval_infra_template_name
+          - >-
+            casval_ms.metadata.annotations[
+              'cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size'] | int
+            >= casval_replica_map['up']
+        fail_msg: >-
+          {{ casval_machineset_namespace }}/{{ casval_machineset_name }} does not
+          match the casval burst node group fingerprint — refusing to scale.
+
+    - name: Find the current burst node
+      kubernetes.core.k8s_info:
+        kind: Node
+        label_selectors:
+          - "{{ casval_node_selector }}"
+      register: casval_nodes_before
+
+    # Informational only (release path): surface what is still running on
+    # the burst node so an operator can see what a release will evict. The
+    # CAPI pre-terminate hook plus the capi-node-cleanup CronJob cordon and
+    # drain the node, so this check never blocks the release — hence
+    # best-effort, not an assert.
+    - name: Read pods still running on the burst node
+      kubernetes.core.k8s_info:
+        kind: Pod
+        field_selectors:
+          - "spec.nodeName={{ (casval_nodes_before.resources | first).metadata.name }}"
+          - status.phase=Running
+      when:
+        - casval_state == 'down'
+        - casval_nodes_before.resources | length > 0
+      register: casval_pinned_pods
+
+    - name: Show workload a release will evict (informational)
+      vars:
+        casval_evictable: >-
+          {{ (casval_pinned_pods.resources | default([], true)
+              | rejectattr('metadata.ownerReferences', 'defined') | list)
+             + (casval_pinned_pods.resources | default([], true)
+                | selectattr('metadata.ownerReferences', 'defined')
+                | rejectattr('metadata.ownerReferences.0.kind', 'equalto', 'DaemonSet')
+                | list) }}
+      ansible.builtin.debug:
+        msg: >-
+          Non-DaemonSet pods still on the burst node
+          ({{ casval_evictable | length }}):
+          {{ casval_evictable | map(attribute='metadata.name') | list }}
+      when:
+        - casval_state == 'down'
+        - casval_pinned_pods.resources is defined
+
+    - name: Scale the casval-worker MachineSet
+      kubernetes.core.k8s:
+        state: patched
+        api_version: "{{ casval_machineset_api_version }}"
+        kind: MachineSet
+        name: "{{ casval_machineset_name }}"
+        namespace: "{{ casval_machineset_namespace }}"
+        definition:
+          spec:
+            replicas: "{{ casval_replica_map[casval_state] | int }}"
+
+    - name: Wait for the burst node to go Ready
+      kubernetes.core.k8s_info:
+        kind: Node
+        label_selectors:
+          - "{{ casval_node_selector }}"
+      register: casval_up_wait
+      retries: "{{ casval_wait_retries }}"
+      delay: "{{ casval_wait_delay }}"
+      until: >-
+        casval_up_wait.resources | default([], true)
+        | map(attribute='status.conditions') | flatten
+        | selectattr('type', 'equalto', 'Ready')
+        | selectattr('status', 'equalto', 'True') | list | length > 0
+      ignore_errors: true
+      when: casval_state == 'up'
+
+    - name: Wait for the casval Machine to be deleted
+      kubernetes.core.k8s_info:
+        api_version: "{{ casval_machineset_api_version }}"
+        kind: Machine
+        namespace: "{{ casval_machineset_namespace }}"
+        label_selectors:
+          - "{{ casval_set_selector }}"
+      register: casval_down_wait
+      retries: "{{ casval_wait_retries }}"
+      delay: "{{ casval_wait_delay }}"
+      until: casval_down_wait.resources | default([], true) | length == 0
+      ignore_errors: true
+      when: casval_state == 'down'
+
+    - name: Read the resulting Machine state
+      kubernetes.core.k8s_info:
+        api_version: "{{ casval_machineset_api_version }}"
+        kind: Machine
+        namespace: "{{ casval_machineset_namespace }}"
+        label_selectors:
+          - "{{ casval_set_selector }}"
+      register: casval_machines_after
+
+    - name: Resolve the outcome
+      vars:
+        casval_wait: "{{ casval_up_wait if casval_state == 'up' else casval_down_wait }}"
+        casval_phases: >-
+          {{ casval_machines_after.resources | default([], true)
+             | map(attribute='status.phase') | select('defined') | list }}
+      ansible.builtin.set_fact:
+        # up   -> the burst node that came Ready
+        # down -> '' once the Machine is gone; on a timeout, the node that
+        #         is still hanging around, so the artifact names the problem.
+        casval_node_name: >-
+          {{ ((casval_up_wait.resources | default([], true)
+               | map(attribute='metadata.name') | list | first) | default('', true))
+             if casval_state == 'up'
+             else ((casval_machines_after.resources | default([], true)
+                    | map(attribute='status.nodeRef.name') | select('defined')
+                    | list | first) | default('', true)) }}
+        casval_outcome: >-
+          {{ casval_state if not (casval_wait.failed | default(false))
+             else ('failed' if 'Failed' in casval_phases else 'timeout') }}
+
+    - name: Publish the outcome for downstream workflow nodes
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          casval_label: "{{ casval_outcome }}"
+          casval_node: "{{ casval_node_name }}"
+          casval_detail: >-
+            {{ ('casval leased: node ' ~ casval_node_name ~ ' Ready (MachineSet '
+                ~ casval_machineset_name ~ ' replicas=1). The autoscaler releases an '
+                ~ 'idle lease after ~10m — schedule the burst workload now.')
+               if casval_outcome == 'up'
+               else ('casval released: MachineSet ' ~ casval_machineset_name
+                     ~ ' replicas=0, Machine deleted, host powered down.')
+               if casval_outcome == 'down'
+               else ('casval scale ' ~ casval_state ~ ' did not settle within '
+                     ~ (casval_wait_retries | int * casval_wait_delay | int) ~ 's ('
+                     ~ casval_outcome ~ '). MachineSet replicas were set; check '
+                     ~ 'BareMetalHost casval and the CAPM3 logs in '
+                     ~ casval_machineset_namespace ~ '.') }}
+
+    - name: Report the outcome
+      ansible.builtin.debug:
+        msg: "casval_label={{ casval_outcome }} casval_node={{ casval_node_name }}"
