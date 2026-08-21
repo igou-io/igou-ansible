@@ -1,0 +1,133 @@
+---
+# Purpose
+# -------
+# Poll the automation-orchestrator (AO) approvals API and post a single Slack
+# digest of everything still waiting on a human decision. Runs on a 15-minute
+# AAP schedule (template `ao_approvals_digest`, schedule
+# `ao_approvals_digest_15m` in igou-inventory). Read-only against AO: it lists
+# approvals and never decides one — see playbooks/ao/approval_decide.yaml for
+# that half of the bridge.
+#
+# When nothing is pending the play ends quietly (a debug line, no Slack post),
+# so a healthy quarter-hour costs nobody a notification.
+#
+# 1Password contract
+# ------------------
+#   AO credentials: item `ao-approvals-bridge`, vault `lab_aap`
+#     field `username` -> OAuth client_id
+#     field `password` -> OAuth client_secret
+#   Slack token: item `slack_notification_password`, field `password`,
+#     vault `lab_external_api_keys`
+# Both resolve through community.general.onepassword, so the job template
+# needs the `onepassword-connect-token` credential attached.
+#
+# Authorization caveat
+# --------------------
+# The `approvals-bridge` service account is project-admin on the default AO
+# project, which covers listing. It may NOT be able to DECIDE approvals whose
+# `approver_groups` include "admins": service accounts are not users and
+# therefore cannot be members of an approver group. This playbook is unaffected
+# (list-only), but the digest prints each request's approver groups so a reader
+# can tell at a glance whether `ao_approval_decide` will be able to act on it
+# or whether a human has to go click it in the AO UI.
+#
+# API shape (from the AO OpenAPI spec)
+# ------------------------------------
+#   GET /api/v1/approvals -> ApprovalListResponse
+#     .resources[] : ApprovalRequestRead
+#     .next        : opaque cursor, null on the last page
+#   ApprovalRequestRead fields used below: id, created_at, status,
+#     name, execution_id, approval_node_id, timeout_at,
+#     workflow_context.workflow_name, workflow_context.workflow_version,
+#     approver_groups[].name
+#   Note ApprovalRequestRead exposes no dedicated `prompt` field — the
+#   approval node's `prompt` parameter lives in the workflow definition, so the
+#   request's `name` is the operator-facing prompt text and is what we truncate.
+#
+# Variables
+#   ao_api_url        AO base URL
+#   ao_op_item/vault  1Password coordinates for the bridge credentials
+#   ao_page_limit     page size (API max 100)
+#   ao_max_pages      recursion guard on cursor pagination
+#   digest_prompt_max prompt truncation width
+#   digest_dry_run    true = render + debug-print the message, skip Slack
+#
+# Manual run:
+#   ansible-playbook playbooks/ao/approvals_digest.yaml -e digest_dry_run=true
+- name: Digest pending AO approvals to Slack
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ao_api_url: https://orchestrator.apps.ocp.igou.systems
+    ao_op_item: ao-approvals-bridge
+    ao_op_vault: lab_aap
+    ao_page_limit: 100
+    ao_max_pages: 20
+    digest_prompt_max: 140
+    digest_dry_run: false
+    slack_channel: "#igoucloud-aap-logs"
+    slack_op_item: slack_notification_password
+    slack_op_vault: lab_external_api_keys
+
+  tasks:
+    - name: Mint an AO access token
+      ansible.builtin.include_tasks: tasks/mint_token.yaml
+
+    - name: Seed the pagination accumulators
+      ansible.builtin.set_fact:
+        ao_approvals: []
+        _ao_cursor: ""
+        _ao_pages_fetched: 0
+
+    - name: Page through every approval request
+      ansible.builtin.include_tasks: tasks/fetch_approvals_page.yaml
+
+    - name: Keep the pending requests, oldest first
+      ansible.builtin.set_fact:
+        ao_pending: >-
+          {{ ao_approvals | selectattr('status', 'defined')
+                          | selectattr('status', 'equalto', 'pending')
+                          | sort(attribute='created_at') }}
+
+    - name: Report a quiet cycle and stop
+      when: ao_pending | length == 0
+      block:
+        - name: Note that nothing is awaiting a decision
+          ansible.builtin.debug:
+            msg: >-
+              No pending AO approvals across {{ ao_approvals | length }}
+              listed request(s) — nothing posted to Slack.
+
+        - name: End the play
+          ansible.builtin.meta: end_play
+
+    - name: Render the digest message
+      ansible.builtin.set_fact:
+        ao_digest_message: |-
+          :hourglass_flowing_sand: *AO approvals awaiting a decision: {{ ao_pending | length }}*
+          {% for a in ao_pending %}
+          {% set _epoch = a.created_at | regex_replace('\.[0-9]+', '') | regex_replace('(Z|[+-][0-9]{2}:?[0-9]{2})$', '') | to_datetime('%Y-%m-%dT%H:%M:%S') %}
+          {% set _age = ((now(utc=true) - _epoch).total_seconds() | int) %}
+          {% set _d = _age // 86400 %}
+          {% set _h = (_age % 86400) // 3600 %}
+          {% set _m = (_age % 3600) // 60 %}
+          {% set _age_text = '%dd %dh' % (_d, _h) if _d > 0 else ('%dh %dm' % (_h, _m) if _h > 0 else '%dm' % _m) %}
+          {% set _wf = a.workflow_context.workflow_name | default('unknown-workflow', true) %}
+          {% set _wfv = a.workflow_context.workflow_version | default('?', true) %}
+          {% set _groups = a.approver_groups | default([], true) | map(attribute='name') | join(',') %}
+          • `{{ _age_text }}` · {{ _wf }} v{{ _wfv }} · exec `{{ a.execution_id | default('?', true) | truncate(8, true, '') }}` · node `{{ a.approval_node_id | default('?', true) }}` · "{{ a.name | default('(unnamed)', true) | replace('\n', ' ') | truncate(digest_prompt_max | int, true, '…', 0) }}" · id `{{ a.id }}`{{ ' · groups: ' ~ _groups if _groups | length > 0 else '' }}
+          {% endfor %}
+
+    - name: Show the rendered digest instead of posting it
+      ansible.builtin.debug:
+        msg: "{{ ao_digest_message | trim | split('\n') }}"
+      when: digest_dry_run | bool
+
+    - name: Post the digest to Slack
+      community.general.slack:
+        token: "{{ lookup('community.general.onepassword', slack_op_item, field='password', vault=slack_op_vault) }}"
+        channel: "{{ slack_channel }}"
+        msg: "{{ ao_digest_message | trim }}"
+      when: not (digest_dry_run | bool)

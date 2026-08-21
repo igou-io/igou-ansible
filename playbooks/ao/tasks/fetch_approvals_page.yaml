@@ -1,0 +1,47 @@
+---
+# Fetch one page of GET /api/v1/approvals and append it to `ao_approvals`.
+#
+# The endpoint uses cursor pagination: ApprovalListResponse carries
+# `resources` (a page of ApprovalRequestRead, max 100) plus `next`/`prev`
+# cursors. This file re-includes itself while `next` is non-null, so the
+# caller only has to seed `ao_approvals: []`, `_ao_cursor: ''` and
+# `_ao_pages_fetched: 0`. `ao_max_pages` bounds the recursion so a stuck or
+# self-referential cursor can never spin forever.
+#
+# Server-side filters (`status`, `sort`) are applied here; the caller still
+# re-filters and re-sorts defensively so the digest stays correct even if the
+# API ignores a parameter.
+- name: Fetch a page of approval requests
+  ansible.builtin.uri:
+    url: >-
+      {{ ao_api_url }}/api/v1/approvals?limit={{ ao_page_limit | int }}&status=pending&sort=created_at{{
+      '&cursor=' ~ (_ao_cursor | urlencode) if _ao_cursor | length > 0 else '' }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ao_token }}"
+      Accept: application/json
+    return_content: true
+    status_code: [200]
+  register: _ao_page
+  failed_when: false
+  no_log: true
+
+- name: Fail with the HTTP status and body when the page cannot be listed
+  ansible.builtin.fail:
+    msg: >-
+      GET /api/v1/approvals failed —
+      HTTP {{ _ao_page.status | default('no response') }}:
+      {{ _ao_page.json | default(_ao_page.content, true) | default(_ao_page.msg, true) | default('no body', true) }}
+  when: _ao_page.status | default(0) | int != 200
+
+- name: Accumulate this page and advance the cursor
+  ansible.builtin.set_fact:
+    ao_approvals: "{{ ao_approvals + (_ao_page.json.resources | default([], true)) }}"
+    _ao_cursor: "{{ _ao_page.json.next | default('', true) }}"
+    _ao_pages_fetched: "{{ _ao_pages_fetched | int + 1 }}"
+
+- name: Follow the cursor to the next page
+  ansible.builtin.include_tasks: fetch_approvals_page.yaml
+  when:
+    - _ao_cursor | length > 0
+    - _ao_pages_fetched | int < ao_max_pages | int
