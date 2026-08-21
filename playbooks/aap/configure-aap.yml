@@ -16,3 +16,12 @@
         # the AAP side seconds after the wait gave up. Widen all async waits.
         aap_configuration_async_retries: 120
         aap_configuration_async_delay: 2
+        # infra.aap_configuration's dispatcher fires BOTH gateway_applications
+        # and controller_applications off the shared `aap_applications` var.
+        # controller_applications calls ansible.controller.application, which
+        # does not exist in any ansible.controller >= 4.8.0 (AAP 2.5+ moved
+        # OAuth apps to the gateway), so defining aap_applications is a
+        # parse-time failure. Still broken upstream on infra.aap_configuration
+        # devel (igou-ansible#514) - do NOT remove this on a collection bump.
+        aap_configuration_dispatcher_exclude_roles:
+          - controller_applications
