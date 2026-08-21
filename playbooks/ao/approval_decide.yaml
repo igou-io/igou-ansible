@@ -1,0 +1,126 @@
+---
+# Purpose
+# -------
+# Submit a decision on one automation-orchestrator (AO) approval request:
+# PATCH /api/v1/approvals/{approval_id} with an ApprovalDecisionRequest body.
+# The other half of the approvals bridge — playbooks/ao/approvals_digest.yaml
+# surfaces what is pending in Slack, this acts on one of the ids it printed.
+#
+# Launched interactively from AAP (template `ao_approval_decide`,
+# ask_variables_on_launch, concurrency disabled so two operators cannot race
+# the same approval). Deciding resumes the parent workflow on the approved or
+# rejected path, so this is a mutating, one-shot operation — there is no
+# schedule for it.
+#
+# 1Password contract
+# ------------------
+#   item `ao-approvals-bridge`, vault `lab_aap`
+#     field `username` -> OAuth client_id
+#     field `password` -> OAuth client_secret
+#   Resolved via community.general.onepassword, so the job template needs the
+#   `onepassword-connect-token` credential attached.
+#
+# Authorization caveat — READ THIS BEFORE DEBUGGING A FAILURE
+# -----------------------------------------------------------
+# The `approvals-bridge` service account holds project-admin on the default AO
+# project, which is enough to LIST approvals. It may NOT be authorized to
+# DECIDE an approval whose `approver_groups` contains "admins": the SA is not a
+# member of that group, and AO service accounts are not users, so they cannot
+# be. Expect HTTP 403 (or 401) on those requests until AO grows a way to grant
+# an SA approver authority, or the approval node's `approver_groups` is widened
+# in the workflow definition. That case is deliberately NOT retried, swallowed,
+# or masked: the API call runs with failed_when:false and the raw status code
+# plus response body are printed by the fail task below, so the real reason is
+# visible in the job output. Only the token mint and the Authorization header
+# are no_log'd.
+#
+# Request body (ApprovalDecisionRequest, from the AO OpenAPI spec)
+#   {"status": "approved"|"rejected", "notes": "<optional, <=2000 chars>"}
+# `status` is required and constrained to ApprovalDecisionStatus
+# (approved|rejected — `cancelled` is engine-internal and not offered here).
+# `notes` is omitted entirely when no note is supplied. The 200 response is an
+# ApprovalRequestRead; we echo back .status, .decided_at, .decided_by.name and
+# .signal_delivery_error (non-null means the decision was recorded but the
+# workflow signal did not land).
+#
+# Variables
+#   approval_id  (required) UUID of the approval request
+#   decision     (required) approved | rejected
+#   note         (optional) free text stored as ApprovalRequestRead.decision_notes
+#
+# Manual run:
+#   ansible-playbook playbooks/ao/approval_decide.yaml \
+#     -e approval_id=<uuid> -e decision=approved -e note='ship it'
+- name: Decide an AO approval request
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ao_api_url: https://orchestrator.apps.ocp.igou.systems
+    ao_op_item: ao-approvals-bridge
+    ao_op_vault: lab_aap
+
+  tasks:
+    - name: Validate the requested decision
+      ansible.builtin.assert:
+        that:
+          - approval_id is defined
+          - approval_id | default('') | length > 0
+          - decision is defined
+          - decision in ['approved', 'rejected']
+          - note | default('') | length <= 2000
+        fail_msg: >-
+          Provide approval_id=<uuid> and decision=approved|rejected
+          (optional note, max 2000 chars). ApprovalDecisionStatus accepts only
+          `approved` and `rejected`.
+        success_msg: "Will submit decision '{{ decision }}' for approval {{ approval_id }}"
+
+    - name: Mint an AO access token
+      ansible.builtin.include_tasks: tasks/mint_token.yaml
+
+    - name: Submit the decision
+      ansible.builtin.uri:
+        url: "{{ ao_api_url }}/api/v1/approvals/{{ approval_id }}"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ ao_token }}"
+          Accept: application/json
+        body_format: json
+        body: >-
+          {{ {'status': decision}
+             | combine({'notes': note} if note | default('') | length > 0 else {}) }}
+        return_content: true
+        status_code: [200]
+      register: ao_decision
+      failed_when: false
+      no_log: true
+
+    - name: Fail with the exact status and response body
+      ansible.builtin.fail:
+        msg: >-
+          PATCH {{ ao_api_url }}/api/v1/approvals/{{ approval_id }} returned
+          HTTP {{ ao_decision.status | default('no response') }} —
+          {{ ao_decision.json | default(ao_decision.content, true) | default(ao_decision.msg, true) | default('no body', true) }}
+          {{ '(403/401 here is most likely the approvals-bridge service account not being a member of this request approver_groups — see the header comment.)'
+             if ao_decision.status | default(0) | int in [401, 403] else '' }}
+      when: ao_decision.status | default(0) | int != 200
+
+    - name: Report the resulting approval state
+      ansible.builtin.debug:
+        msg: >-
+          Approval {{ approval_id }} is now
+          '{{ ao_decision.json.status }}' (decided_at
+          {{ ao_decision.json.decided_at | default('n/a', true) }} by
+          {{ ao_decision.json.decided_by.name | default('n/a', true) }}).
+          {{ 'WARNING — workflow signal delivery failed: ' ~ ao_decision.json.signal_delivery_error
+             if ao_decision.json.signal_delivery_error | default('', true) | length > 0 else '' }}
+
+    - name: Assert the decision actually landed
+      ansible.builtin.assert:
+        that:
+          - ao_decision.json.status == decision
+        fail_msg: >-
+          AO accepted the request but reports status
+          '{{ ao_decision.json.status }}' instead of '{{ decision }}'.
+        success_msg: "Approval {{ approval_id }} recorded as '{{ decision }}'."
