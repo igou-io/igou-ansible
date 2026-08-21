@@ -1,0 +1,52 @@
+---
+# Shared notify step for Automation Orchestrator workflows (AAP template:
+# notify_slack). Any workflow that just needs "post this line to Slack" wires
+# a step to this playbook and passes notify_title / notify_message as
+# extra_vars — no per-workflow notify playbook required.
+#
+# The workflow-specific playbooks/linux/disk/notify_slack.yaml stays as it is:
+# it templates the disk-utilization tiers and is bound to a live workflow.
+# This one is deliberately dumb — the caller composes the text.
+#
+# Requires the onepassword-connect-token credential on the job template: the
+# Slack bot token is resolved with the same 1Password lookup the AAP
+# notification templates and the disk notify step use.
+#
+# Variables:
+#   notify_title   (required) short headline, e.g. "routeros drift check"
+#   notify_message (optional) body text; may be multi-line
+#   notify_status  (optional) ok | warn | critical | info -> emoji prefix
+#                             (anything else falls back to a white circle)
+#   slack_channel  (optional) target channel, default #igoucloud-aap-logs
+- name: Post an orchestrator workflow message to Slack
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    slack_channel: "#igoucloud-aap-logs"
+    notify_message: ""
+    notify_status: info
+    notify_status_emoji:
+      ok: ":large_green_circle:"
+      warn: ":large_yellow_circle:"
+      critical: ":red_circle:"
+      info: ":information_source:"
+  tasks:
+    - name: Assert a title was supplied
+      ansible.builtin.assert:
+        that:
+          - notify_title is defined
+          - notify_title | string | length > 0
+        fail_msg: >-
+          notify_title is required — pass it as an extra_var from the
+          workflow step.
+        quiet: true
+
+    - name: Post the message
+      community.general.slack:
+        token: "{{ lookup('community.general.onepassword', 'slack_notification_password', field='password', vault='lab_external_api_keys') }}"
+        channel: "{{ slack_channel }}"
+        msg: >-
+          {{ notify_status_emoji[notify_status] | default(':white_circle:') }}
+          {{ notify_title }}{% if notify_message | length > 0 %}
+          {{ notify_message }}{% endif %}

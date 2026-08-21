@@ -9,6 +9,10 @@
 #     -i ../igou-inventory/inventory.yaml -e host=routeros --check
 # To apply:
 #   same command without --check.
+# A check-mode run (the AAP routeros_configure_check template) additionally
+# publishes drift_label ('clean'|'drift') and drift_summary as job artifacts,
+# so an Automation Orchestrator workflow can branch on the audit result. See
+# the post_tasks at the bottom.
 # To ship a fresh S3 backup snapshot before the apply touches anything
 # (the AAP routeros_configure template sets this):
 #   ... -e routeros_pre_apply_backup=true
@@ -41,6 +45,16 @@
     routeros_api_validate_certs: false
     routeros_api_port: 8729
 
+  handlers:
+    # Notified (via the `apply:` below) by every task the role runs that
+    # reports changed. In CHECK mode nothing was written, so "changed" means
+    # "the device does not match the baseline" — that is the drift signal the
+    # role otherwise does not expose. In apply mode this only records that a
+    # write happened; nothing reads it.
+    - name: Record that the baseline reported a change
+      ansible.builtin.set_fact:
+        rcfg_changed: true
+
   pre_tasks:
     - name: Resolve api-ssl credentials once
       ansible.builtin.set_fact:
@@ -60,5 +74,43 @@
           host_vars/{{ inventory_hostname }}.yml (or
           equivalent) before running configure.
 
-  roles:
-    - role: david_igou.routeros_configuration.configure
+  tasks:
+    # Was a `roles:` entry. It is an include_role purely so `apply:` can attach
+    # `notify:` to every task the role runs — including the nested _reconcile
+    # includes, which is where api_modify actually reports changed. Execution
+    # position (after pre_tasks, before post_tasks), role arguments, and module
+    # arguments are all unchanged, so apply-mode behavior is unchanged.
+    - name: Reconcile the declarative baseline
+      ansible.builtin.include_role:
+        name: david_igou.routeros_configuration.configure
+        apply:
+          notify: Record that the baseline reported a change
+
+    - name: Flush handlers so the drift flag is set before it is read
+      ansible.builtin.meta: flush_handlers
+
+  # Check mode only: publish the drift verdict as orchestrator artifacts
+  # (set_stats with per_host: false is how an Automation Orchestrator workflow
+  # step reads a value back out of an AAP job). Skipped entirely on the
+  # routeros_configure apply template — "changed" there means "converged",
+  # not "drifted", so there is no apply-mode equivalent.
+  post_tasks:
+    - name: Publish drift labels for the orchestrator
+      ansible.builtin.set_stats:
+        data:
+          drift_label: "{{ 'drift' if _drifted | length > 0 else 'clean' }}"
+          drift_summary: "{{ _summary[:4000] }}"
+        per_host: false
+        aggregate: false
+      vars:
+        _drifted: >-
+          {{ ansible_play_hosts | map('extract', hostvars)
+             | selectattr('rcfg_changed', 'defined')
+             | map(attribute='inventory_hostname') | list }}
+        _summary: >-
+          routeros drift check ({{ ansible_play_hosts | join(', ') }}):
+          {{ 'DRIFT' if _drifted | length > 0 else 'CLEAN' }}.
+          {{ rcfg_ordered_paths | default([]) | length }} baseline path(s) audited in check mode.
+          {% if _drifted | length > 0 %}The declarative routeros_config baseline would change {{ _drifted | join(', ') }}. Run the routeros_configure job template to converge the device, or update host_vars if the device is the source of truth; this job's diff output carries the per-path detail.{% else %}The device already matches its host_vars baseline exactly.{% endif %}
+      run_once: true
+      when: ansible_check_mode
