@@ -44,32 +44,70 @@ dependencies:
     - python3.11-devel [platform:rpm]
   python: requirements.txt
   galaxy:
+    # Every collection is pinned to an exact version. Unpinned, each
+    # rebuild resolved "whatever galaxy served that day", so the image was
+    # only reproducible by accident -- and the weekly rebuild
+    # (igou-openshift components/ee-rebuild) makes that a weekly roll of
+    # the dice. The versions below are the ones baked into the image that
+    # is in service today (`ansible-galaxy collection list` inside
+    # quay.apps.ocp.igou.systems/igou-io/igou-aap-ee-rhel9:latest), so
+    # pinning is a no-op for the current build. Renovate raises the bumps
+    # from here on -- see the galaxy-collection customManager in
+    # renovate.json.
+    #
+    # Not listed here and deliberately left unpinned: infra.aap_utilities
+    # and kubernetes.core, which land as transitive dependencies.
     collections:
       - name: ansible.windows
+        version: "3.6.1"
       - name: community.windows
+        version: "3.2.0"
       - name: ansible.posix
+        version: "2.2.0"
       - name: ansible.netcommon
+        version: "8.5.2"
       - name: ansible.utils
+        version: "6.0.2"
       - name: community.routeros
+        version: "3.20.0"
       - name: community.crypto
+        version: "3.2.1"
       - name: community.general
+        version: "13.0.1"
       - name: redhat.satellite
+        version: "5.11.0"
       - name: redhat.insights
+        version: "1.3.1"
       - name: containers.podman
+        version: "1.20.2"
       - name: community.postgresql
+        version: "4.2.0"
       - name: infra.ah_configuration
+        version: "2.1.0"
       - name: redhat.rhel_system_roles
+        version: "1.120.5"
       - name: ansible.platform
-        version: "<2.7.0"
+        # Was "<2.7.0" -- the exact build that range resolved to. The 2.7
+        # ceiling still applies: the deployed gateway is AAP 2.7 and the
+        # 2.7 collection targets the next platform release.
+        version: "2.6.20260504"
       - name: ansible.hub
+        version: "1.0.6"
       - name: ansible.eda
+        version: "2.12.0"
       - name: ansible.controller
-        # >=4.8.0: replaces controller-local OAuth token minting (POST
-        # /api/controller/v2/tokens/, removed in AAP 2.6 gateway) with
-        # per-request HTTP Basic auth. <4.8.0 fails configure-aap with
-        # "Failed to get token: HTTP Error 404".
-        version: ">=4.8.0"
+        # Was ">=4.8.0". 4.8.0 replaces controller-local OAuth token
+        # minting (POST /api/controller/v2/tokens/, removed in AAP 2.6
+        # gateway) with per-request HTTP Basic auth; <4.8.0 fails
+        # configure-aap with "Failed to get token: HTTP Error 404".
+        version: "4.8.0"
       - name: infra.aap_configuration
+        # Stays at the baked 4.6.0 on purpose. Newer releases are no
+        # better here -- the breakage tracked in igou-ansible#514 is
+        # present in them too, and the dispatcher's exclude is what
+        # actually works around it. Pinning just stops the image drifting
+        # while that stands.
+        version: "4.6.0"
 additional_build_steps:
   prepend_base: |
     RUN microdnf install -y git-core

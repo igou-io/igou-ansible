@@ -43,6 +43,11 @@
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["github-releases", "pypi"],
       "groupName": "cli tools"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["galaxy-collection"],
+      "groupName": "ee galaxy collections"
     }
   ],
   "customManagers": [
@@ -64,6 +69,16 @@
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*name: [^:\\s]+:(?<currentValue>[^@\\s]+)(?:@(?<currentDigest>\\S+))?"
       ],
       "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\n    name: {{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}"
+    },
+    {
+      "description": "Bump pinned Galaxy collection versions in EE definitions (comment lines between name: and version: are tolerated)",
+      "customType": "regex",
+      "managerFilePatterns": ["/^execution-environments/.+/execution-environment\\.yml$/"],
+      "matchStrings": [
+        "- name: (?<depName>[a-z0-9_]+\\.[a-z0-9_]+)\\n(?:\\s*#[^\\n]*\\n)*\\s*version: \"(?<currentValue>[0-9][^\"]*)\""
+      ],
+      "datasourceTemplate": "galaxy-collection",
+      "versioningTemplate": "semver"
     }
   ]
 }
