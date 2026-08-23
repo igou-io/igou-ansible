@@ -22,6 +22,12 @@ on:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   call-deploy-workflow:
+    # The reusable workflow's SBOM/attestation steps can't exceed the
+    # caller's token grants, so they must be granted here too.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     uses:  ./.github/workflows/ee-build.yml
     with:
       EE_FOLDER_NAME: 'igou-awx-ee'
