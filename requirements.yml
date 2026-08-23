@@ -26,7 +26,7 @@ roles:
     version: 1.4.1
 collections:
   - name: community.general
-    version: 13.2.0
+    version: 13.3.0
   - name: ansible.posix
     version: 2.2.2
   - name: kubernetes.core
@@ -38,7 +38,7 @@ collections:
   - name: kubevirt.core
     version: 2.3.0
   - name: ansible.utils
-    version: 6.0.3
+    version: 6.1.0
   - name: felixfontein.acme
     version: 0.11.1
   - name: community.crypto
