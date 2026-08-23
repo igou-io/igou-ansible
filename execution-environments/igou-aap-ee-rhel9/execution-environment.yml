@@ -59,21 +59,21 @@ dependencies:
     # and kubernetes.core, which land as transitive dependencies.
     collections:
       - name: ansible.windows
-        version: "3.6.1"
+        version: "3.7.0"
       - name: community.windows
-        version: "3.2.0"
+        version: "3.3.0"
       - name: ansible.posix
-        version: "2.2.0"
+        version: "2.2.2"
       - name: ansible.netcommon
-        version: "8.5.2"
+        version: "8.6.2"
       - name: ansible.utils
-        version: "6.0.2"
+        version: "6.1.0"
       - name: community.routeros
-        version: "3.20.0"
+        version: "3.21.0"
       - name: community.crypto
-        version: "3.2.1"
+        version: "3.3.0"
       - name: community.general
-        version: "13.0.1"
+        version: "13.3.0"
       - name: redhat.satellite
         version: "5.11.0"
       - name: redhat.insights
@@ -92,9 +92,9 @@ dependencies:
         # 2.7 collection targets the next platform release.
         version: "2.6.20260504"
       - name: ansible.hub
-        version: "1.0.6"
+        version: "1.1.0"
       - name: ansible.eda
-        version: "2.12.0"
+        version: "2.13.0"
       - name: ansible.controller
         # Was ">=4.8.0". 4.8.0 replaces controller-local OAuth token
         # minting (POST /api/controller/v2/tokens/, removed in AAP 2.6
@@ -102,12 +102,12 @@ dependencies:
         # configure-aap with "Failed to get token: HTTP Error 404".
         version: "4.8.0"
       - name: infra.aap_configuration
-        # Stays at the baked 4.6.0 on purpose. Newer releases are no
+        # Stays at the baked 4.7.0 on purpose. Newer releases are no
         # better here -- the breakage tracked in igou-ansible#514 is
         # present in them too, and the dispatcher's exclude is what
         # actually works around it. Pinning just stops the image drifting
         # while that stands.
-        version: "4.6.0"
+        version: "4.7.0"
 additional_build_steps:
   prepend_base: |
     RUN microdnf install -y git-core
