@@ -49,11 +49,11 @@ collections:
     type: git
     version: fix-user-update
   - name: community.docker
-    version: 5.2.1
+    version: 5.2.2
   - name: vkhitrin.libguestfs
     version: 1.1.5
   - name: ansible.netcommon
-    version: 8.6.1
+    version: 8.6.2
   - name: community.routeros
     version: 3.21.0
   - name: david_igou.routeros_configuration
