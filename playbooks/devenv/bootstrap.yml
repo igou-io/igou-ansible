@@ -160,6 +160,10 @@
       #       the devcontainer post-start, host network, plain HTTP on the
       #       LAN — pairing-token auth; tailnet clients use the Tailscale
       #       Serve HTTPS proxy configured at the end of this playbook).
+      #       41641/udp: tailscaled's WireGuard port — open so tailnet peers
+      #       (notably the ocp tailscale-operator egress proxies fronting
+      #       t3, igou-openshift#775) establish a DIRECT LAN path instead of
+      #       relaying via DERP (off-LAN round trip).
       become: true
       ansible.posix.firewalld:
         port: "{{ item }}"
@@ -170,6 +174,7 @@
         - 3773/tcp
         - 8080/tcp
         - 9100/tcp
+        - 41641/udp
       when:
         - "'firewalld.service' in ansible_facts.services"
         - ansible_facts.services['firewalld.service'].state == 'running'
