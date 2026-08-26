@@ -1,0 +1,313 @@
+---
+name: disk-utilization
+edges:
+  - to: check
+    from: start
+  - to: assess
+    from: check
+  - to: route
+    from: assess
+  - to: notify_gate
+    from: route
+    from_port: critical
+  - to: aggressive
+    from: approve
+    from_port: approved
+  - to: cleanup
+    from: route
+    from_port: warning
+  - to: keep
+    from: route
+    from_port: healthy
+  - to: unsupported
+    from: route
+    from_port: fallback
+  - to: notify_crit
+    from: aggressive
+  - to: notify_warn
+    from: cleanup
+  - to: notify_ok
+    from: keep
+  - to: notify_na
+    from: unsupported
+  - to: approve
+    from: notify_gate
+nodes:
+  - id: check
+    name: Check disk utilization
+    type: aap_job_template
+    position:
+      x: 250.0
+      y: 300.0
+    parameters:
+      extra_vars:
+        disk_mount: ${trigger.disk_mount}
+        ansible_limit: ${trigger.target_host}
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: disk_check
+      organization_name: igou
+  - id: route
+    name: Route on AI gate
+    type: switch
+    position:
+      x: 500.0
+      y: 300.0
+    parameters:
+      cases:
+        - port: critical
+          label: critical (tier or AI escalation)
+          condition: ${check.artifacts.disk_tier} == 'critical' || ${assess.result.content.recommended_route} == 'critical'
+        - port: warning
+          label: 'warning (AI: safe cleanup)'
+          condition: ${assess.result.content.recommended_route} == 'warning'
+        - port: healthy
+          label: 'healthy (AI: log only)'
+          condition: ${assess.result.content.recommended_route} == 'healthy'
+      default_port: fallback
+  - id: approve
+    name: Approve aggressive reclaim
+    type: approval
+    position:
+      x: 750.0
+      y: 100.0
+    parameters:
+      prompt: 'Disk on ${check.artifacts.disk_host} ${check.artifacts.disk_mount} routed CRITICAL at ${check.artifacts.disk_use_percent}% (measured tier ${check.artifacts.disk_tier}). Approve aggressive reclaim (unused images >30d, old kernels, journal to 200M)?
+
+
+        AI assessment: ${assess.result.content.summary}
+
+        Route reason: ${assess.result.content.route_reason}
+
+        Pre-approval check: ${assess.result.content.rec_critical}
+
+
+        Top consumers:
+
+        ${check.artifacts.disk_detail}'
+      approver_users:
+        - approvals-bridge
+      approver_groups:
+        - admins
+      decision_window: 14400
+      fallback_decision: reject
+  - id: aggressive
+    name: Aggressive reclaim
+    type: aap_job_template
+    position:
+      x: 1000.0
+      y: 100.0
+    parameters:
+      extra_vars:
+        disk_mount: ${trigger.disk_mount}
+        ansible_limit: ${trigger.target_host}
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: disk_remediate_aggressive
+      organization_name: igou
+  - id: cleanup
+    name: Safe cleanup
+    type: aap_job_template
+    position:
+      x: 1000.0
+      y: 300.0
+    parameters:
+      extra_vars:
+        disk_mount: ${trigger.disk_mount}
+        ansible_limit: ${trigger.target_host}
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: disk_remediate_cleanup
+      organization_name: igou
+  - id: keep
+    name: Log healthy status
+    type: aap_job_template
+    position:
+      x: 1000.0
+      y: 500.0
+    parameters:
+      extra_vars:
+        disk_mount: ${trigger.disk_mount}
+        ansible_limit: ${trigger.target_host}
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: disk_remediate_continue
+      organization_name: igou
+  - id: unsupported
+    name: Unsupported tier (no-op)
+    type: wait
+    position:
+      x: 1000.0
+      y: 650.0
+    parameters:
+      duration: 1
+  - id: notify_ok
+    name: Notify Slack (ok)
+    type: aap_job_template
+    position:
+      x: 1250.0
+      y: 500.0
+    parameters:
+      extra_vars:
+        escalate: ${keep.artifacts.escalate}
+        freed_mb: ${keep.artifacts.freed_mb}
+        disk_host: ${check.artifacts.disk_host}
+        disk_tier: ${check.artifacts.disk_tier}
+        disk_mount: ${check.artifacts.disk_mount}
+        agent_summary: '${assess.result.content.summary} | Recommendation: ${assess.result.content.rec_healthy}'
+        disk_use_percent: ${check.artifacts.disk_use_percent}
+        remediation_action: ${keep.artifacts.remediation_action}
+        disk_use_percent_after: ${keep.artifacts.disk_use_percent_after}
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: disk_notify_slack
+      organization_name: igou
+  - id: notify_warn
+    name: Notify Slack (warn)
+    type: aap_job_template
+    position:
+      x: 1250.0
+      y: 300.0
+    parameters:
+      extra_vars:
+        escalate: ${cleanup.artifacts.escalate}
+        freed_mb: ${cleanup.artifacts.freed_mb}
+        disk_host: ${check.artifacts.disk_host}
+        disk_tier: ${check.artifacts.disk_tier}
+        disk_mount: ${check.artifacts.disk_mount}
+        actions_taken: ${cleanup.artifacts.actions_taken}
+        agent_summary: '${assess.result.content.summary} | Recommendation: ${assess.result.content.rec_warning}'
+        disk_use_percent: ${check.artifacts.disk_use_percent}
+        remediation_action: ${cleanup.artifacts.remediation_action}
+        disk_use_percent_after: ${cleanup.artifacts.disk_use_percent_after}
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: disk_notify_slack
+      organization_name: igou
+  - id: notify_crit
+    name: Notify Slack (crit)
+    type: aap_job_template
+    position:
+      x: 1250.0
+      y: 100.0
+    parameters:
+      extra_vars:
+        escalate: ${aggressive.artifacts.escalate}
+        freed_mb: ${aggressive.artifacts.freed_mb}
+        disk_host: ${check.artifacts.disk_host}
+        disk_tier: ${check.artifacts.disk_tier}
+        disk_mount: ${check.artifacts.disk_mount}
+        actions_taken: ${aggressive.artifacts.actions_taken}
+        agent_summary: '${assess.result.content.summary} | Recommendation: ${assess.result.content.rec_critical}'
+        disk_use_percent: ${check.artifacts.disk_use_percent}
+        remediation_action: ${aggressive.artifacts.remediation_action}
+        disk_use_percent_after: ${aggressive.artifacts.disk_use_percent_after}
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: disk_notify_slack
+      organization_name: igou
+  - id: notify_na
+    name: Notify Slack (na)
+    type: aap_job_template
+    position:
+      x: 1250.0
+      y: 650.0
+    parameters:
+      extra_vars:
+        disk_host: ${check.artifacts.disk_host}
+        disk_tier: ${check.artifacts.disk_tier}
+        disk_mount: ${check.artifacts.disk_mount}
+        agent_summary: '${assess.result.content.summary} | Route reason: ${assess.result.content.route_reason}'
+        disk_use_percent: ${check.artifacts.disk_use_percent}
+        remediation_action: unsupported
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: disk_notify_slack
+      organization_name: igou
+  - id: notify_gate
+    name: 'Notify: approval pending'
+    type: aap_job_template
+    position:
+      x: 625.0
+      y: 100.0
+    parameters:
+      extra_vars:
+        disk_host: ${check.artifacts.disk_host}
+        disk_tier: ${check.artifacts.disk_tier}
+        disk_mount: ${check.artifacts.disk_mount}
+        agent_summary: '${assess.result.content.summary} | Pre-approval check: ${assess.result.content.rec_critical}'
+        disk_use_percent: ${check.artifacts.disk_use_percent}
+        remediation_action: 'APPROVAL PENDING: AI gate routed critical; aggressive reclaim awaits an admins decision (4h window, timeout = reject/failed run)'
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: disk_notify_slack
+      organization_name: igou
+  - id: assess
+    name: AI decision gate (gpt-5.6-luna)
+    type: agentic
+    position:
+      x: 500.0
+      y: 550.0
+    parameters:
+      prompt: 'You are the AI decision gate in the disk-utilization remediation workflow. Facts: host ${check.artifacts.disk_host}, mount ${check.artifacts.disk_mount}, usage ${check.artifacts.disk_use_percent}%, measured tier ${check.artifacts.disk_tier} (healthy <80, warning 80-95, critical >95). Top space consumers (du -xm output, MB):
+
+        ${check.artifacts.disk_detail}
+
+
+        Routes: ''healthy'' = log only, no changes. ''warning'' = safe cleanup (package caches, journald vacuum to 500M, rotated logs, dangling images). ''critical'' = aggressive reclaim (unused container images >30d, old kernels, journal to 200M) which always requires human approval before it runs.
+
+
+        Decide recommended_route. Hard rules: if the measured tier is critical, recommended_route MUST be ''critical''. Never choose ''healthy'' when usage is 80 or higher. Choose ''critical'' from a warning tier only when the consumers show safe cleanup cannot reclaim enough (for example the growth is old kernels or unused images).
+
+
+        Return: summary (max 60 words, plain text for Slack, name the biggest consumers in human terms); route_reason (max 30 words, why this route); rec_healthy (max 40 words, what to watch on this host); rec_warning (max 40 words, what safe cleanup should target first on this host); rec_critical (max 40 words, what a human should verify before approving aggressive reclaim on this host). No markdown anywhere.'
+      llm_model_id: 7373f610-2dc5-442e-8ad1-7ebf729ee26b
+      credential_id: 8f73baec-20b1-4e84-8b41-7db9a28bdb41
+      response_schema:
+        type: object
+        required:
+          - summary
+          - recommended_route
+          - route_reason
+          - rec_healthy
+          - rec_warning
+          - rec_critical
+        properties:
+          summary:
+            type: string
+          rec_healthy:
+            type: string
+          rec_warning:
+            type: string
+          rec_critical:
+            type: string
+          route_reason:
+            type: string
+          recommended_route:
+            enum:
+              - healthy
+              - warning
+              - critical
+            type: string
+triggers:
+  - id: start
+    name: Manual run
+    type: manual_trigger
+    position:
+      x: 0
+      y: 300
+    parameters:
+      input_schema:
+        type: object
+        required:
+          - target_host
+        properties:
+          disk_mount:
+            type: string
+            title: Mount
+            default: /
+          target_host:
+            type: string
+            title: Target host
+            description: Inventory hostname (vscode.igou.systems, upsmonitor.igou.systems, rpi-builder.igou.systems)
+schema_version: 2.0.0
