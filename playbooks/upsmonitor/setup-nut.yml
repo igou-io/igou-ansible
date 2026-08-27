@@ -11,8 +11,9 @@
 #
 # UPS definitions come from inventory (igou-inventory
 # host_vars/upsmonitor.igou.systems.yml, `nut_upses`). upsd account
-# passwords come from 1Password (op://claude/upsmonitor-nut) at run time —
-# never stored in the repo.
+# passwords arrive as full 1Password lookup expressions from the same
+# host_vars (`nut_*_password_lookup`) — never stored in the repo, never
+# assembled here.
 - name: Upsmonitor convergence - NUT netserver
   hosts: "{{ ansible_limit | default('upsmonitor.igou.systems') }}"
   become: true
@@ -24,15 +25,9 @@
     # of defining the public names as play vars.
     _nut_listen: "{{ nut_listen | default([{'address': '0.0.0.0', 'port': 3493}]) }}"
     _nut_pollinterval: "{{ nut_pollinterval | default(5) }}"
-    # upsd account passwords, resolved from 1Password on the controller.
-    _nut_upsmon_password: >-
-      {{ lookup('community.general.onepassword',
-         nut_op_item | default('upsmonitor-nut'),
-         field='upsmon_password', vault=nut_op_vault | default('claude')) }}
-    _nut_monitor_password: >-
-      {{ lookup('community.general.onepassword',
-         nut_op_item | default('upsmonitor-nut'),
-         field='monitor_password', vault=nut_op_vault | default('claude')) }}
+    # upsd account passwords; inventory carries the lookup expressions.
+    _nut_upsmon_password: "{{ nut_upsmon_password_lookup }}"
+    _nut_monitor_password: "{{ nut_monitor_password_lookup }}"
 
   tasks:
     - name: Assert UPS definitions are present in inventory
@@ -40,8 +35,11 @@
         that:
           - nut_upses is defined
           - nut_upses | length > 0
+          - nut_upsmon_password_lookup is defined
+          - nut_monitor_password_lookup is defined
         fail_msg: >-
-          nut_upses must be defined in inventory (see igou-inventory
+          nut_upses, nut_upsmon_password_lookup and nut_monitor_password_lookup
+          must be defined in inventory (see igou-inventory
           host_vars/upsmonitor.igou.systems.yml).
 
     - name: Install NUT server and client

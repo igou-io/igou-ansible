@@ -46,16 +46,10 @@
       {{ _kiosk_proxy_base ~ _kiosk_dashboard_path
          ~ ('' if _kiosk_dashboard_query is search('(^|&)kiosk(=|&|$)')
             else ('&kiosk' if _kiosk_dashboard_query else '?kiosk')) }}
-    # Explicit token wins (molecule/CI); otherwise resolve from 1Password on
-    # the controller. The inline-if keeps the lookup lazy so container runs
-    # never touch 1Password.
-    _kiosk_grafana_token: >-
-      {{ kiosk_grafana_token
-         if kiosk_grafana_token is defined
-         else lookup('community.general.onepassword',
-                     kiosk_grafana_token_op_item | default('grafana-kiosk'),
-                     field=kiosk_grafana_token_op_field | default('password'),
-                     vault=kiosk_grafana_token_op_vault | default('claude')) }}
+    # Explicit token wins (molecule/CI); otherwise kiosk_grafana_token_lookup
+    # — the full 1Password lookup expression carried in host_vars. default()
+    # keeps it lazy so container runs never touch 1Password.
+    _kiosk_grafana_token: "{{ kiosk_grafana_token | default(kiosk_grafana_token_lookup) }}"
     # Chromium leaks on live dashboards (OOM within 6-8h on 512MB boards is
     # widely reported); RuntimeMaxSec + Restart=always recycles the whole
     # browser session daily before it gets there.

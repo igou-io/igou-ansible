@@ -63,8 +63,8 @@
     # service accounts from approver_users, so the SA can list but never
     # decide. Validated live 2026-08-21 (decided_by "Approvals Bridge").
     ao_auth_grant: password
-    ao_op_item: ao-approvals-bridge-user
-    ao_op_vault: lab_aap
+    # Full lookup expressions from igou-inventory group_vars/all/main.yml.
+    ao_credentials: "{{ ao_bridge_credentials.user }}"
 
   tasks:
     - name: Validate the requested decision

@@ -206,7 +206,7 @@
     - name: Provision GCP service-account keys
       ansible.builtin.copy:
         dest: "/home/{{ hermes_user }}/.config/gcp-sa/{{ item.name }}.json"
-        content: "{{ lookup('community.general.onepassword', item.item, field=item.field, vault=item.vault) }}"
+        content: "{{ item.content_lookup }}"
         owner: "{{ hermes_user }}"
         group: "{{ hermes_user }}"
         mode: "0600"

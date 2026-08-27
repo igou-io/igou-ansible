@@ -97,6 +97,16 @@ secret backend. Resolved credential values are passed in as `no_log`
 suboptions; the lookup expressions live as *values* in inventory
 `group_vars`/`host_vars` (e.g. `igou-inventory/host_vars/rustfs.yml`).
 
+The same rule applies to **playbooks**: inventory carries the *full* lookup
+expression (`"{{ lookup('community.general.onepassword', 'item', field='f',
+vault='v') }}"`), never `op_item`/`op_field`/`op_vault`-style coordinates for
+a playbook to assemble (igou-inventory#772). `hosts: localhost` plays read
+theirs from `group_vars/all/main.yml`. When a secret must be evaluated once
+(module_defaults, loops — see `playbooks/routeros/export_config.yaml`), the
+play `set_fact`s from the inventory value; it still builds no lookup. Name the
+keys `*_lookup` or nest them under a `credentials:` map so GitGuardian does
+not flag a template as a literal password.
+
 ### Molecule testing
 
 Scenarios in `molecule/` follow a `<type>-<subject>[-<qualifier>]` naming scheme — `playbook-`, `role-`, or `logic-` (localhost-only) prefixes. Backends are never encoded in the name; they are selected at runtime via `mp_backend`/`PROVISIONER` and matrixed in CI. Provisioning is delegated to the `david_igou.molecule_provisioners` collection. Each scenario is self-contained (no cross-scenario shared plumbing): the sysprep-based Windows scenarios each carry their own copy of `windows-sysprep-secrets.yml` + `templates/windows-unattend.xml.j2`, deliberately un-DRY so a scenario is easy to follow in isolation. Environment variable templating is used extensively for flexibility.

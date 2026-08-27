@@ -29,35 +29,32 @@
   gather_facts: false
 
   vars:
-    # 1P item naming convention: <short-host>-api in the lab_routeros vault.
-    # short-host = inventory_hostname's first DNS label (crs328.igou.systems -> crs328).
-    routeros_bootstrap_op_item: "{{ inventory_hostname | split('.') | first }}-api"
-
     # Group assigned to the bootstrapped user. `full` matches the existing
     # rb5009-api convention; override per-host/group in inventory if you
     # want a tighter group with just api+read+write+ssh policies.
     routeros_bootstrap_user_group: full
 
   pre_tasks:
-    # Resolve the target user/password ONCE. no_log so the creds never hit
-    # stdout or the controller log.
-    - name: Resolve target API credentials from 1Password (once)
+    # Resolve the target user/password ONCE from routeros_api_credentials
+    # (igou-inventory group_vars/routeros.yml, the <short-host>-api item).
+    # no_log so the creds never hit stdout or the controller log.
+    - name: Resolve target API credentials (once)
       delegate_to: localhost
       connection: local
       ansible.builtin.set_fact:
-        _bootstrap_api_username: "{{ lookup('community.general.onepassword', routeros_bootstrap_op_item, field='username', vault='lab_routeros') }}"
-        _bootstrap_api_password: "{{ lookup('community.general.onepassword', routeros_bootstrap_op_item, field='password', vault='lab_routeros') }}"
+        _bootstrap_api_username: "{{ routeros_api_credentials.username }}"
+        _bootstrap_api_password: "{{ routeros_api_credentials.password }}"
       no_log: true
 
-    - name: Refuse to continue if 1P item produced empty creds
+    - name: Refuse to continue if the credentials resolved empty
       ansible.builtin.assert:
         that:
           - _bootstrap_api_username | length > 0
           - _bootstrap_api_password | length > 0
         fail_msg: >-
-          1Password item op://lab_routeros/{{ routeros_bootstrap_op_item }} resolved
-          empty username or password. Create the item with both fields before
-          running this playbook.
+          routeros_api_credentials resolved an empty username or password for
+          {{ inventory_hostname }}. Create the <short-host>-api item in
+          lab_routeros with both fields before running this playbook.
 
   tasks:
     # Detect whether the user already exists. `:put [:len [...]]` returns

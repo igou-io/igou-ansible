@@ -49,13 +49,10 @@
     gitops_cluster: internal
     connect_secret_namespace: external-secrets
     connect_secret_name: onepassword-connect-token
-    # rk8s entity Connect token — read from the dedicated ocp-connect-bootstrap
-    # vault (same as playbooks/openshift/bootstrap_gitops.yaml), authenticating
-    # as the read-only ocp-bootstrap SA. The Connect JWT lives in the item's
-    # `credential` field (aud=com.1password.connect).
-    connect_token_op_vault: ocp-connect-bootstrap
-    connect_token_op_item: rk8s-connect-token
-    connect_token_op_field: credential
+    # rk8s entity Connect token: `rk8s_connect_token_lookup` (igou-inventory
+    # group_vars/all/main.yml) carries the full 1Password lookup expression,
+    # read via the read-only ocp-bootstrap SA (same as
+    # playbooks/openshift/bootstrap_gitops.yaml).
 
   tasks:
     - name: Assert KUBECONFIG and the bootstrap service-account token are present
@@ -104,7 +101,7 @@
             # rk8s ENTITY Connect token from ocp-connect-bootstrap, read via the
             # ocp-bootstrap SA (OP_SERVICE_ACCOUNT_TOKEN env fallback) — NOT the
             # kubeconfig-read token. Same pattern as openshift/bootstrap_gitops.yaml.
-            token: "{{ lookup('community.general.onepassword', connect_token_op_item, field=connect_token_op_field, vault=connect_token_op_vault) }}"
+            token: "{{ rk8s_connect_token_lookup }}"
       no_log: true
 
     - name: Install argocd (server-side apply)
