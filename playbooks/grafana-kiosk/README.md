@@ -50,8 +50,8 @@ ansible-playbook playbooks/grafana-kiosk/converge.yaml \
 | `kiosk_grafana_url` | — **required** | Upstream Grafana origin, e.g. `https://grafana.example.com` |
 | `kiosk_stack` | `cog` | `cog` or `chromium` |
 | `kiosk_dashboard_path` | `/` | e.g. `/playlists/play/<uid>` or `/d/<uid>/<slug>?orgId=1&refresh=30s` |
-| `kiosk_grafana_token` | 1Password lookup | Explicit token (CI only — prefer the op lookup) |
-| `kiosk_grafana_token_op_item` / `_op_vault` / `_op_field` | `grafana-kiosk` / `claude` / `password` | 1Password coordinates of the SA token |
+| `kiosk_grafana_token` | — | Explicit token (CI only — prefer the lookup below) |
+| `kiosk_grafana_token_lookup` | — **required** unless `kiosk_grafana_token` | Full lookup expression for the SA token, e.g. `"{{ lookup('community.general.onepassword', 'grafana-kiosk', field='password', vault='claude') }}"` |
 | `kiosk_proxy_listen` | `127.0.0.1:8480` | |
 | `kiosk_playlist` | `false` | grafana-kiosk playlist mode (chromium stack) |
 | `kiosk_grafana_kiosk_mode` | `full` | grafana-kiosk kiosk-mode (chromium stack) |

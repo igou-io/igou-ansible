@@ -46,7 +46,7 @@
 #
 # Variables
 #   ao_api_url        AO base URL
-#   ao_op_item/vault  1Password coordinates for the bridge credentials
+#   ao_credentials    {client_id, client_secret} (inventory lookup expressions)
 #   ao_page_limit     page size (API max 100)
 #   ao_max_pages      recursion guard on cursor pagination
 #   digest_prompt_max prompt truncation width
@@ -61,15 +61,13 @@
 
   vars:
     ao_api_url: https://orchestrator.apps.ocp.igou.systems
-    ao_op_item: ao-approvals-bridge
-    ao_op_vault: lab_aap
+    # Full lookup expressions from igou-inventory group_vars/all/main.yml.
+    ao_credentials: "{{ ao_bridge_credentials.service }}"
     ao_page_limit: 100
     ao_max_pages: 20
     digest_prompt_max: 140
     digest_dry_run: false
     slack_channel: "#igoucloud-aap-logs"
-    slack_op_item: slack_notification_password
-    slack_op_vault: lab_external_api_keys
 
   tasks:
     - name: Mint an AO access token
@@ -127,7 +125,7 @@
 
     - name: Post the digest to Slack
       community.general.slack:
-        token: "{{ lookup('community.general.onepassword', slack_op_item, field='password', vault=slack_op_vault) }}"
+        token: "{{ slack_notification_token }}"
         channel: "{{ slack_channel }}"
         msg: "{{ ao_digest_message | trim }}"
       when: not (digest_dry_run | bool)

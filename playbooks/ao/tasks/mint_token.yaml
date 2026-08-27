@@ -9,20 +9,21 @@
 #     in 2026.8. The `approvals-bridge-bot` local user, member of `admins`,
 #     exists for exactly this.)
 #
-# 1Password contract (item `ao-approvals-bridge`, vault `lab_aap`):
-#   field `username` -> OAuth client_id
-#   field `password` -> OAuth client_secret
-# The item belongs to the `approvals-bridge` service account, which holds
-# project-admin on the default AO project.
+# Input: `ao_credentials` = {client_id, client_secret}. The including play
+# picks it from `ao_bridge_credentials.service|user` (igou-inventory
+# group_vars/all/main.yml), where the 1Password lookup expressions live —
+# nothing here knows about 1Password. The service item belongs to the
+# `approvals-bridge` service account (project-admin on the default AO
+# project).
 #
 # Tokens live ~15 minutes, which comfortably covers a digest or a single
 # decision, so nothing here refreshes. Every task that touches the secret or
 # the minted token is no_log; failures are re-surfaced through an explicit
 # fail task that prints only the HTTP status and the transport message.
-- name: Resolve the approvals-bridge client credentials from 1Password
+- name: Resolve the approvals-bridge client credentials
   ansible.builtin.set_fact:
-    _ao_client_id: "{{ lookup('community.general.onepassword', ao_op_item, field='username', vault=ao_op_vault) }}"
-    _ao_client_secret: "{{ lookup('community.general.onepassword', ao_op_item, field='password', vault=ao_op_vault) }}"
+    _ao_client_id: "{{ ao_credentials.client_id }}"
+    _ao_client_secret: "{{ ao_credentials.client_secret }}"
   no_log: true
 
 - name: Assert both credential fields resolved
@@ -31,9 +32,9 @@
       - _ao_client_id | default('') | length > 0
       - _ao_client_secret | default('') | length > 0
     fail_msg: >-
-      1Password item '{{ ao_op_item }}' in vault '{{ ao_op_vault }}' did not
-      yield both a `username` (client_id) and a `password` (client_secret).
-    success_msg: "Client credentials resolved from op://{{ ao_op_vault }}/{{ ao_op_item }}"
+      ao_credentials did not yield both a client_id and a client_secret
+      (check ao_bridge_credentials in igou-inventory group_vars/all/main.yml).
+    success_msg: Client credentials resolved from ao_credentials
 
 - name: Exchange the credentials for an access token
   ansible.builtin.uri:
@@ -58,8 +59,8 @@
       AO token mint failed against {{ ao_api_url }}/api/v1/auth/token —
       HTTP {{ _ao_token_result.status | default('no response') }}
       ({{ _ao_token_result.msg | default('no transport message') }}).
-      Verify op://{{ ao_op_vault }}/{{ ao_op_item }} still matches the
-      approvals-bridge service account's client credentials.
+      Verify the 1Password item behind ao_credentials still matches the
+      approvals-bridge account's client credentials.
   when: _ao_token_result.status | default(0) | int != 200
 
 - name: Publish the bearer token for the remaining API calls

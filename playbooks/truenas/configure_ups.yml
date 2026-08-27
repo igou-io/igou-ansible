@@ -14,10 +14,9 @@
 #
 # Variables (igou-inventory group_vars/truenas.yml):
 #   truenas_ups — {identifier, remotehost, remoteport?, shutdown?,
-#                  shutdowntimer?, monuser, op_item, op_field, op_vault}
-#   The monuser password is resolved here from the 1Password coordinates
-#   (op_item/op_field/op_vault) — same indirection as
-#   playbooks/upsmonitor/setup-nut.yml.
+#                  shutdowntimer?, monuser, monitor_password_lookup}
+#   monitor_password_lookup is the full 1Password lookup expression; this
+#   play only consumes the value (igou-inventory#772).
 - name: Configure TrueNAS UPS netclient against the upsmonitor Pi
   hosts: truenas
   gather_facts: false
@@ -31,13 +30,10 @@
           - truenas_ups.identifier is defined
           - truenas_ups.remotehost is defined
           - truenas_ups.monuser is defined
-          - truenas_ups.op_item is defined
-          - truenas_ups.op_field is defined
-          - truenas_ups.op_vault is defined
+          - truenas_ups.monitor_password_lookup is defined
         fail_msg: >-
-          truenas_ups must define identifier, remotehost, monuser and the
-          op_item/op_field/op_vault 1Password coordinates
-          (see igou-inventory group_vars/truenas.yml).
+          truenas_ups must define identifier, remotehost, monuser and
+          monitor_password_lookup (see igou-inventory group_vars/truenas.yml).
 
     - name: Query current UPS service configuration
       ansible.builtin.command: midclt call ups.config
@@ -56,9 +52,7 @@
           shutdown: "{{ truenas_ups.shutdown | default('LOWBATT') }}"
           shutdowntimer: "{{ truenas_ups.shutdowntimer | default(30) }}"
           monuser: "{{ truenas_ups.monuser }}"
-          monpwd: >-
-            {{ lookup('community.general.onepassword', truenas_ups.op_item,
-               field=truenas_ups.op_field, vault=truenas_ups.op_vault) }}
+          monpwd: "{{ truenas_ups.monitor_password_lookup }}"
       no_log: true
 
     - name: Update UPS service configuration
