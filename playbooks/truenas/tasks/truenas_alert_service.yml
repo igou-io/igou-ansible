@@ -4,6 +4,9 @@
 #   truenas_alertservice_query — registered alertservice.query output
 # Match key: name. Entries without attributes are level/enabled-only updates
 # of an existing service and are never created.
+# alertservice.update on 25.10 is a FULL replace, not a patch: name,
+# attributes and level are all required, so the update payload always carries
+# name and falls back to the service's existing attributes.
 # no_log throughout: attributes carry webhook URLs / bot tokens.
 
 - name: "Locate existing alert service — {{ alert_service.name }}"
@@ -43,16 +46,17 @@
 - name: "Update alert service — {{ alert_service.name }}"
   vars:
     truenas_alertsvc_desired: >-
-      {{ {'enabled': alert_service.enabled | default(true),
+      {{ {'name': alert_service.name,
+          'enabled': alert_service.enabled | default(true),
           'level': alert_service.level
-                   | default(truenas_alertsvc_existing[0].level)}
-         | combine({'attributes': alert_service.attributes}
-                   if alert_service.attributes is defined else {}) }}
+                   | default(truenas_alertsvc_existing[0].level),
+          'attributes': alert_service.attributes
+                        | default(truenas_alertsvc_existing[0].attributes)} }}
     truenas_alertsvc_current: >-
-      {{ {'enabled': truenas_alertsvc_existing[0].enabled,
-          'level': truenas_alertsvc_existing[0].level}
-         | combine({'attributes': truenas_alertsvc_existing[0].attributes}
-                   if alert_service.attributes is defined else {}) }}
+      {{ {'name': truenas_alertsvc_existing[0].name,
+          'enabled': truenas_alertsvc_existing[0].enabled,
+          'level': truenas_alertsvc_existing[0].level,
+          'attributes': truenas_alertsvc_existing[0].attributes} }}
     truenas_alertsvc_in_sync: >-
       {{ truenas_alertsvc_current == truenas_alertsvc_desired }}
   ansible.builtin.command:
