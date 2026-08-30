@@ -102,12 +102,12 @@ dependencies:
         # configure-aap with "Failed to get token: HTTP Error 404".
         version: "4.8.0"
       - name: infra.aap_configuration
-        # Stays at the baked 4.7.0 on purpose. Newer releases are no
+        # Stays at the baked 4.8.0 on purpose. Newer releases are no
         # better here -- the breakage tracked in igou-ansible#514 is
         # present in them too, and the dispatcher's exclude is what
         # actually works around it. Pinning just stops the image drifting
         # while that stands.
-        version: "4.7.0"
+        version: "4.8.0"
 additional_build_steps:
   prepend_base: |
     RUN microdnf install -y git-core
