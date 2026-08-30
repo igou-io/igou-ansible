@@ -45,6 +45,16 @@
 
     # docker role: install the full daemon (docker-ce + containerd.io).
     docker_install_daemon: true
+    # Docker storage lives on the big /home LV, not the 70G root LV
+    # (igou-inventory#373): the cs_vscode VG is fully allocated, so root
+    # cannot grow, and images + build cache filled it three times. The
+    # pre_task below migrates an existing /var/lib/docker once; the role
+    # renders data-root into daemon.json. The weekly prune timer keeps the
+    # new location from growing unbounded.
+    docker_data_root: /home/docker-data
+    docker_daemon_options:
+      data-root: "{{ docker_data_root }}"
+    docker_prune_on_calendar: "Sun *-*-* 05:00:00"
 
     # devenv extras
     devenv_repo: https://github.com/igou-io/igou-devenv.git
@@ -144,6 +154,63 @@
             - br_netfilter
 
     # ------------------------------------------------------------------
+    # One-shot Docker data-root migration (igou-inventory#373). Only runs
+    # when a daemon is already up with a root dir other than
+    # docker_data_root: stop the devcontainer unit (its ExecStop removes
+    # the container, and the unit is started again at the end of this play),
+    # stop the daemon, copy the store, and park the old tree as
+    # /var/lib/docker.migrated. The docker role then renders daemon.json
+    # with the new data-root and starts the daemon on it; post_tasks verify
+    # the root dir and delete the parked tree. Fresh hosts (no daemon yet)
+    # skip straight to the role, which creates the store in place.
+    # ------------------------------------------------------------------
+    - name: Read the current Docker root dir
+      ansible.builtin.command:
+        argv: [docker, info, --format, "{{ '{{' }}.DockerRootDir{{ '}}' }}"]
+      register: devenv_docker_root
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: Migrate the Docker store to {{ docker_data_root }}
+      become: true
+      when:
+        - devenv_docker_root.rc == 0
+        - devenv_docker_root.stdout | trim != docker_data_root
+      block:
+        - name: Stop the devcontainer unit (removes the container)
+          ansible.builtin.systemd_service:
+            name: igou-devenv.service
+            state: stopped
+          failed_when: false
+
+        - name: Stop the Docker daemon and socket
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: stopped
+          loop:
+            - docker.socket
+            - docker.service
+
+        - name: Copy the Docker store to the new data-root
+          ansible.builtin.command:
+            argv:
+              - rsync
+              - -aHAXS
+              - --numeric-ids
+              - "{{ devenv_docker_root.stdout | trim }}/"
+              - "{{ docker_data_root }}/"
+          changed_when: true
+
+        - name: Park the old Docker store for post-migration cleanup
+          ansible.builtin.command:
+            argv:
+              - mv
+              - "{{ devenv_docker_root.stdout | trim }}"
+              - "{{ devenv_docker_root.stdout | trim }}.migrated"
+          changed_when: true
+
+    # ------------------------------------------------------------------
     # firewalld port/rule declarations (#399, #408). The kickstarted physical
     # devhost runs firewalld (public zone, default target); the golden cloud
     # image may not. Every task gates on the service actually running, so
@@ -230,6 +297,50 @@
         node_exporter_web_listen_address: "{{ node_exporter_listen_address | default('0.0.0.0:9100') }}"
 
   post_tasks:
+    - name: Verify the Docker daemon runs on {{ docker_data_root }}
+      ansible.builtin.command:
+        argv: [docker, info, --format, "{{ '{{' }}.DockerRootDir{{ '}}' }}"]
+      register: devenv_docker_root_after
+      changed_when: false
+      failed_when: devenv_docker_root_after.stdout | trim != docker_data_root
+      become: true
+
+    - name: Remove the parked pre-migration Docker store
+      ansible.builtin.file:
+        path: "{{ devenv_docker_root.stdout | default('/var/lib/docker') | trim }}.migrated"
+        state: absent
+      become: true
+
+    # Weekly prune (igou-inventory#373): build cache >7d, dangling layers,
+    # and igou-devenv release tags other than the pinned + :latest ones.
+    # Locally built images (armbian.local.only/*) and everything outside
+    # the igou-devenv repository are never touched.
+    - name: Install the Docker prune script and timer
+      become: true
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - src: docker-prune.sh.j2
+          dest: /usr/local/sbin/docker-prune.sh
+          mode: "0755"
+        - src: docker-prune.service.j2
+          dest: /etc/systemd/system/docker-prune.service
+          mode: "0644"
+        - src: docker-prune.timer.j2
+          dest: /etc/systemd/system/docker-prune.timer
+          mode: "0644"
+      register: devenv_docker_prune_units
+
+    - name: Enable the Docker prune timer
+      become: true
+      ansible.builtin.systemd_service:
+        name: docker-prune.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ devenv_docker_prune_units is changed }}"
+
     - name: Reset the connection so the docker group grant takes effect
       # Group membership is evaluated at login; the ControlPersist session was
       # opened before the docker role added the user to the docker group, so

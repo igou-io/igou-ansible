@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Weekly Docker prune on the devenv host
+
+[Timer]
+OnCalendar={{ docker_prune_on_calendar }}
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
