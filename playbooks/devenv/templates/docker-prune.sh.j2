@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# Weekly Docker reclaim for the devenv host (igou-inventory#373). Safe set only:
+# never containers, volumes, locally built images, or the pinned devenv image.
+set -euo pipefail
+
+keep_re='^ghcr.io/igou-io/igou-devenv:({{ devenv_image | regex_replace('^.*:', '') }}|latest)$'
+
+docker builder prune -a -f --filter until=168h
+docker image prune -f
+
+# Superseded igou-devenv release tags (in-use images fail to remove, harmlessly).
+docker images ghcr.io/igou-io/igou-devenv --format '{% raw %}{{.Repository}}:{{.Tag}}{% endraw %}' \
+    | grep -Ev "$keep_re|:<none>$" \
+    | xargs -r docker rmi || true
+
+df -h "$(docker info --format '{% raw %}{{.DockerRootDir}}{% endraw %}')"

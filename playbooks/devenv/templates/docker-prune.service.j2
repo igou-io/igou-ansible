@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Prune Docker build cache, dangling layers and superseded devenv images
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/docker-prune.sh
