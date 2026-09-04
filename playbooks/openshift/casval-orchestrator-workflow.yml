@@ -16,6 +16,9 @@ edges:
   - to: hold_8h
     from: tier
     from_port: h8
+  - to: hold_12h
+    from: tier
+    from_port: h12
   - to: hold_24h
     from: tier
     from_port: h24
@@ -28,6 +31,8 @@ edges:
     from: hold_4h
   - to: notify_warn
     from: hold_8h
+  - to: notify_warn
+    from: hold_12h
   - to: notify_warn
     from: hold_24h
   - to: notify_warn
@@ -87,6 +92,9 @@ nodes:
         - port: h8
           label: 8h
           condition: ${trigger.lease} == '8h'
+        - port: h12
+          label: 12h
+          condition: ${trigger.lease} == '12h'
         - port: h24
           label: 24h
           condition: ${trigger.lease} == '24h'
@@ -115,12 +123,20 @@ nodes:
       y: 380.0
     parameters:
       duration: 28800
+  - id: hold_12h
+    name: Hold 12h
+    type: wait
+    position:
+      x: 1000.0
+      y: 520.0
+    parameters:
+      duration: 43200
   - id: hold_24h
     name: Hold 24h
     type: wait
     position:
       x: 1000.0
-      y: 520.0
+      y: 660.0
     parameters:
       duration: 86400
   - id: hold_fb
@@ -128,7 +144,7 @@ nodes:
     type: wait
     position:
       x: 1000.0
-      y: 660.0
+      y: 800.0
     parameters:
       duration: 14400
   - id: notify_warn
@@ -205,6 +221,7 @@ triggers:
               - 2h
               - 4h
               - 8h
+              - 12h
               - 24h
             type: string
             title: Lease length
