@@ -171,7 +171,7 @@
         definition:
           metadata:
             annotations:
-              "{{ casval_lease_annotation }}": "{{ casval_lease_owner }}"
+              automation.igou.systems/casval-lease-id: "{{ casval_lease_owner }}"
       when: casval_state == 'up'
 
     - name: Scale the casval-worker MachineSet
