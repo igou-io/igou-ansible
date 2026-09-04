@@ -24,7 +24,7 @@ worker group is `hpg5.igou.systems`, `p330.igou.systems`, and
 | [`bootstrap_gitops.yaml`](#gitops-bootstrap) | Install OpenShift GitOps + external-secrets + 1Password Connect, apply the `root-applications` app-of-apps |
 | [`vm_worker_reprovision.yaml`](#vm-worker-lifecycle) | Rebuild the TrueNAS VM worker (`truenas-w1`) end to end |
 | [`vm_worker_destroy.yaml`](#vm-worker-lifecycle) | Drain, remove, and delete the TrueNAS VM worker |
-| [`etcd_defrag.yaml`](#etcd-maintenance) | Defragment etcd members (weekly `openshift_etcd_defrag` job template) |
+| [`etcd_defrag.yaml`](#etcd-maintenance) | Defragment etcd members (daily `openshift_etcd_defrag` job template) |
 
 ## Initial cluster (agent-install)
 
@@ -152,9 +152,10 @@ which chains both). The VM itself is declared in `truenas_vms`
 The cluster-etcd-operator's `DefragController` skips SingleReplica
 topologies, so this SNO cluster never self-defrags.
 `playbooks/openshift/etcd_defrag.yaml` is the scheduled substitute (a no-op
-below the operator's own thresholds: >=45% fragmented AND db >=100MB). It
-runs weekly via the `openshift_etcd_defrag` job template
-(`openshift_etcd_defrag_weekly` schedule).
+below the configured fragmentation percent AND db >=100MB). The playbook
+default is the operator's 45%; the daily AAP schedule overrides to 25%
+via extra_vars. It runs daily via the `openshift_etcd_defrag` job template
+(`openshift_etcd_defrag_daily` schedule).
 
 Backups are separate and live in `igou-openshift`: a nightly `etcd-backup`
 CronJob (namespace `etcd-backup`) ships snapshots to

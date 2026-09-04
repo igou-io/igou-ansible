@@ -6,6 +6,11 @@
 # for a few seconds — so on this SNO cluster fragmentation only grows
 # until etcdDatabaseHighFragmentationRatio fires (igou-inventory#81).
 # This job is the scheduled substitute: a no-op below the thresholds.
+# The 45% gate is the operator's "when to act" on a tight loop. On this
+# SNO cluster the AAP schedule is a cron, and ~25–30 pp/day of churn
+# crosses the 50% platform alert between weekly visits. The daily
+# schedule therefore passes etcd_defrag_max_fragmented_percent=25 via
+# extra_vars; leave 45 here so an ad-hoc launch still matches upstream.
 #
 # Auth: K8S_AUTH_* env vars injected by the etcd-defrag-token AAP
 # credential (SA etcd-defrag, pod read + exec in openshift-etcd only).
