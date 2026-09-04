@@ -11,7 +11,8 @@ yamllint:
 syntax-check:
 	@failed=0; \
 	for playbook in $$(find playbooks \( -name '*.yml' -o -name '*.yaml' \) \
-	    ! -name 'orchestrator-workflow.yml' | sort); do \
+	    ! -name 'orchestrator-workflow.yml' \
+	    ! -name '*-orchestrator-workflow.yml' | sort); do \
 		echo "Checking $${playbook}..."; \
 		if ! ansible-playbook --syntax-check "$${playbook}"; then \
 			failed=1; \

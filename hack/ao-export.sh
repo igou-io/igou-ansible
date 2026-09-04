@@ -29,6 +29,9 @@ AO_PW_REF="${AO_PW_REF:-op://lab_aap/automation-orchestrator-admin-password/pass
 # playbooks its steps dispatch.
 AO_DISK_WF="${AO_DISK_WF:-9c0c6ed9-d5db-4190-be78-6cdb60480cf9}"
 AO_DISK_OUT="playbooks/linux/disk/orchestrator-workflow.yml"
+# The casval lease workflow; keep its durable export beside casval_scale.
+AO_CASVAL_WF="${AO_CASVAL_WF:-1d7fe45e-3f3f-48f4-8663-aeffd7f5ac0a}"
+AO_CASVAL_OUT="playbooks/openshift/casval-orchestrator-workflow.yml"
 
 WF="${WF:-}"
 VER="${VER:-}"
@@ -58,6 +61,8 @@ fi
 
 if [[ "${WF}" == "${AO_DISK_WF}" ]]; then
   out="${AO_DISK_OUT}"
+elif [[ "${WF}" == "${AO_CASVAL_WF}" ]]; then
+  out="${AO_CASVAL_OUT}"
 else
   out="./ao-workflow-${WF}-v${VER}.yml"
 fi
