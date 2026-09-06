@@ -59,7 +59,7 @@ dependencies:
     # and kubernetes.core, which land as transitive dependencies.
     collections:
       - name: ansible.windows
-        version: "3.7.0"
+        version: "3.8.0"
       - name: community.windows
         version: "3.3.0"
       - name: ansible.posix
