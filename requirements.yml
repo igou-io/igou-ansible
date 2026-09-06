@@ -76,7 +76,7 @@ collections:
   - name: community.windows
     version: 3.3.0
   - name: microsoft.ad
-    version: 1.12.0
+    version: 1.12.1
   - name: microsoft.iis
     version: 1.2.1
   - name: chocolatey.chocolatey
