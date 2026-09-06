@@ -18,6 +18,7 @@ how X worked" two weeks from now.
 | [`execution-environments.md`](execution-environments.md) | What each EE is for, when to rebuild, manual rebuild + push |
 | [`disaster-recovery.md`](disaster-recovery.md) | "X is dead, what do I run?" per component (rb5009, truenas, netbootxyz container, OCP cluster, OCP worker, homelab pets) |
 | [`troubleshooting.md`](troubleshooting.md) | Symptom-keyed cross-cutting issues (PXE, DHCP, container, secrets, lint, CI) |
+| [`unifi-network.md`](unifi-network.md) | UniFi Network desired state, API transports, AAP jobs, and adoption safety |
 
 ## Designs and plans (under `superpowers/`)
 

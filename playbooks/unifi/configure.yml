@@ -1,0 +1,10 @@
+---
+- name: Reconcile UniFi Network configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  roles:
+    - role: unifi_network
+      vars:
+        unifi_network_config: "{{ unifi }}"

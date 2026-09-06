@@ -1,0 +1,10 @@
+---
+- name: Reconcile UniFi Network configuration
+  unifi_network_reconcile:
+    config: "{{ unifi_network_config }}"
+  register: unifi_network_result
+
+- name: Publish sanitized UniFi discovery facts
+  ansible.builtin.set_fact:
+    unifi_network_facts: "{{ unifi_network_result.facts }}"
+    unifi_network_changes: "{{ unifi_network_result.changes }}"

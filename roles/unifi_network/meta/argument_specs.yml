@@ -1,0 +1,9 @@
+---
+argument_specs:
+  main:
+    short_description: Reconcile UniFi Network desired state
+    options:
+      unifi_network_config:
+        description: Controller connection, ownership policy, and desired resources.
+        type: dict
+        required: true
