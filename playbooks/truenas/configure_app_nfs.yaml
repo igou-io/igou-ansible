@@ -1,0 +1,90 @@
+---
+# Configure persistent NFS storage for applications that own data outside
+# Kubernetes dynamic provisioning. Desired exports live in igou-inventory as
+# truenas_app_nfs_exports; this play never prunes unlisted datasets or shares.
+- name: Configure application NFS storage on TrueNAS
+  hosts: truenas
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Validate application NFS export definitions
+      ansible.builtin.assert:
+        that:
+          - item.name is string
+          - item.name | length > 0
+          - item.dataset is match('^[a-zA-Z0-9_.:-]+(/[a-zA-Z0-9_.:-]+)+$')
+          - item.owner is match('^[a-z_][a-z0-9_-]*$')
+          - item.group is match('^[a-z_][a-z0-9_-]*$')
+          - item.networks | default([]) | length > 0
+          - item.state | default('present') == 'present'
+        fail_msg: >-
+          Each truenas_app_nfs_exports entry must define a name, dataset,
+          owner, group, and at least one allowed network. Only state=present
+          is supported; removal is deliberately manual.
+      loop: "{{ truenas_app_nfs_exports | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('invalid export') }}"
+
+    - name: Ensure application service identities exist
+      arensb.truenas.user:
+        name: "{{ item.owner }}"
+        state: present
+        comment: "{{ item.user_comment | default(item.name ~ ' NFS identity') }}"
+        password_disabled: true
+        shell: /usr/sbin/nologin
+        smb: false
+        create_group: true
+      loop: "{{ truenas_app_nfs_exports | default([]) }}"
+      loop_control:
+        label: "{{ item.owner }}"
+
+    - name: Ensure application datasets exist
+      arensb.truenas.filesystem:
+        name: "{{ item.dataset }}"
+        state: present
+        type: FILESYSTEM
+        create_ancestors: true
+        comments: "{{ item.dataset_comment | default(item.name) }}"
+        atime: "{{ item.atime | default('OFF') }}"
+        compression: "{{ item.compression | default('LZ4') }}"
+        sync: "{{ item.sync | default('STANDARD') }}"
+        recordsize: "{{ item.recordsize | default('128K') }}"
+        quota: "{{ item.quota_bytes | default(omit) }}"
+      loop: "{{ truenas_app_nfs_exports | default([]) }}"
+      loop_control:
+        label: "{{ item.dataset }}"
+
+- name: Configure application dataset ownership
+  hosts: truenas
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Set application dataset ownership
+      ansible.builtin.file:
+        path: "/mnt/{{ item.dataset }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode | default('0770') }}"
+      loop: "{{ truenas_app_nfs_exports | default([]) }}"
+      loop_control:
+        label: "{{ item.dataset }}"
+
+- name: Configure application NFS exports
+  hosts: truenas
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Export application datasets over NFS
+      arensb.truenas.sharing_nfs:
+        name: "{{ item.name }}"
+        path: "/mnt/{{ item.dataset }}"
+        state: present
+        enabled: true
+        readonly: "{{ item.readonly | default(false) }}"
+        mapall_user: "{{ item.owner }}"
+        mapall_group: "{{ item.group }}"
+        networks: "{{ item.networks }}"
+      loop: "{{ truenas_app_nfs_exports | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
