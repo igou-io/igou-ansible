@@ -1,0 +1,180 @@
+---
+# Reconcile one target, DISK extent, and target/extent association at LUN 0.
+# Expects the caller's query facts and the id maps created by the initiator
+# and auth task files.
+- name: Find existing target — {{ iscsi_volume.target_name }}
+  ansible.builtin.set_fact:
+    _iscsi_target_existing: >-
+      {{ _truenas_iscsi_target_query.stdout | from_json
+         | selectattr('name', 'equalto', iscsi_volume.target_name) | list }}
+
+- name: Find existing extent — {{ iscsi_volume.extent_name }}
+  ansible.builtin.set_fact:
+    _iscsi_extent_existing: >-
+      {{ _truenas_iscsi_extent_query.stdout | from_json
+         | selectattr('name', 'equalto', iscsi_volume.extent_name) | list }}
+
+- name: Assert target and extent names are unambiguous — {{ iscsi_volume.target_name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_target_existing | length < 2
+      - _iscsi_extent_existing | length < 2
+    fail_msg: >-
+      Duplicate target or extent name for {{ iscsi_volume.target_name }}.
+
+- name: Build desired target group — {{ iscsi_volume.target_name }}
+  ansible.builtin.set_fact:
+    _iscsi_target_group:
+      portal: "{{ iscsi_volume.portal | int }}"
+      initiator: "{{ _truenas_iscsi_initiator_ids[iscsi_volume.initiator_group] | int }}"
+      authmethod: CHAP
+      auth: "{{ _truenas_iscsi_auth_ids[iscsi_volume.auth_group] | int }}"
+
+- name: Build desired target — {{ iscsi_volume.target_name }}
+  ansible.builtin.set_fact:
+    _iscsi_target_desired:
+      name: "{{ iscsi_volume.target_name }}"
+      alias: "{{ iscsi_volume.target_alias | default(iscsi_volume.target_name) }}"
+      groups:
+        - "{{ _iscsi_target_group }}"
+
+- name: Create unique target — {{ iscsi_volume.target_name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.target.create
+      - "{{ _iscsi_target_desired | to_json }}"
+  register: _iscsi_target_create
+  when: _iscsi_target_existing | length == 0
+  changed_when: true
+
+- name: Update target and exact initiator policy — {{ iscsi_volume.target_name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.target.update
+      - "{{ _iscsi_target_existing[0].id }}"
+      - "{{ _iscsi_target_desired | to_json }}"
+  when:
+    - _iscsi_target_existing | length == 1
+    - _iscsi_target_existing[0].alias != _iscsi_target_desired.alias
+      or _iscsi_target_existing[0].groups != _iscsi_target_desired.groups
+  changed_when: true
+
+- name: Record target id — {{ iscsi_volume.target_name }}
+  ansible.builtin.set_fact:
+    _truenas_iscsi_target_ids: >-
+      {{ _truenas_iscsi_target_ids | default({})
+         | combine({iscsi_volume.target_name:
+                    (_iscsi_target_existing[0].id
+                     if _iscsi_target_existing | length == 1
+                     else ((_iscsi_target_create.stdout | from_json).id
+                           | default(_iscsi_target_create.stdout | from_json, true)))}) }}
+
+- name: Build desired DISK extent — {{ iscsi_volume.extent_name }}
+  ansible.builtin.set_fact:
+    _iscsi_extent_desired:
+      name: "{{ iscsi_volume.extent_name }}"
+      type: DISK
+      disk: "zvol/{{ iscsi_volume.name }}"
+      blocksize: 512
+      pblocksize: true
+      rpm: SSD
+      ro: false
+      enabled: true
+
+- name: Assert existing extent points to the declared zvol — {{ iscsi_volume.extent_name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_extent_existing | length == 0
+        or _iscsi_extent_existing[0].type == 'DISK'
+      - _iscsi_extent_existing | length == 0
+        or _iscsi_extent_existing[0].disk == _iscsi_extent_desired.disk
+    fail_msg: >-
+      Existing extent {{ iscsi_volume.extent_name }} is not the declared DISK
+      backed by {{ _iscsi_extent_desired.disk }}; refusing to repoint it.
+
+- name: Create DISK extent — {{ iscsi_volume.extent_name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.extent.create
+      - "{{ _iscsi_extent_desired | to_json }}"
+  register: _iscsi_extent_create
+  when: _iscsi_extent_existing | length == 0
+  changed_when: true
+
+- name: Update DISK extent properties — {{ iscsi_volume.extent_name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.extent.update
+      - "{{ _iscsi_extent_existing[0].id }}"
+      - "{{ _iscsi_extent_desired | to_json }}"
+  when:
+    - _iscsi_extent_existing | length == 1
+    - >-
+      _iscsi_extent_existing[0].blocksize != 512
+      or not _iscsi_extent_existing[0].pblocksize
+      or _iscsi_extent_existing[0].rpm != 'SSD'
+      or _iscsi_extent_existing[0].ro
+      or not _iscsi_extent_existing[0].enabled
+  changed_when: true
+
+- name: Record extent id — {{ iscsi_volume.extent_name }}
+  ansible.builtin.set_fact:
+    _truenas_iscsi_extent_ids: >-
+      {{ _truenas_iscsi_extent_ids | default({})
+         | combine({iscsi_volume.extent_name:
+                    (_iscsi_extent_existing[0].id
+                     if _iscsi_extent_existing | length == 1
+                     else ((_iscsi_extent_create.stdout | from_json).id
+                           | default(_iscsi_extent_create.stdout | from_json, true)))}) }}
+
+- name: Find existing target/extent association — {{ iscsi_volume.target_name }}
+  ansible.builtin.set_fact:
+    _iscsi_targetextent_existing: >-
+      {{ _truenas_iscsi_targetextent_query.stdout | from_json
+         | selectattr('target', 'equalto', _truenas_iscsi_target_ids[iscsi_volume.target_name] | int)
+         | selectattr('extent', 'equalto', _truenas_iscsi_extent_ids[iscsi_volume.extent_name] | int)
+         | list }}
+
+- name: Assert target/extent association is unambiguous — {{ iscsi_volume.target_name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_targetextent_existing | length < 2
+    fail_msg: "Duplicate target/extent association for {{ iscsi_volume.target_name }}."
+
+- name: Build desired LUN 0 association — {{ iscsi_volume.target_name }}
+  ansible.builtin.set_fact:
+    _iscsi_targetextent_desired:
+      target: "{{ _truenas_iscsi_target_ids[iscsi_volume.target_name] | int }}"
+      extent: "{{ _truenas_iscsi_extent_ids[iscsi_volume.extent_name] | int }}"
+      lunid: "{{ iscsi_volume.lunid | int }}"
+
+- name: Create target/extent association at LUN 0 — {{ iscsi_volume.target_name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.targetextent.create
+      - "{{ _iscsi_targetextent_desired | to_json }}"
+  when: _iscsi_targetextent_existing | length == 0
+  changed_when: true
+
+- name: Update target/extent association at LUN 0 — {{ iscsi_volume.target_name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.targetextent.update
+      - "{{ _iscsi_targetextent_existing[0].id }}"
+      - "{{ _iscsi_targetextent_desired | to_json }}"
+  when:
+    - _iscsi_targetextent_existing | length == 1
+    - _iscsi_targetextent_existing[0].lunid != (iscsi_volume.lunid | int)
+  changed_when: true

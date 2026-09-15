@@ -1,0 +1,118 @@
+---
+# Reconcile one generic native-iSCSI zvol.  A larger existing zvol is never
+# shrunk; it is an error because the declaration promises an exact size.
+# Expects iscsi_volume and _truenas_iscsi_dataset_query from the caller.
+- name: Find existing iSCSI zvol — {{ iscsi_volume.name }}
+  ansible.builtin.set_fact:
+    _iscsi_zvol_existing: >-
+      {{ _truenas_iscsi_dataset_query.stdout | from_json
+         | selectattr('name', 'equalto', iscsi_volume.name) | list }}
+
+- name: Assert the iSCSI zvol name is unambiguous — {{ iscsi_volume.name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_zvol_existing | length < 2
+    fail_msg: "More than one TrueNAS dataset matched {{ iscsi_volume.name }}."
+
+- name: Assert an existing iSCSI zvol has the expected type — {{ iscsi_volume.name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_zvol_existing | length == 0
+        or _iscsi_zvol_existing[0].type == 'VOLUME'
+    fail_msg: >-
+      {{ iscsi_volume.name }} already exists but is not a VOLUME; refusing to
+      repurpose an existing filesystem.
+
+- name: Assert an existing iSCSI zvol will not be shrunk — {{ iscsi_volume.name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_zvol_existing | length == 0
+        or (_iscsi_zvol_existing[0].volsize.parsed | int) <= (iscsi_volume.volsize | int)
+    fail_msg: >-
+      {{ iscsi_volume.name }} is larger than the declared size; manual
+      expansion/recovery review is required before changing inventory.
+
+- name: Assert immutable iSCSI zvol creation properties — {{ iscsi_volume.name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_zvol_existing | length == 0
+        or (_iscsi_zvol_existing[0].volblocksize.parsed | int)
+           == (iscsi_volume.volblocksize | human_to_bytes)
+      - _iscsi_zvol_existing | length == 0
+        or ((_iscsi_zvol_existing[0].reservation.parsed | default(0, true)) | int)
+           == (iscsi_volume.reservation | default(0) | int)
+      - _iscsi_zvol_existing | length == 0
+        or ((_iscsi_zvol_existing[0].refreservation.parsed | default(0, true)) | int)
+           == (iscsi_volume.refreservation | default(0) | int)
+    fail_msg: >-
+      {{ iscsi_volume.name }} has immutable creation properties that differ
+      from the declaration; refusing to recreate or shrink the zvol.
+
+- name: Create iSCSI zvol — {{ iscsi_volume.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - pool.dataset.create
+      - >-
+        {{ {'name': iscsi_volume.name,
+            'type': 'VOLUME',
+            'create_ancestors': true,
+            'volsize': iscsi_volume.volsize | int,
+            'volblocksize': iscsi_volume.volblocksize,
+            'sparse': iscsi_volume.sparse | bool,
+            'reservation': iscsi_volume.reservation | default(0) | int,
+            'refreservation': iscsi_volume.refreservation | default(0) | int,
+            'compression': iscsi_volume.compression,
+            'sync': iscsi_volume.sync,
+            'comments': iscsi_volume.comments | default(''),
+            'user_properties': iscsi_volume.user_properties | default([])}
+           | to_json }}
+  when: _iscsi_zvol_existing | length == 0
+  changed_when: true
+
+- name: Build desired iSCSI zvol properties — {{ iscsi_volume.name }}
+  ansible.builtin.set_fact:
+    _iscsi_zvol_desired:
+      volsize: "{{ iscsi_volume.volsize | int }}"
+      reservation: "{{ iscsi_volume.reservation | default(0) | int }}"
+      refreservation: "{{ iscsi_volume.refreservation | default(0) | int }}"
+      compression: "{{ iscsi_volume.compression }}"
+      sync: "{{ iscsi_volume.sync }}"
+      user_properties: >-
+        {{ [{'key': 'comments', 'value': iscsi_volume.comments | default('')}]
+           + (iscsi_volume.user_properties | default([])) }}
+    _iscsi_zvol_desired_user_properties: >-
+      {{ ([{'key': 'comments', 'value': iscsi_volume.comments | default('')}]
+         + (iscsi_volume.user_properties | default([])))
+         | items2dict(key_name='key', value_name='value') }}
+    _iscsi_zvol_current_user_properties: >-
+      {{ dict((_iscsi_zvol_existing[0].user_properties | default({}) | dict2items
+               | map(attribute='key') | list)
+              | zip(_iscsi_zvol_existing[0].user_properties | default({}) | dict2items
+                  | map(attribute='value.value') | list)) }}
+  when: _iscsi_zvol_existing | length == 1
+
+- name: Determine whether the existing iSCSI zvol drifts — {{ iscsi_volume.name }}
+  ansible.builtin.set_fact:
+    _iscsi_zvol_in_sync: >-
+      {{ (_iscsi_zvol_existing[0].volsize.parsed | int) == (_iscsi_zvol_desired.volsize | int)
+         and (_iscsi_zvol_existing[0].compression.value | default('')) == _iscsi_zvol_desired.compression
+         and (_iscsi_zvol_existing[0].sync.value | default('')) == _iscsi_zvol_desired.sync
+         and ((_iscsi_zvol_existing[0].reservation.parsed | default(0, true)) | int) == (_iscsi_zvol_desired.reservation | int)
+         and ((_iscsi_zvol_existing[0].refreservation.parsed | default(0, true)) | int) == (_iscsi_zvol_desired.refreservation | int)
+         and _iscsi_zvol_current_user_properties == _iscsi_zvol_desired_user_properties }}
+  when: _iscsi_zvol_existing | length == 1
+
+- name: Update iSCSI zvol properties — {{ iscsi_volume.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - pool.dataset.update
+      - "{{ _iscsi_zvol_existing[0].id }}"
+      - "{{ _iscsi_zvol_desired | to_json }}"
+  when:
+    - _iscsi_zvol_existing | length == 1
+    - not _iscsi_zvol_in_sync
+  changed_when: true

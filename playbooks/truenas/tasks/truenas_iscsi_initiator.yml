@@ -1,0 +1,55 @@
+---
+# Reconcile one exact native-iSCSI initiator policy.  TrueNAS has no logical
+# name field for initiator groups, so the stable inventory identity is the
+# managed comment.
+- name: Find existing initiator policy — {{ iscsi_initiator.name }}
+  ansible.builtin.set_fact:
+    _iscsi_initiator_existing: >-
+      {{ _truenas_iscsi_initiator_query.stdout | from_json
+         | selectattr('comment', 'equalto', iscsi_initiator.comment) | list }}
+
+- name: Assert initiator policy identity is unambiguous — {{ iscsi_initiator.name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_initiator_existing | length < 2
+    fail_msg: "More than one TrueNAS initiator group has {{ iscsi_initiator.comment }}."
+
+- name: Build desired initiator policy — {{ iscsi_initiator.name }}
+  ansible.builtin.set_fact:
+    _iscsi_initiator_desired:
+      initiators: "{{ iscsi_initiator.initiators | sort }}"
+      comment: "{{ iscsi_initiator.comment }}"
+
+- name: Create exact initiator policy — {{ iscsi_initiator.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.initiator.create
+      - "{{ _iscsi_initiator_desired | to_json }}"
+  register: _iscsi_initiator_create
+  when: _iscsi_initiator_existing | length == 0
+  changed_when: true
+
+- name: Update exact initiator policy — {{ iscsi_initiator.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.initiator.update
+      - "{{ _iscsi_initiator_existing[0].id }}"
+      - "{{ _iscsi_initiator_desired | to_json }}"
+  when:
+    - _iscsi_initiator_existing | length == 1
+    - (_iscsi_initiator_existing[0].initiators | sort) != _iscsi_initiator_desired.initiators
+      or _iscsi_initiator_existing[0].comment != _iscsi_initiator_desired.comment
+  changed_when: true
+
+- name: Record initiator policy id — {{ iscsi_initiator.name }}
+  ansible.builtin.set_fact:
+    _truenas_iscsi_initiator_ids: >-
+      {{ _truenas_iscsi_initiator_ids | default({})
+         | combine({iscsi_initiator.name:
+                    (_iscsi_initiator_existing[0].id
+                     if _iscsi_initiator_existing | length == 1
+                     else (_iscsi_initiator_create.stdout | from_json))}) }}

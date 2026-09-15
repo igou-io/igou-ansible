@@ -1,0 +1,130 @@
+---
+# Reconcile declarative native-iSCSI application-config volumes on TrueNAS.
+#
+# This is intentionally generic: callers provide parent datasets, zvols,
+# initiator groups, auth groups, and target/extent/LUN definitions.  It does
+# not know about qBittorrent or Prowlarr and it never manages the shared
+# portal itself.
+#
+# Variables (normally from igou-inventory group_vars/truenas.yml):
+#   truenas_iscsi_parent_datasets — filesystem parents + ZFS metadata
+#   truenas_iscsi_volumes          — VOLUME definitions and iSCSI graph
+#   truenas_iscsi_initiator_groups — exact initiator IQN allowlists
+#   truenas_iscsi_auth_groups      — CHAP groups; password_lookup is secret
+#
+# The play creates/updates the TrueNAS middleware objects only.  It does not
+# create a Kubernetes StorageClass/PV/PVC, mount a destination zvol, or
+# discover/guess target IQNs.  The actual target IQNs are read from SendTargets
+# discovery and recorded in the inventory mapping artifact after convergence.
+- name: Configure native-iSCSI application-config volumes on TrueNAS
+  hosts: truenas
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Assert the native-iSCSI declaration is non-empty
+      ansible.builtin.assert:
+        that:
+          - truenas_iscsi_parent_datasets | default([]) | length > 0
+          - truenas_iscsi_volumes | default([]) | length > 0
+          - truenas_iscsi_initiator_groups | default([]) | length > 0
+          - truenas_iscsi_auth_groups | default([]) | length > 0
+        fail_msg: >-
+          Define parent datasets, volumes, exact initiator groups, and auth
+          groups in inventory before running this playbook.
+
+    - name: Query existing ZFS datasets
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - pool.dataset.query
+      register: _truenas_iscsi_dataset_query
+      changed_when: false
+
+    - name: Reconcile native-iSCSI parent datasets
+      ansible.builtin.include_tasks: tasks/truenas_iscsi_parent_dataset.yml
+      loop: "{{ truenas_iscsi_parent_datasets }}"
+      loop_control:
+        loop_var: iscsi_parent
+        label: "{{ iscsi_parent.name }}"
+
+    - name: Refresh datasets after parent creation
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - pool.dataset.query
+      register: _truenas_iscsi_dataset_query
+      changed_when: false
+
+    - name: Reconcile native-iSCSI zvols
+      ansible.builtin.include_tasks: tasks/truenas_iscsi_zvol.yml
+      loop: "{{ truenas_iscsi_volumes }}"
+      loop_control:
+        loop_var: iscsi_volume
+        label: "{{ iscsi_volume.name }}"
+
+    - name: Query existing initiator policies
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - iscsi.initiator.query
+      register: _truenas_iscsi_initiator_query
+      changed_when: false
+
+    - name: Reconcile exact initiator policies
+      ansible.builtin.include_tasks: tasks/truenas_iscsi_initiator.yml
+      loop: "{{ truenas_iscsi_initiator_groups }}"
+      loop_control:
+        loop_var: iscsi_initiator
+        label: "{{ iscsi_initiator.name }}"
+
+    - name: Query existing CHAP auth groups
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - iscsi.auth.query
+      register: _truenas_iscsi_auth_query
+      changed_when: false
+      no_log: true
+
+    - name: Reconcile dedicated CHAP auth groups
+      ansible.builtin.include_tasks: tasks/truenas_iscsi_auth.yml
+      loop: "{{ truenas_iscsi_auth_groups }}"
+      loop_control:
+        loop_var: iscsi_auth
+        label: "{{ iscsi_auth.name }}"
+
+    - name: Query existing iSCSI targets, extents, and associations
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - midclt call iscsi.target.query
+        - midclt call iscsi.extent.query
+        - midclt call iscsi.targetextent.query
+      register: _truenas_iscsi_graph_queries
+      changed_when: false
+
+    - name: Index iSCSI graph queries
+      ansible.builtin.set_fact:
+        _truenas_iscsi_target_query: "{{ _truenas_iscsi_graph_queries.results[0] }}"
+        _truenas_iscsi_extent_query: "{{ _truenas_iscsi_graph_queries.results[1] }}"
+        _truenas_iscsi_targetextent_query: "{{ _truenas_iscsi_graph_queries.results[2] }}"
+
+    - name: Reconcile target, DISK extent, and LUN 0 association
+      ansible.builtin.include_tasks: tasks/truenas_iscsi_graph.yml
+      loop: "{{ truenas_iscsi_volumes }}"
+      loop_control:
+        loop_var: iscsi_volume
+        label: "{{ iscsi_volume.target_name }}"
+
+    - name: Report reconciled native-iSCSI objects without secrets
+      ansible.builtin.debug:
+        msg:
+          - "zvols: {{ truenas_iscsi_volumes | map(attribute='name') | list }}"
+          - "targets: {{ truenas_iscsi_volumes | map(attribute='target_name') | list }}"
+          - "LUN: 0"
+          - "initiator policies: {{ truenas_iscsi_initiator_groups | map(attribute='name') | list }}"
+          - "auth policies: {{ truenas_iscsi_auth_groups | map(attribute='name') | list }}"

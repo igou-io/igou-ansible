@@ -1,0 +1,74 @@
+---
+# Reconcile one dedicated CHAP auth group.  Every task in this file is
+# no_log because TrueNAS returns the CHAP secret in auth.query responses.
+- name: Find existing CHAP auth group — {{ iscsi_auth.name }}
+  ansible.builtin.set_fact:
+    _iscsi_auth_existing: >-
+      {{ _truenas_iscsi_auth_query.stdout | from_json
+         | selectattr('tag', 'equalto', iscsi_auth.tag | int) | list }}
+  no_log: true
+
+- name: Assert CHAP auth identity is unambiguous — {{ iscsi_auth.name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_auth_existing | length < 2
+    fail_msg: "More than one TrueNAS auth group has tag {{ iscsi_auth.tag }}."
+  no_log: true
+
+- name: Build desired CHAP auth group — {{ iscsi_auth.name }}
+  ansible.builtin.set_fact:
+    _iscsi_auth_desired:
+      tag: "{{ iscsi_auth.tag | int }}"
+      user: "{{ iscsi_auth.username }}"
+      peeruser: ""
+      peersecret: ""
+      discovery_auth: "{{ iscsi_auth.discovery_auth | default('NONE') }}"
+      secret: "{{ iscsi_auth.password_lookup }}"
+  no_log: true
+
+- name: Create dedicated CHAP auth group — {{ iscsi_auth.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.auth.create
+      - "{{ _iscsi_auth_desired | to_json }}"
+  register: _iscsi_auth_create
+  when: _iscsi_auth_existing | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Determine whether CHAP auth drifts — {{ iscsi_auth.name }}
+  ansible.builtin.set_fact:
+    _iscsi_auth_in_sync: >-
+      {{ _iscsi_auth_existing | length == 1
+         and _iscsi_auth_existing[0].user == _iscsi_auth_desired.user
+         and _iscsi_auth_existing[0].discovery_auth == _iscsi_auth_desired.discovery_auth
+         and _iscsi_auth_existing[0].secret == _iscsi_auth_desired.secret }}
+  when: _iscsi_auth_existing | length == 1
+  no_log: true
+
+- name: Update dedicated CHAP auth group — {{ iscsi_auth.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - iscsi.auth.update
+      - "{{ _iscsi_auth_existing[0].id }}"
+      - "{{ _iscsi_auth_desired | to_json }}"
+  when:
+    - _iscsi_auth_existing | length == 1
+    - not _iscsi_auth_in_sync
+  changed_when: true
+  no_log: true
+
+- name: Record CHAP auth group id — {{ iscsi_auth.name }}
+  ansible.builtin.set_fact:
+    _truenas_iscsi_auth_ids: >-
+      {{ _truenas_iscsi_auth_ids | default({})
+         | combine({iscsi_auth.name:
+                    (_iscsi_auth_existing[0].id
+                     if _iscsi_auth_existing | length == 1
+                     else ((_iscsi_auth_create.stdout | from_json).id
+                           | default(_iscsi_auth_create.stdout | from_json, true)))}) }}
+  no_log: true

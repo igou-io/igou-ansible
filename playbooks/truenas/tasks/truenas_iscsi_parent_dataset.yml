@@ -1,0 +1,67 @@
+---
+# Reconcile one filesystem parent for the generic native-iSCSI playbook.
+# Expects iscsi_parent and _truenas_iscsi_dataset_query from the caller.
+- name: Find existing iSCSI parent dataset — {{ iscsi_parent.name }}
+  ansible.builtin.set_fact:
+    _iscsi_parent_existing: >-
+      {{ _truenas_iscsi_dataset_query.stdout | from_json
+         | selectattr('name', 'equalto', iscsi_parent.name) | list }}
+
+- name: Assert the iSCSI parent name is unambiguous — {{ iscsi_parent.name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_parent_existing | length < 2
+    fail_msg: "More than one TrueNAS dataset matched {{ iscsi_parent.name }}."
+
+- name: Assert an existing iSCSI parent is a filesystem — {{ iscsi_parent.name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_parent_existing | length == 0
+        or _iscsi_parent_existing[0].type == 'FILESYSTEM'
+    fail_msg: >-
+      {{ iscsi_parent.name }} already exists but is not a FILESYSTEM; refusing
+      to repurpose it as an iSCSI parent.
+
+- name: Create iSCSI parent dataset — {{ iscsi_parent.name }}
+  ansible.builtin.command:
+    argv:
+      - midclt
+      - call
+      - pool.dataset.create
+      - >-
+        {{ {'name': iscsi_parent.name,
+            'type': 'FILESYSTEM',
+            'create_ancestors': true,
+            'comments': iscsi_parent.comments | default(''),
+            'user_properties': iscsi_parent.user_properties | default([])}
+           | to_json }}
+  when: _iscsi_parent_existing | length == 0
+  changed_when: true
+
+- name: Read iSCSI parent user properties — {{ iscsi_parent.name }}
+  ansible.builtin.command:
+    argv:
+      - zfs
+      - get
+      - -H
+      - -o
+      - value
+      - "{{ item.key }}"
+      - "{{ iscsi_parent.name }}"
+  loop: "{{ iscsi_parent.user_properties | default([]) }}"
+  register: _iscsi_parent_user_property_values
+  changed_when: false
+  when: _iscsi_parent_existing | length == 1
+
+- name: Reconcile iSCSI parent user properties — {{ iscsi_parent.name }}
+  ansible.builtin.command:
+    argv:
+      - zfs
+      - set
+      - "{{ item.item.key }}={{ item.item.value }}"
+      - "{{ iscsi_parent.name }}"
+  loop: "{{ _iscsi_parent_user_property_values.results | default([]) }}"
+  when:
+    - _iscsi_parent_existing | length == 1
+    - item.rc != 0 or item.stdout != item.item.value
+  changed_when: item.rc != 0 or item.stdout != item.item.value
