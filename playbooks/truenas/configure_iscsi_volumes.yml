@@ -33,6 +33,32 @@
           Define parent datasets, volumes, exact initiator groups, and auth
           groups in inventory before running this playbook.
 
+    - name: Query the declared iSCSI portal
+      ansible.builtin.command:
+        argv:
+          - midclt
+          - call
+          - iscsi.portal.query
+      register: _truenas_iscsi_portal_query
+      changed_when: false
+
+    - name: Assert the declared iSCSI portal exists at the declared port
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_truenas_iscsi_portal_query.stdout | from_json
+             | selectattr('id', 'equalto', truenas_iscsi_portal.id | int) | list
+             | length) == 1
+          - >-
+            ((_truenas_iscsi_portal_query.stdout | from_json
+              | selectattr('id', 'equalto', truenas_iscsi_portal.id | int) | first
+              | default({})).listen
+             | selectattr('port', 'equalto', truenas_iscsi_portal.port | int) | list
+             | length) > 0
+        fail_msg: >-
+          The declared TrueNAS iSCSI portal id/port is not present; refusing
+          to create targets against an unexpected portal.
+
     - name: Query existing ZFS datasets
       ansible.builtin.command:
         argv:

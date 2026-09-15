@@ -135,6 +135,32 @@
                      else ((_iscsi_extent_create.stdout | from_json).id
                            | default(_iscsi_extent_create.stdout | from_json, true)))}) }}
 
+- name: Find associations for the managed target and extent — {{ iscsi_volume.target_name }}
+  ansible.builtin.set_fact:
+    _iscsi_target_associations: >-
+      {{ _truenas_iscsi_targetextent_query.stdout | from_json
+         | selectattr('target', 'equalto', _truenas_iscsi_target_ids[iscsi_volume.target_name] | int)
+         | list }}
+    _iscsi_extent_associations: >-
+      {{ _truenas_iscsi_targetextent_query.stdout | from_json
+         | selectattr('extent', 'equalto', _truenas_iscsi_extent_ids[iscsi_volume.extent_name] | int)
+         | list }}
+
+- name: Assert managed target and extent have no unexpected associations — {{ iscsi_volume.target_name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_target_associations | length <= 1
+      - _iscsi_extent_associations | length <= 1
+      - _iscsi_target_associations | length == 0
+        or (_iscsi_target_associations[0].extent == _truenas_iscsi_extent_ids[iscsi_volume.extent_name] | int
+            and _iscsi_target_associations[0].lunid == iscsi_volume.lunid | int)
+      - _iscsi_extent_associations | length == 0
+        or (_iscsi_extent_associations[0].target == _truenas_iscsi_target_ids[iscsi_volume.target_name] | int
+            and _iscsi_extent_associations[0].lunid == iscsi_volume.lunid | int)
+    fail_msg: >-
+      Managed target or extent {{ iscsi_volume.target_name }} has an
+      unexpected target/extent association; refusing to expose another LUN.
+
 - name: Find existing target/extent association — {{ iscsi_volume.target_name }}
   ansible.builtin.set_fact:
     _iscsi_targetextent_existing: >-

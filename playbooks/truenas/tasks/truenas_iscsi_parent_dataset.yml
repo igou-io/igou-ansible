@@ -22,6 +22,16 @@
       {{ iscsi_parent.name }} already exists but is not a FILESYSTEM; refusing
       to repurpose it as an iSCSI parent.
 
+- name: Assert existing iSCSI parent comments are unchanged — {{ iscsi_parent.name }}
+  ansible.builtin.assert:
+    that:
+      - _iscsi_parent_existing | length == 0
+        or (_iscsi_parent_existing[0].user_properties.comments.value | default(''))
+           == (iscsi_parent.comments | default(''))
+    fail_msg: >-
+      {{ iscsi_parent.name }} has unexpected comments metadata. TrueNAS
+      25.10.1 exposes this as a creation-time property; review before repair.
+
 - name: Create iSCSI parent dataset — {{ iscsi_parent.name }}
   ansible.builtin.command:
     argv:
