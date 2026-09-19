@@ -16,7 +16,7 @@ truenas_docker_containers:
       - content: |
           server {
               listen 8080;
-              location / { return 200 "molecule #330 ordering probe"; }
+              location / { return 200 "{{ molecule_config_marker | default('initial') }}"; }
           }
         dest: config/default.conf
         mount: /etc/nginx/conf.d/default.conf
