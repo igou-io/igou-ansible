@@ -2,9 +2,9 @@
 # Purpose
 # -------
 # Poll the automation-orchestrator (AO) approvals API and post a single Slack
-# digest of everything still waiting on a human decision. Runs on a 15-minute
-# AAP schedule (template `ao_approvals_digest`, schedule
-# `ao_approvals_digest_15m` in igou-inventory). Read-only against AO: it lists
+# digest of everything still waiting on a human decision. Manual use only:
+# template `ao_approvals_digest` is retained, but `ao_approvals_digest_15m`
+# is disabled in igou-inventory. Read-only against AO: it lists
 # approvals and never decides one — see playbooks/ao/approval_decide.yaml for
 # that half of the bridge.
 #

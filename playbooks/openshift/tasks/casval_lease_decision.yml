@@ -1,0 +1,14 @@
+---
+# Keep the existing owner when a request would shorten an active lease.
+- name: Calculate the requested casval deadline
+  ansible.builtin.set_fact:
+    casval_requested_expiry: "{{ casval_now_epoch | int + casval_lease_seconds | int }}"
+
+- name: Decide whether the current lease must be retained
+  ansible.builtin.set_fact:
+    casval_retain_lease: >-
+      {{ casval_replicas_before | int == 1
+         and casval_expiry_before | int > casval_now_epoch | int
+         and casval_lease_seconds | int > 0
+         and casval_lease_owner_before != casval_lease_owner
+         and casval_expiry_before | int >= casval_requested_expiry | int }}

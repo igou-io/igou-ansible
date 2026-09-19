@@ -37,7 +37,10 @@
 #     -i igou-inventory/inventory.yaml -e casval_state=up
 #
 # Publishes set_stats (per_host: false) for downstream workflow nodes:
-#   casval_label  up | down | superseded | timeout
+#   casval_label  up | down | superseded | retained | active | expired | timeout
+#   casval_lease   2h | 4h | 8h | 12h | 24h (required for AO scale-up)
+#   casval_expires_at  UTC deadline; shorter renewals retain the existing owner
+#   casval_state=status is read-only, used to suppress obsolete warnings.
 #   casval_node   node name, or '' when there is no node
 #   casval_detail short human-readable outcome
 
@@ -53,6 +56,14 @@
     casval_infra_template_name: casval-worker-template
     casval_set_selector: cluster.x-k8s.io/set-name=casval-worker
     casval_node_selector: node-role.kubernetes.io/burst
+    casval_lease: ""
+    casval_duration_seconds:
+      2h: 7200
+      4h: 14400
+      8h: 28800
+      12h: 43200
+      24h: 86400
+    casval_expiry_annotation: automation.igou.systems/casval-lease-expires
     casval_lease_annotation: automation.igou.systems/casval-lease-id
     # A cold Redfish virtual-media provision can take 20-25 minutes. Allow
     # 30 minutes, then roll replicas back to 0 and fail the job closed.
@@ -63,11 +74,11 @@
       down: 0
   tasks:
 
-    - name: Assert casval_state is up or down
+    - name: Assert casval_state is up, down, or status
       ansible.builtin.assert:
-        that: casval_state | default('', true) in ['up', 'down']
+        that: casval_state | default('', true) in ['up', 'down', 'status']
         fail_msg: >-
-          casval_state must be 'up' or 'down'
+          casval_state must be 'up', 'down', or 'status'
           (got '{{ casval_state | default('<undefined>') }}').
 
     - name: Assert the optional lease identifier is safe
@@ -78,6 +89,13 @@
         fail_msg: >-
           casval_lease_id is optional but must contain no more than 128
           alphanumeric, dot, underscore, or hyphen characters.
+
+    - name: Validate the lease duration
+      ansible.builtin.assert:
+        that:
+          - casval_lease == '' or casval_lease in casval_duration_seconds
+          - casval_state != 'up' or casval_lease_id | default('') | length == 0 or casval_lease in casval_duration_seconds
+        fail_msg: AO scale-up requires casval_lease=2h|4h|8h|12h|24h.
 
     - name: Read the casval-worker MachineSet
       kubernetes.core.k8s_info:
@@ -119,6 +137,37 @@
              or (casval_lease_id | default('') | length == 0)
              or ((casval_ms.metadata.annotations | default({}))[casval_lease_annotation]
                  | default('', true)) == (casval_lease_id | default('')) }}
+
+    - name: Read the lease clock and previous deadline
+      vars:
+        casval_ms: "{{ casval_machineset.resources | first }}"
+      ansible.builtin.set_fact:
+        casval_now_epoch: "{{ (now(utc=true) - ('1970-01-01' | to_datetime('%Y-%m-%d'))).total_seconds() | int }}"
+        casval_expiry_before: "{{ (casval_ms.metadata.annotations | default({})).get(casval_expiry_annotation, '0') | int }}"
+        casval_replicas_before: "{{ casval_ms.spec.replicas | int }}"
+        casval_lease_seconds: "{{ casval_duration_seconds.get(casval_lease, 0) }}"
+
+    - name: Evaluate the renewal policy
+      ansible.builtin.include_tasks: tasks/casval_lease_decision.yml
+
+    - name: Report a retained lease or read-only ownership check
+      when: casval_state == 'status' or (casval_state == 'up' and casval_retain_lease)
+      block:
+        - name: Publish the existing lease status
+          ansible.builtin.set_stats:
+            per_host: false
+            data:
+              casval_label: >-
+                {{ 'retained' if casval_state == 'up'
+                   else 'superseded' if not casval_scale_allowed
+                   else 'active' if casval_replicas_before | int == 1 and casval_expiry_before | int > casval_now_epoch | int
+                   else 'expired' }}
+              casval_expires_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(casval_expiry_before | int, utc=true) }}"
+              casval_lease_owner: "{{ casval_lease_owner_before }}"
+              casval_detail: Existing lease ownership and deadline preserved.
+
+        - name: Finish without changing the lease
+          ansible.builtin.meta: end_play
 
     - name: Find the current burst node
       kubernetes.core.k8s_info:
@@ -172,6 +221,7 @@
           metadata:
             annotations:
               automation.igou.systems/casval-lease-id: "{{ casval_lease_owner }}"
+              automation.igou.systems/casval-lease-expires: "0"
       when: casval_state == 'up'
 
     - name: Scale the casval-worker MachineSet
@@ -202,6 +252,33 @@
       failed_when: false
       when: casval_state == 'up'
 
+    - name: Record the deadline after the node becomes Ready
+      when:
+        - casval_state == 'up'
+        - >-
+          casval_up_wait.resources | default([], true)
+          | map(attribute='status.conditions') | flatten
+          | selectattr('type', 'equalto', 'Ready')
+          | selectattr('status', 'equalto', 'True') | list | length > 0
+      block:
+        - name: Calculate the usable lease deadline
+          ansible.builtin.set_fact:
+            casval_expiry: >-
+              {{ ((now(utc=true) - ('1970-01-01' | to_datetime('%Y-%m-%d'))).total_seconds() | int
+                  + casval_lease_seconds | int) if casval_lease_seconds | int > 0 else 0 }}
+
+        - name: Persist the casval deadline
+          kubernetes.core.k8s:
+            state: patched
+            api_version: "{{ casval_machineset_api_version }}"
+            kind: MachineSet
+            name: "{{ casval_machineset_name }}"
+            namespace: "{{ casval_machineset_namespace }}"
+            definition:
+              metadata:
+                annotations:
+                  automation.igou.systems/casval-lease-expires: "{{ casval_expiry | string }}"
+
     - name: Wait for the casval Machine to be deleted
       kubernetes.core.k8s_info:
         api_version: "{{ casval_machineset_api_version }}"
@@ -213,6 +290,25 @@
       retries: "{{ casval_wait_retries }}"
       delay: "{{ casval_wait_delay }}"
       until: casval_down_wait.resources | default([], true) | length == 0
+      when:
+        - casval_state == 'down'
+        - casval_scale_allowed
+
+    - name: Verify the BareMetalHost is deprovisioned and powered off
+      kubernetes.core.k8s_info:
+        api_version: metal3.io/v1alpha1
+        kind: BareMetalHost
+        name: casval
+        namespace: "{{ casval_machineset_namespace }}"
+      register: casval_host_wait
+      retries: "{{ casval_wait_retries }}"
+      delay: "{{ casval_wait_delay }}"
+      until:
+        - casval_host_wait.resources | length == 1
+        - not (casval_host_wait.resources[0].spec.online | default(true) | bool)
+        - not (casval_host_wait.resources[0].status.poweredOn | default(true) | bool)
+        - casval_host_wait.resources[0].status.provisioning.state | default('') == 'available'
+        - casval_host_wait.resources[0].spec.consumerRef | default(none) == none
       when:
         - casval_state == 'down'
         - casval_scale_allowed
@@ -259,6 +355,7 @@
         per_host: false
         data:
           casval_label: "{{ casval_outcome }}"
+          casval_expires_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(casval_expiry | default(casval_expiry_before) | int, utc=true) }}"
           casval_node: "{{ casval_node_name }}"
           casval_detail: >-
             {{ ('casval leased: node ' ~ casval_node_name ~ ' Ready (MachineSet '
