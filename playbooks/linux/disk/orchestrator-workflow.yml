@@ -243,7 +243,7 @@ nodes:
       job_template_name: disk_notify_slack
       organization_name: igou
     settings:
-      continue_on_failure: true
+      continue_on_failure: false
       timeout: 60
       retry_policy:
         max_retries: 0
