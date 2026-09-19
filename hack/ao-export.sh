@@ -63,6 +63,8 @@ if [[ "${WF}" == "${AO_DISK_WF}" ]]; then
   out="${AO_DISK_OUT}"
 elif [[ "${WF}" == "${AO_CASVAL_WF}" ]]; then
   out="${AO_CASVAL_OUT}"
+elif [[ "${WF}" == "a4c3b4b5-89f5-4835-a85f-dc72b846f078" ]]; then
+  out="playbooks/devenv/restore-orchestrator-workflow.yml"
 else
   out="./ao-workflow-${WF}-v${VER}.yml"
 fi

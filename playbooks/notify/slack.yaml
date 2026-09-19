@@ -44,9 +44,10 @@
 
     - name: Post the message
       community.general.slack:
-        token: "{{ lookup('community.general.onepassword', 'slack_notification_password', field='password', vault='lab_external_api_keys') }}"
+        token: "{{ slack_notification_token }}"
         channel: "{{ slack_channel }}"
         msg: >-
           {{ notify_status_emoji[notify_status] | default(':white_circle:') }}
           {{ notify_title }}{% if notify_message | length > 0 %}
           {{ notify_message }}{% endif %}
+      no_log: true

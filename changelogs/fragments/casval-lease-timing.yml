@@ -1,0 +1,5 @@
+---
+minor_changes:
+  - casval_scale preserved longer leases, exposed read-only ownership checks, and verified physical power-off on release.
+  - casval-lease included the warning window in the requested duration and isolated bounded Slack notifications from its timers.
+  - AO approval workflows linked directly to the execution and stated their decision windows, replacing recurring digest reminders.

@@ -26,7 +26,7 @@
   tasks:
     - name: Post summary
       community.general.slack:
-        token: "{{ lookup('community.general.onepassword', 'slack_notification_password', field='password', vault='lab_external_api_keys') }}"
+        token: "{{ slack_notification_token }}"
         channel: "{{ slack_channel }}"
         msg: >-
           {{ tier_emoji[disk_tier] | default(':white_circle:') }}
@@ -39,3 +39,8 @@
           {% if escalate | default(false) | bool %}:rotating_light: STILL CRITICAL after reclaim — human needed.{% endif %}
           {% if agent_summary is defined and agent_summary | length > 0 %}
           {{ agent_summary }}{% endif %}
+          {% if approval_execution_url | default('') | length > 0 %}
+          <{{ approval_execution_url }}|Review and decide in AO>.
+          Decision window: 4 hours from the approval gate; timeout rejects.
+          {% endif %}
+      no_log: true

@@ -1,12 +1,16 @@
 ---
 name: casval-lease
 edges:
-  - to: scale_up
-    from: start
-  - to: notify_start
-    from: scale_up
-  - to: tier
-    from: notify_start
+  - from: start
+    to: scale_up
+  - from: scale_up
+    to: lease_acquired
+  - from: lease_acquired
+    from_port: 'true'
+    to: tier
+  - from: lease_acquired
+    from_port: 'true'
+    to: notify_start
   - to: hold_2h
     from: tier
     from_port: h2
@@ -25,35 +29,57 @@ edges:
   - to: hold_fb
     from: tier
     from_port: fallback
-  - to: notify_warn
-    from: hold_2h
-  - to: notify_warn
-    from: hold_4h
-  - to: notify_warn
-    from: hold_8h
-  - to: notify_warn
-    from: hold_12h
-  - to: notify_warn
-    from: hold_24h
-  - to: notify_warn
-    from: hold_fb
-  - to: grace
-    from: notify_warn
-  - to: scale_down
-    from: grace
-  - to: notify_done
-    from: scale_down
+  - from: hold_2h
+    to: grace
+  - from: hold_2h
+    to: check_owner
+  - from: hold_4h
+    to: grace
+  - from: hold_4h
+    to: check_owner
+  - from: hold_8h
+    to: grace
+  - from: hold_8h
+    to: check_owner
+  - from: hold_12h
+    to: grace
+  - from: hold_12h
+    to: check_owner
+  - from: hold_24h
+    to: grace
+  - from: hold_24h
+    to: check_owner
+  - from: hold_fb
+    to: grace
+  - from: hold_fb
+    to: check_owner
+  - from: check_owner
+    to: owner_check_ok
+  - from: still_owner
+    from_port: 'true'
+    to: notify_warn
+  - from: grace
+    to: scale_down
+  - from: scale_down
+    to: released
+  - from: released
+    from_port: 'true'
+    to: notify_done
+  - from: owner_check_ok
+    from_port: 'true'
+    to: still_owner
 nodes:
   - id: scale_up
     name: Lease casval and wait for Ready
     type: aap_job_template
     position:
-      x: 250.0
-      y: 300.0
+      x: 250
+      y: 300
     parameters:
       extra_vars:
         casval_state: up
         casval_lease_id: ${workflow_context.execution.id}
+        casval_lease: ${trigger.lease}
       credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
       integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
       job_template_name: casval_scale
@@ -62,15 +88,18 @@ nodes:
     name: Notify (notify_start)
     type: aap_job_template
     position:
-      x: 500.0
-      y: 300.0
+      x: 500
+      y: 300
     settings:
       continue_on_failure: true
+      timeout: 60
+      retry_policy:
+        max_retries: 0
     parameters:
       extra_vars:
         notify_title: 'casval lease: started'
         notify_status: ok
-        notify_message: casval is Ready (label ${scale_up.artifacts.casval_label}, node ${scale_up.artifacts.casval_node}). Lease ${trigger.lease}; re-run to extend safely.
+        notify_message: casval is Ready (${scale_up.artifacts.casval_node}). Lease ${trigger.lease}; expires approximately ${scale_up.artifacts.casval_expires_at}. A shorter renewal preserves the existing lease.
       credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
       integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
       job_template_name: notify_slack
@@ -79,8 +108,8 @@ nodes:
     name: Lease tier
     type: switch
     position:
-      x: 750.0
-      y: 300.0
+      x: 750
+      y: 300
     parameters:
       cases:
         - port: h2
@@ -103,63 +132,66 @@ nodes:
     name: Hold 2h
     type: wait
     position:
-      x: 1000.0
-      y: 100.0
+      x: 1000
+      y: 100
     parameters:
-      duration: 7200
+      duration: 6600
   - id: hold_4h
     name: Hold 4h
     type: wait
     position:
-      x: 1000.0
-      y: 240.0
+      x: 1000
+      y: 240
     parameters:
-      duration: 14400
+      duration: 13800
   - id: hold_8h
     name: Hold 8h
     type: wait
     position:
-      x: 1000.0
-      y: 380.0
+      x: 1000
+      y: 380
     parameters:
-      duration: 28800
+      duration: 28200
   - id: hold_12h
     name: Hold 12h
     type: wait
     position:
-      x: 1000.0
-      y: 520.0
+      x: 1000
+      y: 520
     parameters:
-      duration: 43200
+      duration: 42600
   - id: hold_24h
     name: Hold 24h
     type: wait
     position:
-      x: 1000.0
-      y: 660.0
+      x: 1000
+      y: 660
     parameters:
-      duration: 86400
+      duration: 85800
   - id: hold_fb
     name: Hold fallback 4h
     type: wait
     position:
-      x: 1000.0
-      y: 800.0
+      x: 1000
+      y: 800
     parameters:
-      duration: 14400
+      duration: 13800
   - id: notify_warn
     name: Notify (notify_warn)
     type: aap_job_template
     position:
-      x: 1250.0
-      y: 300.0
+      x: 1250
+      y: 300
     settings:
       continue_on_failure: true
+      timeout: 60
+      retry_policy:
+        max_retries: 0
     parameters:
       extra_vars:
         notify_title: 'casval lease: ending in 10m'
         notify_status: warn
-        notify_message: Lease expires in 10 minutes. To extend, run casval-lease again (idempotent scale-up + fresh timer).
+        notify_message: casval lease expires approximately ${check_owner.artifacts.casval_expires_at}. Re-run casval-lease to extend; shorter requests preserve the current lease.
       credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
       integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
       job_template_name: notify_slack
@@ -168,16 +200,16 @@ nodes:
     name: Grace 10m
     type: wait
     position:
-      x: 1500.0
-      y: 300.0
+      x: 1500
+      y: 300
     parameters:
       duration: 600
   - id: scale_down
     name: Release casval if lease owner
     type: aap_job_template
     position:
-      x: 1750.0
-      y: 300.0
+      x: 1750
+      y: 300
     parameters:
       extra_vars:
         casval_state: down
@@ -190,19 +222,73 @@ nodes:
     name: Notify (notify_done)
     type: aap_job_template
     position:
-      x: 2000.0
-      y: 300.0
+      x: 2000
+      y: 300
     settings:
       continue_on_failure: true
+      timeout: 60
+      retry_policy:
+        max_retries: 0
     parameters:
       extra_vars:
         notify_title: 'casval lease: ended'
         notify_status: ok
-        notify_message: casval lease release finished (label ${scale_down.artifacts.casval_label}, node ${scale_down.artifacts.casval_node}).
+        notify_message: 'casval released: Machine deleted and BareMetalHost verified powered off and available.'
       credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
       integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
       job_template_name: notify_slack
       organization_name: igou
+  - id: lease_acquired
+    name: New lease acquired?
+    type: condition
+    position:
+      x: 500
+      y: 300
+    parameters:
+      condition: ${scale_up.artifacts.casval_label} == 'up'
+  - id: still_owner
+    name: Lease still active?
+    type: condition
+    position:
+      x: 1250
+      y: 50
+    parameters:
+      condition: ${check_owner.artifacts.casval_label} == 'active'
+  - id: released
+    name: Host released?
+    type: condition
+    position:
+      x: 1900
+      y: 300
+    parameters:
+      condition: ${scale_down.artifacts.casval_label} == 'down'
+  - id: check_owner
+    name: Check lease before warning
+    type: aap_job_template
+    position:
+      x: 1100
+      y: 50
+    parameters:
+      extra_vars:
+        casval_state: status
+        casval_lease_id: ${workflow_context.execution.id}
+      credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
+      integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
+      job_template_name: casval_scale
+      organization_name: igou
+    settings:
+      timeout: 60
+      retry_policy:
+        max_retries: 0
+      continue_on_failure: true
+  - id: owner_check_ok
+    name: Ownership check succeeded?
+    type: condition
+    position:
+      x: 1180
+      y: 50
+    parameters:
+      condition: ${check_owner.status} == 'completed'
 triggers:
   - id: start
     name: Start lease
@@ -226,5 +312,5 @@ triggers:
             type: string
             title: Lease length
             default: 4h
-description: 'Time-boxed on-demand GPU burst-worker lease: scale casval up, wait for Ready, hold a durable timer, warn, grace, then release. Overlapping runs are lease-fenced; re-run to extend safely.'
+description: On-demand casval lease with renewal that cannot shorten an active lease. The selected duration includes the ten-minute warning window. Notifications run on separate bounded branches; superseded notices are suppressed and release verifies physical power-off.
 schema_version: 2.0.0

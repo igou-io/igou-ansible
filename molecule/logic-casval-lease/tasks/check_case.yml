@@ -1,0 +1,16 @@
+---
+- name: Evaluate the production lease decision with the scenario inputs
+  ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_lease_decision.yml
+  vars:
+    casval_now_epoch: 1000
+    casval_lease_seconds: "{{ casval_case.duration }}"
+    casval_replicas_before: "{{ casval_case.replicas }}"
+    casval_expiry_before: "{{ casval_case.expiry }}"
+    casval_lease_owner_before: "{{ casval_case.owner }}"
+    casval_lease_owner: current
+
+- name: Verify the renewal outcome
+  ansible.builtin.assert:
+    that:
+      - casval_retain_lease == casval_case.retained
+    fail_msg: "{{ casval_case.name }}"

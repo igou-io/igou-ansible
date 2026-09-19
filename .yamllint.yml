@@ -2,6 +2,7 @@
 extends: default
 
 ignore: |
+  .venv/
   changelogs
   vault.yml
   .github/workflows/
