@@ -1,0 +1,8 @@
+---
+# Change only mounted config content after Molecule has proved the normal
+# converge path is idempotent. The generated Compose file remains unchanged,
+# so app.redeploy is evidence that config-only updates reload the application.
+- name: Apply a config-only update
+  ansible.builtin.import_playbook: ../../playbooks/truenas/configure_docker_containers.yml
+  vars:
+    molecule_config_marker: updated

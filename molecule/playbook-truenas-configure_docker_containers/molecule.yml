@@ -16,7 +16,9 @@
 # app.create is called; verify asserts the compose file, config file, and .env
 # are all in that snapshot — with the pre-#330 task order this assertion fails.
 # app.query replays state recorded by app.create, so the idempotence step also
-# proves a second converge issues no app.create/app.redeploy.
+# proves a second converge issues no app.create/app.redeploy. The side-effect
+# phase then changes only config content and proves that app.redeploy reloads
+# the existing application without a Compose-file change.
 #
 # The datasets play (arensb.truenas.filesystem — real middleware calls) is
 # skipped via --skip-tags; the ownership play's `file state=directory` tasks
@@ -46,12 +48,13 @@ ansible:
     destroy: destroy.yml
     prepare: prepare.yml
     converge: converge.yml
+    side_effect: side_effect.yml
     verify: verify.yml
 
 dependency:
   name: galaxy
   options:
-    requirements-file: collections.yml
+    requirements-file: molecule/playbook-truenas-configure_docker_containers/collections.yml
 
 scenario:
   name: playbook-truenas-configure_docker_containers
@@ -62,6 +65,7 @@ scenario:
     - prepare
     - converge
     - idempotence
+    - side_effect
     - verify
     - destroy
 

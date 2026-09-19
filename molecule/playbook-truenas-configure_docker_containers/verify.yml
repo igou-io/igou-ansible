@@ -68,14 +68,20 @@
         src: /var/lib/molecule-midclt/calls.log
       register: _calls_slurp
 
-    - name: Assert app.create ran exactly once and nothing was redeployed
+    - name: Assert config-only updates redeploy the existing application once
       ansible.builtin.assert:
         that:
           - _calls | select('search', 'app\\.create') | length == 1
-          - _calls | select('search', 'app\\.redeploy') | length == 0
+          - _calls | select('search', 'app\\.redeploy') | length == 1
+          - >-
+            _calls
+            | select('search', 'app\\.redeploy')
+            | select('search', 'nginx-mock')
+            | length == 1
         fail_msg: >-
-          Unexpected middleware call pattern (converge + idempotence should
-          create once and never redeploy): {{ _calls }}
+          Unexpected middleware call pattern (converge should create once,
+          idempotence should do nothing, and the config-only side effect should
+          redeploy nginx-mock once): {{ _calls }}
       vars:
         _calls: >-
           {{ _calls_slurp.content | b64decode | trim | split('\n') }}

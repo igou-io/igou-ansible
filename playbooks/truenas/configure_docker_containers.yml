@@ -395,6 +395,7 @@
         owner: "{{ item.0.owner | default(_default_owner) }}"
         group: "{{ item.0.group | default(_default_group) }}"
         mode: "{{ item.1.mode | default('0644') }}"
+      register: _config_inline
       loop: "{{ _present | subelements('config_files', skip_missing=True) }}"
       loop_control:
         label: "{{ item.0.name }}/{{ item.1.dest }}"
@@ -449,8 +450,8 @@
     #   2. Creates new custom apps for containers that have a compose file but
     #      are not yet registered as TrueNAS apps (via app.create with an
     #      include pointing at the deployed docker-compose.yml).
-    #   3. Redeploys existing apps whose compose file changed on disk so
-    #      TrueNAS picks up the new configuration.
+    #   3. Redeploys existing apps whose compose file or mounted config changed
+    #      on disk so the running container picks up the new configuration.
     #
     # The app name in TrueNAS matches the "name" field in
     # truenas_docker_containers.
@@ -477,6 +478,23 @@
              | map(attribute='name')
              | list }}
       tags: [compose]
+
+    - name: Collect containers with changed config files
+      ansible.builtin.set_fact:
+        _changed_config_names: >-
+          {{ (_config_inline.results | default([]))
+             | selectattr('changed')
+             | map(attribute='item.0.name')
+             | list }}
+      tags:
+        - compose
+
+    - name: Combine containers with changed deployment inputs
+      ansible.builtin.set_fact:
+        _changed_app_names: >-
+          {{ (_changed_compose_names + _changed_config_names) | unique | list }}
+      tags:
+        - compose
 
     - name: Query TrueNAS installed applications
       ansible.builtin.command: midclt call app.query
@@ -530,20 +548,22 @@
 
     # --- Redeploy changed apps -------------------------------------------------
 
-    - name: Redeploy TrueNAS custom apps with changed compose files
+    - name: Redeploy TrueNAS custom apps with changed deployment inputs
       ansible.builtin.command: "midclt call app.redeploy {{ item }}"
       changed_when: true
-      loop: "{{ _changed_compose_names | intersect(_truenas_app_names | default([])) }}"
+      loop: "{{ _changed_app_names | intersect(_truenas_app_names | default([])) }}"
       loop_control:
         label: "{{ item }}"
-      tags: [compose]
+      tags:
+        - compose
 
     - name: Redeployed apps
       ansible.builtin.debug:
         msg: >-
-          {{ _changed_compose_names | intersect(_truenas_app_names | default([])) }}
-      when: (_changed_compose_names | intersect(_truenas_app_names | default([]))) | length > 0
-      tags: [compose]
+          {{ _changed_app_names | intersect(_truenas_app_names | default([])) }}
+      when: (_changed_app_names | intersect(_truenas_app_names | default([]))) | length > 0
+      tags:
+        - compose
 
 # --- Cleanup: state=absent ---------------------------------------------------
 
