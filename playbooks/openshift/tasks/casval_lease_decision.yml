@@ -1,5 +1,4 @@
 ---
-# Pure lease policy, shared by the scale playbook and the logic scenario.
 # Keep the existing owner when a request would shorten an active lease.
 - name: Calculate the requested casval deadline
   ansible.builtin.set_fact:
