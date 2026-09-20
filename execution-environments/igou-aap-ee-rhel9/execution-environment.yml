@@ -69,11 +69,11 @@ dependencies:
       - name: ansible.utils
         version: "6.1.0"
       - name: community.routeros
-        version: "3.21.0"
+        version: "3.22.0"
       - name: community.crypto
-        version: "3.3.0"
+        version: "3.4.0"
       - name: community.general
-        version: "13.3.0"
+        version: "13.4.0"
       - name: redhat.satellite
         version: "5.11.0"
       - name: redhat.insights
