@@ -26,7 +26,7 @@ roles:
     version: 1.4.1
 collections:
   - name: community.general
-    version: 13.3.0
+    version: 13.4.0
   - name: ansible.posix
     version: 2.2.2
   - name: kubernetes.core
@@ -42,20 +42,20 @@ collections:
   - name: felixfontein.acme
     version: 0.11.1
   - name: community.crypto
-    version: 3.3.0
+    version: 3.4.0
   - name: artis3n.tailscale
     version: 1.2.1
   - name: https://github.com/david-igou/ansible-truenas.git
     type: git
     version: fix-user-update
   - name: community.docker
-    version: 5.2.2
+    version: 5.3.0
   - name: vkhitrin.libguestfs
     version: 1.1.5
   - name: ansible.netcommon
     version: 8.6.2
   - name: community.routeros
-    version: 3.21.0
+    version: 3.22.0
   - name: david_igou.routeros_configuration
     version: 0.0.7-alpha
   - name: amazon.aws
