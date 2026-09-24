@@ -1,6 +1,6 @@
 ---
 name: omnigent-smoke
-description: Manually create an Omnigent managed session and send a prompt to the OpenCode Go agent using REST API steps.
+description: Manual prompt test for an Omnigent managed OpenCode Go sandbox using REST
 schema_version: 2.0.0
 triggers:
   - id: start
@@ -62,7 +62,7 @@ nodes:
     name: Send prompt to OpenCode Go agent
     type: http_request
     position:
-      x: 900
+      x: 1200
       y: 300
     parameters:
       method: POST
@@ -81,10 +81,30 @@ nodes:
       timeout: 360
       retry_policy:
         max_retries: 0
+  - id: share_session
+    name: Share session with igou
+    type: http_request
+    position:
+      x: 900
+      y: 300
+    parameters:
+      method: PUT
+      url: https://omnigent.apps.ocp.igou.systems/v1/sessions/${create_session.body.id}/permissions
+      headers:
+        Authorization: Bearer ${mint_token.body.access_token}
+        Content-Type: application/json
+      body:
+        user_id: igou
+        level: 2
+    settings:
+      retry_policy:
+        max_retries: 0
 edges:
   - from: start
     to: mint_token
   - from: mint_token
     to: create_session
   - from: create_session
+    to: share_session
+  - from: share_session
     to: send_prompt
