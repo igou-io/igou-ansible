@@ -1,0 +1,90 @@
+---
+name: omnigent-smoke
+description: Manually create an Omnigent managed session and send a prompt to the OpenCode Go agent using REST API steps.
+schema_version: 2.0.0
+triggers:
+  - id: start
+    name: Enter a prompt
+    type: manual_trigger
+    position:
+      x: 0
+      y: 300
+    parameters:
+      input_schema:
+        type: object
+        required:
+          - prompt
+        properties:
+          prompt:
+            type: string
+            title: Prompt
+            description: Text to send to the opencode-go-test agent (1 to 4000 characters).
+            minLength: 1
+            maxLength: 4000
+nodes:
+  - id: mint_token
+    name: Mint Omnigent access token
+    type: http_request
+    position:
+      x: 300
+      y: 300
+    parameters:
+      method: POST
+      url: https://omnigent.apps.ocp.igou.systems/oauth/token
+      headers:
+        Content-Type: application/x-www-form-urlencoded
+      body: grant_type=client_credentials
+      credential_id: 68ad28bc-102a-4d6e-b9c7-46ebc4bb7afe
+    settings:
+      retry_policy:
+        max_retries: 0
+  - id: create_session
+    name: Create managed sandbox session
+    type: http_request
+    position:
+      x: 600
+      y: 300
+    parameters:
+      method: POST
+      url: https://omnigent.apps.ocp.igou.systems/v1/sessions
+      headers:
+        Authorization: Bearer ${mint_token.body.access_token}
+        Content-Type: application/json
+      body:
+        agent_id: c5d2063508039835af412be6a0c8fb8d
+        host_type: managed
+        title: Automation Orchestrator smoke test
+        initial_items: []
+    settings:
+      retry_policy:
+        max_retries: 0
+  - id: send_prompt
+    name: Send prompt to OpenCode Go agent
+    type: http_request
+    position:
+      x: 900
+      y: 300
+    parameters:
+      method: POST
+      url: https://omnigent.apps.ocp.igou.systems/v1/sessions/${create_session.body.id}/events
+      headers:
+        Authorization: Bearer ${mint_token.body.access_token}
+        Content-Type: application/json
+      body:
+        type: message
+        data:
+          role: user
+          content:
+            - type: input_text
+              text: ${trigger.prompt}
+    settings:
+      timeout: 360
+      retry_policy:
+        max_retries: 0
+edges:
+  - from: start
+    to: mint_token
+  - from: mint_token
+    to: create_session
+  - from: create_session
+    to: send_prompt
