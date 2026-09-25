@@ -99,6 +99,14 @@ nodes:
     settings:
       retry_policy:
         max_retries: 0
+  - id: allow_sandbox_startup
+    name: Allow OpenShell sandbox startup
+    type: wait
+    position:
+      x: 1100
+      y: 300
+    parameters:
+      duration: 90
 edges:
   - from: start
     to: mint_token
@@ -107,4 +115,6 @@ edges:
   - from: create_session
     to: share_session
   - from: share_session
+    to: allow_sandbox_startup
+  - from: allow_sandbox_startup
     to: send_prompt
