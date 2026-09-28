@@ -57,7 +57,7 @@ collections:
   - name: community.routeros
     version: 3.22.0
   - name: david_igou.routeros_configuration
-    version: 0.0.7-alpha
+    version: 0.0.9-alpha
   - name: amazon.aws
     version: 11.4.0
   - name: prometheus.prometheus
