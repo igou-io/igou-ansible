@@ -65,7 +65,7 @@ dependencies:
       - name: ansible.posix
         version: "2.2.2"
       - name: ansible.netcommon
-        version: "8.7.0"
+        version: "8.7.1"
       - name: ansible.utils
         version: "6.1.1"
       - name: community.routeros
