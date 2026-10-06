@@ -1,8 +1,0 @@
----
-- name: Execute a command
-  hosts: "{{ host | default('all') }}"
-  gather_facts: true
-  tasks:
-    - name: Run command
-      ansible.builtin.command: "{{ command }}"
-      changed_when: true
