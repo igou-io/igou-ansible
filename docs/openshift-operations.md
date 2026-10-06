@@ -160,7 +160,7 @@ via extra_vars. It runs daily via the `openshift_etcd_defrag` job template
 Backups are separate and live in `igou-openshift`: a nightly `etcd-backup`
 CronJob (namespace `etcd-backup`) ships snapshots to
 `s3://etcd-backups/<z-stream>/<timestamp>/` on rustfs-cold. Restore
-procedure: `igou-openshift` `docs/runbooks/etcd-backup-restore.md`.
+procedure: [Backing Up and Restoring OpenShift etcd](https://github.com/igou-io/igou-docs/blob/main/openshift/Backing%20Up%20and%20Restoring%20OpenShift%20etcd.md).
 
 ## GitOps bootstrap
 
