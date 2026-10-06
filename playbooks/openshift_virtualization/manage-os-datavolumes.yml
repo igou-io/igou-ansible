@@ -39,8 +39,7 @@
 #
 # --- Room to expand (documented, NOT implemented) ---------------------------
 # This is deliberately minimal. Natural per-entry extensions, added later as the
-# data model grows (the user folds in ubuntu et al. here — do not touch
-# create-ubuntu-datasource.yml):
+# data model grows to support additional OS boot sources:
 #   * per-entry labels / annotations (e.g. instancetype.kubevirt.io/default-*),
 #     merged into metadata so boot-source DataSources inherit VM defaults.
 #   * optional DataSource creation per entry (source.pvc -> the imported PVC),

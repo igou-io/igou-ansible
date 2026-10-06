@@ -11,8 +11,8 @@
 # bucket retains roughly the current copy plus the last four.
 #
 # Target is the vscode.igou.systems devhost - the physical machine that runs
-# the devcontainer. (devenv-vlan9 is a near-empty test rebuild VM and can
-# still be targeted explicitly via `-e ansible_limit=devenv-vlan9`; its
+# the devcontainer. (A deliberately selected test rebuild host can be
+# targeted explicitly via `-e ansible_limit=<host>`; its
 # devcontainer layout maps the same way.)
 #
 # Container<->host path mapping: the devcontainer binds host ~/.claude-container

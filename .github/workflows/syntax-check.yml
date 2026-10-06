@@ -54,7 +54,12 @@ jobs:
               continue
             fi
             echo "Checking ${playbook}..."
-            if ! ansible-playbook --syntax-check "${playbook}"; then
+            extra_args=()
+            # Restore requires explicit targeting, including for syntax-only checks.
+            if [[ "${playbook}" == playbooks/devenv/restore.yml ]]; then
+              extra_args=(-e ansible_limit=localhost)
+            fi
+            if ! ansible-playbook --syntax-check "${playbook}" "${extra_args[@]}"; then
               failed=1
             fi
           done

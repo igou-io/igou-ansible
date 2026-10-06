@@ -1,6 +1,14 @@
 ---
 profile: production
 
+# Changelog fragment names can contain "playbook" without being Ansible plays.
+kinds:
+  - yaml: "**/changelogs/fragments/*.{yaml,yml}"
+
+# Syntax-check fixtures only: restore deliberately has no operational target default.
+extra_vars:
+  ansible_limit: localhost
+
 # Exclude files that reference roles/collections not installable in this environment
 exclude_paths:
   - .venv/
@@ -13,8 +21,6 @@ exclude_paths:
   # a playbook. It lives under playbooks/ to sit next to the playbooks its steps
   # dispatch, so ansible-lint would otherwise try to parse it as Ansible content.
   - playbooks/linux/disk/orchestrator-workflow.yml  # AO workflow export
-  - playbooks/openshift_virtualization/virtualmachine-manage-testing.yml  # ansible-role-kubevirt_vm_manage
-  - playbooks/openshift_virtualization/virtualmachine-tests/  # ansible-role-kubevirt_vm_manage
   - playbooks/rhel/rhsm-system-register.yml  # redhat.rhel_system_roles.rhc
   - playbooks/taint-nodes.yaml  # node_taint role
   - playbooks/zfs/  # ansible-zfs

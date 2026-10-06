@@ -11,9 +11,9 @@
 # overwrites live agent state on the target, so it refuses to run unless
 # devenv_restore_confirm=true is passed explicitly. There is no accidental path.
 #
-# Default target is the devenv-vlan9 test rebuild VM - it must NEVER default to
-# vscode.igou.systems, which is the live backup SOURCE. Restore anywhere else
-# only by naming it explicitly via `-e ansible_limit=<host>`.
+# There is no default target. Name the intended restore host explicitly via
+# `-e ansible_limit=<host>`. Never default to vscode.igou.systems, which is the
+# live backup SOURCE.
 #
 # Quiesce, and the stale file-bind-inode trap: if igou-devenv.service is present
 # and active, it is stopped before extracting and restarted after. This is not
@@ -41,7 +41,7 @@
 # onepassword-connect-token credential. Endpoint comes from the same inventory
 # host_vars the rustfs_state role reconciles against.
 - name: Restore devenv agent state from rustfs-cold
-  hosts: "{{ ansible_limit | default('devenv-vlan9') }}"
+  hosts: "{{ (ansible_limit | default('', true) | trim) or undef(hint='Set ansible_limit explicitly to the intended restore host.') }}"
   gather_facts: false
   vars:
     devenv_restore_home: /home/igou
@@ -81,9 +81,8 @@
           - devenv_restore_confirm | bool
         fail_msg: >-
           This OVERWRITES the live agent state on {{ inventory_hostname }}
-          (default target devenv-vlan9). Re-run with -e devenv_restore_confirm=true
-          once you are sure, and -e ansible_limit=<host> if you mean a host other
-          than the devenv-vlan9 test VM.
+          selected by ansible_limit. Re-run with -e devenv_restore_confirm=true
+          only after checking -e ansible_limit=<host> names the intended target.
 
     - name: Stage a control-node scratch path for the archive to restore
       ansible.builtin.tempfile:

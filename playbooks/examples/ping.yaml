@@ -1,7 +1,0 @@
----
-- name: Ping host
-  hosts: "{{ host | default('all') }}"
-  gather_facts: false
-  tasks:
-    - name: Ping host
-      ansible.builtin.ping:

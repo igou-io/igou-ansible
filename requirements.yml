@@ -6,16 +6,12 @@ roles:
     version: 1.11.1
   - name: githubixx.iscsi_target
     version: 2.0.0
-  - name: githubixx.ansible_role_wireguard
-    version: 19.1.0
   - name: robertdebock.kubectl
     version: 2.1.5
   - name: robertdebock.update
     version: 3.1.10
   - name: geerlingguy.helm
     version: 1.0.1
-  - name: David-Igou.kubevirt_vm_manage
-    version: 0.0.3
   - name: David-Igou.haproxy
     version: 1.0.0
   - name: david-igou.openshift_agent_install
@@ -50,8 +46,6 @@ collections:
     version: fix-user-update
   - name: community.docker
     version: 5.3.0
-  - name: vkhitrin.libguestfs
-    version: 1.1.5
   - name: ansible.netcommon
     version: 8.7.1
   - name: community.routeros
