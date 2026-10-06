@@ -37,6 +37,22 @@ the apex `igou.io` by the TLS-terminating reverse proxy — the cert already
 carries the apex as a SAN. nginx serves files live, so publishing new content
 never restarts a container.
 
+### Canonical domain redirects
+
+`linux_proxy_redirects` declares domain aliases in host inventory. Each entry
+has a `server_name` and a `target` origin without a trailing slash:
+
+```yaml
+linux_proxy_redirects:
+  - server_name: www.igou.io
+    target: https://igou.io
+```
+
+The nginx template returns a permanent 301 redirect over both HTTP and HTTPS,
+appending the original path and query string. HTTPS aliases must be covered by
+the existing certificate. Apply changes through `podman_quadlets`; its existing
+config-change handling restarts the reverse proxy.
+
 ## Workload image updates
 
 Containers opt in with `AutoUpdate=registry` in their quadlet spec;
