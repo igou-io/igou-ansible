@@ -113,7 +113,7 @@ Snapshot/replication tasks are config-as-code
 `truenas_snapshot_tasks`/`truenas_replication_tasks`: containers
 hourly/daily, media weekly, `containers-to-cold`). Kubernetes app data is
 backed up by OADP/Velero to rustfs-cold (igou-openshift
-`clusters/ocp/oadp` + `docs/runbooks/oadp-restore.md`), not by TrueNAS
+`clusters/ocp/oadp` + [OADP Velero Backups on OpenShift](https://github.com/igou-io/igou-docs/blob/main/storage/OADP%20Velero%20Backups%20on%20OpenShift.md)), not by TrueNAS
 snapshot tasks.
 
 Inventory side is also a "backup": `igou-inventory` repo has the desired
@@ -239,7 +239,7 @@ CronJob (namespace `etcd-backup`, 05:00 America/New_York) shipping snapshots
 to `s3://etcd-backups/<z-stream>/<timestamp>/` on rustfs-cold, with a 3-day
 cap. Mined PV→zvol catalogs land in `s3://etcd-backups/catalogs/`. Both the
 snapshot-restore procedure and the catalog-mining procedure live in
-`igou-openshift` `docs/runbooks/etcd-backup-restore.md` — read that **before**
+[Backing Up and Restoring OpenShift etcd](https://github.com/igou-io/igou-docs/blob/main/openshift/Backing%20Up%20and%20Restoring%20OpenShift%20etcd.md) — read that **before**
 choosing a full rebuild, since a snapshot restore is usually the shorter path.
 
 **Cluster auth.** `agent-install/deploy_pxe_assets.yml` writes the kubeconfig
@@ -280,7 +280,7 @@ If the cluster is unrecoverable:
      -i igou-inventory/inventory.yaml -e target_cluster=<cluster>
    ```
    Longer form, including the ArgoCD/ESO convergence checks:
-   `igou-openshift` `docs/runbooks/gitops-bootstrap-from-scratch.md`.
+   [Installing OpenShift and Bootstrapping GitOps](https://github.com/igou-io/igou-docs/blob/main/openshift/Installing%20OpenShift%20and%20Bootstrapping%20GitOps.md).
 5. Re-add the bare-metal workers (`hpg5`, `p330`) via `add_node_iso.yml`.
    The TrueNAS VM worker `truenas-w1` is **not** on that path — rebuild it
    with `playbooks/openshift/vm_worker_reprovision.yaml` (see
