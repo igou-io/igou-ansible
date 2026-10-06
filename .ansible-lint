@@ -13,8 +13,6 @@ exclude_paths:
   # a playbook. It lives under playbooks/ to sit next to the playbooks its steps
   # dispatch, so ansible-lint would otherwise try to parse it as Ansible content.
   - playbooks/linux/disk/orchestrator-workflow.yml  # AO workflow export
-  - playbooks/openshift_virtualization/virtualmachine-manage-testing.yml  # ansible-role-kubevirt_vm_manage
-  - playbooks/openshift_virtualization/virtualmachine-tests/  # ansible-role-kubevirt_vm_manage
   - playbooks/rhel/rhsm-system-register.yml  # redhat.rhel_system_roles.rhc
   - playbooks/taint-nodes.yaml  # node_taint role
   - playbooks/zfs/  # ansible-zfs
