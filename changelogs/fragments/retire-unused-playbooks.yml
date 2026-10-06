@@ -1,6 +1,6 @@
 ---
 removed_features:
-  - Removed nine unused VM experiment playbooks, the devenv VLAN 9 provisioner, five standalone examples, and three legacy root-level bootstrap/example plays.
+  - Removed nine unused VM experiment playbooks, the devenv VLAN 9 provisioner, five standalone examples, and three legacy root-level bootstrap/example plays (https://github.com/igou-io/igou-ansible/pull/580).
   - Removed the exclusively used VM-management experiment role, libguestfs collection, and WireGuard role dependencies and stale VM lint exclusions.
 breaking_changes:
   - devenv restore required an explicit nonempty ansible_limit target instead of defaulting to the retired devenv-vlan9 VM; confirmation remained required.
