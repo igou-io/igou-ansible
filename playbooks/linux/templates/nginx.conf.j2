@@ -1,6 +1,6 @@
 # Managed by Ansible - playbooks/linux/podman_quadlets.yaml
 # Reverse proxy for {{ inventory_hostname }}. Edit linux_proxied_services in
-# inventory to add/remove sites; this file is regenerated from that list.
+# inventory to add/remove sites and linux_proxy_redirects for domain redirects.
 worker_processes auto;
 
 events {
@@ -70,6 +70,24 @@ http {
     }
   }
 
+{% for redirect in linux_proxy_redirects | default([]) %}
+  # Canonical domain redirect over both HTTP and HTTPS, preserving path/query.
+  server {
+    listen 80;
+    listen [::]:80;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name {{ redirect.server_name }};
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    return 301 {{ redirect.target }}$request_uri;
+  }
+
+{% endfor %}
 {% for svc in linux_proxied_services | default([]) %}
   # {{ svc.server_name }} -> {{ svc.upstream }}
   server {
