@@ -74,7 +74,7 @@ nodes:
       extra_vars:
         notify_title: 'restore-drill: approval pending'
         notify_status: warn
-        notify_message: 'Backup ok. Approve within 24h to restore onto the SAFE default target; timeout = reject = failed run (v1 semantics). Review and decide in AO: https://orchestrator.apps.ocp.igou.systems/executions/${workflow_context.execution.id}. Decision window: 24 hours from the approval gate; timeout rejects.'
+        notify_message: 'Backup ok. Approve within 24h to restore onto ${trigger.restore_target}; timeout = reject = failed run (v1 semantics). Review and decide in AO: https://orchestrator.apps.ocp.igou.systems/executions/${workflow_context.execution.id}. Decision window: 24 hours from the approval gate; timeout rejects.'
       credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
       integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
       job_template_name: notify_slack
@@ -86,20 +86,21 @@ nodes:
       x: 1000
       y: 150
     parameters:
-      prompt: 'Monthly restore drill. Restore devenv agent state onto the template-default SAFE target (devenv-vlan9)? Backup job: ${backup.job_url}'
+      prompt: 'Restore drill. Restore devenv agent state onto ${trigger.restore_target}? Backup job: ${backup.job_url}'
       approver_users: []
       approver_groups:
         - admins
       decision_window: 86400
       fallback_decision: reject
   - id: restore
-    name: Restore (safe target)
+    name: Restore selected host
     type: aap_job_template
     position:
       x: 1250
       y: 150
     parameters:
       extra_vars:
+        ansible_limit: ${trigger.restore_target}
         devenv_restore_confirm: true
       credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
       integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
@@ -113,7 +114,7 @@ nodes:
       y: 150
     parameters:
       extra_vars:
-        ansible_limit: devenv-vlan9
+        ansible_limit: ${trigger.restore_target}
       credential_id: f95708b4-c5f6-4e77-a37e-3cada9757c16
       integration_id: d20b53cf-8511-4f2f-a268-2f47d2186b09
       job_template_name: devenv_bootstrap
@@ -127,7 +128,7 @@ nodes:
     settings:
       continue_on_failure: true
     parameters:
-      prompt: 'Write a <=90-word restore-drill record for an ops log. Backup job: ${backup.job_url} (status ${backup.job_status}). Restore job: ${restore.job_url} (status ${restore.job_status}, started ${restore.started}, finished ${restore.finished}). Bootstrap: ${bootstrap.job_status}. State the measured restore duration from the timestamps, the target was the safe default, and one observation. Plain text, no markdown.'
+      prompt: 'Write a <=90-word restore-drill record for an ops log. Backup job: ${backup.job_url} (status ${backup.job_status}). Restore job: ${restore.job_url} (status ${restore.job_status}, started ${restore.started}, finished ${restore.finished}). Bootstrap: ${bootstrap.job_status}. State the measured restore duration from the timestamps, the selected target ${trigger.restore_target}, and one observation. Plain text, no markdown.'
       llm_model_id: 0b4ae1c2-ac1a-4de3-8977-6bd42ca1940c
       credential_id: bb280dc9-bf75-491b-9820-3f5b6bf11a6d
       response_schema:
@@ -156,15 +157,22 @@ nodes:
       organization_name: igou
 triggers:
   - id: start
-    name: Monthly 1st 06:00 ET
-    type: scheduled_trigger
+    name: Select a restore target
+    type: manual_trigger
     position:
       x: 0
       y: 300
     parameters:
-      cron: 0 6 1 * *
-      timezone: America/New_York
-      schedule_type: cron
-      missed_schedule_policy: skip
-description: 'Monthly devenv restore drill: backup -> gate -> approval -> restore (safe default target) -> bootstrap -> agentic write-up -> Slack. Build item #2.'
+      input_schema:
+        type: object
+        required:
+          - restore_target
+        properties:
+          restore_target:
+            type: string
+            title: Restore target
+            description: Existing inventory host to restore and bootstrap; select deliberately before approval.
+            minLength: 1
+            pattern: '\S'
+description: 'Manual devenv restore drill with an explicit target: backup -> gate -> approval -> restore -> bootstrap -> agentic write-up -> Slack. Build item #2.'
 schema_version: 2.0.0

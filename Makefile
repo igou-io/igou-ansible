@@ -14,7 +14,11 @@ syntax-check:
 	    ! -name 'orchestrator-workflow.yml' \
 	    ! -name '*-orchestrator-workflow.yml' | sort); do \
 		echo "Checking $${playbook}..."; \
-		if ! ansible-playbook --syntax-check "$${playbook}"; then \
+		set --; \
+		if [ "$${playbook}" = playbooks/devenv/restore.yml ]; then \
+			set -- -e ansible_limit=localhost; \
+		fi; \
+		if ! ansible-playbook --syntax-check "$${playbook}" "$$@"; then \
 			failed=1; \
 		fi; \
 	done; \

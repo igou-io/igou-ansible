@@ -1,0 +1,81 @@
+---
+- name: Verify explicit restore targeting and confirmation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    restore_target_project: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | default(playbook_dir ~ '/../..', true) }}"
+    restore_target_cases:
+      - name: Missing target
+        extra_vars: {}
+        option: --list-hosts
+        rc: 4
+        message: Set ansible_limit explicitly to the intended restore host.
+      - name: Empty target
+        extra_vars:
+          ansible_limit: ""
+        option: --list-hosts
+        rc: 4
+        message: Set ansible_limit explicitly to the intended restore host.
+      - name: Null target
+        extra_vars:
+          ansible_limit: null
+        option: --list-hosts
+        rc: 4
+        message: Set ansible_limit explicitly to the intended restore host.
+      - name: Whitespace target
+        extra_vars:
+          ansible_limit: "   "
+        option: --list-hosts
+        rc: 4
+        message: Set ansible_limit explicitly to the intended restore host.
+      - name: Explicit target
+        extra_vars:
+          ansible_limit: restore-test
+        option: --list-hosts
+        rc: 0
+        message: "pattern: ['restore-test']"
+      - name: Unconfirmed restore
+        extra_vars:
+          ansible_limit: restore-test
+        option: --check
+        rc: 2
+        message: This OVERWRITES the live agent state on restore-test
+  tasks:
+    - name: Exercise the real restore entry point without restoring state
+      ansible.builtin.command:
+        argv:
+          - ansible-navigator
+          - run
+          - playbooks/devenv/restore.yml
+          - --mode
+          - stdout
+          - --ee
+          - "false"
+          - --
+          - "{{ item.option }}"
+          - -i
+          - molecule/logic-devenv-restore-target/inventory/hosts.yml
+          - -e
+          - "{{ item.extra_vars | to_json }}"
+        chdir: "{{ restore_target_project }}"
+      environment:
+        # Navigator uses the checkout's config instead of Molecule's generated one.
+        ANSIBLE_CONFIG: "{{ restore_target_project }}/ansible.cfg"
+      loop: "{{ restore_target_cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: restore_target_results
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm rejected inputs stop and an explicit target selects one host
+      ansible.builtin.assert:
+        that:
+          - item.rc == item.item.rc
+          - item.item.message in (item.stdout ~ item.stderr)
+          - item.item.option != '--list-hosts' or item.rc != 0 or 'hosts (1)' in item.stdout
+        fail_msg: "Unexpected restore behavior for {{ item.item.name }}: {{ item.stdout }} {{ item.stderr }}"
+      loop: "{{ restore_target_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"

@@ -1,6 +1,10 @@
 ---
 profile: production
 
+# Syntax-check fixtures only: restore deliberately has no operational target default.
+extra_vars:
+  ansible_limit: localhost
+
 # Exclude files that reference roles/collections not installable in this environment
 exclude_paths:
   - .venv/
