@@ -1,6 +1,6 @@
 ---
 major_changes:
-  - Replaced the dedicated Windows Codex desktop deployment with Fedora cloud-image provisioning, persistent GNOME setup, and AAP lifecycle entry points.
+  - Replaced the dedicated Windows Codex desktop deployment with Fedora cloud-image provisioning, persistent GNOME setup, and AAP lifecycle entry points (https://github.com/igou-io/igou-ansible/pull/582).
 minor_changes:
   - Added signed upstream image verification, retained state across OS rebuilds, T3 and tailnet setup, and fenced casval capacity wrappers.
   - Blocked casval release while VM instances or disk attachments remain on the burst worker.
