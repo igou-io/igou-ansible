@@ -4,7 +4,7 @@ Guidance for AI agents working with the `boards` fleet. This directory
 holds the playbooks that drive it; the collection logic lives in the
 external `david_igou.armbian` collection.
 
-> **Authoritative reference:** `../../docs/armbian-boot-modes.md`.
+> **Authoritative reference:** [Managing the Armbian SBC Fleet](https://github.com/igou-io/igou-docs/blob/main/hardware/Managing%20the%20Armbian%20SBC%20Fleet.md).
 > If inventory comments, role docs, or this file disagree with it, that
 > doc wins — fix the others to match. Read it before touching board
 > kernels, boot modes, or netboot TFTP assets.
@@ -50,15 +50,16 @@ real-world symptom is k3s/containerd unable to mount overlayfs).
 | `cycle_board.yaml` | `armbian_cycle_board` | PoE cold-cycle + wait-for-SSH + verify the mounted root matches the declared mode. Run after a converge. |
 | `stage_netboot_assets.yaml` | `armbian_stage_netboot` | (Re)provision NFS rootfs + per-host TFTP kernel artifacts on the netboot server (TrueNAS). Feeds the `nfs`/`sd`/`local` paths. |
 | `provision_local_disk.yaml` | `armbian_provision_local_disk` | Wipe + provision a board's local disk from the running rootfs. |
-| `reprovision_to_local.yaml` | `armbian_reprovision_local` | **Full reimage chain:** NFS boot → disk provision → converge back to `local_kernel`. |
-| `build_and_publish.yaml` | — | Drive `armbian/build` on the docker builder to produce custom PXE-first images. |
-| `bootstrap.yaml` | — | First-boot bootstrap of a board. |
+| `reprovision_to_local.yaml` | `armbian_reprovision_local` | **Full reimage chain:** NFS boot → disk provision → boot transitional `local`. Follow with converge + cycle to inventory `local_kernel`. |
+| `build_and_publish.yaml` | `armbian_build_publish` | Drive `armbian/build` on the docker builder to produce custom PXE-first images. |
+| `bootstrap.yaml` | `armbian_firstboot` | First-boot bootstrap of a board. |
 
 ## Common workflows
 
 - **Reimage a board:** `reprovision_to_local.yaml` (flip to `nfs` →
-  boot network rootfs → wipe/provision local disk → converge back to
-  `local_kernel`). Ensure `stage_netboot_assets.yaml` has staged current
+  boot network rootfs → wipe/provision local disk → boot `local`).
+  Finish with `converge_boot_mode.yaml` + `cycle_board.yaml` using inventory
+  `local_kernel`; the AAP full-reimage workflow includes that final transition. Ensure `stage_netboot_assets.yaml` has staged current
   NFS + TFTP artifacts first.
 - **Update in place:** steady-state boards use the repo's normal
   `system-update` / `system-reboot` path — the kernel is local, so no
@@ -83,7 +84,7 @@ group, is the inverse — it takes `ansible_limit`.)
 
 - **cm3588-nas-01** — `local_kernel` with an NVMe→eMMC `localcmd`
   fallback chain. Root is PERMANENTLY eMMC (since 2026-07 the four NVMe
-  are the `rk8s` raidz1 ZFS pool backing the k3s data-dir — never add
+  are the `rk8s` ZFS pool of two mirrored vdevs (width 2) backing the k3s data-dir — never add
   them to `armbian_local_disks`; `prepare-k3s-datastore.yml` owns
   them). **Not PoE-powered** (crs328 ether13 reports
   short-circuit; runs off its DC supply), so `cycle_board.yaml` cannot

@@ -1,7 +1,7 @@
 ---
 # Set a board's boot mode via -e override (highest precedence), then
 # converge. Thin wrapper over converge_boot_mode.yaml.
-# Boot modes are documented in docs/armbian-boot-modes.md.
+# Boot modes: igou-docs/hardware/Managing the Armbian SBC Fleet.md.
 #
 # Usage:
 #   ansible-playbook playbooks/armbian/set_boot_mode.yaml \

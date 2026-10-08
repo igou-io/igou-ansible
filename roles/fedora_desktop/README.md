@@ -44,6 +44,6 @@ and T3 pairing remain interactive. GNOME uses its normal Wayland session and
 the official app's normal session autostart; SELinux is retained.
 
 Functional scenario: `molecule test -s role-fedora-desktop`. Operator runbook:
-[`docs/codex-desktop.md`](../../docs/codex-desktop.md).
+[Fedora Codex Desktop](https://github.com/igou-io/igou-docs/blob/main/openshift/Fedora%20Codex%20Desktop.md).
 
 Author: David Igou. License: MIT.

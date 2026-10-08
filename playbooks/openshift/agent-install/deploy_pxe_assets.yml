@@ -65,7 +65,7 @@
 - name: Publish boot artifacts to the public nginx host
   # Post-2026-05-11 netboot migration: agent-install artifacts are served
   # from https://public.igou.systems/boot-files/<cluster>/ (see
-  # docs/netboot-operations.md). The retired netbootxyz container paths
+  # igou-docs/netboot/Managing x86 iPXE Netboot Assets and Host Pins.md). The retired netbootxyz container paths
   # (/mnt/ssd/containers/netbootxyz/...) must not be referenced. The iPXE
   # script is NOT published: the boot flow is the rb5009 per-host pin,
   # which carries its own kernel/initrd/rootfs URLs.
