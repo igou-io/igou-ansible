@@ -7,13 +7,16 @@ disk is created. There is no maintained desktop image or image builder.
 
 ## Ownership and scheduling
 
-GitOps source: `igou-openshift/applications/codex-desktop/`. The `standard`
-overlay prefers casval and other workers without the control-plane/master
-labels, with control-plane fallback. Both profiles tolerate the casval
-`workload=burst:NoSchedule` taint and the control-plane/master `NoSchedule`
-taints. The `casval` overlay additionally requires the burst node label.
-Placement is changed by selecting an overlay in `clusters/ocp/values.yaml`
-while the VM is stopped, syncing Argo CD, and starting it again.
+GitOps source: `igou-openshift/applications/codex-desktop/`. The
+VM manifest prefers casval when it is schedulable, then other workers without
+the control-plane/master labels, with control-plane fallback. It tolerates the
+casval `workload=burst:NoSchedule` taint and the control-plane/master
+`NoSchedule` taints. All manifests live in that one application directory;
+there are no placement overlays or required casval selectors. Desktop jobs
+never provision, scale, lease, start, or stop casval. If it is absent or cannot
+accept the VM, the scheduler chooses another eligible host. A running VM is
+not automatically moved when casval appears or disappears; placement is
+evaluated when an instance starts.
 
 The VM always declares `runStrategy: Manual`. AAP uses KubeVirt's start/stop
 endpoints, which preserve that strategy. CPU/RAM, networking, and placement
@@ -82,22 +85,12 @@ root-only file. An already enrolled guest is not joined again.
 | `codex_desktop_setup` | Converge the running guest without replacing its root |
 | `codex_desktop_start` / `codex_desktop_stop` | Power operations preserving disks and enrollment |
 | `codex_desktop_rebuild` | Authenticate/download the newest stable image, stop/detach, replace only root, start/configure around retained state |
-| `codex_desktop_casval_start` | Require the casval overlay, lease capacity through `casval_scale`, wait for Ready, start, and publish the fenced lease ID |
-| `codex_desktop_casval_stop` | Require `casval_lease_id`, stop/detach, then release capacity only if that lease still owns it |
 | `codex_desktop_retire_windows` | Stop/orphan the legacy Windows VM, remove its Services/sysprep Secret, and retain all Windows disks |
 
-For initial casval provisioning, select the casval overlay, acquire capacity
-through the existing `casval-lease` workflow or `casval_scale`, then launch
-rollout. The casval-start template expects a previously provisioned root.
-The convenience casval start/stop jobs hold capacity until an explicit release.
-Start records a `4h` lease by default (`casval_lease` can override it) but does
-not create a timer. To reuse capacity owned by a longer existing lease, pass
-that lease's ID; the wrapper preserves its longer deadline. The existing durable workflow provides timed capacity and
-renewal, but does not stop the desktop: stop it before expiry, or its release
-guard leaves the occupied host running.
-Capacity-release automation refuses to release a node with running VM instances
-or remaining disk attachments, including other namespaces' workloads. Casval
-remains an RHCOS host; Fedora runs inside the VM. There is no GPU passthrough.
+Use the same VM start/stop jobs regardless of host. Casval capacity is managed
+separately from this desktop. Stop the VM and allow disk detachment before
+removing a host that runs it. Casval remains an RHCOS host; Fedora runs inside
+the VM. There is no GPU passthrough or promised live migration.
 
 Normal stop/start and setup do not select a different Fedora release or replace
 root. App package updates use the signed repository configured by the official
@@ -164,10 +157,12 @@ Prometheus scraped the guest successfully, and the existing AAP execution pod
 reached SSH through the internal Service.
 
 Argo remained `Synced / Healthy` during operation lease ownership and kept a
-manually stopped VM off. Overlapping desktop operations, a stale casval lease
-release, and release while a VMI occupied casval were rejected. Casval warm
-start preserved an existing reservation's owner, longer deadline, and replicas.
-Its active reservation was not cycled down/up. The Windows retirement job was
+manually stopped VM off. Overlapping desktop operations were rejected. The
+worker test used nested KVM: TrueNAS VM `truenasw1` backs the RHCOS node
+`truenas-w1.igou.systems`, confirmed through a matching hypervisor/node UUID.
+The casval test used a bare-metal host. Casval capacity management was removed
+from the final implementation; its active reservation was not cycled down/up.
+The Windows retirement job was
 not run, and its VM/disks remain. OADP schedule adoption and a completed backup
 remain pending. Interactive app sign-in, T3 pairing, native Computer Use, and
 cross-client dispatch remain outside these tests.
@@ -182,8 +177,8 @@ molecule test -s logic-codex-desktop
 molecule test -s role-fedora-desktop
 ```
 
-The logic scenario checks production release selection and casval release
-guarding without a cluster. The role scenario uses the pinned
+The logic scenario checks production release selection without a cluster.
+The role scenario uses the pinned
 `david_igou.molecule_provisioners` QEMU backend, an upstream cloud image, and an
 independent temporary block disk. It checks T3/Codex/GNOME/guest-agent behavior,
 SELinux, idempotency, and retained workspace data after replacing the OS.

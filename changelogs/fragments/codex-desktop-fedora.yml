@@ -2,9 +2,7 @@
 major_changes:
   - Replaced the dedicated Windows Codex desktop deployment with Fedora cloud-image provisioning, persistent GNOME setup, and AAP lifecycle entry points (https://github.com/igou-io/igou-ansible/pull/582).
 minor_changes:
-  - Added signed upstream image verification, retained state across OS rebuilds, T3 and tailnet setup, and fenced casval capacity wrappers.
-  - Blocked casval release while VM instances or disk attachments remain on the burst worker.
-  - Preserved longer existing casval reservations when the desktop reused their lease IDs.
+  - Added signed upstream image verification, retained state across OS rebuilds, and T3 and tailnet setup. Desktop jobs controlled VM power without managing casval capacity.
   - Added disposable Fedora QEMU tests for desktop readiness, idempotency, metrics, and retained workspaces.
   - Verified live CDI imports with the production service account and explicit immediate binding for independently created DataVolumes.
   - Added gpgv to the execution environment and refreshed its unavailable CentOS Stream 10 base digest.
