@@ -6,8 +6,7 @@ commented, and driven by a handful of `windows_*` variables — they are
 meant to be read as much as run.
 
 Full design rationale: see the pull request that introduced this
-directory (a local copy lives in `docs/superpowers/specs/`, which is
-not tracked in git).
+directory. Operational documentation lives in the [igou-docs vault](https://github.com/igou-io/igou-docs).
 
 ## Playbooks
 

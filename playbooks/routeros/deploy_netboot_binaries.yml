@@ -12,7 +12,7 @@
 #   dhcp    -- /ip dhcp-server network/option/option-set/matcher
 #   verify  -- TFTP fetch checks + DHCP state assertion
 #
-# See docs/superpowers/specs/2026-05-08-netboot-binaries-build-design.md
+# See igou-docs/netboot/Building and Deploying rb5009 iPXE Binaries.md
 # for the full design and decisions log.
 #
 # The playbook does NOT decommission the rb5009 netbootxyz container

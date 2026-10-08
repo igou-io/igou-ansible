@@ -75,7 +75,7 @@ modes: `local_kernel` (fleet default — kernel from local disk, updated
 via apt), `nfs` (reimaging), `sd` (bring-up), `local` (transitional).
 **When working with the fleet, read `playbooks/armbian/AGENTS.md` first** —
 it covers boot modes, playbooks/job templates, workflows, and per-board
-quirks, and points to the authoritative `docs/armbian-boot-modes.md`.
+quirks, and points to the authoritative [Managing the Armbian SBC Fleet](https://github.com/igou-io/igou-docs/blob/main/hardware/Managing%20the%20Armbian%20SBC%20Fleet.md).
 
 ### Execution environments
 
