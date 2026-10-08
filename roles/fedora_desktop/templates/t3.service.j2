@@ -1,0 +1,14 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=T3 Code remote environment
+After=network.target
+ConditionPathIsMountPoint=/home/{{ fedora_desktop_user }}
+[Service]
+Type=simple
+WorkingDirectory=/home/{{ fedora_desktop_user }}/workspaces
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/t3 serve --host 127.0.0.1 --port {{ fedora_desktop_t3_port }}
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=default.target

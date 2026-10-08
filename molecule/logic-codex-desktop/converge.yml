@@ -1,0 +1,3 @@
+---
+- name: Check desktop image selection and casval release behavior
+  ansible.builtin.import_playbook: verify.yml

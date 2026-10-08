@@ -1,0 +1,69 @@
+---
+- name: Prepare an explicit casval-only desktop start
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate the GitOps VM
+      ansible.builtin.include_tasks: tasks/preflight.yml
+    - name: Require the committed casval placement profile
+      ansible.builtin.assert:
+        that:
+          - "'node-role.kubernetes.io/burst' in (codex_desktop_vm.resources[0].spec.template.spec.nodeSelector | default({}))"
+        fail_msg: Stop the desktop and sync the casval GitOps overlay before requesting casval capacity.
+    - name: Read the running desktop's placement
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachineInstance
+        name: "{{ codex_desktop_name }}"
+        namespace: "{{ codex_desktop_namespace }}"
+      register: codex_desktop_casval_instance
+    - name: Require a stopped desktop or an existing casval-only instance
+      ansible.builtin.assert:
+        that:
+          - >-
+            codex_desktop_casval_instance.resources | length == 0
+            or 'node-role.kubernetes.io/burst' in
+            (codex_desktop_casval_instance.resources[0].spec.nodeSelector | default({}))
+        fail_msg: Stop the existing instance before moving the desktop to casval.
+    - name: Identify this casval capacity lease
+      ansible.builtin.set_fact:
+        codex_desktop_casval_lease_id: "{{ casval_lease_id | default('codex-desktop-' ~ (awx_job_id | default(now(utc=true, fmt='%Y%m%d%H%M%S%f')) | string), true) }}"
+
+- name: Acquire capacity through the existing casval automation
+  ansible.builtin.import_playbook: ../openshift/casval_scale.yaml
+  vars:
+    casval_state: up
+    casval_lease_id: "{{ hostvars['localhost']['codex_desktop_casval_lease_id'] }}"
+    casval_lease: 4h
+    # Reusing an owner's capacity must not shorten its longer reservation.
+    casval_preserve_active_lease: true
+
+- name: Verify acquired capacity before starting the desktop
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read the acquired capacity owner
+      kubernetes.core.k8s_info:
+        api_version: cluster.x-k8s.io/v1beta2
+        kind: MachineSet
+        name: casval-worker
+        namespace: openshift-cluster-api
+      register: codex_desktop_casval_capacity
+    - name: Require ownership rather than a retained longer lease
+      ansible.builtin.assert:
+        that:
+          - codex_desktop_casval_capacity.resources | length == 1
+          - >-
+            (codex_desktop_casval_capacity.resources[0].metadata.annotations | default({}))
+            .get('automation.igou.systems/casval-lease-id', '') == codex_desktop_casval_lease_id
+        fail_msg: A longer existing lease owns casval. Supply its casval_lease_id to reuse that capacity.
+    - name: Publish the identifier required for a fenced release
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          casval_lease_id: "{{ codex_desktop_casval_lease_id }}"
+
+- name: Start the desktop after casval becomes Ready
+  ansible.builtin.import_playbook: start.yaml

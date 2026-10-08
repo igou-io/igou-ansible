@@ -1,0 +1,43 @@
+---
+- name: Configure only the desktop discovered by this operation
+  hosts: codex_desktop_guest
+  become: true
+  gather_facts: false
+  vars:
+    codex_desktop_operation_id: "{{ hostvars['localhost']['codex_desktop_operation_id'] }}"
+    codex_desktop_operation_owned: "{{ hostvars['localhost']['codex_desktop_operation_owned'] }}"
+  tasks:
+    - name: Configure the guest and report its readiness
+      block:
+        - name: Wait for authenticated guest access
+          ansible.builtin.wait_for_connection:
+            timeout: 900
+
+        - name: Gather Fedora guest facts
+          ansible.builtin.setup:
+
+        - name: Install and configure the desktop
+          ansible.builtin.include_role:
+            name: fedora_desktop
+
+        - name: Install the supported Linux metrics exporter
+          ansible.builtin.include_role:
+            name: prometheus.prometheus.node_exporter
+
+        - name: Enroll and expose the tailnet endpoint
+          ansible.builtin.include_tasks: tasks/tailnet.yml
+          when: fedora_desktop_tailscale | default(true)
+
+        - name: Report infrastructure readiness and interactive enrollment
+          ansible.builtin.debug:
+            msg:
+              - Fedora desktop, Codex CLI, T3, SSH, guest agent, and metrics are configured.
+              - Open the KubeVirt console to sign in to the app, enroll or unlock the keyring, and pair T3.
+              - Native Linux Computer Use is assumed for this groundwork and remains unverified.
+      always:
+        - name: Release this job's desktop operation lease
+          ansible.builtin.include_tasks:
+            file: tasks/release.yml
+            apply:
+              delegate_to: localhost
+              become: false

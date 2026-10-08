@@ -176,7 +176,49 @@
           - "{{ casval_node_selector }}"
       register: casval_nodes_before
 
-    # Informational only (release path): surface what is still running on
+    - name: Read virtual machine instances before releasing casval
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachineInstance
+        # A node release affects VMs in every namespace; inspect all of them.
+        namespace: ''
+      register: casval_virtualmachine_instances
+      when:
+        - casval_state == 'down'
+        - casval_scale_allowed
+        - casval_nodes_before.resources | length > 0
+
+    - name: Guard virtual machines before a worker release
+      ansible.builtin.include_tasks: tasks/casval_vmi_guard.yml
+      when:
+        - casval_state == 'down'
+        - casval_scale_allowed
+        - casval_nodes_before.resources | length > 0
+
+    - name: Read disk attachments before releasing casval
+      kubernetes.core.k8s_info:
+        api_version: storage.k8s.io/v1
+        kind: VolumeAttachment
+      register: casval_volume_attachments
+      when:
+        - casval_state == 'down'
+        - casval_scale_allowed
+        - casval_nodes_before.resources | length > 0
+
+    - name: Require disk detachment before releasing casval
+      ansible.builtin.assert:
+        that:
+          - >-
+            casval_volume_attachments.resources
+            | selectattr('spec.nodeName', 'in', casval_nodes_before.resources | map(attribute='metadata.name') | list)
+            | list | length == 0
+        fail_msg: Casval still has attached VM or workload disks. Wait for detachment before releasing its lease.
+      when:
+        - casval_state == 'down'
+        - casval_scale_allowed
+        - casval_nodes_before.resources | length > 0
+
+    # Informational only for ordinary pods (release path): surface what is still running on
     # the burst node so an operator can see what a release will evict. The
     # CAPI pre-terminate hook plus the capi-node-cleanup CronJob cordon and
     # drain the node, so this check never blocks the release — hence

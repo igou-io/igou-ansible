@@ -1,0 +1,5 @@
+---
+- name: Start the desktop while preserving its disks and enrollment
+  ansible.builtin.import_playbook: lifecycle.yaml
+  vars:
+    codex_desktop_power: started

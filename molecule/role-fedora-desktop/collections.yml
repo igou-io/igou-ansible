@@ -1,0 +1,10 @@
+---
+collections:
+  - name: david_igou.molecule_provisioners
+    version: 0.0.4-alpha
+  - name: community.general
+    version: 13.3.0
+  - name: ansible.posix
+    version: 2.2.2
+  - name: prometheus.prometheus
+    version: 0.30.1

@@ -1,0 +1,40 @@
+---
+- name: Select stable Fedora Cloud Base qcow2 candidates
+  ansible.builtin.set_fact:
+    codex_desktop_image_candidates: >-
+      {{ codex_desktop_release_metadata
+         | selectattr('variant', 'equalto', 'Cloud')
+         | selectattr('subvariant', 'equalto', 'Cloud_Base')
+         | selectattr('arch', 'equalto', codex_desktop_image_arch)
+         | selectattr('version', 'match', '^[0-9]+$')
+         | selectattr('link', 'match', '^https://download[.]fedoraproject[.]org/pub/fedora/linux/releases/[0-9]+/Cloud/[^/]+/images/Fedora-Cloud-Base-Generic-.*[.]qcow2$')
+         | list }}
+
+- name: Require an official stable cloud image
+  ansible.builtin.assert:
+    that:
+      - codex_desktop_image_candidates | length > 0
+    fail_msg: No stable official Fedora Cloud Base qcow2 image was found; no disk will be replaced.
+
+- name: Resolve the newest numeric release
+  ansible.builtin.set_fact:
+    codex_desktop_image_release: "{{ codex_desktop_image_candidates | map(attribute='version') | map('int') | max | string }}"
+
+- name: Resolve one artifact for this invocation
+  ansible.builtin.set_fact:
+    codex_desktop_image: "{{ codex_desktop_image_candidates | selectattr('version', 'equalto', codex_desktop_image_release) | first }}"
+
+- name: Validate the selected image metadata
+  ansible.builtin.assert:
+    that:
+      - codex_desktop_image.sha256 is match('^[a-f0-9]{64}$')
+      - codex_desktop_image.link | basename is match('^Fedora-Cloud-Base-Generic-[0-9]+-[0-9.]+[.]' ~ codex_desktop_image_arch ~ '[.]qcow2$')
+      - "('/releases/' ~ codex_desktop_image_release ~ '/') in codex_desktop_image.link"
+    fail_msg: The upstream image metadata is incomplete or inconsistent; refusing to import.
+
+- name: Resolve the matching signed checksum filename
+  ansible.builtin.set_fact:
+    codex_desktop_image_filename: "{{ codex_desktop_image.link | basename }}"
+    codex_desktop_checksum_filename: >-
+      {{ codex_desktop_image.link | basename
+         | regex_replace('^Fedora-Cloud-Base-Generic-([0-9]+-[0-9.]+)[.]([^.]+)[.]qcow2$', 'Fedora-Cloud-\1-\2-CHECKSUM') }}

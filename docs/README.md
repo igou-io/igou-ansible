@@ -7,6 +7,7 @@ how X worked" two weeks from now.
 
 | Doc | What it covers |
 |---|---|
+| [`codex-desktop.md`](codex-desktop.md) | Latest upstream Fedora cloud image, GitOps/AAP ownership, GNOME/Codex/T3 setup, persistent state, start/stop, casval, and explicit root rebuilding |
 | [`netboot-operations.md`](netboot-operations.md) | netboot.xyz menu, host pins, ISOs, kickstart/cloud-init, OpenShift PXE assets, rb5009 iPXE binaries, smoke testing, troubleshooting |
 | [`openshift-operations.md`](openshift-operations.md) | Initial cluster (agent-install), GitOps bootstrap, add-node (link), TrueNAS VM worker lifecycle, etcd defrag + backup pointer, CSR approval, common breaks |
 | [`truenas-operations.md`](truenas-operations.md) | Docker containers, users, NFS netboot, KVM guests (incl. the `truenas-w1` OCP worker), API smoke test |

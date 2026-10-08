@@ -3,7 +3,7 @@
 Install the application layer of a Windows desktop over `psrp`/WinRM: an
 execution-policy guard, a Chocolatey package set, direct MSI/EXE installers, and
 (optionally) Firefox as the default browser. Extracted verbatim from the
-`deploy_windows_desktop` playbook so the same behavior is reusable and testable.
+retired Windows desktop playbook; the role remains reusable and covered by its Molecule scenario.
 
 ## What it does
 

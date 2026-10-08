@@ -1,0 +1,27 @@
+---
+- name: Fedora desktop | Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Fedora desktop | Update dconf
+  ansible.builtin.command: dconf update
+  changed_when: true
+
+- name: Fedora desktop | Restart Tailscale
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    state: restarted
+
+- name: Fedora desktop | Restart T3
+  ansible.builtin.systemd_service:
+    name: t3.service
+    scope: user
+    state: restarted
+    daemon_reload: true
+  become: true
+  become_user: "{{ fedora_desktop_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ fedora_desktop_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ fedora_desktop_uid }}/bus"
+  # Installation also notifies this handler before the initial user manager exists.
+  when: __fedora_desktop_user_manager_ready | default(false)

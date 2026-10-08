@@ -1,0 +1,5 @@
+---
+- name: Replace only the OS disk using the latest stable upstream image
+  ansible.builtin.import_playbook: rollout.yaml
+  vars:
+    codex_desktop_rebuild: true

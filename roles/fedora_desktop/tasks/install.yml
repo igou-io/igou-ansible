@@ -1,0 +1,130 @@
+---
+- name: Fedora desktop | Install desktop and development packages
+  ansible.builtin.dnf:
+    name: "{{ fedora_desktop_packages }}"
+    state: present
+
+- name: Fedora desktop | Create the tools directory
+  ansible.builtin.file:
+    path: /opt/codex-desktop
+    state: directory
+    mode: '0755'
+
+- name: Fedora desktop | Download checksum-verified Node.js
+  ansible.builtin.get_url:
+    url: "https://nodejs.org/dist/v{{ fedora_desktop_node_version }}/node-v{{ fedora_desktop_node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:https://nodejs.org/dist/v{{ fedora_desktop_node_version }}/SHASUMS256.txt"
+    dest: "/opt/codex-desktop/node-v{{ fedora_desktop_node_version }}-linux-x64.tar.xz"
+    mode: '0644'
+    timeout: 120
+
+- name: Fedora desktop | Extract the pinned Node.js distribution
+  ansible.builtin.unarchive:
+    src: "/opt/codex-desktop/node-v{{ fedora_desktop_node_version }}-linux-x64.tar.xz"
+    dest: /opt/codex-desktop
+    remote_src: true
+    creates: "/opt/codex-desktop/node-v{{ fedora_desktop_node_version }}-linux-x64/bin/node"
+
+- name: Fedora desktop | Expose Node.js commands
+  ansible.builtin.file:
+    src: "/opt/codex-desktop/node-v{{ fedora_desktop_node_version }}-linux-x64/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+  loop:
+    - node
+    - npm
+    - npx
+
+- name: Fedora desktop | Install the pinned coding tools
+  community.general.npm:
+    name: "{{ item.name }}"
+    version: "{{ item.version }}"
+    global: true
+    state: present
+    executable: /usr/local/bin/npm
+  environment:
+    PATH: /usr/local/bin:/usr/bin:/bin
+  loop:
+    - name: t3
+      version: "{{ fedora_desktop_t3_version }}"
+    - name: '@openai/codex'
+      version: "{{ fedora_desktop_codex_version }}"
+  notify: Fedora desktop | Restart T3
+
+- name: Fedora desktop | Expose coding tool commands
+  ansible.builtin.file:
+    src: "/opt/codex-desktop/node-v{{ fedora_desktop_node_version }}-linux-x64/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+  loop:
+    - t3
+    - codex
+
+- name: Fedora desktop | Download the reviewed binary OpenAI signing keyring
+  ansible.builtin.get_url:
+    url: "{{ fedora_desktop_openai_signing_key_url }}"
+    dest: /opt/codex-desktop/openai-signing-key.gpg
+    mode: '0644'
+
+# rpm_key accepts armored keys; OpenAI publishes a binary OpenPGP keyring.
+- name: Fedora desktop | Export only the expected signing key as ASCII armor
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --batch
+      - --no-default-keyring
+      - --keyring
+      - /opt/codex-desktop/openai-signing-key.gpg
+      - --armor
+      - --export
+      - "{{ fedora_desktop_openai_signing_fingerprint }}"
+  changed_when: false
+  register: __fedora_desktop_openai_key
+
+- name: Fedora desktop | Write the reviewed armored public key
+  ansible.builtin.copy:
+    content: "{{ __fedora_desktop_openai_key.stdout }}\n"
+    dest: /opt/codex-desktop/openai-signing-key.asc
+    mode: '0644'
+
+- name: Fedora desktop | Import the reviewed OpenAI signing key
+  ansible.builtin.rpm_key:
+    key: /opt/codex-desktop/openai-signing-key.asc
+    fingerprint: "{{ fedora_desktop_openai_signing_fingerprint }}"
+    state: present
+
+- name: Fedora desktop | Read installed RPMs
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Fedora desktop | Bootstrap the official signed desktop RPM
+  ansible.builtin.dnf:
+    name: "{{ fedora_desktop_openai_rpm_url }}"
+    state: present
+    disable_gpg_check: false
+  when: "'chatgpt' not in ansible_facts['packages']"
+
+- name: Fedora desktop | Import Google's Chrome signing key
+  ansible.builtin.rpm_key:
+    key: https://dl.google.com/linux/linux_signing_key.pub
+    state: present
+  when: fedora_desktop_chrome
+
+- name: Fedora desktop | Install optional Chrome
+  ansible.builtin.dnf:
+    name: https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
+    state: present
+  when: fedora_desktop_chrome
+
+- name: Fedora desktop | Configure the upstream Tailscale repository
+  ansible.builtin.get_url:
+    url: https://pkgs.tailscale.com/stable/fedora/tailscale.repo
+    dest: /etc/yum.repos.d/tailscale.repo
+    mode: '0644'
+  when: fedora_desktop_tailscale
+
+- name: Fedora desktop | Install Tailscale
+  ansible.builtin.dnf:
+    name: tailscale
+    state: present
+  when: fedora_desktop_tailscale

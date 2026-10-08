@@ -1,0 +1,40 @@
+---
+prerun: false
+dependency:
+  name: galaxy
+  options:
+    requirements-file: molecule/role-fedora-desktop/collections.yml
+ansible:
+  cfg:
+    defaults:
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections
+      host_key_checking: false
+  executor:
+    args:
+      ansible_playbook:
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: converge.yml
+    side_effect: side_effect.yml
+    verify: verify.yml
+scenario:
+  name: role-fedora-desktop
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - side_effect
+    - idempotence
+    - verify
+    - destroy
+verifier:
+  name: ansible

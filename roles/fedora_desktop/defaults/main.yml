@@ -1,0 +1,46 @@
+---
+fedora_desktop_user: codex
+fedora_desktop_uid: 1100
+fedora_desktop_state_device: /dev/disk/by-id/virtio-codex-state
+fedora_desktop_state_dir: /var/lib/codex-desktop
+fedora_desktop_packages:
+  - gnome-shell
+  - gnome-session
+  - gdm
+  - gnome-control-center
+  - gnome-terminal
+  - nautilus
+  - gnome-keyring
+  - xorg-x11-server-Xwayland
+  - xdg-desktop-portal-gnome
+  - xdg-utils
+  - dconf
+  - dbus-daemon
+  - firefox
+  - openssh-server
+  - qemu-guest-agent
+  - chrony
+  - git
+  - acl
+  - gnupg2
+  - gcc-c++
+  - make
+  - python3
+  - python3-libdnf5
+  - policycoreutils-python-utils
+  - python3-libselinux
+  - tar
+  - xz
+fedora_desktop_node_version: '26.10.0'
+fedora_desktop_t3_version: '0.0.45'
+fedora_desktop_codex_version: '0.160.1'
+fedora_desktop_t3_port: 3773
+fedora_desktop_openai_rpm_url: https://persistent.oaistatic.com/codex-app-prod/linux/rpm/latest/chatgpt.x86_64.rpm
+# The reviewed OpenAI key bundle is shared by the Linux package repositories.
+fedora_desktop_openai_signing_key_url: https://persistent.oaistatic.com/codex-app-prod/linux/arch/26.1002.52244/repository-signing-key.gpg
+fedora_desktop_openai_signing_fingerprint: 3BFA0E4AE8B8CC16A2D9BA684A3B4A566C4660E4
+fedora_desktop_chrome: false
+fedora_desktop_tailscale: true
+fedora_desktop_tailscale_authkey: ''
+fedora_desktop_tailscale_tags:
+  - tag:codex

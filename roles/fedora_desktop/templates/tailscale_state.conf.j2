@@ -1,0 +1,5 @@
+{{ ansible_managed | comment }}
+[Unit]
+RequiresMountsFor={{ fedora_desktop_state_dir }} /var/lib/tailscale
+AssertPathIsMountPoint={{ fedora_desktop_state_dir }}
+AssertPathIsMountPoint=/var/lib/tailscale

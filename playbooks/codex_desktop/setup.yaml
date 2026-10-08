@@ -1,0 +1,23 @@
+---
+- name: Prepare configuration of the existing desktop
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate GitOps prerequisites
+      ansible.builtin.include_tasks: tasks/preflight.yml
+    - name: Serialize desktop operations
+      ansible.builtin.include_tasks: tasks/acquire.yml
+    - name: Connect to the existing desktop
+      block:
+        - name: Discover the guest
+          ansible.builtin.include_tasks: tasks/connect.yml
+      rescue:
+        - name: Release the operation lease after connection failure
+          ansible.builtin.include_tasks: tasks/release.yml
+        - name: Report connection failure
+          ansible.builtin.fail:
+            msg: Cannot connect to the existing desktop; start it before running setup.
+
+- name: Configure only the discovered desktop
+  ansible.builtin.import_playbook: configure.yaml

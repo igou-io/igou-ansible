@@ -1,0 +1,59 @@
+---
+- name: Identify this desktop operation
+  ansible.builtin.set_fact:
+    codex_desktop_operation_id: "{{ awx_job_id | default('local-' ~ now(utc=true, fmt='%Y%m%d%H%M%S%f')) | string }}"
+
+# Argo CD excludes coordination Leases; AAP owns this runtime lock.
+- name: Read whether the runtime operation lease exists
+  kubernetes.core.k8s_info:
+    api_version: coordination.k8s.io/v1
+    kind: Lease
+    name: "{{ codex_desktop_name }}-operation"
+    namespace: "{{ codex_desktop_namespace }}"
+  register: codex_desktop_lease_exists
+
+- name: Initialize an absent runtime operation lease
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: coordination.k8s.io/v1
+      kind: Lease
+      metadata:
+        name: "{{ codex_desktop_name }}-operation"
+        namespace: "{{ codex_desktop_namespace }}"
+      spec: {}
+  when: codex_desktop_lease_exists.resources | length == 0
+
+- name: Read the desktop operation lease
+  kubernetes.core.k8s_info:
+    api_version: coordination.k8s.io/v1
+    kind: Lease
+    name: "{{ codex_desktop_name }}-operation"
+    namespace: "{{ codex_desktop_namespace }}"
+  register: codex_desktop_operation_lease
+
+- name: Refuse overlapping desktop operations
+  ansible.builtin.assert:
+    that:
+      - codex_desktop_operation_lease.resources | length == 1
+      - codex_desktop_operation_lease.resources[0].spec.holderIdentity | default('') | length == 0
+    fail_msg: Another desktop job holds the operation lease. Inspect that job before clearing an abandoned lease.
+
+# The resourceVersion test makes acquisition atomic across different AAP templates.
+- name: Acquire the desktop operation lease
+  kubernetes.core.k8s_json_patch:
+    api_version: coordination.k8s.io/v1
+    kind: Lease
+    name: "{{ codex_desktop_name }}-operation"
+    namespace: "{{ codex_desktop_namespace }}"
+    patch:
+      - op: test
+        path: /metadata/resourceVersion
+        value: "{{ codex_desktop_operation_lease.resources[0].metadata.resourceVersion }}"
+      - op: add
+        path: /spec/holderIdentity
+        value: "{{ codex_desktop_operation_id }}"
+
+- name: Remember lease ownership
+  ansible.builtin.set_fact:
+    codex_desktop_operation_owned: true

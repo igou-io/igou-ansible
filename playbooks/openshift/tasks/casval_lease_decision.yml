@@ -10,5 +10,6 @@
       {{ casval_replicas_before | int == 1
          and casval_expiry_before | int > casval_now_epoch | int
          and casval_lease_seconds | int > 0
-         and casval_lease_owner_before != casval_lease_owner
+         and (casval_lease_owner_before != casval_lease_owner
+              or casval_preserve_active_lease | default(false) | bool)
          and casval_expiry_before | int >= casval_requested_expiry | int }}
