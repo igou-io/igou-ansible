@@ -1,0 +1,87 @@
+---
+- name: Provision the GitOps-defined Fedora desktop
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate GitOps prerequisites
+      ansible.builtin.include_tasks: tasks/preflight.yml
+
+    - name: Serialize desktop operations
+      ansible.builtin.include_tasks: tasks/acquire.yml
+
+    - name: Provision and connect the desktop
+      block:
+        - name: Read the existing OS DataVolume
+          kubernetes.core.k8s_info:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ codex_desktop_root_name }}"
+            namespace: "{{ codex_desktop_namespace }}"
+          register: codex_desktop_existing_root
+
+        - name: Require a completed independently owned existing root
+          ansible.builtin.assert:
+            that:
+              - codex_desktop_existing_root.resources[0].status.phase | default('') == 'Succeeded'
+              - codex_desktop_existing_root.resources[0].metadata.ownerReferences | default([]) | length == 0
+            fail_msg: The existing root is incomplete or VM-owned. Inspect it and explicitly rebuild to recover.
+          when:
+            - codex_desktop_existing_root.resources | length > 0
+            - not (codex_desktop_rebuild | default(false) | bool)
+
+        - name: Authenticate the latest upstream image before changing disks
+          ansible.builtin.include_tasks: tasks/verify_image.yml
+          when: codex_desktop_existing_root.resources | length == 0 or (codex_desktop_rebuild | default(false) | bool)
+
+        - name: Stop and detach before an explicit rebuild
+          ansible.builtin.include_tasks: tasks/stop.yml
+          when: codex_desktop_rebuild | default(false) | bool
+
+        - name: Remove only the OS DataVolume for an explicit rebuild
+          kubernetes.core.k8s:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: DataVolume
+            name: "{{ codex_desktop_root_name }}"
+            namespace: "{{ codex_desktop_namespace }}"
+            state: absent
+            wait: true
+            wait_timeout: 600
+          when: codex_desktop_rebuild | default(false) | bool
+
+        - name: Remove only the old OS PVC after detachment
+          kubernetes.core.k8s:
+            kind: PersistentVolumeClaim
+            name: "{{ codex_desktop_root_name }}"
+            namespace: "{{ codex_desktop_namespace }}"
+            state: absent
+            wait: true
+            wait_timeout: 600
+          when: codex_desktop_rebuild | default(false) | bool
+
+        - name: Import a verified new OS disk
+          ansible.builtin.include_tasks: tasks/import_image.yml
+          when: codex_desktop_existing_root.resources | length == 0 or (codex_desktop_rebuild | default(false) | bool)
+
+        - name: Start the desktop without changing its GitOps definition
+          kubevirt.core.kubevirt_vm:
+            name: "{{ codex_desktop_name }}"
+            namespace: "{{ codex_desktop_namespace }}"
+            state: started
+            wait: true
+            wait_timeout: 900
+
+        - name: Discover the guest for the following setup play
+          ansible.builtin.include_tasks: tasks/connect.yml
+      rescue:
+        - name: Release the operation lease after provisioning failure
+          ansible.builtin.include_tasks: tasks/release.yml
+        - name: Report failed provisioning
+          ansible.builtin.fail:
+            msg: Provisioning failed. Existing user state was retained; inspect the preceding error before retrying.
+      always:
+        - name: Remove temporary image and credential files
+          ansible.builtin.file:
+            path: "{{ codex_desktop_artifact_dir.path }}"
+            state: absent
+          when: codex_desktop_artifact_dir.path is defined

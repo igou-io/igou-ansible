@@ -1,0 +1,69 @@
+---
+- name: Fetch Fedora release metadata
+  ansible.builtin.uri:
+    url: "{{ codex_desktop_releases_url }}"
+    return_content: true
+    timeout: 60
+  register: codex_desktop_releases_response
+
+- name: Decode the release metadata
+  ansible.builtin.set_fact:
+    codex_desktop_release_metadata: "{{ codex_desktop_releases_response.json }}"
+
+- name: Select the latest stable cloud image
+  ansible.builtin.include_tasks: select_image.yml
+
+- name: Allocate temporary artifact storage
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: codex-desktop-image-
+  register: codex_desktop_artifact_dir
+
+- name: Download Fedora's public signing keyring
+  ansible.builtin.get_url:
+    url: https://fedoraproject.org/fedora.gpg
+    dest: "{{ codex_desktop_artifact_dir.path }}/fedora.gpg"
+    mode: '0600'
+    timeout: 60
+
+- name: Download the signed checksum document
+  ansible.builtin.get_url:
+    url: "{{ codex_desktop_image.link | dirname }}/{{ codex_desktop_checksum_filename }}"
+    dest: "{{ codex_desktop_artifact_dir.path }}/CHECKSUM"
+    mode: '0600'
+    timeout: 60
+
+# No Ansible builtin verifies OpenPGP cleartext signatures; use Fedora's documented gpgv interface.
+- name: Verify the Fedora signature and extract authenticated checksums
+  ansible.builtin.command:
+    argv:
+      - gpgv
+      - --keyring
+      - "{{ codex_desktop_artifact_dir.path }}/fedora.gpg"
+      - --output
+      - "{{ codex_desktop_artifact_dir.path }}/verified-checksums"
+      - "{{ codex_desktop_artifact_dir.path }}/CHECKSUM"
+  changed_when: false
+
+- name: Read authenticated checksum data
+  ansible.builtin.slurp:
+    src: "{{ codex_desktop_artifact_dir.path }}/verified-checksums"
+  register: codex_desktop_verified_checksums
+
+- name: Require the metadata digest to match Fedora's signed checksum
+  ansible.builtin.assert:
+    that:
+      - "('SHA256 (' ~ codex_desktop_image_filename ~ ') = ' ~ codex_desktop_image.sha256) in (codex_desktop_verified_checksums.content | b64decode).splitlines()"
+    fail_msg: The metadata digest does not match the signed checksum; no disk will be replaced.
+
+- name: Download the unmodified upstream cloud image
+  ansible.builtin.get_url:
+    url: "{{ codex_desktop_image.link }}"
+    checksum: "sha256:{{ codex_desktop_image.sha256 }}"
+    dest: "{{ codex_desktop_artifact_dir.path }}/{{ codex_desktop_image_filename }}"
+    mode: '0600'
+    timeout: 120
+  register: codex_desktop_image_download
+  retries: 3
+  delay: 10
+  until: codex_desktop_image_download is succeeded

@@ -1,0 +1,65 @@
+---
+- name: Retire only the legacy Windows desktop while retaining all disks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read the legacy Windows desktop
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        name: codex-desktop
+        namespace: windows-images
+      register: codex_desktop_windows_vm
+
+    - name: Stop the legacy desktop before removing its definition
+      kubevirt.core.kubevirt_vm:
+        name: codex-desktop
+        namespace: windows-images
+        state: stopped
+        wait: true
+        wait_timeout: 600
+      when: codex_desktop_windows_vm.resources | length > 0
+
+    - name: Wait for the legacy running instance to disappear
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachineInstance
+        name: codex-desktop
+        namespace: windows-images
+      register: codex_desktop_windows_instance
+      retries: 60
+      delay: 10
+      until: codex_desktop_windows_instance.resources | length == 0
+
+    - name: Orphan retained Windows disks when removing only the VM definition
+      kubernetes.core.k8s:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        name: codex-desktop
+        namespace: windows-images
+        state: absent
+        delete_options:
+          propagationPolicy: Orphan
+        wait: true
+        wait_timeout: 600
+
+    - name: Remove only the retired desktop Services
+      kubernetes.core.k8s:
+        kind: Service
+        name: "{{ item }}"
+        namespace: windows-images
+        state: absent
+      loop:
+        - codex-desktop
+        - codex-desktop-rdp
+        - codex-desktop-metrics
+
+    - name: Remove only the retired sysprep Secret
+      kubernetes.core.k8s:
+        kind: Secret
+        name: codex-desktop-sysprep
+        namespace: windows-images
+        state: absent
+      # Kubernetes can return the deleted Secret object; suppress its contents.
+      no_log: true

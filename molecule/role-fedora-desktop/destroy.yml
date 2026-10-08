@@ -1,0 +1,16 @@
+---
+- name: Destroy the disposable VM through the provisioner collection
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
+
+- name: Remove only the scenario's context disk and marker
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Remove disposable retained-state test files
+      ansible.builtin.file:
+        path: "{{ molecule_ephemeral_directory }}/{{ item }}"
+        state: absent
+      loop:
+        - codex-state.qcow2
+        - root-rebuilt

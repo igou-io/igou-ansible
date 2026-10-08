@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: David Igou
+  description: Configure a persistent Fedora GNOME desktop for Codex and T3.
+  license: MIT
+  min_ansible_version: '2.18'
+  platforms:
+    - name: Fedora
+      versions:
+        - all
+  galaxy_tags:
+    - desktop
+    - fedora
+dependencies: []

@@ -1,0 +1,90 @@
+---
+# There is no builtin or collection module for logind linger.
+- name: Fedora desktop | Enable the persistent desktop user's service manager
+  ansible.builtin.command:
+    argv:
+      - loginctl
+      - enable-linger
+      - "{{ fedora_desktop_user }}"
+    creates: "/var/lib/systemd/linger/{{ fedora_desktop_user }}"
+
+- name: Fedora desktop | Start base guest services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - sshd
+    - chronyd
+
+- name: Fedora desktop | Start the desktop user's service manager
+  ansible.builtin.systemd_service:
+    name: "user@{{ fedora_desktop_uid }}.service"
+    state: started
+    daemon_reload: true
+
+- name: Fedora desktop | Remember user manager readiness
+  ansible.builtin.set_fact:
+    __fedora_desktop_user_manager_ready: true
+
+- name: Fedora desktop | Apply service and session policy changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Fedora desktop | Start the virtualization guest agent
+  ansible.builtin.systemd_service:
+    name: qemu-guest-agent
+    state: started
+
+- name: Fedora desktop | Start Tailscale using retained identity
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    state: started
+    enabled: true
+  when: fedora_desktop_tailscale
+
+- name: Fedora desktop | Start the T3 user service
+  ansible.builtin.systemd_service:
+    name: t3.service
+    scope: user
+    state: started
+    enabled: true
+    daemon_reload: true
+  become: true
+  become_user: "{{ fedora_desktop_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ fedora_desktop_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ fedora_desktop_uid }}/bus"
+
+- name: Fedora desktop | Set Firefox as the desktop default browser
+  community.general.ini_file:
+    path: "/home/{{ fedora_desktop_user }}/.config/mimeapps.list"
+    section: Default Applications
+    option: "{{ item }}"
+    value: org.mozilla.firefox.desktop
+    owner: "{{ fedora_desktop_user }}"
+    group: "{{ fedora_desktop_user }}"
+    # Desktop tools rewrite this non-secret preferences file with mode 0644.
+    mode: '0644'
+    no_extra_spaces: true
+  loop:
+    - x-scheme-handler/http
+    - x-scheme-handler/https
+    - text/html
+
+- name: Fedora desktop | Select graphical boot
+  ansible.builtin.file:
+    src: /usr/lib/systemd/system/graphical.target
+    dest: /etc/systemd/system/default.target
+    state: link
+
+- name: Fedora desktop | Start the graphical login manager
+  ansible.builtin.systemd_service:
+    name: gdm
+    state: started
+    enabled: true
+
+- name: Fedora desktop | Wait for T3 readiness
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ fedora_desktop_t3_port }}"
+    timeout: 120

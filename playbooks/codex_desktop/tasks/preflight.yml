@@ -1,0 +1,44 @@
+---
+- name: Require the desktop inventory policy
+  ansible.builtin.assert:
+    that:
+      - codex_desktop_namespace is defined
+      - codex_desktop_name is defined
+      - codex_desktop_root_name != codex_desktop_state_name
+      - not ansible_check_mode
+    fail_msg: Load igou-inventory; lifecycle operations require a real run. Use syntax-check for static validation.
+
+- name: Read the GitOps-owned VirtualMachine
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachine
+    name: "{{ codex_desktop_name }}"
+    namespace: "{{ codex_desktop_namespace }}"
+  register: codex_desktop_vm
+  retries: 30
+  delay: 10
+  until: codex_desktop_vm.resources | length == 1
+
+- name: Require the expected manually controlled disk references
+  vars:
+    codex_desktop_spec: "{{ codex_desktop_vm.resources[0].spec }}"
+  ansible.builtin.assert:
+    that:
+      - codex_desktop_spec.runStrategy == 'Manual'
+      - codex_desktop_spec.template.spec.volumes | selectattr('name', 'equalto', 'root') | map(attribute='dataVolume.name') | first == codex_desktop_root_name
+      - codex_desktop_spec.template.spec.volumes | selectattr('name', 'equalto', 'state') | map(attribute='persistentVolumeClaim.claimName') | first == codex_desktop_state_name
+    fail_msg: Sync the codex-desktop GitOps application before running this automation.
+
+- name: Read the retained state disk
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    name: "{{ codex_desktop_state_name }}"
+    namespace: "{{ codex_desktop_namespace }}"
+  register: codex_desktop_state_pvc
+
+- name: Require independently owned retained state
+  ansible.builtin.assert:
+    that:
+      - codex_desktop_state_pvc.resources | length == 1
+      - codex_desktop_state_pvc.resources[0].metadata.ownerReferences | default([]) | length == 0
+    fail_msg: The independent retained state PVC must exist before provisioning.

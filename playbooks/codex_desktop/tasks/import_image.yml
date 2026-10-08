@@ -1,0 +1,66 @@
+---
+- name: Create an independently owned upload DataVolume
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: cdi.kubevirt.io/v1beta1
+      kind: DataVolume
+      metadata:
+        name: "{{ codex_desktop_root_name }}"
+        namespace: "{{ codex_desktop_namespace }}"
+        annotations:
+          # --no-create does not apply virtctl's --force-bind annotation.
+          cdi.kubevirt.io/storage.bind.immediate.requested: ''
+          automation.igou.systems/fedora-release: "{{ codex_desktop_image_release }}"
+          automation.igou.systems/image-url: "{{ codex_desktop_image.link }}"
+          automation.igou.systems/image-sha256: "{{ codex_desktop_image.sha256 }}"
+      spec:
+        source:
+          upload: {}
+        storage:
+          accessModes:
+            - ReadWriteOnce
+          volumeMode: Block
+          storageClassName: "{{ codex_desktop_storage_class }}"
+          resources:
+            requests:
+              storage: "{{ codex_desktop_root_size }}"
+
+- name: Prepare a private upload kubeconfig for AAP token credentials
+  ansible.builtin.template:
+    src: upload_kubeconfig.yml.j2
+    dest: "{{ codex_desktop_artifact_dir.path }}/upload-kubeconfig"
+    mode: '0600'
+  no_log: true
+  when: lookup('env', 'KUBECONFIG') | length == 0
+
+# virtctl uses kubeconfig, whereas the Ansible API modules also accept K8S_AUTH_*.
+- name: Upload the verified image using the existing CDI client
+  ansible.builtin.command:
+    argv:
+      - virtctl
+      - image-upload
+      - dv
+      - "{{ codex_desktop_root_name }}"
+      - --namespace
+      - "{{ codex_desktop_namespace }}"
+      - --no-create
+      - --wait-secs=600
+      - "--image-path={{ codex_desktop_artifact_dir.path }}/{{ codex_desktop_image_filename }}"
+      - "--uploadproxy-url={{ codex_desktop_upload_proxy }}"
+    # Use the credential file only for this process; never replace ~/.kube/config.
+  environment:
+    KUBECONFIG: "{{ lookup('env', 'KUBECONFIG') | default(codex_desktop_artifact_dir.path ~ '/upload-kubeconfig', true) }}"
+  changed_when: true
+
+- name: Wait for CDI to complete the root import
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataVolume
+    name: "{{ codex_desktop_root_name }}"
+    namespace: "{{ codex_desktop_namespace }}"
+  register: codex_desktop_import
+  retries: 90
+  delay: 10
+  until: codex_desktop_import.resources[0].status.phase | default('') == 'Succeeded'
+  failed_when: codex_desktop_import.resources[0].status.phase | default('') == 'Failed'

@@ -1,0 +1,5 @@
+---
+- name: Stop the desktop and wait for disk detachment
+  ansible.builtin.import_playbook: lifecycle.yaml
+  vars:
+    codex_desktop_power: stopped

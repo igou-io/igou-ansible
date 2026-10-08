@@ -1,0 +1,6 @@
+---
+- name: Provision the latest upstream OS when needed
+  ansible.builtin.import_playbook: provision.yaml
+
+- name: Configure the deployed desktop and release its operation lease
+  ansible.builtin.import_playbook: configure.yaml

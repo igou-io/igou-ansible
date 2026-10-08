@@ -3,7 +3,7 @@ version: 3
 images:
   base_image:
     # renovate: datasource=docker depName=quay.io/centos/centos
-    name: quay.io/centos/centos:stream10-minimal@sha256:5c0cf51dd1b0553f8ea8ebd7c5a4f080e0be9c8ad702ee0462b7bb69119f5068
+    name: quay.io/centos/centos:stream10-minimal@sha256:92855f75b362e25c1dac22e8f50955e3fb7996b656e7e77cf6e4d3a1bd1b0872
 options:
   package_manager_path: /usr/bin/microdnf
 dependencies:
@@ -41,6 +41,7 @@ dependencies:
     terraform
     coreos-installer
     tar
+    gnupg2
   python: requirements.txt
 additional_build_steps:
   prepend_base: |

@@ -1,0 +1,26 @@
+---
+- name: Fedora desktop | Require a supported guest and stable account inputs
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Fedora'
+      - ansible_facts['architecture'] == 'x86_64'
+      - fedora_desktop_uid | int >= 1000
+      - fedora_desktop_user is match('^[a-z][a-z0-9_-]*$')
+      - fedora_desktop_state_dir.startswith('/')
+      - fedora_desktop_t3_port | int > 0
+      - fedora_desktop_t3_port | int < 65536
+
+- name: Fedora desktop | Install guest prerequisites
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/install.yml"
+
+- name: Fedora desktop | Mount retained state and configure the desktop
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/configure.yml"
+
+- name: Fedora desktop | Start desktop services
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/service.yml"
+
+- name: Fedora desktop | Join with a controller-supplied short-lived key
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/tailscale_join.yml"
+  when:
+    - fedora_desktop_tailscale
+    - fedora_desktop_tailscale_authkey | length > 0

@@ -1,0 +1,31 @@
+---
+- name: Fedora desktop | Allocate a private temporary join-key file
+  ansible.builtin.tempfile:
+    state: file
+    path: /run
+    prefix: codex-desktop-tailnet-
+  register: __fedora_desktop_join_file
+  no_log: true
+
+- name: Fedora desktop | Enroll with the controller-created join key
+  no_log: true
+  block:
+    - name: Fedora desktop | Write only the short-lived join key
+      ansible.builtin.copy:
+        content: "{{ fedora_desktop_tailscale_authkey }}"
+        dest: "{{ __fedora_desktop_join_file.path }}"
+        mode: '0600'
+    - name: Fedora desktop | Join the tailnet
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - up
+          - "--auth-key=file:{{ __fedora_desktop_join_file.path }}"
+          - "--advertise-tags={{ fedora_desktop_tailscale_tags | join(',') }}"
+          - --accept-dns=false
+      changed_when: true
+  always:
+    - name: Fedora desktop | Remove the temporary join-key file
+      ansible.builtin.file:
+        path: "{{ __fedora_desktop_join_file.path }}"
+        state: absent

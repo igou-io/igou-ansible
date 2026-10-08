@@ -1,0 +1,200 @@
+---
+- name: Fedora desktop | Create the persistent state mount point
+  ansible.builtin.file:
+    path: "{{ fedora_desktop_state_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Fedora desktop | Format only an unformatted retained disk
+  community.general.filesystem:
+    dev: "{{ fedora_desktop_state_device }}"
+    fstype: ext4
+    force: false
+
+- name: Fedora desktop | Mount retained state before desktop login
+  ansible.posix.mount:
+    src: "{{ fedora_desktop_state_device }}"
+    path: "{{ fedora_desktop_state_dir }}"
+    fstype: ext4
+    opts: defaults
+    state: mounted
+
+- name: Fedora desktop | Create the stable desktop group
+  ansible.builtin.group:
+    name: "{{ fedora_desktop_user }}"
+    gid: "{{ fedora_desktop_uid }}"
+    state: present
+
+- name: Fedora desktop | Create the unprivileged desktop account
+  ansible.builtin.user:
+    name: "{{ fedora_desktop_user }}"
+    uid: "{{ fedora_desktop_uid }}"
+    group: "{{ fedora_desktop_user }}"
+    home: "/home/{{ fedora_desktop_user }}"
+    create_home: false
+    shell: /bin/bash
+    state: present
+
+- name: Fedora desktop | Create retained home storage
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ fedora_desktop_user }}"
+    group: "{{ fedora_desktop_user }}"
+    mode: '0700'
+  loop:
+    - "{{ fedora_desktop_state_dir }}/home"
+    - "/home/{{ fedora_desktop_user }}"
+
+- name: Fedora desktop | Apply normal home SELinux policy to retained storage
+  community.general.sefcontext:
+    target: "{{ fedora_desktop_state_dir }}/home"
+    substitute: "/home/{{ fedora_desktop_user }}"
+    state: present
+  register: __fedora_desktop_home_policy
+
+- name: Fedora desktop | Bind the retained home into the normal user path
+  ansible.posix.mount:
+    src: "{{ fedora_desktop_state_dir }}/home"
+    path: "/home/{{ fedora_desktop_user }}"
+    fstype: none
+    opts: bind
+    state: mounted
+
+- name: Fedora desktop | Create persistent user configuration directories
+  ansible.builtin.file:
+    path: "/home/{{ fedora_desktop_user }}/{{ item }}"
+    state: directory
+    owner: "{{ fedora_desktop_user }}"
+    group: "{{ fedora_desktop_user }}"
+    mode: '0700'
+  loop:
+    - workspaces
+    - .config/autostart
+    - .config/systemd/user
+    - .codex
+
+- name: Fedora desktop | Configure graphical autologin
+  community.general.ini_file:
+    path: /etc/gdm/custom.conf
+    section: daemon
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: '0644'
+    no_extra_spaces: true
+  loop:
+    - option: AutomaticLoginEnable
+      value: 'True'
+    - option: AutomaticLogin
+      value: "{{ fedora_desktop_user }}"
+
+- name: Fedora desktop | Create system service override and desktop policy directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /etc/systemd/system/gdm.service.d
+    - /etc/systemd/system/tailscaled.service.d
+    - /etc/dconf/db/local.d/locks
+    - /etc/dconf/profile
+
+- name: Fedora desktop | Prevent login without mounted user state
+  ansible.builtin.template:
+    src: gdm_state.conf.j2
+    dest: /etc/systemd/system/gdm.service.d/state.conf
+    mode: '0644'
+    backup: true
+  notify: Fedora desktop | Reload systemd
+
+- name: Fedora desktop | Configure GNOME session policy
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: '0644'
+    backup: true
+  loop:
+    - src: dconf_profile.j2
+      dest: /etc/dconf/profile/user
+    - src: desktop_policy.j2
+      dest: /etc/dconf/db/local.d/00-codex-desktop
+    - src: desktop_locks.j2
+      dest: /etc/dconf/db/local.d/locks/codex-desktop
+  notify: Fedora desktop | Update dconf
+
+- name: Fedora desktop | Mask host sleep targets in the guest
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    masked: true
+  loop:
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+
+- name: Fedora desktop | Configure app autostart and T3 user service
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/home/{{ fedora_desktop_user }}/{{ item.dest }}"
+    owner: "{{ fedora_desktop_user }}"
+    group: "{{ fedora_desktop_user }}"
+    mode: '0644'
+    backup: true
+  loop:
+    - src: chatgpt.desktop.j2
+      dest: .config/autostart/chatgpt.desktop
+    - src: t3.service.j2
+      dest: .config/systemd/user/t3.service
+  notify: Fedora desktop | Restart T3
+
+- name: Fedora desktop | Preserve tailnet identity
+  when: fedora_desktop_tailscale
+  block:
+    - name: Fedora desktop | Create protected persistent tailnet storage
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - "{{ fedora_desktop_state_dir }}/tailscale"
+        - /var/lib/tailscale
+
+    - name: Fedora desktop | Apply Tailscale SELinux policy to retained storage
+      community.general.sefcontext:
+        target: "{{ fedora_desktop_state_dir }}/tailscale"
+        substitute: /var/lib/tailscale
+        state: present
+      register: __fedora_desktop_tailnet_policy
+
+    - name: Fedora desktop | Bind retained Tailscale state
+      ansible.posix.mount:
+        src: "{{ fedora_desktop_state_dir }}/tailscale"
+        path: /var/lib/tailscale
+        fstype: none
+        opts: bind
+        state: mounted
+
+    - name: Fedora desktop | Require persistent tailnet storage before starting Tailscale
+      ansible.builtin.template:
+        src: tailscale_state.conf.j2
+        dest: /etc/systemd/system/tailscaled.service.d/state.conf
+        mode: '0644'
+        backup: true
+      notify:
+        - Fedora desktop | Reload systemd
+        - Fedora desktop | Restart Tailscale
+
+- name: Fedora desktop | Restore retained storage SELinux contexts
+  ansible.builtin.command:
+    argv:
+      - restorecon
+      - -RFv
+      - "{{ fedora_desktop_state_dir }}"
+  register: __fedora_desktop_restorecon
+  changed_when: __fedora_desktop_restorecon.stdout | length > 0
+  # Relabel for policy changes and a fresh OS, rather than altering live app caches.
+  when: >-
+    __fedora_desktop_home_policy.changed
+    or (__fedora_desktop_tailnet_policy.changed | default(false))

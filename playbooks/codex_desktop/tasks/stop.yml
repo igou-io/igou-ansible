@@ -1,0 +1,59 @@
+---
+- name: Stop the desktop gracefully
+  kubevirt.core.kubevirt_vm:
+    name: "{{ codex_desktop_name }}"
+    namespace: "{{ codex_desktop_namespace }}"
+    state: stopped
+    wait: true
+    wait_timeout: 600
+
+- name: Wait for the desktop instance to disappear
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    name: "{{ codex_desktop_name }}"
+    namespace: "{{ codex_desktop_namespace }}"
+  register: codex_desktop_stopped_instance
+  retries: 60
+  delay: 10
+  until: codex_desktop_stopped_instance.resources | length == 0
+
+- name: Wait for launcher pods to finish terminating
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: "{{ codex_desktop_namespace }}"
+    label_selectors:
+      - "app.kubernetes.io/name={{ codex_desktop_name }}"
+  register: codex_desktop_launcher_pods
+  retries: 60
+  delay: 10
+  until: codex_desktop_launcher_pods.resources | length == 0
+
+- name: Read the desktop's disk bindings
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    name: "{{ item }}"
+    namespace: "{{ codex_desktop_namespace }}"
+  loop:
+    - "{{ codex_desktop_root_name }}"
+    - "{{ codex_desktop_state_name }}"
+  register: codex_desktop_disk_bindings
+
+- name: Resolve the desktop's bound volumes
+  ansible.builtin.set_fact:
+    codex_desktop_bound_volumes: >-
+      {{ codex_desktop_disk_bindings.results | map(attribute='resources') | flatten
+         | selectattr('spec.volumeName', 'defined') | map(attribute='spec.volumeName') | list }}
+
+- name: Wait for both desktop disks to detach
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: VolumeAttachment
+  register: codex_desktop_attachments
+  retries: 60
+  delay: 10
+  until: >-
+    codex_desktop_attachments.resources
+    | selectattr('spec.source.persistentVolumeName', 'defined')
+    | selectattr('spec.source.persistentVolumeName', 'in', codex_desktop_bound_volumes)
+    | list | length == 0

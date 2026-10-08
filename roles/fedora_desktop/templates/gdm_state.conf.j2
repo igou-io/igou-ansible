@@ -1,0 +1,5 @@
+{{ ansible_managed | comment }}
+[Unit]
+RequiresMountsFor={{ fedora_desktop_state_dir }} /home/{{ fedora_desktop_user }}
+AssertPathIsMountPoint={{ fedora_desktop_state_dir }}
+AssertPathIsMountPoint=/home/{{ fedora_desktop_user }}

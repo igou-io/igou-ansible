@@ -1,0 +1,4 @@
+---
+mp_backend: qemu
+mp_qemu_slirp_port_base: 23222
+mp_qemu_wait_timeout: 600

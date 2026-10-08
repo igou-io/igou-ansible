@@ -1,0 +1,71 @@
+---
+argument_specs:
+  main:
+    short_description: Install a persistent Fedora GNOME desktop with Codex and T3
+    description:
+      - Configure an upstream cloud guest without changing its image or disabling SELinux.
+    options:
+      fedora_desktop_user:
+        type: str
+        default: codex
+        description: Unprivileged desktop account.
+      fedora_desktop_uid:
+        type: int
+        default: 1100
+        description: Stable UID and GID for retained user data.
+      fedora_desktop_state_device:
+        type: str
+        default: /dev/disk/by-id/virtio-codex-state
+        description: Independent retained state block device; only blank disks are formatted.
+      fedora_desktop_state_dir:
+        type: path
+        default: /var/lib/codex-desktop
+        description: Required persistent mount containing home and tailnet identity.
+      fedora_desktop_packages:
+        type: list
+        elements: str
+        description: GNOME, browser, guest agent, SSH, and development packages.
+      fedora_desktop_node_version:
+        type: str
+        default: '26.10.0'
+        description: Node.js version pinned independently from the Fedora release.
+      fedora_desktop_t3_version:
+        type: str
+        default: '0.0.45'
+        description: T3 npm package version.
+      fedora_desktop_codex_version:
+        type: str
+        default: '0.160.1'
+        description: Codex CLI npm package version.
+      fedora_desktop_t3_port:
+        type: int
+        default: 3773
+        description: T3 loopback listener port.
+      fedora_desktop_openai_rpm_url:
+        type: str
+        description: Official desktop bootstrap RPM URL.
+      fedora_desktop_openai_signing_key_url:
+        type: str
+        description: Reviewed OpenAI Linux repository signing key bundle URL.
+      fedora_desktop_openai_signing_fingerprint:
+        type: str
+        description: Expected OpenAI signing key fingerprint; required for key import.
+      fedora_desktop_chrome:
+        type: bool
+        default: false
+        description: Install Google Chrome in addition to Firefox.
+      fedora_desktop_tailscale:
+        type: bool
+        default: true
+        description: Install Tailscale and persist its identity.
+      fedora_desktop_tailscale_authkey:
+        type: str
+        default: ''
+        no_log: true
+        description: Controller-created short-lived join key; never an OAuth client secret.
+      fedora_desktop_tailscale_tags:
+        type: list
+        elements: str
+        default:
+          - tag:codex
+        description: Tailnet device tags used during enrollment.

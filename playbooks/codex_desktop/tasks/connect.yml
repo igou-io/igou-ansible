@@ -1,0 +1,39 @@
+---
+- name: Read the OS disk identity for SSH host-key tracking
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataVolume
+    name: "{{ codex_desktop_root_name }}"
+    namespace: "{{ codex_desktop_namespace }}"
+  register: codex_desktop_ssh_root
+
+- name: Resolve the guest SSH endpoint
+  ansible.builtin.set_fact:
+    codex_desktop_guest_endpoint: "{{ codex_desktop_ssh_host | default(codex_desktop_name ~ '-ssh.' ~ codex_desktop_namespace ~ '.svc.cluster.local', true) }}"
+
+- name: Wait for the guest SSH listener
+  ansible.builtin.wait_for:
+    host: "{{ codex_desktop_guest_endpoint }}"
+    port: "{{ codex_desktop_ssh_port | default(22) }}"
+    timeout: 900
+
+- name: Add only this desktop to the configuration group
+  ansible.builtin.add_host:
+    name: codex-desktop-guest
+    groups:
+      - codex_desktop_guest
+    ansible_host: "{{ codex_desktop_guest_endpoint }}"
+    ansible_port: "{{ codex_desktop_ssh_port | default(22) }}"
+    ansible_user: igou
+    ansible_connection: ssh
+    ansible_python_interpreter: /usr/bin/python3
+    # A newly imported OS has a new host key; reuse its key on routine setup.
+    ansible_ssh_common_args: >-
+      -o StrictHostKeyChecking=accept-new
+      -o HostKeyAlias=codex-desktop-{{ codex_desktop_ssh_root.resources[0].metadata.uid }}
+
+- name: Publish the non-secret deployment endpoint
+  ansible.builtin.set_stats:
+    per_host: false
+    data:
+      codex_desktop_ssh_endpoint: "{{ codex_desktop_guest_endpoint }}"
