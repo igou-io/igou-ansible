@@ -52,9 +52,10 @@ without deleting its old storage. Remove an existing persistent device from
 the tailnet once during migration; it is not covered by ephemeral cleanup.
 
 Functional scenario: `molecule test -s role-fedora-desktop`. It provisions a
-fresh Fedora VM, installs and verifies the desktop with Tailscale disabled,
-checks idempotency, then removes the disposable VM and disks. Teardown verifies
-that the QEMU process exits and the guest SSH listener closes. Operator runbook:
+fresh Fedora VM on KubeVirt, installs and verifies the desktop with Tailscale
+disabled, checks idempotency, then removes the disposable VM and disks. Run it
+locally with the `ocp-ansible-molecule` credential profile. Teardown waits for
+the VM, VMI, boot DataVolume/PVC, and SSH Service to disappear. Operator runbook:
 [Fedora Codex Desktop](https://github.com/igou-io/igou-docs/blob/main/openshift/Fedora%20Codex%20Desktop.md).
 
 Author: David Igou. License: MIT.

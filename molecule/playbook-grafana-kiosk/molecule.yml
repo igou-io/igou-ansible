@@ -5,9 +5,8 @@
 #
 # Provisioning is delegated to david_igou.molecule_provisioners
 # (inventory-driven; see inventory/hosts.yml for the instances and
-# inventory/group_vars/ for the memory caps and kiosk vars). Backends:
-# podman (default) / docker containers, or PROVISIONER=kubevirt for real
-# 512MiB VMs on the cluster - the kubevirt path also supports no-destroy
+# inventory/group_vars/ for the memory caps and kiosk vars). Real
+# 512MiB KubeVirt VMs on the cluster also support no-destroy
 # render inspection (see playbooks/grafana-kiosk/README.md "Render testing").
 prerun: false
 
@@ -33,7 +32,7 @@ ansible:
 dependency:
   name: galaxy
   options:
-    requirements-file: collections.yml
+    requirements-file: molecule/playbook-grafana-kiosk/collections.yml
 
 scenario:
   name: playbook-grafana-kiosk

@@ -22,9 +22,9 @@ keeps its internal underscores):
 | `subject` | The content's own identifier. For a nested playbook domain, include the domain first — e.g. `playbook-windows-join_domain`. |
 | `qualifier` | Optional. Disambiguates multiple scenarios for the same subject, and describes the **test** — `e2e`, `smoke`, `absent`, `upgrade`. |
 
-**The backend never goes in the scenario name.** Podman vs. qemu vs. kubevirt is
-selected at runtime via `mp_backend` / `PROVISIONER` and matrixed in CI. Each
-scenario's `molecule.yml` sets `scenario.name` to match its directory name.
+**The backend never goes in the scenario name.** Every provisioned instance in
+this repository uses KubeVirt. Each scenario's `molecule.yml` sets
+`scenario.name` to match its directory name.
 
 ## Provisioning
 
@@ -32,15 +32,23 @@ Instance lifecycle is delegated to the
 [`david_igou.molecule_provisioners`](https://galaxy.ansible.com/david_igou/molecule_provisioners)
 collection rather than per-scenario create/destroy plumbing. Inventories stay
 per-scenario (they describe which instances that scenario tests): a `molecule`
-group with `mp.<backend>` host blocks and `mp_backend`/`mp_defaults` in
-`group_vars`.
+group with `mp.kubevirt` host blocks and `mp_backend: kubevirt` in `group_vars`.
+Use `mp_defaults.kubevirt` for shared guest settings. Pure `logic-*` scenarios
+run locally and provision no machines.
+
+Run Molecule from the local development environment against the live cluster
+with the `ocp-ansible-molecule` credential profile. GitHub Actions runs static
+checks and image builds; it does not run Molecule. New guest scenarios must
+use the collection's KubeVirt backend, without container or local-QEMU options.
+The local Python environment needs Molecule, Ansible, and the `kubernetes`
+client used by the provisioner's Kubernetes modules.
 
 ## Directory structure
 
 ```
 molecule/
 ├── README.md
-├── default/                         # scaffold stub
+├── default/                         # KubeVirt provisioning/SSH smoke test
 ├── logic-kubevirt-vm-snapshot/      # localhost-only logic test
 ├── playbook-devenv-bootstrap/
 ├── playbook-grafana-kiosk/
@@ -69,19 +77,28 @@ needs lives in its own directory. The sysprep play resolves its template via
 ## Environment variable templating
 
 Molecule natively supports environment variable substitution in `molecule.yml`,
-used here so one scenario covers many shapes (distro, privilege, backend):
+used for test inputs and controller paths. Guest provisioning is expressed in
+the scenario inventory, for example:
 
 ```yaml
-platforms:
-  - name: "${MOLECULE_PLATFORM_NAME:-instance}"
-    image: "${MOLECULE_DISTRO_IMAGE:-quay.io/ansible/community-ansible-dev-tools:latest}"
-    privileged: ${MOLECULE_PRIVILEGED:-true}
+all:
+  children:
+    molecule:
+      hosts:
+        example:
+          mp:
+            kubevirt:
+              boot_source:
+                type: container_disk
+                image: quay.io/containerdisks/centos-stream:10
+              ssh_user: igou
 ```
 
 ## Usage
 
 ```bash
-# Run one scenario
+# Run one scenario with namespace-scoped cluster credentials
+use ocp-ansible-molecule
 molecule test -s <scenario-name>
 
 # Iterate without tearing down instances

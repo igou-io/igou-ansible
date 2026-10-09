@@ -1,0 +1,4 @@
+---
+minor_changes:
+  - Molecule - Moved Fedora desktop, Grafana kiosk, and TrueNAS fixtures to KubeVirt and replaced the default scaffold with a KubeVirt provisioning smoke test.
+  - CI - Removed Molecule execution from GitHub Actions; functional scenarios run locally against the cluster with scoped test credentials.

@@ -79,14 +79,12 @@ at the Pi Zero 2 W's 512MB envelope, against a mock Grafana that echoes the
 Authorization header. Verify proves end-to-end token injection, unit
 enablement, config permissions, and runs real headless browser renders
 (Chromium screenshot and cog 20s survival) inside the memory cap. Provisioning uses
-`david_igou.molecule_provisioners` (see `molecule/playbook-grafana-kiosk/inventory/`);
-pick a backend with `PROVISIONER`:
-
-| `PROVISIONER` | Guests | Notes |
-|---|---|---|
-| `podman` (default) | systemd containers, cgroup-capped at 512m | Broken in the igou devcontainer (nested rootless podman has no cgroup delegation) — use `docker` there |
-| `docker` | same containers via host-side docker | Enforces the memory cap everywhere |
-| `kubevirt` | real 512MiB VMs on the cluster (`containerdisks/debian:12` for chromium, `debian:13` + virtio display for cog) | Needs a `KUBECONFIG` with VM + Service CRUD in the `molecule` namespace (ansible-molecule SA: `op://claude/ocp-ansible-molecule/token`). The zram/sysctl metal paths genuinely run, and the VMs have virtual displays |
+the KubeVirt backend of `david_igou.molecule_provisioners` (see
+`molecule/playbook-grafana-kiosk/inventory/`). The guests are real 512MiB VMs:
+Debian 12 for Chromium and Debian 13 with a virtio display for cog. Run locally
+with `use ocp-ansible-molecule`; the profile provides scoped access to the
+`molecule` namespace. The zram/sysctl paths run in the guests, and the VMs have
+virtual displays. GitHub Actions does not run this scenario.
 
 ### Render testing (run without destroy)
 
@@ -95,7 +93,7 @@ up so you can iterate on the play and eyeball what the kiosk actually
 renders:
 
 ```bash
-export PROVISIONER=kubevirt   # and a KUBECONFIG for the ansible-molecule SA
+use ocp-ansible-molecule
 
 molecule converge -s playbook-grafana-kiosk   # create + prepare + converge; instances stay up
 KIOSK_FETCH_SCREENSHOT=1 molecule verify -s playbook-grafana-kiosk   # re-runnable

@@ -1,10 +1,18 @@
 ---
-# Purpose: assert that the instance really ended up in the expected state.
-# Molecule calls this playbook with `molecule verify`.
-- name: Verify
-  hosts: instance
-  gather_facts: false  # Quicker, if you do not need facts
+- name: Verify the smoke-test guest
+  hosts: molecule
+  gather_facts: true
   tasks:
-    - name: Assert something
+    - name: Require the requested CentOS Stream release
       ansible.builtin.assert:
-        that: true
+        that:
+          - ansible_facts.distribution == 'CentOS'
+          - ansible_facts.distribution_major_version == '10'
+    - name: Exercise the cloud-init user's privileged access
+      ansible.builtin.command: id -u
+      become: true
+      changed_when: false
+      register: molecule_smoke_uid
+    - name: Require usable root access for installation tasks
+      ansible.builtin.assert:
+        that: molecule_smoke_uid.stdout == '0'

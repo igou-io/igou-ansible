@@ -10,9 +10,9 @@
 # every file the compose stack mounts (docker-compose.yml, config_files, .env)
 # exists on the dataset BEFORE app.create runs.
 #
-# No TrueNAS middleware is involved: the instance is a plain container standing
+# No TrueNAS middleware is involved: the instance is a CentOS KubeVirt VM standing
 # in for the TrueNAS host, with a stateful `midclt` STUB (files/midclt.py) on
-# PATH. The stub snapshots the container-dataset file listing at the moment
+# PATH. The stub snapshots the guest-dataset file listing at the moment
 # app.create is called; verify asserts the compose file, config file, and .env
 # are all in that snapshot — with the pre-#330 task order this assertion fails.
 # app.query replays state recorded by app.create, so the idempotence step also
@@ -40,7 +40,7 @@ ansible:
         - --inventory=inventory/
         - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
         # The datasets play drives the real TrueNAS middleware
-        # (arensb.truenas.filesystem) — not mockable on a plain container.
+        # (arensb.truenas.filesystem) — unavailable on the fixture VM.
         # Harmless for the other phases (nothing else carries the tag).
         - --skip-tags=datasets
   playbooks:

@@ -45,9 +45,8 @@
           {{ _verify_unit }}:
           {{ ansible_facts.services[_verify_unit] | default('unit not found') }}
 
-    # --- Low-resource smoke: real browser rendering inside the 512MB cgroup.
-    # Headless because containers have no DRM/X; the memory ceiling is what
-    # is under test (an OOM kill fails the task).
+    # Headless rendering exercises each browser within the 512Mi guest.
+    # An OOM kill fails the task.
 
     - name: Chromium render smoke
       when: kiosk_stack == 'chromium'
