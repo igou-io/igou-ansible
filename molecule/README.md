@@ -43,6 +43,11 @@ use the collection's KubeVirt backend, without container or local-QEMU options.
 The local Python environment needs Molecule, Ansible, and the `kubernetes`
 client used by the provisioner's Kubernetes modules.
 
+Lint installs the repo-root `requirements.yml` (roles and collections) and
+`requirements-molecule.yml` (shared test collections). Together these cover the
+Molecule playbook imports and the content under test. Scenario-specific
+`collections.yml` files remain the dependency inputs for local Molecule runs.
+
 ## Directory structure
 
 ```

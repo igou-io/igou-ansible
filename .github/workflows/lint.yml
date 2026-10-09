@@ -25,8 +25,11 @@ jobs:
       - name: Install ansible-lint
         run: pip install ansible-lint
 
-      - name: Install collections needed by lint
-        run: ansible-galaxy collection install -r molecule/role-fedora-desktop/collections.yml
+      - name: Install repository and Molecule dependencies
+        run: |
+          ansible-galaxy collection install -r requirements.yml
+          ansible-galaxy role install -r requirements.yml
+          ansible-galaxy collection install -r requirements-molecule.yml
 
       - name: Run ansible-lint
         run: ansible-lint --profile=production
