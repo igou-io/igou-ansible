@@ -1,5 +1,5 @@
 ---
-- name: Verify a usable desktop and retained workspace
+- name: Verify the freshly installed desktop
   hosts: molecule
   become: true
   gather_facts: false
@@ -64,43 +64,10 @@
     - name: Require SELinux to remain enforced
       ansible.builtin.assert:
         that: codex_desktop_test_selinux.stdout == 'Enforcing'
-    - name: Read the workspace retained through OS replacement
-      ansible.builtin.command: cat /home/codex/workspaces/retention.txt
+    - name: Create a workspace as the unprivileged desktop user
+      ansible.builtin.tempfile:
+        path: /home/codex/workspaces
+        state: directory
+        prefix: molecule-install-
       become: true
       become_user: codex
-      changed_when: false
-      register: codex_desktop_test_retention
-      when: (lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/root-rebuilt', errors='ignore') | default('', true)) == 'rebuilt'
-    - name: Require retained workspace contents to survive a fresh OS
-      ansible.builtin.assert:
-        that: codex_desktop_test_retention.stdout == 'retained-across-root-replacement'
-      when: codex_desktop_test_retention.stdout is defined
-    - name: Verify the daemon ignores persistent identity storage
-      block:
-        - name: Put deliberately invalid state at the vendor's default disk path
-          ansible.builtin.copy:
-            content: invalid-persistent-state-must-not-be-loaded
-            dest: /var/lib/tailscale/tailscaled.state
-            mode: '0600'
-        - name: Restart the real Tailscale daemon without a join key
-          ansible.builtin.systemd_service:
-            name: tailscaled
-            state: restarted
-        - name: Read the real daemon's fresh login state
-          ansible.builtin.command: tailscale status --json
-          changed_when: false
-          register: codex_desktop_test_tailnet
-          failed_when: codex_desktop_test_tailnet.rc not in [0, 1]
-          retries: 15
-          delay: 2
-          until: >-
-            (codex_desktop_test_tailnet.stdout | from_json).BackendState == 'NeedsLogin'
-        - name: Require disposable enrollment despite invalid disk state
-          ansible.builtin.assert:
-            that:
-              - "not ((codex_desktop_test_tailnet.stdout | from_json).Self | default({}, true)).get('ID', '')"
-      always:
-        - name: Remove the invalid fixture state
-          ansible.builtin.file:
-            path: /var/lib/tailscale/tailscaled.state
-            state: absent

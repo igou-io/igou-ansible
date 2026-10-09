@@ -1,16 +1,39 @@
 ---
-- name: Destroy the disposable VM through the provisioner collection
-  ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
-
-- name: Remove only the scenario's context disk and marker
+- name: Remember the disposable VM process before removal
   hosts: localhost
   connection: local
   gather_facts: false
   tasks:
-    - name: Remove disposable retained-state test files
+    - name: Read the provisioner's QEMU PID if the VM was created
+      ansible.builtin.slurp:
+        src: "{{ molecule_ephemeral_directory }}/fedora-desktop-test.pid"
+      register: codex_desktop_test_qemu_pid
+      failed_when: false
+
+- name: Destroy the disposable VM through the provisioner collection
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
+
+- name: Remove the scenario's extra resources and verify VM removal
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Remove the disposable state disk and guest-agent socket
       ansible.builtin.file:
         path: "{{ molecule_ephemeral_directory }}/{{ item }}"
         state: absent
       loop:
         - codex-state.qcow2
-        - root-rebuilt
+        - qga.sock
+    - name: Require the disposable QEMU process to exit
+      ansible.builtin.wait_for:
+        path: "/proc/{{ codex_desktop_test_qemu_pid.content | b64decode | trim }}"
+        state: absent
+        timeout: 30
+      when: codex_desktop_test_qemu_pid.content is defined
+    - name: Require the guest SSH listener to close
+      ansible.builtin.wait_for:
+        host: "{{ hostvars['fedora-desktop-test'].ansible_host | default('127.0.0.1') }}"
+        port: "{{ hostvars['fedora-desktop-test'].ansible_port | default(mp_qemu_slirp_port_base) }}"
+        state: stopped
+        timeout: 30

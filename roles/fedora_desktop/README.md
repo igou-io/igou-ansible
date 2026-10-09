@@ -51,7 +51,10 @@ a restart and reapply Serve. The role detaches the former Tailscale bind mount
 without deleting its old storage. Remove an existing persistent device from
 the tailnet once during migration; it is not covered by ephemeral cleanup.
 
-Functional scenario: `molecule test -s role-fedora-desktop`. Operator runbook:
+Functional scenario: `molecule test -s role-fedora-desktop`. It provisions a
+fresh Fedora VM, installs and verifies the desktop with Tailscale disabled,
+checks idempotency, then removes the disposable VM and disks. Teardown verifies
+that the QEMU process exits and the guest SSH listener closes. Operator runbook:
 [Fedora Codex Desktop](https://github.com/igou-io/igou-docs/blob/main/openshift/Fedora%20Codex%20Desktop.md).
 
 Author: David Igou. License: MIT.
