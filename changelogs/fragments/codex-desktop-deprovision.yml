@@ -1,4 +1,0 @@
----
-minor_changes:
-  - Added a codex_desktop deprovision entry point that stopped the VM and removed its exact tagged Tailscale device while retaining both disks (https://github.com/igou-io/igou-ansible/pull/585).
-  - Recorded desktop enrollment on the state PVC and reset retired client enrollment only during a subsequent explicit setup or rollout.

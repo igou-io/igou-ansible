@@ -25,6 +25,56 @@
             wait: true
             wait_timeout: 900
           when: codex_desktop_power == 'started'
-      always:
-        - name: Release the desktop operation lease
+        - name: Discover the started desktop over cluster SSH
+          ansible.builtin.include_tasks: tasks/connect.yml
+          when: codex_desktop_power == 'started'
+      rescue:
+        - name: Release the lease after a failed start
           ansible.builtin.include_tasks: tasks/release.yml
+          when: codex_desktop_power == 'started'
+        - name: Report the failed power operation
+          ansible.builtin.fail:
+            msg: The desktop power operation failed; its operation lease has been released.
+      always:
+        - name: Release the completed stop operation lease
+          ansible.builtin.include_tasks: tasks/release.yml
+          when: codex_desktop_power == 'stopped'
+
+- name: Restore ephemeral tailnet access on the started desktop
+  hosts: codex_desktop_guest
+  become: true
+  gather_facts: false
+  vars:
+    codex_desktop_operation_id: "{{ hostvars['localhost']['codex_desktop_operation_id'] }}"
+    codex_desktop_operation_owned: "{{ hostvars['localhost']['codex_desktop_operation_owned'] }}"
+  tasks:
+    - name: Ensure tailnet access before completing the start operation
+      when: codex_desktop_power == 'started'
+      block:
+        - name: Wait for authenticated guest access
+          ansible.builtin.wait_for_connection:
+            timeout: 900
+        - name: Configure native ephemeral Tailscale state
+          ansible.builtin.include_role:
+            name: fedora_desktop
+            tasks_from: tailscale_state
+          when: fedora_desktop_tailscale | default(true)
+        - name: Apply Tailscale service configuration
+          ansible.builtin.meta: flush_handlers
+        - name: Ensure the ephemeral daemon is running
+          ansible.builtin.systemd_service:
+            name: tailscaled
+            state: started
+            enabled: true
+          when: fedora_desktop_tailscale | default(true)
+        - name: Enroll and expose the tailnet endpoint
+          ansible.builtin.include_tasks: tasks/tailnet.yml
+          when: fedora_desktop_tailscale | default(true)
+      always:
+        - name: Release this job's desktop operation lease
+          ansible.builtin.include_tasks:
+            file: tasks/release.yml
+            apply:
+              delegate_to: localhost
+              become: false
+          when: codex_desktop_power == 'started'

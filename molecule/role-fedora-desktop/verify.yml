@@ -75,22 +75,32 @@
       ansible.builtin.assert:
         that: codex_desktop_test_retention.stdout == 'retained-across-root-replacement'
       when: codex_desktop_test_retention.stdout is defined
-    - name: Verify retained tailnet storage after OS replacement
-      when: codex_desktop_test_retention.stdout is defined
+    - name: Verify the daemon ignores persistent identity storage
       block:
-        - name: Read retained protected state as the service owner
-          ansible.builtin.command: cat /var/lib/tailscale/retention.txt
+        - name: Put deliberately invalid state at the vendor's default disk path
+          ansible.builtin.copy:
+            content: invalid-persistent-state-must-not-be-loaded
+            dest: /var/lib/tailscale/tailscaled.state
+            mode: '0600'
+        - name: Restart the real Tailscale daemon without a join key
+          ansible.builtin.systemd_service:
+            name: tailscaled
+            state: restarted
+        - name: Read the real daemon's fresh login state
+          ansible.builtin.command: tailscale status --json
           changed_when: false
-          register: codex_desktop_test_tailnet_retention
-        - name: Attempt the same read as the unprivileged desktop user
-          ansible.builtin.command: cat /var/lib/tailscale/retention.txt
-          become: true
-          become_user: codex
-          changed_when: false
-          failed_when: false
-          register: codex_desktop_test_tailnet_access
-        - name: Require retained service state and desktop-user isolation
+          register: codex_desktop_test_tailnet
+          failed_when: codex_desktop_test_tailnet.rc not in [0, 1]
+          retries: 15
+          delay: 2
+          until: >-
+            (codex_desktop_test_tailnet.stdout | from_json).BackendState == 'NeedsLogin'
+        - name: Require disposable enrollment despite invalid disk state
           ansible.builtin.assert:
             that:
-              - codex_desktop_test_tailnet_retention.stdout == 'protected-state-retained'
-              - codex_desktop_test_tailnet_access.rc != 0
+              - "not ((codex_desktop_test_tailnet.stdout | from_json).Self | default({}, true)).get('ID', '')"
+      always:
+        - name: Remove the invalid fixture state
+          ansible.builtin.file:
+            path: /var/lib/tailscale/tailscaled.state
+            state: absent

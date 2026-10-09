@@ -23,9 +23,11 @@ join-key argument accepts only a resolved short-lived key.
 | `fedora_desktop_openai_signing_key_url` | Reviewed official Linux signing bundle |
 | `fedora_desktop_openai_signing_fingerprint` | Expected fingerprint; key import fails on mismatch |
 | `fedora_desktop_chrome` | `false`: optional Chrome |
-| `fedora_desktop_tailscale` | `true`: install Tailscale and persist identity |
+| `fedora_desktop_tailscale` | `true`: install Tailscale with ephemeral in-memory enrollment |
 | `fedora_desktop_tailscale_authkey` | Empty; optional short-lived join key, declared `no_log` |
 | `fedora_desktop_tailscale_tags` | `tag:codex` |
+| `fedora_desktop_tailscale_hostname` | `codex-desktop`, requested tailnet hostname |
+| `fedora_desktop_tailscale_key_dir` | `/run`, temporary root-only join-key storage |
 
 ```yaml
 ---
@@ -42,6 +44,13 @@ of restoring the previous OS disk and retaining the separate state disk. There
 is no state-destruction interface. Sign-in, encrypted keyring enrollment/unlock,
 and T3 pairing remain interactive. GNOME uses its normal Wayland session and
 the official app's normal session autostart; SELinux is retained.
+
+Tailscale uses native `--state=mem:`. Its identity and Serve configuration are
+disposable across daemon restarts; desktop files and app credentials remain on
+the retained disk. The controller must supply a fresh ephemeral join key after
+a restart and reapply Serve. The role detaches the former Tailscale bind mount
+without deleting its old storage. Remove an existing persistent device from
+the tailnet once during migration; it is not covered by ephemeral cleanup.
 
 Functional scenario: `molecule test -s role-fedora-desktop`. Operator runbook:
 [Fedora Codex Desktop](https://github.com/igou-io/igou-docs/blob/main/openshift/Fedora%20Codex%20Desktop.md).

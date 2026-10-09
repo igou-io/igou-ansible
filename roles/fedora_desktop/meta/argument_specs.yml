@@ -20,7 +20,7 @@ argument_specs:
       fedora_desktop_state_dir:
         type: path
         default: /var/lib/codex-desktop
-        description: Required persistent mount containing home and tailnet identity.
+        description: Required persistent mount containing desktop home and workspaces.
       fedora_desktop_packages:
         type: list
         elements: str
@@ -57,7 +57,7 @@ argument_specs:
       fedora_desktop_tailscale:
         type: bool
         default: true
-        description: Install Tailscale and persist its identity.
+        description: Install Tailscale with disposable in-memory enrollment.
       fedora_desktop_tailscale_authkey:
         type: str
         default: ''
@@ -69,3 +69,11 @@ argument_specs:
         default:
           - tag:codex
         description: Tailnet device tags used during enrollment.
+      fedora_desktop_tailscale_hostname:
+        type: str
+        default: codex-desktop
+        description: Requested tailnet hostname; enrollment must not occupy a conflicting DNS name.
+      fedora_desktop_tailscale_key_dir:
+        type: path
+        default: /run
+        description: Temporary directory for a root-only join-key file that is removed after enrollment.

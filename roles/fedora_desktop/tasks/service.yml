@@ -35,7 +35,7 @@
     name: qemu-guest-agent
     state: started
 
-- name: Fedora desktop | Start Tailscale using retained identity
+- name: Fedora desktop | Start Tailscale with disposable enrollment
   ansible.builtin.systemd_service:
     name: tailscaled
     state: started

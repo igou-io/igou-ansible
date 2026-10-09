@@ -1,4 +1,64 @@
 ---
+- name: Exercise migration from the previous retained Tailscale mount
+  hosts: molecule
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Stop the disposable daemon before preparing legacy storage
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        state: stopped
+    - name: Create the former retained identity directory
+      ansible.builtin.file:
+        path: /var/lib/codex-desktop/tailscale
+        state: directory
+        mode: '0700'
+    - name: Retain an isolated old-state marker during migration
+      ansible.builtin.copy:
+        content: old-tailnet-storage-retained
+        dest: /var/lib/codex-desktop/tailscale/retention.txt
+        mode: '0600'
+    - name: Recreate the former SELinux substitution
+      community.general.sefcontext:
+        target: /var/lib/codex-desktop/tailscale
+        substitute: /var/lib/tailscale
+        state: present
+    - name: Recreate the former persistent state mount
+      ansible.posix.mount:
+        src: /var/lib/codex-desktop/tailscale
+        path: /var/lib/tailscale
+        fstype: none
+        opts: bind
+        state: mounted
+    - name: Recreate the former mount-dependent service override
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          RequiresMountsFor=/var/lib/codex-desktop /var/lib/tailscale
+          AssertPathIsMountPoint=/var/lib/tailscale
+        dest: /etc/systemd/system/tailscaled.service.d/state.conf
+        mode: '0644'
+    - name: Apply the production migration tasks
+      ansible.builtin.include_role:
+        name: fedora_desktop
+        tasks_from: tailscale_state
+    - name: Apply the new daemon configuration
+      ansible.builtin.meta: flush_handlers
+    - name: Inspect whether identity storage is still mounted
+      ansible.builtin.command: findmnt --noheadings --mountpoint /var/lib/tailscale
+      changed_when: false
+      failed_when: false
+      register: codex_desktop_test_old_mount
+    - name: Read the preserved old-state marker
+      ansible.builtin.command: cat /var/lib/codex-desktop/tailscale/retention.txt
+      changed_when: false
+      register: codex_desktop_test_old_state
+    - name: Require detached enrollment storage without data deletion
+      ansible.builtin.assert:
+        that:
+          - codex_desktop_test_old_mount.rc == 1
+          - codex_desktop_test_old_state.stdout == 'old-tailnet-storage-retained'
+
 - name: Seed retained workspace data before replacing the OS
   hosts: molecule
   become: true
@@ -9,17 +69,6 @@
       ansible.builtin.copy:
         content: retained-across-root-replacement
         dest: /home/codex/workspaces/retention.txt
-        mode: '0600'
-
-- name: Seed protected tailnet storage without enrolling a real device
-  hosts: molecule
-  become: true
-  gather_facts: false
-  tasks:
-    - name: Write a non-secret marker through the live Tailscale state mount
-      ansible.builtin.copy:
-        content: protected-state-retained
-        dest: /var/lib/tailscale/retention.txt
         mode: '0600'
 
 - name: Shut down cleanly before the provisioner removes the disposable OS

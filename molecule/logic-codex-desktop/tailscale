@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Model retained client login state without contacting a real tailnet."""
+"""Model ephemeral daemon state and Serve without enrolling a real device."""
 
 import json
 import os
@@ -8,13 +8,40 @@ from pathlib import Path
 
 state_file = Path(os.environ["MOLECULE_TAILNET_STATE"])
 state = json.loads(state_file.read_text())
-if sys.argv[1:] == ["logout"]:
-    state["BackendState"] = "NeedsLogin"
-    state["Self"] = None
-    state["logouts"] += 1
-    state_file.write_text(json.dumps(state))
-elif sys.argv[1:] == ["status", "--json"]:
+args = sys.argv[1:]
+if args == ["status", "--json"]:
     print(json.dumps(state))
-    sys.exit(1 if state["BackendState"] == "NeedsLogin" else 0)
+    sys.exit(0 if state["BackendState"] == "Running" else 1)
+elif args and args[0] == "up":
+    auth = next((a for a in args if a.startswith("--auth-key=file:")), None)
+    if auth:
+        key_file = Path(auth.removeprefix("--auth-key=file:"))
+        key = key_file.read_text()
+        if not key.startswith("molecule-join-") or state.get("fail_join"):
+            sys.exit(1)
+        hostname = next(a.removeprefix("--hostname=") for a in args if a.startswith("--hostname="))
+        if "--advertise-tags=tag:codex" not in args or "--accept-dns=false" not in args:
+            sys.exit(2)
+        state.update({
+            "BackendState": "Running",
+            "MagicDNSSuffix": "fixture.ts.net",
+            "Self": {"ID": "nEphemeral" + key.rsplit("-", 1)[1], "HostName": hostname,
+                     "DNSName": hostname + ".fixture.ts.net.", "Tags": ["tag:codex"]},
+            "joins": state.get("joins", 0) + 1,
+            "last_key_file": str(key_file),
+        })
+    elif state.get("Self"):
+        state["BackendState"] = "Running"
+        state["resumes"] = state.get("resumes", 0) + 1
+    else:
+        sys.exit(2)
+elif args == ["serve", "status", "--json"]:
+    print(json.dumps(state.get("serve", {})))
+    sys.exit(0)
+elif len(args) == 3 and args[:2] == ["serve", "--bg"]:
+    state["serve"] = {"Web": {state["Self"]["DNSName"].rstrip(".") + ":443": {
+        "Handlers": {"/": {"Proxy": "http://127.0.0.1:" + args[2]}}}}}
+    state["serves"] = state.get("serves", 0) + 1
 else:
     sys.exit(2)
+state_file.write_text(json.dumps(state))

@@ -4,7 +4,6 @@ profile: production
 # Changelog fragment names can contain "playbook" without being Ansible plays.
 kinds:
   - yaml: "**/changelogs/fragments/*.{yaml,yml}"
-  - tasks: molecule/logic-codex-desktop/reject_tailnet.yml
 
 # Syntax-check fixtures only: restore deliberately has no operational target default.
 extra_vars:

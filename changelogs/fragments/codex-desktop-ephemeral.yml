@@ -1,0 +1,4 @@
+---
+minor_changes:
+  - codex_desktop - use native ephemeral Tailscale enrollment; AAP start ensures login and T3 Serve with controller-created single-use keys (https://github.com/igou-io/igou-ansible/pull/585).
+  - fedora_desktop - keep desktop data persistent while replacing the former Tailscale bind mount with in-memory state; no device-delete API or retained PVC bookkeeping is required.

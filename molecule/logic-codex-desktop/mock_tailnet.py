@@ -1,26 +1,13 @@
-"""Local, credential-free Tailscale API fixture for desktop teardown tests."""
+"""Credential-free OAuth/join-key fixture for ephemeral desktop enrollment."""
 
 import argparse
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs
 
-
-def device(node_id, hostname="codex-desktop", tag="tag:codex"):
-    return {"id": node_id, "nodeId": node_id, "hostname": hostname, "tags": [tag]}
-
-
-DEVICES = {
-    "nDesktop": device("nDesktop"),
-    "nWrongHost": device("nWrongHost", hostname="another-desktop"),
-    "nWrongTag": device("nWrongTag", tag="tag:another"),
-    "nWrongId": device("nOther"),
-    "nUnrelated": device("nUnrelated", hostname="another-desktop"),
-    "nFailure": device("nFailure"),
-}
-DELETIONS = []
+AUDIT = {"oauth_tokens": 0, "join_keys": 0, "requests": []}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -40,42 +27,32 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, {})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
-        body = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
-        if self.path != "/api/v2/oauth/token":
-            self.reply(404, {})
-        elif (
-            body.get("client_id") != ["molecule-client"]
-            or body.get("scope") != ["devices:core"]
-            or body.get("tags") != ["tag:codex"]
-        ):
-            self.reply(403, {"message": "scope not granted"})
-        else:
+        AUDIT["requests"].append(self.path)
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
+        if self.path == "/api/v2/oauth/token":
+            body = parse_qs(raw)
+            if body.get("client_id") != ["molecule-client"] or body.get("scope") != ["auth_keys"]:
+                self.reply(403, {"message": "scope not granted"})
+                return
+            AUDIT["oauth_tokens"] += 1
             self.reply(200, {"access_token": "molecule-token"})
+        elif self.path == "/api/v2/tailnet/-/keys":
+            body = json.loads(raw)
+            expected = {"reusable": False, "ephemeral": True, "preauthorized": True, "tags": ["tag:codex"]}
+            if (
+                self.headers.get("Authorization") != "Bearer molecule-token"
+                or body.get("expirySeconds") != 3600
+                or body.get("capabilities", {}).get("devices", {}).get("create") != expected
+            ):
+                self.reply(400, {"message": "not a single-use tagged ephemeral key"})
+                return
+            AUDIT["join_keys"] += 1
+            self.reply(200, {"key": f"molecule-join-{AUDIT['join_keys']}"})
+        else:
+            self.reply(404, {})
 
     def do_GET(self):
-        if self.path == "/audit":
-            self.reply(200, {"deletions": DELETIONS, "devices": DEVICES})
-            return
-        if self.headers.get("Authorization") != "Bearer molecule-token":
-            self.reply(401, {})
-            return
-        node_id = urlsplit(self.path).path.removeprefix("/api/v2/device/")
-        self.reply(200, DEVICES[node_id]) if node_id in DEVICES else self.reply(404, {})
-
-    def do_DELETE(self):
-        if self.headers.get("Authorization") != "Bearer molecule-token":
-            self.reply(401, {})
-            return
-        node_id = urlsplit(self.path).path.removeprefix("/api/v2/device/")
-        if node_id == "nFailure":
-            self.reply(500, {"message": "fixture deletion failure"})
-            return
-        if node_id not in DEVICES:
-            self.reply(404, {})
-            return
-        DELETIONS.append(node_id)
-        del DEVICES[node_id]
-        self.reply(200, {})
+        self.reply(200, AUDIT) if self.path == "/audit" else self.reply(404, {})
 
 
 if __name__ == "__main__":
