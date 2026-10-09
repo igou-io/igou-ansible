@@ -1,0 +1,16 @@
+---
+- name: Verify Firefox executes on the prepared client
+  hosts: windows_client
+  gather_facts: false
+  tasks:
+    - name: Launch a headless browser and close it
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $p = Start-Process 'C:\Program Files\Mozilla Firefox\firefox.exe' -ArgumentList '--headless','--no-remote','about:blank' -PassThru
+          try {
+            Start-Sleep -Seconds 5
+            if ($p.HasExited) { throw 'Firefox exited before it was usable.' }
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }

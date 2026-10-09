@@ -1,0 +1,17 @@
+---
+- name: Require the prepared interactive user's performance preset
+  hosts: windows_client
+  gather_facts: false
+  tasks:
+    - name: Read the interactive hive's performance effects
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $sid = (Get-LocalUser -Name '{{ ansible_user }}').SID.Value
+          $base = "Registry::HKEY_USERS\$sid"
+          if (-not (Test-Path $base)) { throw 'The interactive user hive is not loaded; this check would be vacuous.' }
+          $fx = Get-ItemProperty "$base\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
+          $desktop = Get-ItemProperty "$base\Control Panel\Desktop"
+          if ($fx.VisualFXSetting -ne 3 -or $desktop.DragFullWindows -ne '1' -or $desktop.FontSmoothing -ne '0') {
+            throw 'The interactive user does not have the requested performance preset.'
+          }

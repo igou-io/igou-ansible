@@ -1,0 +1,43 @@
+---
+prerun: false
+dependency:
+  name: galaxy
+  options:
+    requirements-file: requirements-molecule.yml
+    role-file: requirements-molecule.yml
+    no-deps: true
+ansible:
+  cfg:
+    defaults:
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles
+      collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections
+      host_key_checking: false
+    persistent_connection:
+      connect_timeout: 120
+      command_timeout: 120
+  executor:
+    args:
+      ansible_playbook:
+        - --inventory=${MOLECULE_PROJECT_DIRECTORY}/molecule/shared/inventory/
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+        - --extra-vars=@${MOLECULE_SCENARIO_DIRECTORY}/overrides.yml
+  playbooks:
+    create: ../shared/create.yml
+    prepare: ../shared/prepare.yml
+    destroy: ../shared/destroy.yml
+    converge: converge.yml
+    side_effect: side_effect.yml
+    verify: verify.yml
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy
+verifier:
+  name: ansible

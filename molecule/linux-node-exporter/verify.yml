@@ -1,0 +1,13 @@
+---
+- name: Verify node exporter supplies host metrics after reboot
+  hosts: molecule
+  gather_facts: false
+  tasks:
+    - name: Require actual CPU and host identity samples
+      ansible.builtin.include_tasks: ../shared/tasks/http_metrics.yml
+      vars:
+        molecule_metrics_endpoint: metrics
+        molecule_metrics_required:
+          - node_uname_info
+          - node_cpu_seconds_total
+          - node_memory_MemTotal_bytes

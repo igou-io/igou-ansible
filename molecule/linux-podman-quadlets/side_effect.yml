@@ -1,0 +1,30 @@
+---
+- name: Change the fixture source revision
+  hosts: molecule
+  become: true
+  become_user: containers
+  gather_facts: false
+  tasks:
+    - name: Replace the source page with a second revision
+      ansible.builtin.copy:
+        dest: /home/containers/site-fixture/layouts/index.html
+        content: |
+          <h1>molecule-site-v2</h1>
+        mode: '0644'
+    - name: Commit the changed source
+      ansible.builtin.command: git -c user.name=Molecule -c user.email=molecule@example.invalid commit -am revision-two  # noqa: command-instead-of-module -- author a local fixture revision; git module only clones/updates
+      args:
+        chdir: /home/containers/site-fixture
+      changed_when: true
+- name: Rebuild and deploy through the real site playbook
+  ansible.builtin.import_playbook: ../../playbooks/linux/deploy_static_site.yaml
+- name: Reload the fixture secrets
+  ansible.builtin.import_playbook: load_fixture_secrets.yml
+- name: Exercise a bind-mounted proxy configuration change
+  ansible.builtin.import_playbook: ../../playbooks/linux/podman_quadlets.yaml
+  vars:
+    linux_placeholder_html: molecule-proxy-reconfigured
+- name: Exercise the real workload update entry point
+  ansible.builtin.import_playbook: ../../playbooks/linux/podman_auto_update.yaml
+- name: Exercise boot persistence
+  ansible.builtin.import_playbook: ../shared/reboot_linux.yml

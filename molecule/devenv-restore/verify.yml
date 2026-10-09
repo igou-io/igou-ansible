@@ -1,0 +1,37 @@
+---
+- name: Verify the restored state is visible to the restarted container
+  hosts: devenv
+  gather_facts: false
+  tasks:
+    - name: Read state from outside the restored container
+      ansible.builtin.uri:
+        url: http://{{ mp_kubevirt_endpoints['restored-state'].host }}:{{ mp_kubevirt_endpoints['restored-state'].port }}/
+        return_content: true
+      delegate_to: localhost
+      register: molecule_state_after
+      retries: 30
+      delay: 5
+      until: molecule_state_after.status | default(0) == 200
+    - name: Require restored state through the actual bind mount
+      ansible.builtin.assert:
+        that:
+          - '''molecule-backup-state'' in molecule_state_after.content'
+          - '''molecule-before-restore'' not in molecule_state_after.content'
+    - name: Read pre-restore state from the actual rollback archive
+      ansible.builtin.command:
+        argv:
+          - tar
+          - xOzf
+          - /home/igou/.devenv-pre-restore.tar.gz
+          - .claude.json
+      register: molecule_rollback_state
+      changed_when: false
+    - name: Require recovery of the displaced pre-restore content
+      ansible.builtin.assert:
+        that:
+          - '''molecule-before-restore'' in molecule_rollback_state.stdout'
+    - name: Verify the login user can modify the restored primary state
+      ansible.builtin.copy:
+        dest: /home/igou/.claude-container/state.json
+        content: '{"marker":"molecule-user-can-write"}'
+        mode: '0600'

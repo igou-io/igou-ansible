@@ -1,0 +1,14 @@
+---
+- name: Verify the image boots and its guest agent runs in a new clone
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Inspect the running guest agent independently
+      ansible.windows.win_service_info:
+        name: QEMU-GA
+      register: molecule_image_agent
+    - name: Require the installed agent to be running
+      ansible.builtin.assert:
+        that:
+          - molecule_image_agent.services | length == 1
+          - molecule_image_agent.services[0].state == 'started'

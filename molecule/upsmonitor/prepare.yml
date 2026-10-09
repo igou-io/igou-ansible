@@ -1,0 +1,27 @@
+---
+- name: Wait for the provisioned Debian guest
+  ansible.builtin.import_playbook: ../shared/prepare.yml
+- name: Prepare NUT's supported dummy driver inputs
+  hosts: molecule
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install NUT before creating its driver fixtures
+      ansible.builtin.apt:
+        name: nut-server
+        state: present
+        update_cache: true
+    - name: Simulate both UPSes on mains power
+      ansible.builtin.copy:
+        dest: /etc/nut/{{ item.name }}.dev
+        owner: root
+        group: nut
+        mode: '0640'
+        content: |
+          device.model: Molecule {{ item.name }}
+          ups.status: OL
+          battery.charge: 100
+          battery.runtime: 1800
+          ups.load: 25
+          TIMER 5
+      loop: "{{ nut_upses }}"

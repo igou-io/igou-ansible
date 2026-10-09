@@ -4,4 +4,4 @@
   gather_facts: false
   tasks:
     - name: Require working SSH and Python in the guest
-      ansible.builtin.ping:
+      ansible.builtin.ping: null

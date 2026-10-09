@@ -1,0 +1,30 @@
+---
+mp_kubevirt_wait_timeout: 900
+fedora_desktop_tailscale: false
+molecule_profile_overrides:
+  namespace: molecule
+  ssh_user: igou
+  cpu:
+    cores: 4
+  memory: 8Gi
+  extra_disks:
+    - name: codex-state
+      serial: codex-state
+      disk:
+        bus: virtio
+  extra_volumes:
+    - name: codex-state
+      emptyDisk:
+        capacity: 5Gi
+  vm_overrides:
+    spec:
+      template:
+        spec:
+          domain:
+            firmware:
+              bootloader:
+                efi:
+                  secureBoot: false
+            devices:
+              video:
+                type: virtio

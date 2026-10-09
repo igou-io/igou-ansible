@@ -1,0 +1,7 @@
+---
+- name: Load the caller's fixture secrets
+  ansible.builtin.import_playbook: load_fixture_secrets.yml
+- name: Apply the actual quadlet runtime
+  ansible.builtin.import_playbook: ../../playbooks/linux/podman_quadlets.yaml
+- name: Publish the actual Hugo site
+  ansible.builtin.import_playbook: ../../playbooks/linux/deploy_static_site.yaml

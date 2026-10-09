@@ -1,3 +1,0 @@
----
-- name: Create the smoke-test VM
-  ansible.builtin.import_playbook: david_igou.molecule_provisioners.create

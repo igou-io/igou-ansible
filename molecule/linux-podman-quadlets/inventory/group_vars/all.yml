@@ -1,0 +1,82 @@
+---
+baseline_service_users:
+  - name: containers
+baseline_sysctl_overwrite:
+  net.ipv4.ip_unprivileged_port_start: 80
+linux_install_packages:
+  - podman
+  - acl
+  - git
+  - python3-cryptography
+  - httpd-tools
+linux_podman_run_as_user: containers
+linux_podman_teardown_users:
+  - containers
+linux_podman_old_run_user: containers
+linux_podman_data_dirs:
+  - /home/containers/containers/site/html
+linux_static_site_repo: /home/containers/site-fixture
+linux_static_site_version: main
+linux_static_site_src: /home/containers/site-checkout
+linux_static_site_dest: /home/containers/containers/site/html
+linux_podman_config_files:
+  - src: nginx.conf.j2
+    dest: /home/containers/containers/nginx/nginx.conf
+    reload: nginx.service
+linux_proxied_services:
+  - server_name: app.molecule.test
+    upstream: http://whoami:80
+    deny_paths:
+      - /private
+  - server_name: site.molecule.test
+    upstream: http://site:80
+  - server_name: auth.molecule.test
+    upstream: http://whoami:80
+    basic_auth:
+      realm: Molecule
+      user_file: /etc/nginx/auth.htpasswd
+linux_proxy_redirects:
+  - server_name: old.molecule.test
+    target: https://site.molecule.test
+molecule_profile_overrides:
+  memory: 4Gi
+  application_ports:
+    - name: http
+      port: 80
+    - name: https
+      port: 443
+linux_podman_quadlet_specs:
+  - name: proxy
+    type: network
+    file_content: |
+      [Network]
+      Subnet=10.89.0.0/24
+  - name: whoami
+    type: container
+    Container:
+      Image: docker.io/traefik/whoami:v1.11.0
+      ContainerName: whoami
+      AutoUpdate: registry
+      Network: proxy.network
+    Service:
+      Restart: always
+    Install:
+      WantedBy: default.target
+  - name: site
+    type: container
+    Container:
+      Image: docker.io/library/nginx:stable-alpine
+      ContainerName: site
+      AutoUpdate: registry
+      Network: proxy.network
+      Volume: '%h/containers/site/html:/usr/share/nginx/html:ro,z'
+    Service:
+      Restart: always
+    Install:
+      WantedBy: default.target
+  - template_src: nginx-reverse-proxy.container.j2
+molecule_proxy_credentials:
+  username: molecule
+  password_lookup: "{{ lookup('ansible.builtin.password', molecule_ephemeral_directory ~ '/proxy-password length=32 chars=ascii_letters,digits') }}"
+linux_nginx_extra_secrets:
+  - molecule-proxy-auth,type=mount,target=/etc/nginx/auth.htpasswd,mode=0444

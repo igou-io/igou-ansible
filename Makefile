@@ -55,3 +55,20 @@ aap-bootstrap-connect: _check-inv ## Seed the Onepassword Connect credential (ne
 
 ao-export: ## Export a published Automation Orchestrator workflow version to YAML (WF=<workflow-id> VER=<version>)
 	@WF="$(WF)" VER="$(VER)" ./hack/ao-export.sh
+
+# Local KubeVirt tests. Functional execution is deliberately outside Actions.
+export MOLECULE_GLOB := molecule/*/molecule.yml
+MOLECULE_SCENARIO ?= default
+.PHONY: molecule-test molecule-test-all molecule-converge molecule-verify molecule-destroy molecule-matrix
+molecule-test:
+	molecule test -s $(MOLECULE_SCENARIO)
+molecule-test-all:
+	molecule test --all
+molecule-converge:
+	molecule converge -s $(MOLECULE_SCENARIO)
+molecule-verify:
+	molecule verify -s $(MOLECULE_SCENARIO)
+molecule-destroy:
+	molecule destroy -s $(MOLECULE_SCENARIO)
+molecule-matrix:
+	molecule matrix -s $(MOLECULE_SCENARIO) test

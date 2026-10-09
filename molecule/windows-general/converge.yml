@@ -1,0 +1,133 @@
+---
+- name: Apply Windows manage local users
+  ansible.builtin.import_playbook: ../../playbooks/windows/manage_local_users.yaml
+  vars:
+    windows_local_groups:
+      - name: AppTesters
+        description: Accounts used for automated application testing
+    windows_local_users:
+      - name: moluser
+        password: "{{ molecule_windows_password_lookup }}"
+        fullname: Molecule Test User
+        description: Molecule-managed local admin
+        groups:
+          - Administrators
+          - AppTesters
+        state: present
+      - name: molgone
+        state: absent
+- name: Apply Windows install applications
+  ansible.builtin.import_playbook: ../../playbooks/windows/install_applications.yaml
+  vars:
+    windows_apps:
+      - name: 7zip
+      - name: notepadplusplus
+- name: Apply Windows provision test machine
+  ansible.builtin.import_playbook: ../../playbooks/windows/provision_test_machine.yaml
+  vars:
+    windows_test_user_password: "{{ molecule_windows_password_lookup }}"
+    windows_test_apps:
+      - name: 7zip
+    windows_test_enable_rdp: true
+- name: Apply Windows manage services
+  ansible.builtin.import_playbook: ../../playbooks/windows/manage_services.yaml
+  vars:
+    windows_services:
+      - name: W32Time
+        state: started
+        start_mode: auto
+      - name: Spooler
+        state: stopped
+        start_mode: disabled
+- name: Apply Windows configure firewall
+  ansible.builtin.import_playbook: ../../playbooks/windows/configure_firewall.yaml
+  vars:
+    windows_firewall_profiles:
+      - Domain
+      - Private
+      - Public
+    windows_firewall_rules:
+      - name: Allow ICMP ping (managed by Ansible)
+        protocol: icmpv4
+      - name: Allow molecule inbound TCP 7777
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: '7777'
+        state: present
+      - name: Allow molecule outbound TCP 7777
+        direction: out
+        action: allow
+        protocol: tcp
+        localport: '7777'
+        state: present
+      - name: Remove legacy molecule TCP 7779
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: '7779'
+        state: absent
+- name: Apply Windows create scheduled task
+  ansible.builtin.import_playbook: ../../playbooks/windows/create_scheduled_task.yaml
+  vars:
+    windows_task_name: molecule-marker-task
+    windows_task_description: Molecule marker task — appends to a file to prove it fires
+    windows_task_command: C:\Windows\System32\cmd.exe
+    windows_task_arguments: /c echo fired >> C:\molecule-task-fired.txt
+    windows_task_start_time: '2026-01-01T03:00:00'
+- name: Apply Windows install updates
+  ansible.builtin.import_playbook: ../../playbooks/windows/install_updates.yaml
+  vars:
+    windows_updates_categories:
+      - Definition Updates
+    windows_updates_reboot: false
+    windows_updates_reject_list:
+      - KB4052623
+- name: Deploy the server website
+  ansible.builtin.import_playbook: ../../playbooks/windows/deploy_iis_website.yaml
+  vars:
+    ansible_limit: windows_server  # noqa: var-naming[read-only] -- target this imported play only
+- name: Report Windows facts
+  ansible.builtin.import_playbook: ../../playbooks/windows/ping_and_facts.yaml
+- name: Converge — apply the windows_computer_use role
+  hosts: windows_client
+  gather_facts: false
+  tasks:
+    - name: Ready the desktop for computer use
+      ansible.builtin.import_role:
+        name: windows_computer_use
+      vars:
+        windows_computer_use_autologon: true
+        windows_computer_use_quiet_uac: true
+        windows_computer_use_disable_notifications: true
+        windows_computer_use_resolution: 1920x1080
+- name: Converge — apply roles/windows_power
+  hosts: windows_client
+  gather_facts: false
+  tasks:
+    - name: Disable sleep and hibernation via windows_power
+      ansible.builtin.import_role:
+        name: windows_power
+      vars:
+        windows_power_disable_sleep: true
+- name: Converge — apply the windows_desktop_apps role
+  hosts: windows_client
+  gather_facts: false
+  tasks:
+    - name: Import the windows_desktop_apps role
+      ansible.builtin.import_role:
+        name: windows_desktop_apps
+      vars:
+        windows_desktop_apps_packages:
+          - name: 7zip
+          - name: firefox
+        windows_desktop_apps_firefox_default: false
+        windows_desktop_apps_msi_packages: []
+- name: Debloat the client through its public playbook
+  ansible.builtin.import_playbook: ../../playbooks/windows/debloat.yaml
+  vars:
+    ansible_limit: windows_client  # noqa: var-naming[read-only] -- target this imported play only
+- name: Configure client visual effects
+  ansible.builtin.import_playbook: ../../playbooks/windows/configure_visual_effects.yaml
+  vars:
+    ansible_limit: windows_client  # noqa: var-naming[read-only] -- target this imported play only

@@ -1,0 +1,31 @@
+---
+- name: Require the intended OpenShift cluster and scenario inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Verify the API server selected by the credential profile
+      ansible.builtin.command: oc whoami --show-server
+      register: molecule_server
+      changed_when: false
+    - name: Verify the active identity
+      ansible.builtin.command: oc whoami
+      register: molecule_identity
+      changed_when: false
+    - name: Require OpenShift and explicitly declared guests
+      ansible.builtin.assert:
+        that:
+          - molecule_server.stdout == 'https://api.ocp.igou.systems:6443'
+          - molecule_identity.stdout | length > 0
+          - mp_backend == 'kubevirt'
+          - groups['molecule'] | default([]) | length > 0
+          - molecule_ephemeral_directory | length > 0
+        fail_msg: Run from the repository root with the ocp-ansible-molecule profile and this scenario's inventory.
+    - name: Persist a consumer resource identity for this scenario lifecycle
+      ansible.builtin.set_fact:
+        molecule_initialized_run_id: "{{ lookup('ansible.builtin.password', molecule_ephemeral_directory ~ '/consumer-run-id length=12 chars=ascii_lowercase,digits') }}"
+    - name: Check VM access in the test namespace
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        namespace: "{{ molecule_namespace }}"

@@ -1,0 +1,63 @@
+---
+- name: Verify the firewall using a live listener and external probes
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Start the negative-control listener after reboot
+      ansible.windows.win_shell: Start-ScheduledTask -TaskPath \Ansible\ -TaskName molecule-fwprobe-listener
+      changed_when: true
+    - name: Require the blocked-port listener to work locally
+      ansible.windows.win_shell: (Test-NetConnection -ComputerName 127.0.0.1 -Port 7778 -WarningAction SilentlyContinue).TcpTestSucceeded
+      register: molecule_listener_local
+      changed_when: false
+      retries: 12
+      delay: 5
+      until: molecule_listener_local.stdout | trim == 'True'
+    - name: Require RDP to be reachable externally
+      ansible.builtin.wait_for:
+        host: "{{ mp_kubevirt_endpoints.rdp.host }}"
+        port: "{{ mp_kubevirt_endpoints.rdp.port }}"
+        timeout: 60
+      delegate_to: localhost
+    - name: Observe whether the external blocked listener accepts connections
+      block:
+        - name: Require the live blocked listener to be unreachable externally
+          ansible.builtin.wait_for:
+            host: "{{ mp_kubevirt_endpoints.blocked.host }}"
+            port: "{{ mp_kubevirt_endpoints.blocked.port }}"
+            timeout: 10
+            state: started
+          delegate_to: localhost
+          register: molecule_listener_external
+        - name: Record an unexpected accepted connection
+          ansible.builtin.set_fact:
+            molecule_firewall_rejected: false
+      rescue:
+        - name: Require an actual connection timeout
+          ansible.builtin.assert:
+            that:
+              - '''Timeout'' in (ansible_failed_result.msg | default(''''))'
+        - name: Record the expected connection rejection
+          ansible.builtin.set_fact:
+            molecule_firewall_rejected: true
+    - name: Require guest firewall enforcement
+      ansible.builtin.assert:
+        that:
+          - molecule_firewall_rejected | bool
+- name: Verify the deployed IIS page from outside the server
+  hosts: windows_server
+  gather_facts: false
+  tasks:
+    - name: Read the server page through the provisioner endpoint
+      ansible.builtin.uri:
+        url: http://{{ mp_kubevirt_endpoints.iis.host }}:{{ mp_kubevirt_endpoints.iis.port }}/
+        return_content: true
+      delegate_to: localhost
+      register: molecule_iis_response
+      retries: 12
+      delay: 5
+      until: molecule_iis_response.status | default(0) == 200
+    - name: Require the delivered page
+      ansible.builtin.assert:
+        that:
+          - '''Served by IIS, deployed by Ansible.'' in molecule_iis_response.content'

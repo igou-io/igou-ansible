@@ -1,0 +1,100 @@
+---
+- name: Wait for the provisioned guest
+  ansible.builtin.import_playbook: ../shared/prepare.yml
+- name: Prepare the production runtime accounts and hardening
+  ansible.builtin.import_playbook: ../../playbooks/linux/baseline.yaml
+- name: Install fixture prerequisites through the package playbook
+  ansible.builtin.import_playbook: ../../playbooks/linux/install_packages.yaml
+- name: Prepare disposable TLS and static-site inputs without ACME
+  hosts: molecule
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Create the fixture source directory
+      ansible.builtin.file:
+        path: /home/containers/site-fixture/layouts
+        state: directory
+        owner: containers
+        group: containers
+        mode: '0755'
+    - name: Write the tiny Hugo site configuration
+      ansible.builtin.copy:
+        dest: /home/containers/site-fixture/hugo.toml
+        content: |
+          baseURL = 'https://site.molecule.test/'
+          title = 'Molecule runtime'
+        owner: containers
+        group: containers
+        mode: '0644'
+    - name: Write the site's initial response
+      ansible.builtin.copy:
+        dest: /home/containers/site-fixture/layouts/index.html
+        content: |
+          <h1>molecule-site-v1</h1>
+        owner: containers
+        group: containers
+        mode: '0644'
+    - name: Initialize the local site repository
+      ansible.builtin.command: git init --initial-branch=main  # noqa: command-instead-of-module -- author a local fixture revision; git module only clones/updates
+      args:
+        chdir: /home/containers/site-fixture
+        creates: /home/containers/site-fixture/.git
+      become_user: containers
+      become: true
+    - name: Stage the site source
+      ansible.builtin.command: git add .  # noqa: command-instead-of-module -- author a local fixture revision; git module only clones/updates
+      args:
+        chdir: /home/containers/site-fixture
+      become_user: containers
+      changed_when: true
+      become: true
+    - name: Commit the fixture's first revision
+      ansible.builtin.command: git -c user.name=Molecule -c user.email=molecule@example.invalid commit -m initial  # noqa: command-instead-of-module -- author a local fixture revision; git module only clones/updates
+      args:
+        chdir: /home/containers/site-fixture
+      become_user: containers
+      changed_when: true
+      become: true
+    - name: Generate a disposable TLS private key
+      community.crypto.openssl_privatekey:
+        path: /home/containers/molecule-tls.key
+        owner: containers
+        group: containers
+        mode: '0600'
+    - name: Generate the fixture certificate request
+      community.crypto.openssl_csr:
+        path: /home/containers/molecule-tls.csr
+        privatekey_path: /home/containers/molecule-tls.key
+        common_name: molecule.test
+        subject_alt_name:
+          - DNS:*.molecule.test
+        owner: containers
+        group: containers
+        mode: '0600'
+    - name: Issue a self-signed fixture certificate
+      community.crypto.x509_certificate:
+        path: /home/containers/molecule-tls.pem
+        privatekey_path: /home/containers/molecule-tls.key
+        csr_path: /home/containers/molecule-tls.csr
+        provider: selfsigned
+        owner: containers
+        group: containers
+        mode: '0600'
+    - name: Generate the runtime fixture password verifier
+      ansible.builtin.command:
+        argv:
+          - htpasswd
+          - -nim
+          - '{{ molecule_proxy_credentials.username }}'
+        stdin: '{{ molecule_proxy_credentials.password_lookup }}'
+      register: molecule_proxy_verifier
+      changed_when: false
+      no_log: true
+    - name: Deliver the runtime fixture password verifier
+      ansible.builtin.copy:
+        dest: /home/containers/molecule-auth.htpasswd
+        content: "{{ molecule_proxy_verifier.stdout }}\n"
+        owner: containers
+        group: containers
+        mode: '0600'
+      no_log: true

@@ -1,0 +1,6 @@
+---
+scenario:
+  name: windows-domain
+ansible:
+  playbooks:
+    prepare: prepare.yml

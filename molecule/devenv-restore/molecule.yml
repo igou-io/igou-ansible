@@ -1,0 +1,14 @@
+---
+scenario:
+  name: devenv-restore
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy
+ansible:
+  playbooks:
+    prepare: prepare.yml

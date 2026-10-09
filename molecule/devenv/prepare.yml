@@ -1,0 +1,93 @@
+---
+- name: Prepare molecule instances
+  import_playbook: ../shared/prepare.yml
+- name: Mount the docker scratch disk
+  hosts: molecule
+  gather_facts: false
+  become: true
+  vars:
+    __docker_disk: /dev/disk/by-id/virtio-docker
+  tasks:
+    - name: Wait for the scratch disk device to appear
+      ansible.builtin.wait_for:
+        path: "{{ __docker_disk }}"
+        timeout: 60
+    - name: Create an xfs filesystem on the scratch disk
+      community.general.filesystem:
+        fstype: xfs
+        dev: "{{ __docker_disk }}"
+    - name: Mount the scratch disk at /home/docker-data
+      ansible.posix.mount:
+        path: /home/docker-data
+        src: "{{ __docker_disk }}"
+        fstype: xfs
+        state: mounted
+    - name: Load the tun module the devcontainer's --device=/dev/net/tun needs
+      community.general.modprobe:
+        name: tun
+        state: present
+    - name: Stat the character devices the devcontainer binds
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /dev/fuse
+        - /dev/net/tun
+      register: __devenv_chardevs
+    - name: Assert /dev/fuse and /dev/net/tun are present character devices
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.ischr
+        fail_msg: "{{ item.item }} is missing — the devcontainer cannot bind it"
+      loop: "{{ __devenv_chardevs.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+    - name: Pre-create the igou-owned ~/.config/ghapp bind-mount source (ghapp disabled)
+      ansible.builtin.file:
+        path: /home/igou/.config/ghapp
+        state: directory
+        owner: igou
+        group: igou
+        mode: '0700'
+    - name: Seed a placeholder ghapp config so post-create's read-only-mount guard skips
+      ansible.builtin.copy:
+        dest: /home/igou/.config/ghapp/config.yaml
+        owner: igou
+        group: igou
+        mode: '0600'
+        content: |
+          # Molecule placeholder (playbook-devenv-bootstrap). ghapp is disabled in
+          # this scenario (devenv_ghapp_enabled=false), so the devhost ghapp role
+          # does not render the real host config. This file exists only to satisfy
+          # the container post-create.sh "first run only" guard, which would
+          # otherwise try to cp into the read-only ~/.config/ghapp bind mount and
+          # fail. ghapp is not exercised by this scenario.
+    - name: Ensure the docker group exists (docker-ce reuses it on install)
+      ansible.builtin.group:
+        name: docker
+        system: true
+        state: present
+    - name: Add igou to the docker group so converge's fresh login can drive docker
+      ansible.builtin.user:
+        name: igou
+        groups: docker
+        append: true
+    - name: Read the user-namespace limit (nested rootless podman needs it)
+      ansible.builtin.command:
+        cmd: sysctl -n user.max_user_namespaces
+      register: __devenv_userns
+      changed_when: false
+    - name: Assert unprivileged user namespaces are enabled
+      ansible.builtin.assert:
+        that:
+          - __devenv_userns.stdout | int > 0
+        fail_msg: user.max_user_namespaces is {{ __devenv_userns.stdout }} — rootless podman inside the devcontainer needs unprivileged user namespaces
+    - name: Install firewalld (mirror the kickstarted physical devhost)
+      ansible.builtin.dnf:
+        name: firewalld
+        state: present
+    - name: Enable and start firewalld
+      ansible.builtin.systemd_service:
+        name: firewalld.service
+        enabled: true
+        state: started

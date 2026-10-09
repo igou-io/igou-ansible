@@ -1,0 +1,3 @@
+---
+- name: Apply node exporter
+  ansible.builtin.import_playbook: ../../playbooks/linux/node_exporter.yaml

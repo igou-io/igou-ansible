@@ -1,0 +1,3 @@
+---
+mp_defaults:
+  kubevirt: "{{ molecule_kubevirt_defaults | combine(molecule_profile_overrides | default({})) }}"

@@ -1,0 +1,55 @@
+---
+mp_backend: kubevirt
+mp_kubevirt_run_isolation: true
+mp_kubevirt_wait_timeout: 900
+mp_kubevirt_windows_wait_timeout: 1500
+molecule_namespace: molecule
+molecule_ephemeral_directory: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
+molecule_consumer_run_id: "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/consumer-run-id', errors='ignore') | default('', true) | trim }}"
+molecule_kubevirt_run: "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/kubevirt_run.yml', errors='ignore') | default('{}', true) | from_yaml }}"
+molecule_windows_password_lookup: "{{ lookup('ansible.builtin.env', 'MOLECULE_WINDOWS_ADMIN_PASSWORD') or lookup('ansible.builtin.password', molecule_ephemeral_directory ~ '/windows-password length=24 chars=ascii_letters,digits') ~ 'aA9!' }}"
+molecule_placement:
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: burst
+      effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - casval.igou.systems
+        - weight: 10
+          preference:
+            matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+molecule_kubevirt_defaults: "{{ molecule_placement | combine(dict(namespace=molecule_namespace)) }}"
+molecule_guest_profiles:
+  debian:
+    boot_source:
+      type: container_disk
+      image: quay.io/containerdisks/debian:13
+    ssh_user: debian
+    memory: 2Gi
+  windows:
+    connection: psrp
+    admin_password: "{{ molecule_windows_password_lookup }}"
+    instancetype: u1.large
+  stream10:
+    boot_source:
+      type: container_disk
+      image: quay.io/containerdisks/centos-stream:10
+    ssh_user: cloud-user
+    memory: 2Gi
+baseline_user: igou
+baseline_user_groups: []
+baseline_user_shell: /bin/bash
+baseline_passwordless_sudo: true
+baseline_authorized_keys:
+  - "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/identity_file.pub') }}"

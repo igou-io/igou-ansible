@@ -1,0 +1,6 @@
+---
+scenario:
+  name: devenv
+ansible:
+  playbooks:
+    prepare: prepare.yml

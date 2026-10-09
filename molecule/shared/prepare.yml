@@ -1,0 +1,3 @@
+---
+- name: Wait for disposable guests
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare

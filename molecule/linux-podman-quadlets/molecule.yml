@@ -1,0 +1,18 @@
+---
+scenario:
+  name: linux-podman-quadlets
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy
+ansible:
+  playbooks:
+    prepare: prepare.yml
+    cleanup: cleanup.yml

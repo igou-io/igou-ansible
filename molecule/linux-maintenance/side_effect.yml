@@ -1,0 +1,5 @@
+---
+- name: Patch disposable guests through the real maintenance playbook
+  ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
+- name: Exercise access after a real reboot
+  ansible.builtin.import_playbook: ../shared/reboot_linux.yml

@@ -1,0 +1,22 @@
+---
+- name: Verify the installed Windows applications execute
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Execute the installed 7-Zip CLI
+      ansible.windows.win_command:
+        argv:
+          - C:\Program Files\7-Zip\7z.exe
+          - i
+      changed_when: false
+    - name: Launch and close the installed editor
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $p = Start-Process 'C:\Program Files\Notepad++\notepad++.exe' -ArgumentList '-multiInst','-nosession' -PassThru
+          try {
+            Start-Sleep -Seconds 5
+            if ($p.HasExited) { throw 'Notepad++ exited before it was usable.' }
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }

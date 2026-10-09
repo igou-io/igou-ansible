@@ -1,0 +1,88 @@
+---
+- name: Verify public runtime behavior through provisioner endpoints
+  hosts: molecule
+  gather_facts: false
+  tasks:
+    - name: Request the TLS proxy's live application
+      ansible.builtin.uri:
+        url: https://{{ mp_kubevirt_endpoints.https.host }}:{{ mp_kubevirt_endpoints.https.port }}/
+        headers:
+          Host: app.molecule.test
+        validate_certs: false
+        return_content: true
+      delegate_to: localhost
+      register: molecule_vps_app
+      retries: 30
+      delay: 5
+      until: molecule_vps_app.status | default(0) == 200
+    - name: Require the actual backend response
+      ansible.builtin.assert:
+        that:
+          - '''Hostname:'' in molecule_vps_app.content'
+    - name: Request the published site
+      ansible.builtin.uri:
+        url: https://{{ mp_kubevirt_endpoints.https.host }}:{{ mp_kubevirt_endpoints.https.port }}/
+        headers:
+          Host: site.molecule.test
+        validate_certs: false
+        return_content: true
+      delegate_to: localhost
+      register: molecule_vps_site
+    - name: Require the newest built content
+      ansible.builtin.assert:
+        that:
+          - '''molecule-site-v2'' in molecule_vps_site.content'
+          - '''molecule-site-v1'' not in molecule_vps_site.content'
+    - name: Require proxy path denial
+      ansible.builtin.uri:
+        url: https://{{ mp_kubevirt_endpoints.https.host }}:{{ mp_kubevirt_endpoints.https.port }}/private
+        headers:
+          Host: app.molecule.test
+        validate_certs: false
+        status_code: 403
+      delegate_to: localhost
+    - name: Require canonical redirects to preserve path and query
+      ansible.builtin.uri:
+        url: http://{{ mp_kubevirt_endpoints.http.host }}:{{ mp_kubevirt_endpoints.http.port }}/somewhere?test=1
+        headers:
+          Host: old.molecule.test
+        follow_redirects: none
+        status_code: 301
+      delegate_to: localhost
+      register: molecule_vps_redirect
+    - name: Require the correct redirect destination
+      ansible.builtin.assert:
+        that:
+          - molecule_vps_redirect.location == 'https://site.molecule.test/somewhere?test=1'
+    - name: Request the reconfigured placeholder after reboot
+      ansible.builtin.uri:
+        url: https://{{ mp_kubevirt_endpoints.https.host }}:{{ mp_kubevirt_endpoints.https.port }}/
+        headers:
+          Host: unmatched.molecule.test
+        validate_certs: false
+        return_content: true
+      delegate_to: localhost
+      register: molecule_vps_placeholder
+    - name: Require the refreshed proxy configuration
+      ansible.builtin.assert:
+        that:
+          - molecule_vps_placeholder.content == 'molecule-proxy-reconfigured'
+    - name: Require authentication on the protected backend
+      ansible.builtin.uri:
+        url: https://{{ mp_kubevirt_endpoints.https.host }}:{{ mp_kubevirt_endpoints.https.port }}/
+        headers:
+          Host: auth.molecule.test
+        validate_certs: false
+        status_code: 401
+      delegate_to: localhost
+    - name: Accept the declared fixture identity on the protected backend
+      ansible.builtin.uri:
+        url: https://{{ mp_kubevirt_endpoints.https.host }}:{{ mp_kubevirt_endpoints.https.port }}/
+        headers:
+          Host: auth.molecule.test
+        validate_certs: false
+        url_username: "{{ molecule_proxy_credentials.username }}"
+        url_password: "{{ molecule_proxy_credentials.password_lookup }}"
+        force_basic_auth: true
+      delegate_to: localhost
+      no_log: true

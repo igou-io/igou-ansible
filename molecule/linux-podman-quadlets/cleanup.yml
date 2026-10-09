@@ -1,0 +1,16 @@
+---
+- name: Exercise the real runtime teardown
+  ansible.builtin.import_playbook: ../../playbooks/linux/podman_teardown.yaml
+- name: Remove the previous run user's units through the migration playbook
+  ansible.builtin.import_playbook: ../../playbooks/linux/podman_migrate_run_user.yaml
+- name: Verify teardown released the public listener
+  hosts: molecule
+  gather_facts: false
+  tasks:
+    - name: Require HTTPS to stop accepting connections
+      ansible.builtin.wait_for:
+        host: "{{ mp_kubevirt_endpoints.https.host }}"
+        port: "{{ mp_kubevirt_endpoints.https.port }}"
+        state: stopped
+        timeout: 60
+      delegate_to: localhost

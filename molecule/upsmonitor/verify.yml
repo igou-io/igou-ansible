@@ -1,0 +1,35 @@
+---
+- name: Verify both simulated UPSes are readable and remotely scrapeable
+  hosts: molecule
+  gather_facts: false
+  tasks:
+    - name: Read each UPS status through the NUT protocol
+      ansible.builtin.command: upsc {{ item.name }}@localhost ups.status
+      loop: "{{ nut_upses }}"
+      register: molecule_ups_status
+      changed_when: false
+      retries: 12
+      delay: 5
+      until: molecule_ups_status.rc == 0
+    - name: Require mains power for both devices
+      ansible.builtin.assert:
+        that:
+          - item.stdout | trim == 'OL'
+      loop: "{{ molecule_ups_status.results }}"
+    - name: Scrape host metrics
+      ansible.builtin.include_tasks: ../shared/tasks/http_metrics.yml
+      vars:
+        molecule_metrics_endpoint: node-metrics
+        molecule_metrics_required:
+          - node_uname_info
+    - name: Scrape every UPS independently
+      ansible.builtin.include_tasks: ../shared/tasks/http_metrics.yml
+      loop: "{{ nut_upses }}"
+      loop_control:
+        loop_var: molecule_ups
+      vars:
+        molecule_metrics_endpoint: nut-metrics
+        molecule_metrics_path: /ups_metrics?ups={{ molecule_ups.name }}
+        molecule_metrics_required:
+          - network_ups_tools_ups_status
+          - network_ups_tools_battery_runtime

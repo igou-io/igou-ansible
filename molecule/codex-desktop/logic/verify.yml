@@ -1,0 +1,67 @@
+---
+- name: Verify desktop provisioning decisions without a cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    codex_desktop_image_arch: x86_64
+    codex_desktop_release_metadata:
+      - version: 101 Beta
+        variant: Cloud
+        subvariant: Cloud_Base
+        arch: x86_64
+        link: https://download.fedoraproject.org/pub/fedora/linux/releases/101/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-101-1.1.x86_64.qcow2
+        sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - version: '99'
+        variant: Cloud
+        subvariant: Cloud_Base
+        arch: x86_64
+        link: https://download.fedoraproject.org/pub/fedora/linux/releases/99/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-99-1.1.x86_64.qcow2
+        sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - version: '100'
+        variant: Cloud
+        subvariant: Cloud_Base
+        arch: x86_64
+        link: https://download.fedoraproject.org/pub/fedora/linux/releases/100/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-100-1.2.x86_64.qcow2
+        sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      - version: '101'
+        variant: Cloud
+        subvariant: Cloud_Base
+        arch: aarch64
+        link: https://download.fedoraproject.org/pub/fedora/linux/releases/101/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-101-1.1.aarch64.qcow2
+        sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - version: '101'
+        variant: Cloud
+        subvariant: Cloud_Base
+        arch: x86_64
+        link: https://download.fedoraproject.org/pub/fedora/linux/releases/101/Cloud/x86_64/images/Fedora-Cloud-Base-UEFI-UKI-101-1.1.x86_64.qcow2
+        sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  tasks:
+    - name: Run the production image selector
+      ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/select_image.yml
+    - name: Require numeric latest-release selection and the matching checksum document
+      ansible.builtin.assert:
+        that:
+          - codex_desktop_image_release == '100'
+          - codex_desktop_image_filename == 'Fedora-Cloud-Base-Generic-100-1.2.x86_64.qcow2'
+          - codex_desktop_checksum_filename == 'Fedora-Cloud-100-1.2-x86_64-CHECKSUM'
+          - codex_desktop_image.sha256 == 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    - name: Verify metadata without a stable image fails closed
+      block:
+        - name: Select from only preview releases
+          ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/select_image.yml
+          vars:
+            codex_desktop_release_metadata:
+              - version: 101 Beta
+                variant: Cloud
+                subvariant: Cloud_Base
+                arch: x86_64
+                link: https://download.fedoraproject.org/pub/fedora/linux/releases/101/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-101-1.1.x86_64.qcow2
+                sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      rescue:
+        - name: Remember rejection of preview-only metadata
+          ansible.builtin.set_fact:
+            codex_desktop_preview_rejected: true
+    - name: Require preview-only metadata to be rejected
+      ansible.builtin.assert:
+        that: codex_desktop_preview_rejected | default(false)

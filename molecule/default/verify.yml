@@ -16,3 +16,5 @@
     - name: Require usable root access for installation tasks
       ansible.builtin.assert:
         that: molecule_smoke_uid.stdout == '0'
+- name: Preserve snapshot input and retention regression coverage
+  ansible.builtin.import_playbook: checks/snapshot_inputs.yml

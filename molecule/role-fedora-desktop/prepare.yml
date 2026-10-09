@@ -1,3 +1,0 @@
----
-- name: Prepare the disposable VM
-  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare

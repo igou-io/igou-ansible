@@ -109,7 +109,21 @@ not flag a template as a literal password.
 
 ### Molecule testing
 
-Scenarios in `molecule/` follow a `<type>-<subject>[-<qualifier>]` naming scheme — `playbook-`, `role-`, or `logic-` prefixes. All provisioned test instances use the `kubevirt` backend of `david_igou.molecule_provisioners` on the live cluster. Set `mp_backend: kubevirt` and define only `mp.kubevirt` host specs; do not add QEMU, Podman, or Docker test backends. Pure logic scenarios run locally without instances. Do not run Molecule in GitHub Actions; keep those workflows to static checks and image builds. Run functional tests from the local environment with the scoped `ocp-ansible-molecule` profile, and verify cleanup in the `molecule` namespace. Each scenario is self-contained: the sysprep-based Windows scenarios carry their own `windows-sysprep-secrets.yml` and `templates/windows-unattend.xml.j2`.
+Scenarios in `molecule/` are named for use cases (`codex-desktop`,
+`windows-general`, `linux-podman-quadlets`), without playbook/role prefixes.
+All guests use `david_igou.molecule_provisioners`' KubeVirt backend on
+OpenShift. Shared configuration lives in `.config/molecule/config.yml`,
+test dependencies in `requirements-molecule.yml`, and inventory defaults,
+Windows specialization, preflight and dispatcher imports in `molecule/shared/`.
+Keep each scenario's host set, production imports, fixtures and outcome checks
+local. Override `molecule_profile_overrides`, not `mp_defaults`, to preserve
+the common soft Casval preference and burst toleration. Do not pin guests to
+Casval: other eligible workers must remain available as fallback.
+Keep logic regressions with their owning use-case scenarios. See
+`molecule/README.md` for inheritance, lifecycle exceptions and deferred coverage.
+Do not run Molecule in GitHub Actions. Functional testing uses the local
+`ocp-ansible-molecule` profile, and must prove cleanup in `molecule`.
+
 
 ### Inventory (separate repo)
 

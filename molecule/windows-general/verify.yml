@@ -1,0 +1,27 @@
+---
+- name: Verify manage local users
+  ansible.builtin.import_playbook: checks/manage_local_users.yml
+- name: Verify manage services
+  ansible.builtin.import_playbook: checks/manage_services.yml
+- name: Verify create scheduled task
+  ansible.builtin.import_playbook: checks/create_scheduled_task.yml
+- name: Verify install applications
+  ansible.builtin.import_playbook: checks/install_applications.yml
+- name: Verify install updates
+  ansible.builtin.import_playbook: checks/install_updates.yml
+- name: Verify desktop computer use
+  ansible.builtin.import_playbook: checks/computer_use.yml
+- name: Verify desktop power
+  ansible.builtin.import_playbook: checks/power.yml
+- name: Verify desktop desktop apps
+  ansible.builtin.import_playbook: checks/desktop_apps.yml
+- name: Verify desktop debloat
+  ansible.builtin.import_playbook: checks/debloat.yml
+- name: Verify externally reachable services
+  ansible.builtin.import_playbook: checks/network.yml
+- name: Verify interactive visual effects
+  ansible.builtin.import_playbook: checks/visual_effects.yml
+- name: Verify the application test account authenticates
+  ansible.builtin.import_playbook: checks/provision_test_machine.yml
+- name: Verify firewall profiles and rule transitions
+  ansible.builtin.import_playbook: checks/configure_firewall.yml

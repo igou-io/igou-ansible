@@ -1,0 +1,6 @@
+---
+molecule_profile_overrides:
+  application_ports:
+    - name: metrics
+      port: 9100
+node_exporter_listen_address: 0.0.0.0:9100

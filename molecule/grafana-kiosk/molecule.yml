@@ -1,0 +1,6 @@
+---
+scenario:
+  name: grafana-kiosk
+ansible:
+  playbooks:
+    prepare: prepare.yml

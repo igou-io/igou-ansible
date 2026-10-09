@@ -1,0 +1,9 @@
+---
+windows_golden_namespace: "{{ molecule_namespace }}"
+windows_golden_admin_password: "{{ molecule_windows_password_lookup }}"
+windows_golden_vm_name: "{{ molecule_image_name }}-build"
+windows_golden_dv_name: "{{ molecule_image_name }}"
+windows_golden_installcd_dv: "{{ molecule_image_name }}-installcd"
+windows_golden_unattend_secret: "{{ molecule_image_name }}-unattend"
+windows_golden_preferred_node_affinity: "{{ molecule_placement.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution }}"
+windows_golden_tolerations: "{{ molecule_placement.tolerations }}"

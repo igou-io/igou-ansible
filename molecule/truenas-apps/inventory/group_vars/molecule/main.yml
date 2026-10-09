@@ -1,0 +1,8 @@
+---
+mp_kubevirt_wait_timeout: 600
+molecule_profile_overrides:
+  boot_source:
+    type: container_disk
+    image: quay.io/containerdisks/centos-stream:10
+  ssh_user: igou
+  memory: 1Gi
