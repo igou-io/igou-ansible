@@ -1,4 +1,13 @@
 ---
+- name: Fedora desktop | Restore retained storage SELinux contexts
+  ansible.builtin.command:
+    argv:
+      - restorecon
+      - -RFv
+      - "{{ fedora_desktop_state_dir }}"
+  register: __fedora_desktop_restorecon
+  changed_when: __fedora_desktop_restorecon.stdout | length > 0
+
 - name: Fedora desktop | Reload systemd
   ansible.builtin.systemd_service:
     daemon_reload: true

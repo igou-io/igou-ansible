@@ -1,4 +1,32 @@
 ---
-mp_backend: qemu
-mp_qemu_slirp_port_base: 23222
-mp_qemu_wait_timeout: 600
+mp_backend: kubevirt
+mp_kubevirt_wait_timeout: 900
+fedora_desktop_tailscale: false
+mp_defaults:
+  kubevirt:
+    namespace: molecule
+    ssh_user: igou
+    cpu:
+      cores: 4
+    memory: 8Gi
+    extra_disks:
+      - name: codex-state
+        serial: codex-state
+        disk:
+          bus: virtio
+    extra_volumes:
+      - name: codex-state
+        emptyDisk:
+          capacity: 5Gi
+    vm_overrides:
+      spec:
+        template:
+          spec:
+            domain:
+              firmware:
+                bootloader:
+                  efi:
+                    secureBoot: false
+              devices:
+                video:
+                  type: virtio

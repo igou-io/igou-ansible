@@ -109,7 +109,7 @@ not flag a template as a literal password.
 
 ### Molecule testing
 
-Scenarios in `molecule/` follow a `<type>-<subject>[-<qualifier>]` naming scheme — `playbook-`, `role-`, or `logic-` (localhost-only) prefixes. Backends are never encoded in the name; they are selected at runtime via `mp_backend`/`PROVISIONER` and matrixed in CI. Provisioning is delegated to the `david_igou.molecule_provisioners` collection. Each scenario is self-contained (no cross-scenario shared plumbing): the sysprep-based Windows scenarios each carry their own copy of `windows-sysprep-secrets.yml` + `templates/windows-unattend.xml.j2`, deliberately un-DRY so a scenario is easy to follow in isolation. Environment variable templating is used extensively for flexibility.
+Scenarios in `molecule/` follow a `<type>-<subject>[-<qualifier>]` naming scheme — `playbook-`, `role-`, or `logic-` prefixes. All provisioned test instances use the `kubevirt` backend of `david_igou.molecule_provisioners` on the live cluster. Set `mp_backend: kubevirt` and define only `mp.kubevirt` host specs; do not add QEMU, Podman, or Docker test backends. Pure logic scenarios run locally without instances. Do not run Molecule in GitHub Actions; keep those workflows to static checks and image builds. Run functional tests from the local environment with the scoped `ocp-ansible-molecule` profile, and verify cleanup in the `molecule` namespace. Each scenario is self-contained: the sysprep-based Windows scenarios carry their own `windows-sysprep-secrets.yml` and `templates/windows-unattend.xml.j2`.
 
 ### Inventory (separate repo)
 

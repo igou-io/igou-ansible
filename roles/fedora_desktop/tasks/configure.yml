@@ -51,7 +51,7 @@
     target: "{{ fedora_desktop_state_dir }}/home"
     substitute: "/home/{{ fedora_desktop_user }}"
     state: present
-  register: __fedora_desktop_home_policy
+  notify: Fedora desktop | Restore retained storage SELinux contexts
 
 - name: Fedora desktop | Bind the retained home into the normal user path
   ansible.posix.mount:
@@ -95,7 +95,6 @@
     mode: '0755'
   loop:
     - /etc/systemd/system/gdm.service.d
-    - /etc/systemd/system/tailscaled.service.d
     - /etc/dconf/db/local.d/locks
     - /etc/dconf/profile
 
@@ -147,54 +146,6 @@
       dest: .config/systemd/user/t3.service
   notify: Fedora desktop | Restart T3
 
-- name: Fedora desktop | Preserve tailnet identity
+- name: Fedora desktop | Configure native ephemeral Tailscale state
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/tailscale_state.yml"
   when: fedora_desktop_tailscale
-  block:
-    - name: Fedora desktop | Create protected persistent tailnet storage
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        owner: root
-        group: root
-        mode: '0700'
-      loop:
-        - "{{ fedora_desktop_state_dir }}/tailscale"
-        - /var/lib/tailscale
-
-    - name: Fedora desktop | Apply Tailscale SELinux policy to retained storage
-      community.general.sefcontext:
-        target: "{{ fedora_desktop_state_dir }}/tailscale"
-        substitute: /var/lib/tailscale
-        state: present
-      register: __fedora_desktop_tailnet_policy
-
-    - name: Fedora desktop | Bind retained Tailscale state
-      ansible.posix.mount:
-        src: "{{ fedora_desktop_state_dir }}/tailscale"
-        path: /var/lib/tailscale
-        fstype: none
-        opts: bind
-        state: mounted
-
-    - name: Fedora desktop | Require persistent tailnet storage before starting Tailscale
-      ansible.builtin.template:
-        src: tailscale_state.conf.j2
-        dest: /etc/systemd/system/tailscaled.service.d/state.conf
-        mode: '0644'
-        backup: true
-      notify:
-        - Fedora desktop | Reload systemd
-        - Fedora desktop | Restart Tailscale
-
-- name: Fedora desktop | Restore retained storage SELinux contexts
-  ansible.builtin.command:
-    argv:
-      - restorecon
-      - -RFv
-      - "{{ fedora_desktop_state_dir }}"
-  register: __fedora_desktop_restorecon
-  changed_when: __fedora_desktop_restorecon.stdout | length > 0
-  # Relabel for policy changes and a fresh OS, rather than altering live app caches.
-  when: >-
-    __fedora_desktop_home_policy.changed
-    or (__fedora_desktop_tailnet_policy.changed | default(false))

@@ -1,0 +1,59 @@
+---
+- name: Fedora desktop | Inspect the former retained Tailscale mount
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --mountpoint
+      - /var/lib/tailscale
+      - --output
+      - SOURCE
+  register: __fedora_desktop_tailnet_mount
+  changed_when: false
+  failed_when: __fedora_desktop_tailnet_mount.rc not in [0, 1]
+
+- name: Fedora desktop | Detach the former retained identity without deleting it
+  when: __fedora_desktop_tailnet_mount.rc == 0
+  block:
+    - name: Fedora desktop | Stop Tailscale before detaching old storage
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        state: stopped
+    - name: Fedora desktop | Unmount the former retained identity
+      ansible.posix.mount:
+        path: /var/lib/tailscale
+        state: unmounted
+
+- name: Fedora desktop | Remove the former Tailscale bind mount from boot configuration
+  ansible.posix.mount:
+    path: /var/lib/tailscale
+    state: absent_from_fstab
+
+- name: Fedora desktop | Remove the former retained Tailscale SELinux mapping
+  community.general.sefcontext:
+    target: "{{ fedora_desktop_state_dir }}/tailscale"
+    substitute: /var/lib/tailscale
+    state: absent
+
+- name: Fedora desktop | Create protected local Tailscale storage and service overrides
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - path: /var/lib/tailscale
+      mode: '0700'
+    - path: /etc/systemd/system/tailscaled.service.d
+      mode: '0755'
+
+- name: Fedora desktop | Replace retained-state startup with native in-memory state
+  ansible.builtin.template:
+    src: tailscale_state.conf.j2
+    dest: /etc/systemd/system/tailscaled.service.d/state.conf
+    mode: '0644'
+    backup: true
+  notify:
+    - Fedora desktop | Reload systemd
+    - Fedora desktop | Restart Tailscale

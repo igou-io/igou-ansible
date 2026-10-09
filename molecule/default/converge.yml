@@ -1,10 +1,7 @@
 ---
-# Purpose: bring the instance to the desired state by running the role under test.
-# Molecule calls this playbook with `molecule converge`.
-- name: Converge
-  hosts: all
-  gather_facts: true  # Disable if your role does not rely on facts
+- name: Exercise the provisioned guest's Ansible connection
+  hosts: molecule
+  gather_facts: false
   tasks:
-    - name: Apply role under test
-      ansible.builtin.include_role:
-        name: yournamespace.yourcollection.yourrole
+    - name: Require working SSH and Python in the guest
+      ansible.builtin.ping:

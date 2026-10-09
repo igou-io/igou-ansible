@@ -21,6 +21,7 @@
           - tailscale
           - up
           - "--auth-key=file:{{ __fedora_desktop_join_file.path }}"
+          - "--hostname={{ fedora_desktop_tailscale_hostname }}"
           - "--advertise-tags={{ fedora_desktop_tailscale_tags | join(',') }}"
           - --accept-dns=false
       changed_when: true

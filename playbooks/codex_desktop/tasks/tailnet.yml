@@ -1,10 +1,20 @@
 ---
-- name: Read the retained tailnet enrollment state
+- name: Wait for the daemon to resolve its current enrollment state
   ansible.builtin.command: tailscale status --json
   register: codex_desktop_tailnet_status
   changed_when: false
   # An unenrolled daemon returns a nonzero exit code but still reports JSON.
   failed_when: codex_desktop_tailnet_status.rc not in [0, 1]
+  until: >-
+    (codex_desktop_tailnet_status.stdout | default('{}', true) | from_json)
+    .get('BackendState', '') in ['NeedsLogin', 'Running', 'Stopped', 'NeedsMachineAuth']
+  retries: 15
+  delay: 2
+
+- name: Resume an enrolled client that was explicitly disconnected
+  ansible.builtin.command: tailscale up
+  changed_when: true
+  when: (codex_desktop_tailnet_status.stdout | from_json).BackendState == 'Stopped'
 
 - name: Enroll only a guest that needs authentication
   when: (codex_desktop_tailnet_status.stdout | from_json).BackendState == 'NeedsLogin'
@@ -24,7 +34,7 @@
       register: codex_desktop_oauth_response
       no_log: true
 
-    - name: Create a single-use short-lived tagged join key
+    - name: Create a single-use short-lived ephemeral join key
       ansible.builtin.uri:
         url: https://api.tailscale.com/api/v2/tailnet/-/keys
         method: POST
@@ -34,12 +44,12 @@
         body_format: json
         body:
           expirySeconds: 3600
-          description: codex-desktop rollout
+          description: codex-desktop startup
           capabilities:
             devices:
               create:
                 reusable: false
-                ephemeral: false
+                ephemeral: true
                 preauthorized: true
                 tags:
                   - tag:codex
@@ -54,10 +64,46 @@
         tasks_from: tailscale_join
       vars:
         fedora_desktop_tailscale_authkey: "{{ codex_desktop_join_response.json.key }}"
+        fedora_desktop_tailscale_hostname: "{{ codex_desktop_name }}"
       no_log: true
+
+- name: Wait for authenticated tailnet access
+  ansible.builtin.command: tailscale status --json
+  register: codex_desktop_enrolled_status
+  changed_when: false
+  failed_when: codex_desktop_enrolled_status.rc not in [0, 1]
+  until: >-
+    (codex_desktop_enrolled_status.stdout | default('{}', true) | from_json)
+    .get('BackendState', '') == 'Running'
+  retries: 15
+  delay: 2
+
+- name: Require the requested hostname before exposing the desktop
+  vars:
+    codex_desktop_enrolled_device: "{{ codex_desktop_enrolled_status.stdout | from_json }}"
+  ansible.builtin.assert:
+    that:
+      - codex_desktop_enrolled_device.Self.HostName == codex_desktop_name
+      - "'tag:codex' in codex_desktop_enrolled_device.Self.Tags"
+      - >-
+        (codex_desktop_enrolled_device.Self.DNSName | regex_replace('[.]$', ''))
+        == codex_desktop_name ~ '.' ~ codex_desktop_enrolled_device.MagicDNSSuffix
+    fail_msg: The desktop did not receive its requested tagged DNS identity. Stop the desktop, remove the conflicting registration from the Tailscale admin console, then run AAP start to obtain a fresh enrollment.
+
+- name: Wait for the T3 loopback listener before exposing it
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ fedora_desktop_t3_port | default(3773) }}"
+    timeout: 120
 
 - name: Expose T3 through the existing Tailscale Serve role
   ansible.builtin.include_role:
     name: tailscale_serve
   vars:
     tailscale_serve_port: "{{ fedora_desktop_t3_port | default(3773) }}"
+
+- name: Publish the current hostname-based desktop endpoint
+  ansible.builtin.set_stats:
+    per_host: false
+    data:
+      codex_desktop_tailnet_endpoint: "https://{{ (codex_desktop_enrolled_status.stdout | from_json).Self.DNSName | regex_replace('[.]$', '') }}"

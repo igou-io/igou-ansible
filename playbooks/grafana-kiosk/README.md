@@ -50,7 +50,7 @@ ansible-playbook playbooks/grafana-kiosk/converge.yaml \
 | `kiosk_grafana_url` | — **required** | Upstream Grafana origin, e.g. `https://grafana.example.com` |
 | `kiosk_stack` | `cog` | `cog` or `chromium` |
 | `kiosk_dashboard_path` | `/` | e.g. `/playlists/play/<uid>` or `/d/<uid>/<slug>?orgId=1&refresh=30s` |
-| `kiosk_grafana_token` | — | Explicit token (CI only — prefer the lookup below) |
+| `kiosk_grafana_token` | — | Explicit token for test fixtures; prefer the lookup below on managed hosts |
 | `kiosk_grafana_token_lookup` | — **required** unless `kiosk_grafana_token` | Full lookup expression for the SA token, e.g. `"{{ lookup('community.general.onepassword', 'grafana-kiosk', field='password', vault='claude') }}"` |
 | `kiosk_proxy_listen` | `127.0.0.1:8480` | |
 | `kiosk_playlist` | `false` | grafana-kiosk playlist mode (chromium stack) |
@@ -77,16 +77,14 @@ ansible-playbook playbooks/grafana-kiosk/converge.yaml \
 `molecule test -s playbook-grafana-kiosk` converges **both stacks** in guests capped
 at the Pi Zero 2 W's 512MB envelope, against a mock Grafana that echoes the
 Authorization header. Verify proves end-to-end token injection, unit
-enablement, config permissions, and runs real headless browser renders
+enablement, config permissions, active zram swap, and runs real headless browser renders
 (Chromium screenshot and cog 20s survival) inside the memory cap. Provisioning uses
-`david_igou.molecule_provisioners` (see `molecule/playbook-grafana-kiosk/inventory/`);
-pick a backend with `PROVISIONER`:
-
-| `PROVISIONER` | Guests | Notes |
-|---|---|---|
-| `podman` (default) | systemd containers, cgroup-capped at 512m | Broken in the igou devcontainer (nested rootless podman has no cgroup delegation) — use `docker` there |
-| `docker` | same containers via host-side docker | Enforces the memory cap everywhere |
-| `kubevirt` | real 512MiB VMs on the cluster (`containerdisks/debian:12` for chromium, `debian:13` + virtio display for cog) | Needs a `KUBECONFIG` with VM + Service CRUD in the `molecule` namespace (ansible-molecule SA: `op://claude/ocp-ansible-molecule/token`). The zram/sysctl metal paths genuinely run, and the VMs have virtual displays |
+the KubeVirt backend of `david_igou.molecule_provisioners` (see
+`molecule/playbook-grafana-kiosk/inventory/`). The guests are real 512MiB VMs:
+Debian 12 for Chromium and Debian 13 with a virtio display for cog. Run locally
+with `use ocp-ansible-molecule`; the profile provides scoped access to the
+`molecule` namespace. The zram/sysctl paths run in the guests, and the VMs have
+virtual displays. GitHub Actions does not run this scenario.
 
 ### Render testing (run without destroy)
 
@@ -95,7 +93,7 @@ up so you can iterate on the play and eyeball what the kiosk actually
 renders:
 
 ```bash
-export PROVISIONER=kubevirt   # and a KUBECONFIG for the ansible-molecule SA
+use ocp-ansible-molecule
 
 molecule converge -s playbook-grafana-kiosk   # create + prepare + converge; instances stay up
 KIOSK_FETCH_SCREENSHOT=1 molecule verify -s playbook-grafana-kiosk   # re-runnable

@@ -1,5 +1,5 @@
 ---
-- name: Resolve upstream feedstock and create only the scenario's extra state disk
+- name: Resolve the latest Fedora cloud image for KubeVirt
   hosts: localhost
   connection: local
   gather_facts: false
@@ -15,17 +15,6 @@
       ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/select_image.yml
       vars:
         codex_desktop_release_metadata: "{{ codex_desktop_test_metadata.json }}"
-    - name: Create the scenario's independent retained block disk
-      ansible.builtin.command:
-        argv:
-          - qemu-img
-          - create
-          - -f
-          - qcow2
-          - "{{ molecule_ephemeral_directory }}/codex-state.qcow2"
-          - 5G
-        creates: "{{ molecule_ephemeral_directory }}/codex-state.qcow2"
-
     # Resolve values in the controller context rather than nesting magic
     # hostvars references inside another host's lazy inventory variables.
     - name: Pass resolved image values into the scenario's VM inventory
@@ -34,25 +23,11 @@
         groups:
           - molecule
         mp:
-          qemu:
-            image: "{{ codex_desktop_image.link }}"
-            image_checksum: "sha256:{{ codex_desktop_image.sha256 }}"
-            ssh_user: igou
-            firmware: uefi
-            cpus: 4
-            memory: 8192
-            disk_size: 50G
-            extra_args:
-              - -drive
-              - "file={{ molecule_ephemeral_directory }}/codex-state.qcow2,if=none,format=qcow2,id=codex-state"
-              - -device
-              - virtio-blk-pci,drive=codex-state,serial=codex-state
-              - -chardev
-              - "socket,path={{ molecule_ephemeral_directory }}/qga.sock,server=on,wait=off,id=qga0"
-              - -device
-              - virtio-serial
-              - -device
-              - virtserialport,chardev=qga0,name=org.qemu.guest_agent.0
+          kubevirt:
+            boot_source:
+              type: data_volume_url
+              url: "{{ codex_desktop_image.link }}"
+              size: 50Gi
 
 - name: Create the disposable VM through the provisioner collection
   ansible.builtin.import_playbook: david_igou.molecule_provisioners.create

@@ -1,5 +1,5 @@
 ---
-- name: Verify a usable desktop and retained workspace
+- name: Verify the freshly installed desktop
   hosts: molecule
   become: true
   gather_facts: false
@@ -64,33 +64,10 @@
     - name: Require SELinux to remain enforced
       ansible.builtin.assert:
         that: codex_desktop_test_selinux.stdout == 'Enforcing'
-    - name: Read the workspace retained through OS replacement
-      ansible.builtin.command: cat /home/codex/workspaces/retention.txt
+    - name: Create a workspace as the unprivileged desktop user
+      ansible.builtin.tempfile:
+        path: /home/codex/workspaces
+        state: directory
+        prefix: molecule-install-
       become: true
       become_user: codex
-      changed_when: false
-      register: codex_desktop_test_retention
-      when: (lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/root-rebuilt', errors='ignore') | default('', true)) == 'rebuilt'
-    - name: Require retained workspace contents to survive a fresh OS
-      ansible.builtin.assert:
-        that: codex_desktop_test_retention.stdout == 'retained-across-root-replacement'
-      when: codex_desktop_test_retention.stdout is defined
-    - name: Verify retained tailnet storage after OS replacement
-      when: codex_desktop_test_retention.stdout is defined
-      block:
-        - name: Read retained protected state as the service owner
-          ansible.builtin.command: cat /var/lib/tailscale/retention.txt
-          changed_when: false
-          register: codex_desktop_test_tailnet_retention
-        - name: Attempt the same read as the unprivileged desktop user
-          ansible.builtin.command: cat /var/lib/tailscale/retention.txt
-          become: true
-          become_user: codex
-          changed_when: false
-          failed_when: false
-          register: codex_desktop_test_tailnet_access
-        - name: Require retained service state and desktop-user isolation
-          ansible.builtin.assert:
-            that:
-              - codex_desktop_test_tailnet_retention.stdout == 'protected-state-retained'
-              - codex_desktop_test_tailnet_access.rc != 0

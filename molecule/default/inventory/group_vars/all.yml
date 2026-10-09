@@ -1,0 +1,3 @@
+---
+mp_backend: kubevirt
+mp_kubevirt_wait_timeout: 600
