@@ -20,7 +20,7 @@
 #
 # Required in host_vars: kiosk_grafana_url (e.g. https://grafana.example.com)
 # Secrets: the Grafana service-account token resolves from 1Password on the
-# controller (kiosk_grafana_token_op_*); CI/molecule passes an explicit
+# controller (kiosk_grafana_token_lookup); Molecule passes an explicit
 # kiosk_grafana_token instead.
 - name: Grafana kiosk convergence - proxy, tuning, browser stack
   hosts: "{{ ansible_limit | default('grafana_kiosk') }}"
@@ -46,9 +46,9 @@
       {{ _kiosk_proxy_base ~ _kiosk_dashboard_path
          ~ ('' if _kiosk_dashboard_query is search('(^|&)kiosk(=|&|$)')
             else ('&kiosk' if _kiosk_dashboard_query else '?kiosk')) }}
-    # Explicit token wins (molecule/CI); otherwise kiosk_grafana_token_lookup
+    # Explicit token wins (Molecule); otherwise kiosk_grafana_token_lookup
     # — the full 1Password lookup expression carried in host_vars. default()
-    # keeps it lazy so container runs never touch 1Password.
+    # keeps it lazy so test runs never touch 1Password.
     _kiosk_grafana_token: "{{ kiosk_grafana_token | default(kiosk_grafana_token_lookup) }}"
     # Chromium leaks on live dashboards (OOM within 6-8h on 512MB boards is
     # widely reported); RuntimeMaxSec + Restart=always recycles the whole
@@ -58,7 +58,7 @@
     _kiosk_gpu_mem: "{{ kiosk_gpu_mem | default(96) }}"
     _kiosk_unit: "{{ 'cog-kiosk.service' if _kiosk_stack == 'cog' else 'grafana-kiosk.service' }}"
     _kiosk_other_unit: "{{ 'grafana-kiosk.service' if _kiosk_stack == 'cog' else 'cog-kiosk.service' }}"
-    # Containers (molecule) have no kernel knobs, DRM, or display: install
+    # Containers have no kernel knobs, DRM, or display: install
     # and enable everything, but skip zram/sysctl and service starts.
     _kiosk_is_container: >-
       {{ ansible_virtualization_type | default('')
@@ -98,7 +98,7 @@
           (if set) to a dict of VAR: value pairs.
 
     # video/input are static base groups and render normally comes from
-    # udev, but molecule's slim containers lack it - ensure all three.
+    # udev, but minimal guest images can lack it - ensure all three.
     - name: Ensure display/input groups exist
       ansible.builtin.group:
         name: "{{ item }}"
@@ -169,7 +169,7 @@
     # 512MB board needs the swap headroom already in place.
     - name: Activate zram swap
       ansible.builtin.systemd_service:
-        name: systemd-zram-setup@zram0.service
+        name: dev-zram0.swap
         state: started
         daemon_reload: true
       when: not _kiosk_is_container
@@ -293,10 +293,20 @@
         name: systemd-journald.service
         state: restarted
 
-    - name: Restart zram swap
+    # Separate stop/start transactions let the bound setup service reset the
+    # device before swap activation; a restart can race on Debian 13.
+    - name: Stop zram swap before reconfiguration
+      listen: Restart zram swap
       ansible.builtin.systemd_service:
-        name: systemd-zram-setup@zram0.service
-        state: restarted
+        name: dev-zram0.swap
+        state: stopped
+      when: not _kiosk_is_container
+
+    - name: Start reconfigured zram swap
+      listen: Restart zram swap
+      ansible.builtin.systemd_service:
+        name: dev-zram0.swap
+        state: started
         daemon_reload: true
       when: not _kiosk_is_container
 

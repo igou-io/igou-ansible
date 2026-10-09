@@ -9,6 +9,16 @@
     _verify_unit: "{{ 'cog-kiosk.service' if kiosk_stack == 'cog' else 'grafana-kiosk.service' }}"
 
   tasks:
+    - name: Read active guest swap devices
+      ansible.builtin.slurp:
+        src: /proc/swaps
+      register: verify_zram_swaps
+
+    - name: Require active compressed swap within the guest's memory budget
+      ansible.builtin.assert:
+        that:
+          - (verify_zram_swaps.content | b64decode) is search('(?m)^/dev/zram0\s')
+
     - name: Fetch a dashboard URL through the proxy
       ansible.builtin.uri:
         url: "{{ _verify_proxy }}/d/mock/dashboard"

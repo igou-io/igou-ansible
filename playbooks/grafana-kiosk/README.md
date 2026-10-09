@@ -50,7 +50,7 @@ ansible-playbook playbooks/grafana-kiosk/converge.yaml \
 | `kiosk_grafana_url` | — **required** | Upstream Grafana origin, e.g. `https://grafana.example.com` |
 | `kiosk_stack` | `cog` | `cog` or `chromium` |
 | `kiosk_dashboard_path` | `/` | e.g. `/playlists/play/<uid>` or `/d/<uid>/<slug>?orgId=1&refresh=30s` |
-| `kiosk_grafana_token` | — | Explicit token (CI only — prefer the lookup below) |
+| `kiosk_grafana_token` | — | Explicit token for test fixtures; prefer the lookup below on managed hosts |
 | `kiosk_grafana_token_lookup` | — **required** unless `kiosk_grafana_token` | Full lookup expression for the SA token, e.g. `"{{ lookup('community.general.onepassword', 'grafana-kiosk', field='password', vault='claude') }}"` |
 | `kiosk_proxy_listen` | `127.0.0.1:8480` | |
 | `kiosk_playlist` | `false` | grafana-kiosk playlist mode (chromium stack) |
@@ -77,7 +77,7 @@ ansible-playbook playbooks/grafana-kiosk/converge.yaml \
 `molecule test -s playbook-grafana-kiosk` converges **both stacks** in guests capped
 at the Pi Zero 2 W's 512MB envelope, against a mock Grafana that echoes the
 Authorization header. Verify proves end-to-end token injection, unit
-enablement, config permissions, and runs real headless browser renders
+enablement, config permissions, active zram swap, and runs real headless browser renders
 (Chromium screenshot and cog 20s survival) inside the memory cap. Provisioning uses
 the KubeVirt backend of `david_igou.molecule_provisioners` (see
 `molecule/playbook-grafana-kiosk/inventory/`). The guests are real 512MiB VMs:
