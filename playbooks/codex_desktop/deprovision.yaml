@@ -1,0 +1,49 @@
+---
+- name: Stop the desktop and remove its persistent tailnet registration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate GitOps prerequisites
+      ansible.builtin.include_tasks: tasks/preflight.yml
+
+    - name: Serialize desktop operations
+      ansible.builtin.include_tasks: tasks/acquire.yml
+
+    - name: Retire enrollment while retaining the desktop disks
+      block:
+        - name: Read current enrollment after acquiring the operation lease
+          kubernetes.core.k8s_info:
+            kind: PersistentVolumeClaim
+            name: "{{ codex_desktop_state_name }}"
+            namespace: "{{ codex_desktop_namespace }}"
+          register: codex_desktop_state_pvc
+
+        - name: Select the recorded device for permanent retirement
+          ansible.builtin.include_tasks: tasks/select_tailnet_device.yml
+
+        - name: Stop and detach the desktop
+          ansible.builtin.include_tasks: tasks/stop.yml
+
+        - name: Remove only this desktop from the tailnet
+          ansible.builtin.include_tasks: tasks/remove_tailnet.yml
+
+        - name: Remember retired enrollment on the retained disk
+          kubernetes.core.k8s:
+            state: patched
+            definition:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                name: "{{ codex_desktop_state_name }}"
+                namespace: "{{ codex_desktop_namespace }}"
+                annotations:
+                  codex-desktop.igou.io/tailscale-device-id: "{{ codex_desktop_cleanup_device_id }}"
+                  codex-desktop.igou.io/tailscale-retired: 'true'
+
+        - name: Report deprovisioning and retained resources
+          ansible.builtin.debug:
+            msg: The desktop is stopped and its tailnet device is absent. Both disks are retained. Remove the VM definition through GitOps to complete permanent retirement.
+      always:
+        - name: Release the desktop operation lease
+          ansible.builtin.include_tasks: tasks/release.yml

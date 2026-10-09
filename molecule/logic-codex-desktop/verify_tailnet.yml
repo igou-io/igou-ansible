@@ -1,0 +1,240 @@
+---
+- name: Verify tailnet cleanup and retained client recovery without live credentials
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    codex_desktop_name: codex-desktop
+    codex_desktop_state_pvc:
+      resources:
+        - metadata:
+            annotations:
+              codex-desktop.igou.io/tailscale-device-id: nDesktop
+    codex_desktop_retired_device_id: nRetired
+    codex_desktop_tailscale_credentials:
+      client_id_lookup: molecule-client
+      client_secret_lookup: molecule-dummy
+    codex_desktop_test_client:
+      BackendState: Running
+      Self:
+        ID: nRetired
+      logouts: 0
+    codex_desktop_test_new_client:
+      BackendState: Running
+      Self:
+        ID: nReenrolled
+      logouts: 0
+  tasks:
+    - name: Allocate isolated fixture state
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: codex-desktop-tailnet-test-
+      register: codex_desktop_test_dir
+
+    - name: Exercise production cleanup against an isolated API
+      block:
+        - name: Start the local tailnet API fixture
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_playbook_python }}"
+              - "{{ playbook_dir }}/mock_tailnet.py"
+              - --port-file
+              - "{{ codex_desktop_test_dir.path }}/port"
+          async: 300
+          poll: 0
+          changed_when: false
+          register: codex_desktop_test_server
+
+        - name: Wait for fixture startup
+          ansible.builtin.wait_for:
+            path: "{{ codex_desktop_test_dir.path }}/port"
+            timeout: 15
+
+        - name: Read the dynamically allocated fixture port
+          ansible.builtin.slurp:
+            src: "{{ codex_desktop_test_dir.path }}/port"
+          register: codex_desktop_test_port
+
+        - name: Select the local API endpoint
+          ansible.builtin.set_fact:
+            codex_desktop_test_url: "http://127.0.0.1:{{ codex_desktop_test_port.content | b64decode }}"
+            codex_desktop_tailscale_api_url: "http://127.0.0.1:{{ codex_desktop_test_port.content | b64decode }}/api/v2"
+
+        - name: Select an offline device from its retained record
+          ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/select_tailnet_device.yml
+
+        - name: Require the exact retained device to be selected
+          ansible.builtin.assert:
+            that:
+              - codex_desktop_cleanup_device_id == 'nDesktop'
+
+        - name: Reject an override conflicting with retained enrollment
+          block:
+            - name: Attempt to replace a recorded deletion target
+              ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/select_tailnet_device.yml
+              vars:
+                codex_desktop_tailscale_device_id: nWrongHost
+            - name: Fail if a conflicting override was accepted
+              ansible.builtin.fail:
+                msg: Cleanup unexpectedly allowed overriding an existing device record.
+          rescue:
+            - name: Require rejection before stopping the desktop
+              ansible.builtin.assert:
+                that:
+                  - ansible_failed_task.name == 'Require a recorded device before stopping the desktop'
+
+        - name: Restore the retained deletion target after the rejected override
+          ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/select_tailnet_device.yml
+          vars:
+            codex_desktop_tailscale_device_id: ''
+
+        - name: Reject missing and mismatched device identities
+          ansible.builtin.include_tasks: reject_tailnet.yml
+          loop:
+            - ''
+            - ../nDesktop
+            - nWrongHost
+            - nWrongTag
+            - nWrongId
+          loop_control:
+            loop_var: codex_desktop_rejected_id
+
+        - name: Verify an ungranted OAuth scope fails cleanup
+          block:
+            - name: Attempt cleanup with an unauthorized client
+              ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/remove_tailnet.yml
+              vars:
+                codex_desktop_tailscale_credentials:
+                  client_id_lookup: unauthorized-client
+                  client_secret_lookup: molecule-dummy
+            - name: Fail if unauthorized cleanup succeeded
+              ansible.builtin.fail:
+                msg: Cleanup unexpectedly accepted an unauthorized OAuth client.
+          rescue:
+            - name: Require failure at OAuth authentication
+              ansible.builtin.assert:
+                that:
+                  - ansible_failed_task.name == 'Mint a device-management OAuth token'
+
+        - name: Verify deletion errors propagate without reporting success
+          block:
+            - name: Attempt removal during an API failure
+              ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/remove_tailnet.yml
+              vars:
+                codex_desktop_cleanup_device_id: nFailure
+            - name: Fail if an API deletion error was accepted
+              ansible.builtin.fail:
+                msg: Cleanup unexpectedly succeeded during an API failure.
+          rescue:
+            - name: Require failure at device deletion
+              ansible.builtin.assert:
+                that:
+                  - ansible_failed_task.name == 'Delete the validated desktop device'
+
+        - name: Remove the exact recorded device
+          ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/remove_tailnet.yml
+
+        - name: Require a changed result for first removal
+          ansible.builtin.assert:
+            that:
+              - codex_desktop_cleanup_delete.changed
+
+        - name: Repeat cleanup of the now-absent device
+          ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/remove_tailnet.yml
+
+        - name: Require an unchanged repeated cleanup
+          ansible.builtin.assert:
+            that:
+              - not codex_desktop_cleanup_delete.changed
+
+        - name: Inspect actual API fixture state
+          ansible.builtin.uri:
+            url: "{{ codex_desktop_test_url }}/audit"
+          register: codex_desktop_test_audit
+
+        - name: Verify only the intended device was removed
+          ansible.builtin.assert:
+            that:
+              - codex_desktop_test_audit.json.deletions | length == 1
+              - codex_desktop_test_audit.json.deletions[0] == 'nDesktop'
+              - "'nDesktop' not in codex_desktop_test_audit.json.devices"
+              - codex_desktop_test_audit.json.devices | length == 5
+
+        - name: Install the isolated client fixture
+          ansible.builtin.copy:
+            src: tailscale
+            dest: "{{ codex_desktop_test_dir.path }}/tailscale"
+            mode: '0755'
+
+        - name: Seed a retained revoked enrollment
+          ansible.builtin.copy:
+            content: "{{ codex_desktop_test_client | to_json }}"
+            dest: "{{ codex_desktop_test_dir.path }}/client-state"
+            mode: '0600'
+
+        - name: Exercise retired enrollment recovery
+          environment:
+            PATH: "{{ codex_desktop_test_dir.path }}:{{ lookup('env', 'PATH') }}"
+            MOLECULE_TAILNET_STATE: "{{ codex_desktop_test_dir.path }}/client-state"
+          block:
+            - name: Read retained fixture enrollment
+              ansible.builtin.command: tailscale status --json
+              register: codex_desktop_tailnet_status
+              changed_when: false
+
+            - name: Reset a revoked enrollment through production tasks
+              ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/reset_tailnet.yml
+
+            - name: Require fresh login after permanent retirement
+              ansible.builtin.assert:
+                that:
+                  - (codex_desktop_tailnet_status.stdout | from_json).BackendState == 'NeedsLogin'
+                  - (codex_desktop_tailnet_status.stdout | from_json).logouts == 1
+
+            - name: Repeat recovery of an already logged-out client
+              ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/reset_tailnet.yml
+
+            - name: Require no additional logout on a retry
+              ansible.builtin.assert:
+                that:
+                  - not codex_desktop_retired_logout.changed
+                  - (codex_desktop_tailnet_status.stdout | from_json).logouts == 1
+
+            - name: Seed a completed re-enrollment awaiting bookkeeping
+              ansible.builtin.copy:
+                content: "{{ codex_desktop_test_new_client | to_json }}"
+                dest: "{{ codex_desktop_test_dir.path }}/client-state"
+                mode: '0600'
+
+            - name: Read the new enrollment
+              ansible.builtin.command: tailscale status --json
+              register: codex_desktop_tailnet_status
+              changed_when: false
+
+            - name: Recover an interrupted enrollment-record update
+              ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/reset_tailnet.yml
+
+            - name: Preserve a new valid device despite stale retirement bookkeeping
+              ansible.builtin.assert:
+                that:
+                  - not codex_desktop_retired_logout.changed
+                  - (codex_desktop_tailnet_status.stdout | from_json).Self.ID == 'nReenrolled'
+                  - (codex_desktop_tailnet_status.stdout | from_json).logouts == 0
+
+      always:
+        - name: Shut down the API fixture
+          ansible.builtin.uri:
+            url: "{{ codex_desktop_test_url }}/shutdown"
+            method: POST
+          when: codex_desktop_test_url is defined
+
+        - name: Remove the completed asynchronous fixture record
+          ansible.builtin.async_status:
+            jid: "{{ codex_desktop_test_server.ansible_job_id }}"
+            mode: cleanup
+          when: codex_desktop_test_server.ansible_job_id is defined
+
+        - name: Remove isolated test state
+          ansible.builtin.file:
+            path: "{{ codex_desktop_test_dir.path }}"
+            state: absent

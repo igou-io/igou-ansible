@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Model retained client login state without contacting a real tailnet."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+state_file = Path(os.environ["MOLECULE_TAILNET_STATE"])
+state = json.loads(state_file.read_text())
+if sys.argv[1:] == ["logout"]:
+    state["BackendState"] = "NeedsLogin"
+    state["Self"] = None
+    state["logouts"] += 1
+    state_file.write_text(json.dumps(state))
+elif sys.argv[1:] == ["status", "--json"]:
+    print(json.dumps(state))
+    sys.exit(1 if state["BackendState"] == "NeedsLogin" else 0)
+else:
+    sys.exit(2)

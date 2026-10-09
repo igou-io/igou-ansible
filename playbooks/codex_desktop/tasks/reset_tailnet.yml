@@ -1,0 +1,20 @@
+---
+# API removal can leave retained client state pointing at a revoked device.
+# Reset only after explicit deprovisioning; routine starts/rebuilds retain it.
+- name: Log out the previously retired local enrollment
+  ansible.builtin.command: tailscale logout
+  register: codex_desktop_retired_logout
+  changed_when: true
+  when:
+    - (codex_desktop_tailnet_status.stdout | from_json).BackendState != 'NeedsLogin'
+    - (codex_desktop_tailnet_status.stdout | from_json).Self.ID | default('') == codex_desktop_retired_device_id
+
+- name: Read the reset enrollment state
+  ansible.builtin.command: tailscale status --json
+  register: codex_desktop_retired_status
+  changed_when: false
+  failed_when: codex_desktop_retired_status.rc not in [0, 1]
+
+- name: Use the reset state for fresh enrollment
+  ansible.builtin.set_fact:
+    codex_desktop_tailnet_status: "{{ codex_desktop_retired_status }}"

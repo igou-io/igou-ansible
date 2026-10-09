@@ -6,6 +6,25 @@
   # An unenrolled daemon returns a nonzero exit code but still reports JSON.
   failed_when: codex_desktop_tailnet_status.rc not in [0, 1]
 
+- name: Read retained enrollment bookkeeping
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    name: "{{ codex_desktop_state_name }}"
+    namespace: "{{ codex_desktop_namespace }}"
+  delegate_to: localhost
+  become: false
+  register: codex_desktop_tailnet_state
+
+- name: Reset enrollment after a previous permanent deprovision
+  ansible.builtin.include_tasks: reset_tailnet.yml
+  vars:
+    codex_desktop_retired_device_id: >-
+      {{ (codex_desktop_tailnet_state.resources[0].metadata.annotations | default({}))
+         .get('codex-desktop.igou.io/tailscale-device-id', '') }}
+  when: >-
+    (codex_desktop_tailnet_state.resources[0].metadata.annotations | default({}))
+    .get('codex-desktop.igou.io/tailscale-retired', '') == 'true'
+
 - name: Enroll only a guest that needs authentication
   when: (codex_desktop_tailnet_status.stdout | from_json).BackendState == 'NeedsLogin'
   block:
@@ -55,6 +74,34 @@
       vars:
         fedora_desktop_tailscale_authkey: "{{ codex_desktop_join_response.json.key }}"
       no_log: true
+
+- name: Read the authenticated device identity
+  ansible.builtin.command: tailscale status --json
+  register: codex_desktop_enrolled_status
+  changed_when: false
+
+- name: Require a usable identity before recording enrollment
+  vars:
+    codex_desktop_enrolled_device: "{{ codex_desktop_enrolled_status.stdout | from_json }}"
+  ansible.builtin.assert:
+    that:
+      - codex_desktop_enrolled_device.BackendState == 'Running'
+      - codex_desktop_enrolled_device.Self.ID is match('^[A-Za-z0-9]+$')
+
+- name: Record the non-secret device ID on the retained state disk
+  kubernetes.core.k8s:
+    state: patched
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ codex_desktop_state_name }}"
+        namespace: "{{ codex_desktop_namespace }}"
+        annotations:
+          codex-desktop.igou.io/tailscale-device-id: "{{ (codex_desktop_enrolled_status.stdout | from_json).Self.ID }}"
+          codex-desktop.igou.io/tailscale-retired: null
+  delegate_to: localhost
+  become: false
 
 - name: Expose T3 through the existing Tailscale Serve role
   ansible.builtin.include_role:
