@@ -7,6 +7,14 @@
     K8S_AUTH_KUBECONFIG: "{{ kubeconfig | default(omit) }}"
   vars:
     gitops_repo: "https://github.com/igou-io/igou-openshift.git"
+    bootstrap_gitops_default_rbac:
+      defaultPolicy: role:none
+      policy: |
+        g, system:cluster-admins, role:admin
+        g, cluster-admins, role:admin
+        g, admin, role:admin
+        g, homepage, role:readonly
+      scopes: '[groups]'
   tasks:
     - name: Create 1P Connect secrets, deploy and cluster-config application
       tags: create-objects
@@ -446,15 +454,7 @@
                     requests:
                       cpu: 250m
                       memory: 512Mi
-                rbac:
-                  defaultPolicy: 'role:none'
-                  policy: |
-                    p, role:none, *, *, */*, deny
-                    g, system:cluster-admins, role:admin
-                    g, cluster-admins, role:admin
-                    g, admin, role:admin
-                    g, homepage, role:readonly
-                  scopes: "[groups]"
+                rbac: "{{ openshift_gitops_rbac | default(bootstrap_gitops_default_rbac) }}"
                 repo:
                   sidecarContainers:
                     - name: setenv-plugin
@@ -660,3 +660,19 @@
                       maxDuration: 3m
           retries: 50
           delay: 15
+
+    # Apply only RBAC to an existing installation without rerunning bootstrap.
+    - name: Configure OpenShift GitOps user access
+      tags:
+        - never
+        - gitops-rbac
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: argoproj.io/v1beta1
+          kind: ArgoCD
+          metadata:
+            name: openshift-gitops
+            namespace: openshift-gitops
+          spec:
+            rbac: "{{ openshift_gitops_rbac | default(bootstrap_gitops_default_rbac) }}"
