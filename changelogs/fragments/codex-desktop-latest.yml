@@ -1,0 +1,5 @@
+---
+minor_changes:
+  - fedora_desktop - Switched Codex CLI, T3 and the signed desktop app to the latest published releases and verified current versions in the codex-desktop scenario.
+breaking_changes:
+  - fedora_desktop - Removed fedora_desktop_codex_version and fedora_desktop_t3_version; both npm tools now always track latest.

@@ -63,7 +63,7 @@ set during an isolated lifecycle requires destroying that run first.
 | Scenario | Guests and intended outcomes |
 | --- | --- |
 | `default` | Stream 10 SSH/Python/sudo smoke; retained snapshot input and retention regressions. |
-| `codex-desktop` | Upstream Fedora desktop, production role, state disk, desktop behavior; retained image resolver regressions. |
+| `codex-desktop` | Upstream Fedora desktop, latest Codex CLI/T3/desktop app, state disk, desktop behavior; retained image resolver regressions. |
 | `devenv` | Stream 10 devcontainer bootstrap, tools, authenticated external code-server, Docker storage and reboot persistence. |
 | `devenv-restore` | Stream 10, disposable versioned S3 store, real backup/restore, rollback archive and live container bind-mount refresh. |
 | `grafana-kiosk` | Debian x64 Cog and Chromium guests; dashboard navigation and kiosk behavior against the existing HTTP fixture. |

@@ -14,6 +14,30 @@
     - name: Require the installed desktop RPM
       ansible.builtin.assert:
         that: '''chatgpt'' in ansible_facts[''packages'']'
+    - name: Query the latest desktop release from the official package repository
+      ansible.builtin.command:
+        argv:
+          - dnf5
+          - --quiet
+          - --refresh
+          - --repo=openai-chatgpt
+          - repoquery
+          - --available
+          - --arch=x86_64
+          - --latest-limit=1
+          - --queryformat=%{version}-%{release}
+          - chatgpt
+      register: codex_desktop_test_latest_app
+      changed_when: false
+    - name: Require the latest published desktop app
+      ansible.builtin.assert:
+        that:
+          - codex_desktop_test_latest_app.stdout | trim | length > 0
+          - >-
+            ansible_facts['packages']['chatgpt'][0].version ~ '-' ~
+            ansible_facts['packages']['chatgpt'][0].release ==
+            codex_desktop_test_latest_app.stdout | trim
+        fail_msg: The installed desktop app must match the latest official repository release.
     - name: Require actual node exporter metrics
       ansible.builtin.uri:
         url: http://127.0.0.1:9100/metrics
@@ -27,9 +51,30 @@
       ansible.builtin.command: /usr/local/bin/codex --version
       register: codex_desktop_test_cli
       changed_when: false
-    - name: Require the expected Codex CLI
+    - name: Read the current Codex CLI release from npm
+      ansible.builtin.uri:
+        url: https://registry.npmjs.org/@openai%2Fcodex/latest
+        return_content: true
+      register: codex_desktop_test_latest_cli
+    - name: Require the latest published Codex CLI
       ansible.builtin.assert:
-        that: '''0.160.1'' in codex_desktop_test_cli.stdout'
+        that:
+          - codex_desktop_test_cli.stdout | trim == 'codex-cli ' ~ codex_desktop_test_latest_cli.json.version
+        fail_msg: The installed Codex CLI must match npm's latest release.
+    - name: Run the installed T3 CLI
+      ansible.builtin.command: /usr/local/bin/t3 --version
+      register: codex_desktop_test_t3
+      changed_when: false
+    - name: Read the current T3 release from npm
+      ansible.builtin.uri:
+        url: https://registry.npmjs.org/t3/latest
+        return_content: true
+      register: codex_desktop_test_latest_t3
+    - name: Require the latest published T3 server
+      ansible.builtin.assert:
+        that:
+          - codex_desktop_test_t3.stdout | trim == 't3 v' ~ codex_desktop_test_latest_t3.json.version
+        fail_msg: The installed T3 server must match npm's latest release.
     - name: Require a running GNOME session for the unprivileged desktop user
       ansible.builtin.command: pgrep -u 1100 -x gnome-shell
       changed_when: false
