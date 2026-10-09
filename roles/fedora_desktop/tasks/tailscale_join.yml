@@ -2,7 +2,7 @@
 - name: Fedora desktop | Allocate a private temporary join-key file
   ansible.builtin.tempfile:
     state: file
-    path: "{{ fedora_desktop_tailscale_key_dir }}"
+    path: /run
     prefix: codex-desktop-tailnet-
   register: __fedora_desktop_join_file
   no_log: true

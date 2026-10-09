@@ -73,7 +73,3 @@ argument_specs:
         type: str
         default: codex-desktop
         description: Requested tailnet hostname; enrollment must not occupy a conflicting DNS name.
-      fedora_desktop_tailscale_key_dir:
-        type: path
-        default: /run
-        description: Temporary directory for a root-only join-key file that is removed after enrollment.

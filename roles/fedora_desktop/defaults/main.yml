@@ -43,6 +43,5 @@ fedora_desktop_chrome: false
 fedora_desktop_tailscale: true
 fedora_desktop_tailscale_authkey: ''
 fedora_desktop_tailscale_hostname: codex-desktop
-fedora_desktop_tailscale_key_dir: /run
 fedora_desktop_tailscale_tags:
   - tag:codex

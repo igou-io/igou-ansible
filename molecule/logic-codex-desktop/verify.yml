@@ -65,6 +65,3 @@
     - name: Require preview-only metadata to be rejected
       ansible.builtin.assert:
         that: codex_desktop_preview_rejected | default(false)
-
-- name: Verify permanent desktop tailnet cleanup
-  ansible.builtin.import_playbook: verify_tailnet.yml

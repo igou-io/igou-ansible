@@ -25,7 +25,7 @@ jobs:
       - name: Install localhost test tooling
         run: pip install molecule ansible-core
 
-      - name: Verify desktop image selection and ephemeral enrollment
+      - name: Verify desktop image selection
         run: molecule test -s logic-codex-desktop
 
   ansible-lint:

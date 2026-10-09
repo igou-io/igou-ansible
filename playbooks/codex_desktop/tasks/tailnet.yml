@@ -21,7 +21,7 @@
   block:
     - name: Mint an OAuth access token on the controller
       ansible.builtin.uri:
-        url: "{{ codex_desktop_tailscale_api_url | default('https://api.tailscale.com/api/v2') }}/oauth/token"
+        url: https://api.tailscale.com/api/v2/oauth/token
         method: POST
         body_format: form-urlencoded
         body:
@@ -36,7 +36,7 @@
 
     - name: Create a single-use short-lived ephemeral join key
       ansible.builtin.uri:
-        url: "{{ codex_desktop_tailscale_api_url | default('https://api.tailscale.com/api/v2') }}/tailnet/-/keys"
+        url: https://api.tailscale.com/api/v2/tailnet/-/keys
         method: POST
         status_code: 200
         headers:

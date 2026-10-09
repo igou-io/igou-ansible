@@ -27,7 +27,6 @@ join-key argument accepts only a resolved short-lived key.
 | `fedora_desktop_tailscale_authkey` | Empty; optional short-lived join key, declared `no_log` |
 | `fedora_desktop_tailscale_tags` | `tag:codex` |
 | `fedora_desktop_tailscale_hostname` | `codex-desktop`, requested tailnet hostname |
-| `fedora_desktop_tailscale_key_dir` | `/run`, temporary root-only join-key storage |
 
 ```yaml
 ---
