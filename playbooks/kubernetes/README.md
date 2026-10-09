@@ -65,7 +65,7 @@ playbook handles both via `geerlingguy.containerd` and an
 ## Bootstrap (either distro)
 
 `bootstrap-gitops.yaml` bootstraps a cluster from igou-kubernetes'
-app-of-apps layout (see `docs/bootstrap.md` there). It seeds the
+app-of-apps layout (see `igou-docs/kubernetes/Bootstrapping the rk8s Cluster.md` there). It seeds the
 `external-secrets` namespace + Connect token secret backing the
 `onepassword` ClusterSecretStore, installs argocd, and applies
 `clusters/<cluster>` — after which argocd self-manages the cluster. The
