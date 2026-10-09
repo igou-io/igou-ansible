@@ -1,7 +1,7 @@
 ---
 # Bootstrap a cluster from igou-kubernetes (app-of-apps layout).
 #
-# Mirrors igou-kubernetes docs/bootstrap.md. Seeds the ESO Connect token
+# Mirrors igou-docs/kubernetes/Bootstrapping the rk8s Cluster.md. Seeds the ESO Connect token
 # first, then installs argocd, then applies the cluster root:
 #   1. external-secrets namespace + onepassword-connect-token Secret, seeded
 #      with the rk8s ENTITY Connect token read from the dedicated

@@ -128,3 +128,12 @@ Scenarios in `molecule/` follow a `<type>-<subject>[-<qualifier>]` naming scheme
 ## CI/CD
 
 GitHub Actions workflows build EE container images. Reusable workflow in `.github/workflows/ee-build.yml`. Triggered on path changes to `execution-environments/` dirs or weekly on Sunday. Renovate auto-merges dependency updates in `requirements.yml`.
+
+## Documentation ownership
+
+Operational runbooks and durable architecture decisions belong in
+`/workspace/igou-docs`. Keep implementation plans in the conversation; if a
+persistent record is needed, write a concise decision note in that vault.
+Do not create `docs/superpowers/` or repository-local agent execution plans.
+Keep public API/collection documentation, READMEs, and agent instructions
+beside the code. Update the relevant vault note when behavior changes.
