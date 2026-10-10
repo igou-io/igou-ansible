@@ -18,5 +18,11 @@
             }
         parameters:
           Mtu: "{{ molecule_windows_guest_mtu }}"
+    - name: Permit the scenario's local administrators to use remoting
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+        name: LocalAccountTokenFilterPolicy
+        data: 1
+        type: dword
 - name: Verify local disk placement and snapshot cloning
   ansible.builtin.import_playbook: storage_verify.yml

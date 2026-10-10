@@ -46,6 +46,7 @@
 - name: Verify — the created user's password actually authenticates
   hosts: windows
   gather_facts: false
+  any_errors_fatal: true
   vars:
     ansible_user: moluser
     ansible_password: "{{ molecule_windows_password_lookup }}"
