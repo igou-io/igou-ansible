@@ -1,4 +1,4 @@
 ---
 minor_changes:
-  - Renovate - Added tracking for Molecule requirements, standalone tool versions, bootstrap and test images, and paired devenv bootstrap releases; corrected GitHub collection lookup names and required review for the new dependency surfaces.
+  - Renovate - Added tracking for Molecule requirements, standalone tool versions, bootstrap and test images, and paired devenv bootstrap releases; corrected GitHub collection lookup names and required review for the new dependency surfaces (https://github.com/igou-io/igou-ansible/pull/588).
   - CI - Added Renovate extraction and replacement checks, including Grafana kiosk checksum coverage and matching devenv bootstrap releases.
