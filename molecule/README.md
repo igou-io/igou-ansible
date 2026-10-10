@@ -133,6 +133,9 @@ source .venv/bin/activate
 
 Windows preflight checks PSRP before creating guests; a missing controller
 dependency must not consume the full guest connection timeout.
+Shared prepare clamps Windows Ethernet MTU to `molecule_windows_guest_mtu`
+(1400 for this cluster) before package downloads. Windows ignores the
+DHCP-advertised pod MTU; leaving it at 1500 can stall external CDN requests.
 The `molecule` namespace must exist and grant the provisioner's documented
 VM/CDI/Service permissions. CentOS and Windows scenarios need Ready local
 `centos-stream10-casval`, `win11-casval` and `win2k25-casval` DataSources in
@@ -219,3 +222,8 @@ scenario is included in the default batch.
 Earlier storage validation measured nine local clones at 6–32 seconds per disk.
 That excludes guest boot, Windows specialization and Ansible phases; it is not
 a runtime certification or timing guarantee for this Molecule refactor.
+
+The local storage checks cover boot disks. Windows preferences also persist EFI
+and vTPM state in small KubeVirt-managed claims using the cluster's RWX state
+storage (`freenas-nfs-ssd-csi` in current validation). Those claims are owned by
+the disposable VM and must disappear during teardown alongside its boot disk.

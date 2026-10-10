@@ -7,6 +7,7 @@ molecule_namespace: molecule
 molecule_storage_class: lvms-casval
 molecule_casval_node: casval.igou.systems
 molecule_image_namespace: openshift-virtualization-os-images
+molecule_windows_guest_mtu: 1400
 molecule_ephemeral_directory: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
 molecule_consumer_run_id: "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/consumer-run-id', errors='ignore') | default('', true) | trim }}"
 molecule_kubevirt_run: "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/kubevirt_run.yml', errors='ignore') | default('{}', true) | from_yaml }}"

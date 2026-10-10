@@ -1,5 +1,22 @@
 ---
 - name: Wait for disposable guests
   ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+- name: Prepare Windows guests for pod-network traffic
+  hosts: windows_guests
+  gather_facts: false
+  tasks:
+    - name: Clamp Windows Ethernet MTU before external package downloads
+      ansible.windows.win_powershell:
+        script: |
+          param([int]$Mtu)
+          $Ansible.Changed = $false
+          Get-NetIPInterface -AddressFamily IPv4 -InterfaceAlias 'Ethernet*' |
+            Where-Object NlMtu -gt $Mtu |
+            ForEach-Object {
+              $_ | Set-NetIPInterface -NlMtu $Mtu
+              $Ansible.Changed = $true
+            }
+        parameters:
+          Mtu: "{{ molecule_windows_guest_mtu }}"
 - name: Verify local disk placement and snapshot cloning
   ansible.builtin.import_playbook: storage_verify.yml
