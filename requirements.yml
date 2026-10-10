@@ -21,6 +21,9 @@ roles:
   - name: geerlingguy.containerd
     version: 1.4.1
 collections:
+  # Shared by playbooks, Molecule and the AWX EE; the RHEL EE has its own list.
+  - name: david_igou.molecule_provisioners
+    version: 0.0.6-alpha
   - name: community.general
     version: 13.4.0
   - name: ansible.posix

@@ -1,0 +1,5 @@
+---
+minor_changes:
+  - Dependencies - Consolidated playbook, Molecule and AWX EE Galaxy dependencies into root requirements.yml, including the pinned Molecule provisioner; retained the RHEL EE's separate list (https://github.com/igou-io/igou-ansible/pull/588).
+  - Renovate - Added tracking for standalone tool versions, bootstrap and test images, and paired devenv bootstrap releases; corrected GitHub collection lookup names and required review for the provisioner and new tool/image dependency surfaces.
+  - CI - Added Renovate extraction and replacement checks, including Grafana kiosk checksum coverage and matching devenv bootstrap releases.

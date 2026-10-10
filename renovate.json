@@ -48,6 +48,54 @@
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["galaxy-collection"],
       "groupName": "ee galaxy collections"
+    },
+    {
+      "description": "Normalize GitHub collection URLs for github-tags lookups without rewriting Ansible sources",
+      "matchManagers": ["ansible-galaxy"],
+      "matchDatasources": ["github-tags"],
+      "matchPackageNames": ["/^https://github\\.com/[^/]+/[^/]+\\.git$/"],
+      "overridePackageName": "{{replace '.git' '' (replace 'https://github.com/' '' packageName)}}"
+    },
+    {
+      "description": "Keep explicitly chosen branch and commit requirements outside release updates",
+      "matchManagers": ["ansible-galaxy"],
+      "matchDatasources": ["github-tags"],
+      "matchCurrentValue": "/^(?:main|fix-user-update|[a-f0-9]{40})$/",
+      "enabled": false
+    },
+    {
+      "description": "Review provisioner updates before running the local Molecule scenarios",
+      "matchManagers": ["ansible-galaxy"],
+      "matchFileNames": ["requirements.yml"],
+      "matchPackageNames": ["david_igou.molecule_provisioners"],
+      "groupName": "molecule provisioner",
+      "automerge": false
+    },
+    {
+      "description": "New standalone tool and image pins need individual compatibility review",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": [
+        ".github/workflows/ee-build.yml",
+        "roles/fedora_desktop/defaults/main.yml",
+        "playbooks/windows/deploy_ohmgraphite.yaml",
+        "playbooks/upsmonitor/setup-exporter.yml",
+        "playbooks/grafana-kiosk/setup-kiosk.yaml",
+        "ansible-navigator.yml",
+        "playbooks/aap/ansible-navigator.yml",
+        "playbooks/openshift/bootstrap_gitops.yaml",
+        "playbooks/openshift_virtualization/build_windows_golden.yml",
+        "molecule/**/inventory/**"
+      ],
+      "groupName": null,
+      "automerge": false
+    },
+    {
+      "description": "The bootstrap git release and runtime image must advance together",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": ["playbooks/devenv/bootstrap.yml"],
+      "groupName": "devenv bootstrap release",
+      "versioning": "regex:^v?(?<major>\\d{4})\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?<build>\\d+))?$",
+      "automerge": false
     }
   ],
   "customManagers": [
@@ -79,6 +127,81 @@
       ],
       "datasourceTemplate": "galaxy-collection",
       "versioningTemplate": "semver"
+    },
+    {
+      "description": "Track the inline ansible-builder pin used to build execution environments",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/ee-build\\.yml$/"],
+      "matchStrings": ["pip install (?<depName>ansible-builder)==(?<currentValue>[0-9][^\\s]+)"],
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "description": "Track Node used by the Fedora desktop role",
+      "customType": "regex",
+      "managerFilePatterns": ["/^roles/fedora_desktop/defaults/main\\.yml$/"],
+      "matchStrings": ["fedora_desktop_node_version:\\s*[\"']?(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
+    },
+    {
+      "description": "Track the OhmGraphite release downloaded by the Windows playbook",
+      "customType": "regex",
+      "managerFilePatterns": ["/^playbooks/windows/deploy_ohmgraphite\\.yaml$/"],
+      "matchStrings": ["ohmgraphite_version:\\s*[\"']?(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "nickbabcock/OhmGraphite",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "description": "Track the nut_exporter default while retaining the Jinja override",
+      "customType": "regex",
+      "managerFilePatterns": ["/^playbooks/upsmonitor/setup-exporter\\.yml$/"],
+      "matchStrings": ["nut_exporter_version\\s*\\|\\s*default\\('(?<currentValue>\\d+\\.\\d+\\.\\d+)'\\)"],
+      "depNameTemplate": "DRuggeri/nut_exporter",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "description": "Track the grafana-kiosk default; a version bump also needs reviewed asset checksums",
+      "customType": "regex",
+      "managerFilePatterns": ["/^playbooks/grafana-kiosk/setup-kiosk\\.yaml$/"],
+      "matchStrings": ["kiosk_grafana_kiosk_version\\s*\\|\\s*default\\('(?<currentValue>\\d+\\.\\d+\\.\\d+)'\\)"],
+      "depNameTemplate": "grafana/grafana-kiosk",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "description": "Track the devenv bootstrap git release alongside its container image",
+      "customType": "regex",
+      "managerFilePatterns": ["/^playbooks/devenv/bootstrap\\.yml$/"],
+      "matchStrings": ["devenv_repo_version:\\s*[\"']?(?<currentValue>v\\d{4}\\.\\d+\\.\\d+(?:-\\d+)?)"],
+      "depNameTemplate": "igou-io/igou-devenv",
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "regex:^v?(?<major>\\d{4})\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?<build>\\d+))?$"
+    },
+    {
+      "description": "Track qualified bootstrap, navigator and Molecule image references, including embedded Kubernetes YAML",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^(?:ansible-navigator|playbooks/aap/ansible-navigator)\\.yml$/",
+        "/^playbooks/devenv/bootstrap\\.yml$/",
+        "/^playbooks/openshift/bootstrap_gitops\\.yaml$/",
+        "/^playbooks/openshift_virtualization/build_windows_golden\\.yml$/",
+        "/^molecule/.+/inventory/.+\\.ya?ml$/"
+      ],
+      "matchStringsStrategy": "recursive",
+      "matchStrings": [
+        "(?m)^[ \\t]*(?:devenv_)?image:[ \\t]+[\"']?[^\\s\"'{}]+",
+        "(?<depName>(?:[a-z0-9.-]+:[0-9]+/)?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9._-]+)+)(?::(?<currentValue>[^\\s@\"'{}:]+))?(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?"
+      ],
+      "datasourceTemplate": "docker",
+      "currentValueTemplate": "{{#if currentValue}}{{{currentValue}}}{{else}}latest{{/if}}",
+      "autoReplaceStringTemplate": "{{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}"
     }
   ]
 }
