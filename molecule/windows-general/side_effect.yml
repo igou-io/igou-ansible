@@ -6,3 +6,5 @@
     - name: Reboot Windows
       ansible.windows.win_reboot:
         reboot_timeout: 1500
+- name: Verify console auto-logon survived the reboot before reconverging
+  ansible.builtin.import_playbook: checks/autologon.yml

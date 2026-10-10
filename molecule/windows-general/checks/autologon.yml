@@ -1,0 +1,23 @@
+---
+- name: Require persistent console auto-logon after reboot
+  hosts: windows_client
+  gather_facts: false
+  tasks:
+    - name: Check the console session and non-secret Winlogon state
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$ExpectedUser)
+          $Ansible.Changed = $false
+          $wl = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+          $consoleUser = (Get-CimInstance Win32_ComputerSystem).UserName
+          if ($wl.AutoAdminLogon -ne '1' -or $wl.DefaultUserName -ne $ExpectedUser -or
+              $null -ne $wl.AutoLogonCount -or
+              ($consoleUser -split '\\')[-1] -ne $ExpectedUser) {
+            throw 'Persistent console auto-logon did not survive the reboot.'
+          }
+        parameters:
+          ExpectedUser: "{{ ansible_user }}"
+      register: windows_autologon_check
+      until: windows_autologon_check is succeeded
+      retries: 12
+      delay: 5
