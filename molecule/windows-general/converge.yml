@@ -127,7 +127,7 @@
   ansible.builtin.import_playbook: ../../playbooks/windows/debloat.yaml
   vars:
     ansible_limit: windows_client  # noqa: var-naming[read-only] -- target this imported play only
-- name: Configure client visual effects
+- name: Configure server visual effects
   ansible.builtin.import_playbook: ../../playbooks/windows/configure_visual_effects.yaml
   vars:
-    ansible_limit: windows_client  # noqa: var-naming[read-only] -- target this imported play only
+    ansible_limit: windows_server  # noqa: var-naming[read-only] -- target this imported play only

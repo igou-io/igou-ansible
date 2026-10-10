@@ -1,17 +1,23 @@
 ---
-- name: Require the prepared interactive user's performance preset
-  hosts: windows_client
+- name: Require each guest's independent visual-effects policy
+  hosts: windows
   gather_facts: false
   tasks:
     - name: Read the interactive hive's performance effects
       ansible.windows.win_powershell:
         script: |
+          param([int]$ExpectedPreset, [string]$ExpectedDragFull, [bool]$CheckFontSmoothing)
           $Ansible.Changed = $false
           $sid = (Get-LocalUser -Name '{{ ansible_user }}').SID.Value
           $base = "Registry::HKEY_USERS\$sid"
           if (-not (Test-Path $base)) { throw 'The interactive user hive is not loaded; this check would be vacuous.' }
           $fx = Get-ItemProperty "$base\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
           $desktop = Get-ItemProperty "$base\Control Panel\Desktop"
-          if ($fx.VisualFXSetting -ne 3 -or $desktop.DragFullWindows -ne '1' -or $desktop.FontSmoothing -ne '0') {
+          if ($fx.VisualFXSetting -ne $ExpectedPreset -or $desktop.DragFullWindows -ne $ExpectedDragFull -or
+              ($CheckFontSmoothing -and $desktop.FontSmoothing -ne '0')) {
             throw 'The interactive user does not have the requested performance preset.'
           }
+        parameters:
+          ExpectedPreset: "{{ 3 if inventory_hostname in groups['windows_server'] else 2 }}"
+          ExpectedDragFull: "{{ '1' if inventory_hostname in groups['windows_server'] else '0' }}"
+          CheckFontSmoothing: "{{ inventory_hostname in groups['windows_server'] }}"

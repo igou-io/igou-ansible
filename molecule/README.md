@@ -82,8 +82,11 @@ set during an isolated lifecycle requires destroying that run first.
 | `truenas-apps` | Retained middleware simulation on Stream 10; config/environment drift, app recreation and payload behavior. No live TrueNAS changes. |
 
 `windows-general` excludes OHMGraphite and domain membership; AD remains a separate
-lifecycle. IIS runs only on Server; desktop roles run only on the client. Windows
-specialization uses the same helper for built-in Administrator and client local
+lifecycle. IIS runs only on Server; desktop roles run only on the client.
+The computer-use visual effects remain on the client; the standalone visual-effects
+playbook runs on Server so their different presets do not overwrite each other.
+Verification checks both policies after reboot.
+Windows specialization uses the same helper for built-in Administrator and client local
 administrator modes. A disposable password is persisted in Molecule state unless
 `MOLECULE_WINDOWS_ADMIN_PASSWORD` supplies one.
 
