@@ -9,6 +9,19 @@
   # pre_tasks run before roles, so the admin user + key + sudo exist before
   # ssh_hardening disables root login and password auth (prevents lockout).
   pre_tasks:
+    - name: Check whether this kernel exposes the user-namespace compatibility sysctl
+      ansible.builtin.stat:
+        path: /proc/sys/kernel/unprivileged_userns_clone
+      register: baseline_userns_clone
+
+    - name: Remove an unsupported compatibility sysctl left by an earlier baseline
+      ansible.posix.sysctl:
+        name: kernel.unprivileged_userns_clone
+        state: absent
+        sysctl_file: /etc/sysctl.d/90-dev-sec.conf
+        reload: false
+      when: not baseline_userns_clone.stat.exists
+
     - name: Ensure sudo is installed
       ansible.builtin.package:
         name: sudo
@@ -102,9 +115,11 @@
         # silently ignored.
         #
         # kernel.unprivileged_userns_clone re-enables unprivileged user
-        # namespaces for rootless podman; devsec sets it to 0 on Ubuntu
-        # (CVE-2021-33909).
-        sysctl_overwrite: "{{ {'kernel.unprivileged_userns_clone': 1} | combine(baseline_sysctl_overwrite | default({})) }}"
+        # namespaces for rootless podman where the kernel exposes it;
+        # requesting it on other kernels reports changed on every run.
+        sysctl_overwrite: >-
+          {{ ({'kernel.unprivileged_userns_clone': 1} if baseline_userns_clone.stat.exists else {})
+             | combine(baseline_sysctl_overwrite | default({})) }}
 
     - role: devsec.hardening.ssh_hardening
       vars:

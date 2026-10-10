@@ -15,6 +15,14 @@
       ansible.builtin.command: sudo -n id -u
       register: molecule_sudo_identity
       changed_when: false
+    - name: Create a user namespace without administrator privileges
+      ansible.builtin.command:
+        argv:
+          - unshare
+          - --user
+          - --map-root-user
+          - "true"
+      changed_when: false
     - name: Require root elevation
       ansible.builtin.assert:
         that:
