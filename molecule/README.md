@@ -2,7 +2,7 @@
 
 Molecule discovers all 15 scenarios through the shared configuration. Linux smoke
 and node-exporter lifecycles have passed on Casval; Windows guests have booted and
-authenticated with local snapshot clones. Cold reinstall/cache recovery and
+authenticated with local snapshot clones. Cold reinstall/cache recovery passed;
 three complete mixed-OS batches remain in validation. These results do not
 certify every scenario in the table below.
 
@@ -140,6 +140,10 @@ Shared prepare clamps Windows Ethernet MTU to `molecule_windows_guest_mtu`
 DHCP-advertised pod MTU; leaving it at 1500 can stall external CDN requests.
 Windows test guests use `u1.xlarge` (four vCPUs, 16 GiB) on Casval to give
 specialization and feature installation more CPU than the former two-core preset.
+`windows-general` runs its existing client/server reboot after converge and
+before idempotence. This settles pending Windows changes before testing a no-op
+second pass; `win_feature.reboot_required` can reflect server state even when
+the feature itself is unchanged. Final verification still runs after the reboot.
 The `molecule` namespace must exist and grant the provisioner's documented
 VM/CDI/Service permissions. CentOS and Windows scenarios need Ready local
 `centos-stream10-casval`, `win11-casval` and `win2k25-casval` DataSources in
