@@ -136,6 +136,8 @@ dependency must not consume the full guest connection timeout.
 Shared prepare clamps Windows Ethernet MTU to `molecule_windows_guest_mtu`
 (1400 for this cluster) before package downloads. Windows ignores the
 DHCP-advertised pod MTU; leaving it at 1500 can stall external CDN requests.
+Windows test guests use `u1.xlarge` (four vCPUs, 16 GiB) on Casval to give
+specialization and feature installation more CPU than the former two-core preset.
 The `molecule` namespace must exist and grant the provisioner's documented
 VM/CDI/Service permissions. CentOS and Windows scenarios need Ready local
 `centos-stream10-casval`, `win11-casval` and `win2k25-casval` DataSources in

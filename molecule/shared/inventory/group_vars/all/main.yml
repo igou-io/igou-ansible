@@ -75,7 +75,7 @@ molecule_guest_profiles:
   windows:
     connection: psrp
     admin_password: "{{ molecule_windows_password_lookup }}"
-    instancetype: u1.large
+    instancetype: u1.xlarge
   stream10:
     boot_source: "{{ molecule_boot_sources.stream10 }}"
     ssh_user: cloud-user
