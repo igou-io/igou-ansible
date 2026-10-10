@@ -46,11 +46,28 @@
           propagationPolicy: Foreground
           preconditions:
             uid: "{{ item.metadata.uid }}"
-        wait: true
-        wait_timeout: 300
       loop: "{{ casval_cache_old_volumes.resources | selectattr('metadata.creationTimestamp', 'lt', casval_cache_node_created) | list }}"
       loop_control:
         label: "{{ item.metadata.name }}"
+      no_log: true
+
+    # CDI can immediately recreate the same name. Wait for the old identities,
+    # rather than requiring names shared with replacement imports to disappear.
+    - name: Wait for stale DataVolume identities to disappear
+      kubernetes.core.k8s_info:
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataVolume
+        namespace: "{{ casval_cache_namespace }}"
+        label_selectors:
+          - "cdi.kubevirt.io/dataImportCron={{ casval_cache_seed }}"
+      register: casval_cache_remaining_volumes
+      retries: 60
+      delay: 5
+      until: >-
+        casval_cache_remaining_volumes.resources | map(attribute='metadata.uid') | list
+        | intersect(casval_cache_old_volumes.resources
+        | selectattr('metadata.creationTimestamp', 'lt', casval_cache_node_created)
+        | map(attribute='metadata.uid') | list) | length == 0
       no_log: true
 
     - name: Read claims that remain after dependent cleanup
@@ -71,11 +88,24 @@
         delete_options:
           preconditions:
             uid: "{{ item.metadata.uid }}"
-        wait: true
-        wait_timeout: 300
       loop: "{{ casval_cache_remaining_claims.resources | selectattr('metadata.creationTimestamp', 'lt', casval_cache_node_created) | list }}"
       loop_control:
         label: "{{ item.metadata.name }}"
+      no_log: true
+
+    - name: Wait for stale claim identities to disappear
+      kubernetes.core.k8s_info:
+        kind: PersistentVolumeClaim
+        namespace: "{{ casval_cache_namespace }}"
+        label_selectors:
+          - "cdi.kubevirt.io/dataImportCron={{ casval_cache_seed }}"
+      register: casval_cache_surviving_claims
+      retries: 60
+      delay: 5
+      until: >-
+        casval_cache_surviving_claims.resources | map(attribute='metadata.uid') | list
+        | intersect(casval_cache_old_claims.resources | map(attribute='metadata.uid') | list)
+        | length == 0
       no_log: true
 
 - name: Wait for the feed's current backing PVC
