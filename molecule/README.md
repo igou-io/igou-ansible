@@ -1,8 +1,10 @@
 # Molecule scenarios
 
-This scaffold is under structure review. Local production-profile ansible-lint and yamllint pass, and Molecule discovers
-all 15 scenarios through the shared configuration. VM execution remains deferred. No scenario has runtime certification
-from this refactor yet.
+Molecule discovers all 15 scenarios through the shared configuration. Linux smoke
+and node-exporter lifecycles have passed on Casval; Windows guests have booted and
+authenticated with local snapshot clones. Cold reinstall/cache recovery and
+three complete mixed-OS batches remain in validation. These results do not
+certify every scenario in the table below.
 
 All disposable guests use `david_igou.molecule_provisioners` **0.0.6-alpha** with
 KubeVirt on `https://api.ocp.igou.systems:6443`. Scenario names describe use cases;
@@ -162,7 +164,12 @@ same test manifest for static linting only.
 ## Fast batches on Casval
 
 Deploy the companion GitOps `components/molecule` image cache and service-account
-read grants before running this branch. The cache keeps one seed for each of
+read grants before running this branch. The same GitOps change enables Casval's
+Metal3 metadata cleaning between installations; leaving it disabled lets the
+provisioning ramdisk activate the old LVMS pool and block CoreOS installation.
+Cleaning affects every recognized local disk, so keep durable images off Casval
+and recheck its hardware inventory before adding disks.
+The cache keeps one seed for each of
 CentOS Stream 10, Windows 11 and Server 2025 on `lvms-casval`; tests snapshot-clone
 the same class using RWO Block volumes. Windows requires a first TrueNAS-to-local
 copy per golden PVC generation. CentOS imports directly from its registry feed.
