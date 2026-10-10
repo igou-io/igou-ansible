@@ -1,9 +1,10 @@
 # Molecule scenarios
 
-Molecule discovers all 15 scenarios through the shared configuration. Linux smoke
-and node-exporter lifecycles have passed on Casval; Windows guests have booted and
-authenticated with local snapshot clones. Cold reinstall/cache recovery passed;
-three complete mixed-OS batches remain in validation. These results do not
+Molecule discovers all 15 scenarios through the shared configuration. Three fresh
+mixed-OS batches passed Linux smoke, node-exporter and Windows general lifecycles
+on Casval, including idempotence, functional verification and cleanup. A separate
+Linux maintenance lifecycle also passed. Cold reinstall/cache recovery passed
+with one BMC warm restart needed to boot the cleaning agent. These results do not
 certify every scenario in the table below.
 
 All disposable guests use `david_igou.molecule_provisioners` **0.0.6-alpha** with
@@ -234,6 +235,21 @@ still runs a real installer (45–90 minutes), with its root disk and resulting
 test clone on LVMS. Its standalone blank build disk uses the builder's existing
 immediate-binding annotation; test VM clone templates do not. Neither expensive
 scenario is included in the default batch.
+
+The 2026-10-10 mixed-OS validation used three concurrent scenario processes and
+four fresh guests per round. Every root disk used a snapshot clone on Casval;
+each complete batch exited successfully and left no VM, VMI, DataVolume, PVC or
+Service in the test namespace.
+
+| Round | Full batch | CentOS smoke disk | Exporter disk | Windows 11 disk | Server 2025 disk |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 32m 01s | 19s | 17s | 58s | 58s |
+| 2 | 33m 28s | 21s | 28s | 59s | 49s |
+| 3 | 29m 21s | 17s | 19s | 58s | 70s |
+
+Disk times measure DataVolume creation to Ready, including controller preparation.
+Full batch times include dependency checks, guest specialization, application and
+feature installation, reboot, idempotence, verification and teardown.
 
 Earlier storage validation measured nine local clones at 6–32 seconds per disk.
 That excludes guest boot, Windows specialization and Ansible phases; it is not

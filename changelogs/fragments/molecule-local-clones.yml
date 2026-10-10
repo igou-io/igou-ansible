@@ -1,6 +1,6 @@
 ---
 minor_changes:
-  - Molecule reused GitOps-managed CentOS and Windows seeds on Casval through LVMS snapshot clones, checked image readiness and actual clone placement, and added bounded scenario execution with shared dependency installation.
+  - Molecule reused GitOps-managed CentOS and Windows seeds on Casval through LVMS snapshot clones, checked image readiness and actual clone placement, and added bounded scenario execution with shared dependency installation (https://github.com/igou-io/igou-ansible/pull/587).
 bugfixes:
   - windows_computer_use removed the finite image auto-logon counter so console login remained enabled after reboot.
   - The Linux baseline checked kernel support before enabling the user-namespace compatibility sysctl and removed stale unsupported settings, preserving idempotence on CentOS Stream 10.
