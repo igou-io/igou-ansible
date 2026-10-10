@@ -122,6 +122,17 @@ while retaining the shared inventory chain. Other scenarios inherit it unchanged
 Use the local managed toolchain with Molecule 26.9.0, compatible ansible-core,
 `oc`, Kubernetes Python dependencies, PSRP dependencies and boto3/botocore for
 restore. Activate the scoped `ocp-ansible-molecule` profile and verify identity.
+Install local controller dependencies in a project virtual environment so the
+Ansible process can import them:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-molecule.txt
+source .venv/bin/activate
+```
+
+Windows preflight checks PSRP before creating guests; a missing controller
+dependency must not consume the full guest connection timeout.
 The `molecule` namespace must exist and grant the provisioner's documented
 VM/CDI/Service permissions. CentOS and Windows scenarios need Ready local
 `centos-stream10-casval`, `win11-casval` and `win2k25-casval` DataSources in
@@ -160,6 +171,12 @@ Casval placement, normal consumer binding and CDI's actual `cloneType: snapshot`
 a copy fallback fails the run. It prints selected disk information without clone
 tokens. No test lifecycle mounts or deletes shared seeds.
 
+Acquire or renew through `casval_scale` after deploying the feeds. Acquisition
+warms all three seeds and marks the current node UID cache-ready. A fresh
+installation resets only cache claims that predate the node; retries preserve
+imports already created on that installation. Molecule rejects a missing or
+stale cache marker. Reboots reuse seeds without copying them again.
+
 Hold one Casval lease for the batch and cleanup; extend it before expiry if
 needed. A reboot preserves local seeds. Destructive reprovisioning loses them
 and requires reseeding; a stale Bound PVC alone does not prove its data survived.
@@ -171,8 +188,13 @@ make molecule-test-batch \
   MOLECULE_WORKERS=3
 ```
 
-This installs the shared pinned dependencies once, then uses Molecule's native
-workers with dependency installation disabled in each worker. The default batch
+This installs the shared pinned dependencies once, then uses `xargs -P` to run
+independent Molecule processes with dependency installation disabled. Molecule
+26.9's native `--workers` requires collection mode and cannot run this repository.
+`molecule/dependency.sh` installs roles and collections from the one requirements
+file into the same project-local paths used by test execution. This prevents
+Galaxy from skipping globally installed collections that tests cannot see.
+The default batch
 contains `default`, `linux-node-exporter` and `linux-maintenance`. A worker limit
 bounds **scenarios**, not VMs: `windows-general` creates two guests. Start at
 three workers and increase only after measuring CPU/RAM, thin-pool data/metadata

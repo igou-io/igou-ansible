@@ -13,6 +13,12 @@
     - molecule_guest_boot_source.type == 'data_volume_source_ref'
     - molecule_guest_boot_source.source_ref.namespace == molecule_image_namespace
   block:
+    - name: Require the cache to belong to the current Casval installation
+      ansible.builtin.assert:
+        that:
+          - (molecule_casval.resources[0].metadata.annotations | default({})).get('molecule.igou.systems/cache-node-uid', '') == molecule_casval.resources[0].metadata.uid
+        fail_msg: Acquire or renew a Casval lease to recover and warm this installation's image cache before cloning.
+
     - name: Read the local image DataSource
       kubernetes.core.k8s_info:
         api_version: cdi.kubevirt.io/v1beta1

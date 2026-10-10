@@ -24,6 +24,23 @@
     - name: Persist a consumer resource identity for this scenario lifecycle
       ansible.builtin.set_fact:
         molecule_initialized_run_id: "{{ lookup('ansible.builtin.password', molecule_ephemeral_directory ~ '/consumer-run-id length=12 chars=ascii_lowercase,digits') }}"
+    - name: Check the Windows controller connection dependency
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -m
+          - pip
+          - show
+          - pypsrp
+      register: molecule_psrp_dependency
+      changed_when: false
+      failed_when: false
+      when: groups['windows_guests'] | default([]) | length > 0
+    - name: Require PSRP before creating Windows guests
+      ansible.builtin.assert:
+        that: molecule_psrp_dependency.rc == 0
+        fail_msg: Install the documented controller PSRP dependency in the active Ansible interpreter before creating Windows guests.
+      when: groups['windows_guests'] | default([]) | length > 0
     - name: Check VM access in the test namespace
       kubernetes.core.k8s_info:
         api_version: kubevirt.io/v1

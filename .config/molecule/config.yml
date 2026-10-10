@@ -1,12 +1,9 @@
 ---
 prerun: false
 dependency:
-  name: galaxy
+  name: shell
   enabled: ${MOLECULE_DEPENDENCY_ENABLED:-true}
-  options:
-    requirements-file: requirements-molecule.yml
-    role-file: requirements-molecule.yml
-    no-deps: true
+  command: bash ${MOLECULE_PROJECT_DIRECTORY}/molecule/dependency.sh
 ansible:
   cfg:
     defaults:

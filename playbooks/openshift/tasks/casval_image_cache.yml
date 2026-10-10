@@ -1,0 +1,70 @@
+---
+- name: Read the GitOps-managed Casval image feeds
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataImportCron
+    namespace: "{{ casval_cache_namespace }}"
+    label_selectors:
+      - molecule.igou.systems/image-cache=casval
+  register: casval_cache_feeds
+
+# GPU-only leases still work before the optional Molecule component is deployed.
+- name: Prepare the deployed local image cache
+  when: casval_cache_feeds.resources | length > 0
+  block:
+    - name: Require exactly the expected Casval image feeds
+      ansible.builtin.assert:
+        that:
+          - casval_cache_feeds.resources | map(attribute='metadata.name') | sort == casval_cache_seeds | sort
+          - casval_cache_feeds.resources | map(attribute='spec.template.spec.storage.storageClassName') | unique | list == ['lvms-casval']
+        fail_msg: Casval cache recovery only manages the three declared lvms-casval image feeds.
+
+    - name: Wait for the Casval volume group
+      kubernetes.core.k8s_info:
+        api_version: lvm.topolvm.io/v1alpha1
+        kind: LVMCluster
+        name: lvmcluster
+        namespace: openshift-storage
+      register: casval_cache_lvm
+      retries: 60
+      delay: 10
+      until: >-
+        casval_cache_lvm.resources | map(attribute='status.deviceClassStatuses') | flatten
+        | map(attribute='nodeStatus') | flatten
+        | selectattr('node', 'equalto', casval_cache_node)
+        | selectattr('status', 'equalto', 'Ready') | list | length > 0
+
+    - name: Read the current Casval installation identity
+      kubernetes.core.k8s_info:
+        kind: Node
+        name: "{{ casval_cache_node }}"
+      register: casval_cache_current_node
+
+    - name: Determine whether this installation needs cache recovery
+      ansible.builtin.set_fact:
+        casval_cache_node_uid: "{{ casval_cache_current_node.resources[0].metadata.uid }}"
+        casval_cache_node_created: "{{ casval_cache_current_node.resources[0].metadata.creationTimestamp }}"
+        casval_cache_reset: >-
+          {{ (casval_cache_current_node.resources[0].metadata.annotations | default({})).get(casval_cache_annotation, '')
+             != casval_cache_current_node.resources[0].metadata.uid }}
+
+    - name: Recover each stale seed and wait for usable data
+      ansible.builtin.include_tasks: casval_image_seed.yml
+      loop: "{{ casval_cache_seeds }}"
+      loop_control:
+        loop_var: casval_cache_seed
+
+    - name: Mark this installation's cache ready after all imports succeed
+      kubernetes.core.k8s:
+        state: patched
+        kind: Node
+        name: "{{ casval_cache_node }}"
+        definition:
+          metadata:
+            uid: "{{ casval_cache_node_uid }}"
+            annotations:
+              molecule.igou.systems/cache-node-uid: "{{ casval_cache_node_uid }}"
+
+    - name: Report the cache lifecycle result
+      ansible.builtin.debug:
+        msg: "Casval image cache ready for node UID {{ casval_cache_node_uid }}; recovered={{ casval_cache_reset }}."

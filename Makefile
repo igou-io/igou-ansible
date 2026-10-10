@@ -68,8 +68,9 @@ molecule-test-all:
 	molecule test --all
 molecule-test-batch:
 	@test -n "$(MOLECULE_SCENARIOS)" || { echo "Set MOLECULE_SCENARIOS to the scenarios to run"; exit 1; }
+	@case "$(MOLECULE_WORKERS)" in ''|*[!0-9]*) echo "MOLECULE_WORKERS must be a positive integer" >&2; exit 1 ;; esac; test "$(MOLECULE_WORKERS)" -gt 0
 	MOLECULE_DEPENDENCY_ENABLED=true molecule dependency -s $(firstword $(MOLECULE_SCENARIOS))
-	MOLECULE_DEPENDENCY_ENABLED=false molecule test --workers $(MOLECULE_WORKERS) $(foreach scenario,$(MOLECULE_SCENARIOS),-s $(scenario))
+	printf '%s\n' $(MOLECULE_SCENARIOS) | xargs -r -n 1 -P $(MOLECULE_WORKERS) env MOLECULE_DEPENDENCY_ENABLED=false molecule test -s
 molecule-converge:
 	molecule converge -s $(MOLECULE_SCENARIO)
 molecule-verify:
