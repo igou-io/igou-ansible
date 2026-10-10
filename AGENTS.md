@@ -84,6 +84,11 @@ Built with `ansible-builder`, defined in `execution-environments/`. Each has `ex
 - `igou-awx-ee` - Primary EE (CentOS Stream 10, includes terraform, 1password-cli, oc, helm, kustomize)
 - `igou-aap-ee-rhel9` - AAP on RHEL9
 
+Use root `requirements.yml` as the single Galaxy dependency manifest for
+playbooks, Molecule and the AWX EE, including the pinned Molecule provisioner.
+The RHEL EE keeps its separate inline Galaxy list in
+`execution-environments/igou-aap-ee-rhel9/execution-environment.yml`.
+
 ### Roles
 
 Mix of community galaxy roles (pinned versions in `requirements.yml`) and custom roles in `roles/`: `alloy`, `kubevirt_vm_provision`, `kubevirt_vm_snapshot`, `rpi_boot_render`, `rpi_eeprom`, `rpi_rootfs`, `tailscale_serve`, `windows_computer_use`, `windows_debloat`, `windows_desktop_apps`, `windows_power`, `zfs_pool`.
@@ -113,7 +118,7 @@ Scenarios in `molecule/` are named for use cases (`codex-desktop`,
 `windows-general`, `linux-podman-quadlets`), without playbook/role prefixes.
 All guests use `david_igou.molecule_provisioners`' KubeVirt backend on
 OpenShift. Shared configuration lives in `.config/molecule/config.yml`,
-test dependencies in `requirements-molecule.yml`, and inventory defaults,
+shared dependencies in root `requirements.yml`, and inventory defaults,
 Windows specialization, preflight and dispatcher imports in `molecule/shared/`.
 Keep each scenario's host set, production imports, fixtures and outcome checks
 local. Override `molecule_profile_overrides`, not `mp_defaults`, to preserve

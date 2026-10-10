@@ -34,33 +34,41 @@ const route = (dep, manager = 'custom.regex', updateType = 'minor') => applyPack
   automerge: true, groupName: 'inherited group', packageRules: config.packageRules,
 });
 
-const requirementsFile = 'requirements-molecule.yml';
+const requirementsFile = 'requirements.yml';
 const requirementsContent = await read(requirementsFile);
 const requirements = parseSingleYaml(requirementsContent);
-assert.ok(matchesFile([...galaxyDefaults.managerFilePatterns, ...config['ansible-galaxy'].managerFilePatterns], requirementsFile));
+assert.ok(matchesFile(galaxyDefaults.managerFilePatterns, requirementsFile));
 const galaxy = (await extractGalaxy(requirementsContent, requirementsFile)).deps;
 assert.equal(galaxy.length, requirements.roles.length + requirements.collections.length);
 const provisioner = galaxy.find((dep) => dep.depName === 'david_igou.molecule_provisioners');
+assert.ok(provisioner, 'The shared manifest must include the Molecule provisioner');
 assert.equal(provisioner.currentValue, requirements.collections.find((dep) => dep.name === provisioner.depName).version);
 assert.equal((await route({ ...provisioner, packageFile: requirementsFile }, 'ansible-galaxy')).automerge, false);
-assert.equal((await route({ ...provisioner, packageFile: requirementsFile }, 'ansible-galaxy')).groupName, 'molecule requirements');
+assert.equal((await route({ ...provisioner, packageFile: requirementsFile }, 'ansible-galaxy')).groupName, 'molecule provisioner');
+const general = galaxy.find((dep) => dep.depName === 'community.general');
+assert.equal((await route({ ...general, packageFile: requirementsFile }, 'ansible-galaxy')).automerge, true,
+  'Normal shared dependencies retain the inherited merge policy');
+for (const entries of [requirements.roles, requirements.collections]) {
+  assert.equal(new Set(entries.map((dep) => dep.name)).size, entries.length, 'Each dependency needs one shared pin');
+}
+const awx = parseSingleYaml(await read('execution-environments/igou-awx-ee/execution-environment.yml'));
+assert.equal(path.resolve('execution-environments/igou-awx-ee', awx.dependencies.galaxy), path.resolve(requirementsFile));
+const rhel = parseSingleYaml(await read('execution-environments/igou-aap-ee-rhel9/execution-environment.yml'));
+assert.ok(Array.isArray(rhel.dependencies.galaxy.collections), 'The RHEL EE retains its separate Galaxy list');
+assert.ok(!rhel.dependencies.galaxy.collections.some((dep) => dep.name === provisioner.depName));
 
-for (const file of ['requirements.yml', requirementsFile]) {
-  const content = await read(file);
-  const parsed = (await extractGalaxy(content, file)).deps;
-  for (const dep of parsed.filter((item) => item.datasource === 'github-tags')) {
-    const policy = await route({ ...dep, packageFile: file }, 'ansible-galaxy');
-    assert.equal(policy.packageName, dep.packageName.replace('https://github.com/', '').replace(/\.git$/, ''));
-    if (['main', 'fix-user-update'].includes(dep.currentValue) || /^[a-f0-9]{40}$/.test(dep.currentValue)) {
-      assert.equal(policy.enabled, false, `${file}: explicit branch/SHA must stay manual`);
-    } else {
-      assert.notEqual(policy.enabled, false, `${file}: release tags must remain enabled`);
-      const updated = await doAutoReplace({ ...dep, manager: 'ansible-galaxy', packageFile: file,
-        depIndex: parsed.indexOf(dep), newValue: '99.99.99' }, content, false);
-      assert.ok(updated.includes(dep.packageName), 'Ansible git source URL must survive lookup normalization');
-      const updatedDep = (await extractGalaxy(updated, file)).deps[parsed.indexOf(dep)];
-      assert.equal(updatedDep.currentValue, '99.99.99');
-    }
+for (const dep of galaxy.filter((item) => item.datasource === 'github-tags')) {
+  const policy = await route({ ...dep, packageFile: requirementsFile }, 'ansible-galaxy');
+  assert.equal(policy.packageName, dep.packageName.replace('https://github.com/', '').replace(/\.git$/, ''));
+  if (['main', 'fix-user-update'].includes(dep.currentValue) || /^[a-f0-9]{40}$/.test(dep.currentValue)) {
+    assert.equal(policy.enabled, false, `${requirementsFile}: explicit branch/SHA must stay manual`);
+  } else {
+    assert.notEqual(policy.enabled, false, `${requirementsFile}: release tags must remain enabled`);
+    const updated = await doAutoReplace({ ...dep, manager: 'ansible-galaxy', packageFile: requirementsFile,
+      depIndex: galaxy.indexOf(dep), newValue: '99.99.99' }, requirementsContent, false);
+    assert.ok(updated.includes(dep.packageName), 'Ansible git source URL must survive lookup normalization');
+    const updatedDep = (await extractGalaxy(updated, requirementsFile)).deps[galaxy.indexOf(dep)];
+    assert.equal(updatedDep.currentValue, '99.99.99');
   }
 }
 
@@ -145,4 +153,4 @@ for (const dep of [git, image]) {
   assert.equal(extract(updated, bootstrapFile).find((item) => item.depName === dep.depName).currentValue, newValue);
   parseSingleYaml(updated);
 }
-console.log(`Renovate coverage passed: ${galaxy.length} Molecule requirements, Git collection lookup/replacement, ${tools.length} tool pins, ${images.length} image locations, quoted/embedded image updates, kiosk checksums and paired bootstrap releases.`);
+console.log(`Renovate coverage passed: ${galaxy.length} shared requirements, AWX/RHEL dependency contracts, Git collection lookup/replacement, ${tools.length} tool pins, ${images.length} image locations, quoted/embedded image updates, kiosk checksums and paired bootstrap releases.`);

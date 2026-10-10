@@ -15,7 +15,7 @@ Linux and logging domains use flat names so discovery and `-s` remain simple.
 
 ```text
 .config/molecule/config.yml       common Molecule configuration
-requirements-molecule.yml         one pinned test dependency manifest
+requirements.yml                  shared Galaxy dependencies for playbooks, tests and AWX EE
 molecule/
   shared/
     inventory/                   defaults only; introduces no guests
@@ -167,7 +167,10 @@ Bare `molecule test -s <use-case>` uses the same base. `default` remains usable 
 bare commands. `make molecule-test-all` includes costly image builds and
 credentialed integration tests; individual scenarios are the intended starting
 point. Functional execution stays outside GitHub Actions. Actions install the
-same test manifest for static linting only.
+same root `requirements.yml` for static checks. Playbooks, Molecule and the AWX
+EE share these Galaxy versions, including the pinned provisioner; the RHEL EE
+keeps its own inline Galaxy list. Python controller packages remain in
+`requirements-molecule.txt`.
 
 ## Fast batches on Casval
 

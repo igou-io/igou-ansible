@@ -64,10 +64,11 @@
       "enabled": false
     },
     {
-      "description": "Review test dependency updates before running the local Molecule scenarios",
+      "description": "Review provisioner updates before running the local Molecule scenarios",
       "matchManagers": ["ansible-galaxy"],
-      "matchFileNames": ["requirements-molecule.yml"],
-      "groupName": "molecule requirements",
+      "matchFileNames": ["requirements.yml"],
+      "matchPackageNames": ["david_igou.molecule_provisioners"],
+      "groupName": "molecule provisioner",
       "automerge": false
     },
     {
@@ -202,8 +203,5 @@
       "currentValueTemplate": "{{#if currentValue}}{{{currentValue}}}{{else}}latest{{/if}}",
       "autoReplaceStringTemplate": "{{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}"
     }
-  ],
-  "ansible-galaxy": {
-    "managerFilePatterns": ["/(^|/)requirements-molecule\\.ya?ml$/"]
-  }
+  ]
 }

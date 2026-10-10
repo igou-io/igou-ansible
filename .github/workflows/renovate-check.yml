@@ -7,7 +7,8 @@ name: Renovate coverage
       - main
     paths:
       - renovate.json
-      - requirements*.yml
+      - requirements.yml
+      - execution-environments/**/execution-environment.yml
       - ansible-navigator.yml
       - playbooks/**
       - roles/fedora_desktop/defaults/main.yml
