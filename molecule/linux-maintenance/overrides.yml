@@ -1,6 +1,5 @@
 ---
 ansible_limit: molecule  # noqa: var-naming[read-only] -- repository caller target convention
-ansible_become: true
 user: igou
 keys: "{{ baseline_authorized_keys }}"
 github_users: []

@@ -4,6 +4,7 @@
   gather_facts: false
   vars:
     ansible_user: igou
+    ansible_become: false
   tasks:
     - name: Establish a fresh administrator connection
       ansible.builtin.meta: reset_connection
