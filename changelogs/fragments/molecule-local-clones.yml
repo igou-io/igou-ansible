@@ -1,3 +1,5 @@
 ---
 minor_changes:
   - Molecule reused GitOps-managed CentOS and Windows seeds on Casval through LVMS snapshot clones, checked image readiness and actual clone placement, and added bounded scenario execution with shared dependency installation.
+bugfixes:
+  - windows_computer_use removed the finite image auto-logon counter so console login remained enabled after reboot.

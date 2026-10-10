@@ -64,7 +64,8 @@ The role is **idempotent** — a re-run reports `changed: false`.
 ## Testing
 
 Functional Molecule scenario:
-[`molecule/role-windows_computer_use/`](../../molecule/role-windows_computer_use/) —
+[`molecule/windows-general/`](../../molecule/windows-general/) —
 provisions a `win11` golden clone on the live cluster, applies the role over
-psrp, and verifies each setting with independent registry / `powercfg` /
-scheduled-task reads (never the password).
+psrp, reboots and checks the console session before idempotence, and verifies
+settings with independent registry / `powercfg` / scheduled-task reads (never
+the password).
