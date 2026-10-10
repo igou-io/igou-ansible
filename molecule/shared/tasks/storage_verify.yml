@@ -1,0 +1,46 @@
+---
+- name: Read the provisioned guest instance
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    name: "{{ molecule_guest_resources.name }}"
+    namespace: "{{ molecule_guest_resources.namespace }}"
+  register: molecule_local_instance
+  no_log: true
+- name: Require Casval placement for the local disk
+  ansible.builtin.assert:
+    that:
+      - molecule_local_instance.resources | length == 1
+      - molecule_local_instance.resources[0].status.nodeName == molecule_casval_node
+    fail_msg: The local-storage test VM must run on Casval.
+- name: Read the generated boot DataVolume
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataVolume
+    name: "{{ molecule_guest_resources.name }}-boot"
+    namespace: "{{ molecule_guest_resources.namespace }}"
+  register: molecule_local_disk
+  no_log: true
+- name: Require a completed local boot disk
+  ansible.builtin.assert:
+    that:
+      - molecule_local_disk.resources | length == 1
+      - molecule_local_disk.resources[0].status.phase == 'Succeeded'
+      - molecule_local_disk.resources[0].spec.storage.storageClassName == 'lvms-casval'
+      - molecule_local_disk.resources[0].metadata.annotations['cdi.kubevirt.io/storage.bind.immediate.requested'] | default('false') != 'true'
+    fail_msg: The VM must consume a completed lvms-casval boot disk using normal WaitForFirstConsumer binding.
+- name: Require snapshot cloning rather than a full disk copy
+  ansible.builtin.assert:
+    that:
+      - molecule_local_disk.resources[0].metadata.annotations['cdi.kubevirt.io/cloneType'] | default('') == 'snapshot'
+    fail_msg: CDI fell back to copying the disk. Check seed usage and the lvms-casval StorageProfile before running more tests.
+  when: molecule_guest_boot_source.type in ['data_volume_source_ref', 'data_volume_pvc']
+- name: Report the storage path without credentials or clone tokens
+  ansible.builtin.debug:
+    msg:
+      guest: "{{ molecule_guest }}"
+      node: "{{ molecule_local_instance.resources[0].status.nodeName }}"
+      storage_class: lvms-casval
+      clone_type: "{{ molecule_local_disk.resources[0].metadata.annotations['cdi.kubevirt.io/cloneType'] | default('import') }}"
+      disk_created: "{{ molecule_local_disk.resources[0].metadata.creationTimestamp }}"
+      disk_ready: "{{ molecule_local_disk.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='lastTransitionTime') | first | default('') }}"

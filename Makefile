@@ -59,11 +59,17 @@ ao-export: ## Export a published Automation Orchestrator workflow version to YAM
 # Local KubeVirt tests. Functional execution is deliberately outside Actions.
 export MOLECULE_GLOB := molecule/*/molecule.yml
 MOLECULE_SCENARIO ?= default
-.PHONY: molecule-test molecule-test-all molecule-converge molecule-verify molecule-destroy molecule-matrix
+MOLECULE_SCENARIOS ?= default linux-node-exporter linux-maintenance
+MOLECULE_WORKERS ?= 3
+.PHONY: molecule-test molecule-test-all molecule-test-batch molecule-converge molecule-verify molecule-destroy molecule-matrix
 molecule-test:
 	molecule test -s $(MOLECULE_SCENARIO)
 molecule-test-all:
 	molecule test --all
+molecule-test-batch:
+	@test -n "$(MOLECULE_SCENARIOS)" || { echo "Set MOLECULE_SCENARIOS to the scenarios to run"; exit 1; }
+	MOLECULE_DEPENDENCY_ENABLED=true molecule dependency -s $(firstword $(MOLECULE_SCENARIOS))
+	MOLECULE_DEPENDENCY_ENABLED=false molecule test --workers $(MOLECULE_WORKERS) $(foreach scenario,$(MOLECULE_SCENARIOS),-s $(scenario))
 molecule-converge:
 	molecule converge -s $(MOLECULE_SCENARIO)
 molecule-verify:

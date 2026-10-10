@@ -2,6 +2,7 @@
 prerun: false
 dependency:
   name: galaxy
+  enabled: ${MOLECULE_DEPENDENCY_ENABLED:-true}
   options:
     requirements-file: requirements-molecule.yml
     role-file: requirements-molecule.yml
@@ -12,6 +13,10 @@ ansible:
       roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles
       collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections
       host_key_checking: false
+      forks: 16
+      callbacks_enabled: ansible.posix.profile_tasks
+    ssh_connection:
+      pipelining: true
     persistent_connection:
       connect_timeout: 120
       command_timeout: 120

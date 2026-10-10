@@ -4,6 +4,9 @@ mp_kubevirt_run_isolation: true
 mp_kubevirt_wait_timeout: 900
 mp_kubevirt_windows_wait_timeout: 1500
 molecule_namespace: molecule
+molecule_storage_class: lvms-casval
+molecule_casval_node: casval.igou.systems
+molecule_image_namespace: openshift-virtualization-os-images
 molecule_ephemeral_directory: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
 molecule_consumer_run_id: "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/consumer-run-id', errors='ignore') | default('', true) | trim }}"
 molecule_kubevirt_run: "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/kubevirt_run.yml', errors='ignore') | default('{}', true) | from_yaml }}"
@@ -30,6 +33,37 @@ molecule_placement:
               - key: node-role.kubernetes.io/control-plane
                 operator: DoesNotExist
 molecule_kubevirt_defaults: "{{ molecule_placement | combine(dict(namespace=molecule_namespace)) }}"
+molecule_boot_sources:
+  stream10:
+    type: data_volume_source_ref
+    source_ref:
+      name: centos-stream10-casval
+      namespace: "{{ molecule_image_namespace }}"
+    size: 30Gi
+    storage_class: "{{ molecule_storage_class }}"
+    volume_mode: Block
+    access_modes:
+      - ReadWriteOnce
+  win11:
+    type: data_volume_source_ref
+    source_ref:
+      name: win11-casval
+      namespace: "{{ molecule_image_namespace }}"
+    size: 50Gi
+    storage_class: "{{ molecule_storage_class }}"
+    volume_mode: Block
+    access_modes:
+      - ReadWriteOnce
+  win2k25:
+    type: data_volume_source_ref
+    source_ref:
+      name: win2k25-casval
+      namespace: "{{ molecule_image_namespace }}"
+    size: 50Gi
+    storage_class: "{{ molecule_storage_class }}"
+    volume_mode: Block
+    access_modes:
+      - ReadWriteOnce
 molecule_guest_profiles:
   debian:
     boot_source:
@@ -42,9 +76,7 @@ molecule_guest_profiles:
     admin_password: "{{ molecule_windows_password_lookup }}"
     instancetype: u1.large
   stream10:
-    boot_source:
-      type: container_disk
-      image: quay.io/containerdisks/centos-stream:10
+    boot_source: "{{ molecule_boot_sources.stream10 }}"
     ssh_user: cloud-user
     memory: 2Gi
 baseline_user: igou

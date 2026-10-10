@@ -29,3 +29,17 @@
         api_version: kubevirt.io/v1
         kind: VirtualMachine
         namespace: "{{ molecule_namespace }}"
+    - name: Check Casval availability
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+        name: "{{ molecule_casval_node }}"
+      register: molecule_casval
+    - name: Check local storage prerequisites for each guest
+      ansible.builtin.include_tasks: tasks/storage_preflight.yml
+      vars:
+        molecule_guest_spec: "{{ hostvars[groups['molecule'][0]].mp_defaults.kubevirt | combine(hostvars[molecule_guest].mp.kubevirt) }}"
+        molecule_guest_boot_source: "{{ molecule_guest_spec.boot_source }}"
+      loop: "{{ groups['molecule'] }}"
+      loop_control:
+        loop_var: molecule_guest

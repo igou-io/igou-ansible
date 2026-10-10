@@ -1,0 +1,48 @@
+---
+- name: Require an available leased Casval for local disks
+  ansible.builtin.assert:
+    that:
+      - molecule_casval.resources | length == 1
+      - molecule_casval.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first == 'True'
+      - not (molecule_casval.resources[0].spec.unschedulable | default(false))
+    fail_msg: Casval must be Ready and schedulable with an active lease before using lvms-casval. Local disks cannot fall back to another worker.
+  when: molecule_guest_boot_source.storage_class | default('') == 'lvms-casval'
+
+- name: Check the GitOps-managed local golden image
+  when:
+    - molecule_guest_boot_source.type == 'data_volume_source_ref'
+    - molecule_guest_boot_source.source_ref.namespace == molecule_image_namespace
+  block:
+    - name: Read the local image DataSource
+      kubernetes.core.k8s_info:
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataSource
+        name: "{{ molecule_guest_boot_source.source_ref.name }}"
+        namespace: "{{ molecule_image_namespace }}"
+      register: molecule_seed
+      no_log: true
+    - name: Require a ready seed with a backing PVC
+      ansible.builtin.assert:
+        that:
+          - molecule_seed.resources | length == 1
+          - molecule_seed.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
+          - molecule_seed.resources[0].spec.source.pvc is defined
+        fail_msg: "Wait for GitOps seed {{ molecule_guest_boot_source.source_ref.name }} to become Ready before testing; Molecule does not create or delete shared seeds."
+    - name: Read the backing local seed claim
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: "{{ molecule_seed.resources[0].spec.source.pvc.name }}"
+        namespace: "{{ molecule_seed.resources[0].spec.source.pvc.namespace }}"
+      register: molecule_seed_claim
+      no_log: true
+    - name: Require matching local storage for snapshot cloning
+      ansible.builtin.assert:
+        that:
+          - molecule_seed_claim.resources | length == 1
+          - molecule_seed_claim.resources[0].status.phase == 'Bound'
+          - molecule_seed_claim.resources[0].spec.storageClassName == 'lvms-casval'
+          - molecule_seed_claim.resources[0].spec.storageClassName == molecule_guest_boot_source.storage_class
+          - molecule_seed_claim.resources[0].spec.volumeMode == molecule_guest_boot_source.volume_mode
+          - molecule_seed_claim.resources[0].spec.accessModes == molecule_guest_boot_source.access_modes
+        fail_msg: Local seed and destination must use lvms-casval, Block and ReadWriteOnce; a cross-class copy is not the fast test path.

@@ -1,3 +1,5 @@
 ---
 - name: Wait for disposable guests
   ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+- name: Verify local disk placement and snapshot cloning
+  ansible.builtin.import_playbook: storage_verify.yml

@@ -28,5 +28,9 @@
               type: data_volume_url
               url: "{{ codex_desktop_image.link }}"
               size: 50Gi
+              storage_class: "{{ molecule_storage_class }}"
+              volume_mode: Block
+              access_modes:
+                - ReadWriteOnce
 - name: Create the disposable VM through the provisioner collection
   ansible.builtin.import_playbook: ../shared/create.yml

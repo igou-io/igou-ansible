@@ -47,10 +47,11 @@ replaces the matching default mapping. Shared placement lives outside guest
 profiles and is combined into `mp_defaults.kubevirt`; a partial scenario
 `mp_defaults` mapping can erase it and must be avoided.
 
-Every guest tolerates `workload=burst:NoSchedule` and **prefers**, rather than
-requires, hostname `casval.igou.systems` (weight 100). Other workers remain eligible
-when Casval is unavailable; avoiding control-plane nodes is a second preference.
-Scheduling still depends on resources, architecture, storage and other taints.
+Every guest tolerates `workload=burst:NoSchedule` and prefers hostname
+`casval.igou.systems` (weight 100). `lvms-casval` disks require Casval through
+storage topology; preflight fails if it is unavailable or cordoned. Container-disk
+guests can use other eligible workers. Avoiding control-plane nodes remains a
+second preference. Scheduling also depends on resources, architecture and taints.
 
 The provisioner owns isolated VM, disk, Service and runtime-inventory lifecycle.
 Consumer-owned sysprep Secrets and golden-build artifacts include a persisted
@@ -122,9 +123,10 @@ Use the local managed toolchain with Molecule 26.9.0, compatible ansible-core,
 `oc`, Kubernetes Python dependencies, PSRP dependencies and boto3/botocore for
 restore. Activate the scoped `ocp-ansible-molecule` profile and verify identity.
 The `molecule` namespace must exist and grant the provisioner's documented
-VM/CDI/Service permissions. Windows scenarios need the `win11` and `win2k25`
-golden PVCs in `openshift-virtualization-os-images`; devenv needs its CentOS
-DataSource. Image builds additionally need the source ISO clone permission.
+VM/CDI/Service permissions. CentOS and Windows scenarios need Ready local
+`centos-stream10-casval`, `win11-casval` and `win2k25-casval` DataSources in
+`openshift-virtualization-os-images`, plus read access to those DataSources/PVCs
+and source clone authorization. Image builds additionally need the source ISO clone permission.
 The controller must reach node InternalIPs/NodePorts and guests need package,
 image and release download access.
 
@@ -140,3 +142,58 @@ bare commands. `make molecule-test-all` includes costly image builds and
 credentialed integration tests; individual scenarios are the intended starting
 point. Functional execution stays outside GitHub Actions. Actions install the
 same test manifest for static linting only.
+
+## Fast batches on Casval
+
+Deploy the companion GitOps `components/molecule` image cache and service-account
+read grants before running this branch. The cache keeps one seed for each of
+CentOS Stream 10, Windows 11 and Server 2025 on `lvms-casval`; tests snapshot-clone
+the same class using RWO Block volumes. Windows requires a first TrueNAS-to-local
+copy per golden PVC generation. CentOS imports directly from its registry feed.
+Hourly polling updates stable DataSources after the new seed succeeds. Windows
+refresh detects a replacement PVC UID, not changes to disk bytes in place.
+
+Use `molecule_boot_sources` for complete host boot mappings: the provisioner
+replaces nested mappings rather than recursively merging them. Shared preflight
+checks seed readiness, binding and matching class/modes. Shared prepare verifies
+Casval placement, normal consumer binding and CDI's actual `cloneType: snapshot`;
+a copy fallback fails the run. It prints selected disk information without clone
+tokens. No test lifecycle mounts or deletes shared seeds.
+
+Hold one Casval lease for the batch and cleanup; extend it before expiry if
+needed. A reboot preserves local seeds. Destructive reprovisioning loses them
+and requires reseeding; a stale Bound PVC alone does not prove its data survived.
+Operational recovery is documented in the companion `igou-docs` runbook.
+
+```bash
+make molecule-test-batch \
+  MOLECULE_SCENARIOS="default linux-node-exporter windows-general" \
+  MOLECULE_WORKERS=3
+```
+
+This installs the shared pinned dependencies once, then uses Molecule's native
+workers with dependency installation disabled in each worker. The default batch
+contains `default`, `linux-node-exporter` and `linux-maintenance`. A worker limit
+bounds **scenarios**, not VMs: `windows-general` creates two guests. Start at
+three workers and increase only after measuring CPU/RAM, thin-pool data/metadata
+and total wall time. Keep independent scenario lifecycles and ephemeral directories;
+do not run another process against the same scenario's state concurrently.
+If cleanup fails, retain its state and run the matching `molecule-destroy` target.
+
+The common generated Ansible configuration enables SSH pipelining, 16 forks and
+task timing. Forks parallelize guest tasks; they do not cap VM or scenario count.
+For repeated development on an already-created guest, use `molecule-converge`
+and `molecule-verify`, then destroy when done. Full certification still uses
+`molecule-test` with a fresh clone, idempotence and teardown.
+
+Debian container-disk guests keep their existing node image-cache path. Fedora
+desktop still resolves/downloads the current upstream cloud image on each fresh
+run, now onto LVMS; its resolver behavior remains covered. Windows image-build
+still runs a real installer (45–90 minutes), with its root disk and resulting
+test clone on LVMS. Its standalone blank build disk uses the builder's existing
+immediate-binding annotation; test VM clone templates do not. Neither expensive
+scenario is included in the default batch.
+
+Earlier storage validation measured nine local clones at 6–32 seconds per disk.
+That excludes guest boot, Windows specialization and Ansible phases; it is not
+a runtime certification or timing guarantee for this Molecule refactor.
