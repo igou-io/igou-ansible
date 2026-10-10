@@ -1,0 +1,127 @@
+---
+- name: Reset the connection so bootstrap's devcontainer up sees the docker group
+  hosts: devenv
+  gather_facts: false
+  tasks:
+    - name: Reset the persistent SSH connection
+      ansible.builtin.meta: reset_connection
+- name: Converge via the production devenv bootstrap playbook
+  ansible.builtin.import_playbook: ../../playbooks/devenv/bootstrap.yml
+- name: Ensure code-server has settled after converge
+  hosts: devenv-devenv
+  gather_facts: false
+  tags:
+    - molecule-idempotence-notest
+  tasks:
+    - name: Wait for code-server on :8080 (post-start launches it asynchronously)
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        status_code:
+          - 200
+      register: __cs_settle
+      failed_when: false
+      retries: 12
+      delay: 5
+      until: __cs_settle.status == 200
+    - name: Restart the unit once if code-server did not settle (race guard)
+      ansible.builtin.systemd_service:
+        name: igou-devenv.service
+        state: restarted
+      become: true
+      when: __cs_settle.status != 200
+    - name: Re-confirm code-server is serving after the restart
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+      register: __cs_settle2
+      retries: 24
+      delay: 5
+      until: __cs_settle2.status == 200
+      when: __cs_settle.status != 200
+- name: Seed 1Password credentials and scenario test env files
+  hosts: devenv-devenv
+  gather_facts: true
+  vars:
+    devenv_bootstrap_op_dir: "{{ ansible_user_dir }}/.config/op"
+    devenv_bootstrap_envs_dir: "{{ ansible_user_dir }}/igou-devenv/envs"
+    devenv_bootstrap_op_env_files:
+      - molecule-simple.env
+      - molecule-kubeconfig.env
+      - molecule-k8s-token.env
+      - molecule-registry.env
+      - molecule-bad.env
+  tasks:
+    - name: Report that 1Password integration setup is skipped
+      ansible.builtin.debug:
+        msg: 1Password integration checks skipped (no token provided) — set MOLECULE_OP_SERVICE_ACCOUNT_TOKEN, or MOLECULE_OP_CONNECT_HOST plus MOLECULE_OP_CONNECT_TOKEN, to enable them.
+      when: not (devenv_bootstrap_op_enabled | bool)
+    - name: Assert the MOLECULE_OP_* configuration is valid
+      ansible.builtin.assert:
+        that:
+          - not ((devenv_bootstrap_op_connect_enabled | bool) and (devenv_bootstrap_op_sa_enabled | bool))
+          - (devenv_bootstrap_op_connect_host | length > 0) == (devenv_bootstrap_op_connect_token | length > 0)
+        fail_msg: 'invalid MOLECULE_OP_* configuration: set EITHER both MOLECULE_OP_CONNECT_HOST and MOLECULE_OP_CONNECT_TOKEN, OR MOLECULE_OP_SERVICE_ACCOUNT_TOKEN — never a half-set Connect pair, and never both modes at once.'
+        success_msg: |-
+          1Password auth mode: {{ 'Connect' if (devenv_bootstrap_op_connect_enabled | bool)
+             else ('service account' if (devenv_bootstrap_op_sa_enabled | bool)
+             else 'none (checks disabled)') }}
+    - name: Seed 1Password credentials and test env files
+      when: devenv_bootstrap_op_enabled | bool
+      block:
+        - name: Ensure ~/.config/op exists with private permissions
+          ansible.builtin.file:
+            path: "{{ devenv_bootstrap_op_dir }}"
+            state: directory
+            mode: '0700'
+        - name: Seed the op device config the read-only bind keeps op from creating
+          ansible.builtin.copy:
+            content: '{"latest_signin":"","device":"moleculedevenve2edeviceidx"}'
+            dest: "{{ devenv_bootstrap_op_dir }}/config"
+            mode: '0600'
+            force: false
+        - name: Seed the 1Password Connect host
+          ansible.builtin.copy:
+            content: "{{ devenv_bootstrap_op_connect_host }}"
+            dest: "{{ devenv_bootstrap_op_dir }}/connect-host"
+            mode: '0600'
+          no_log: true
+          when: devenv_bootstrap_op_connect_enabled | bool
+        - name: Seed the 1Password Connect token
+          ansible.builtin.copy:
+            content: "{{ devenv_bootstrap_op_connect_token }}"
+            dest: "{{ devenv_bootstrap_op_dir }}/connect-token"
+            mode: '0600'
+          no_log: true
+          when: devenv_bootstrap_op_connect_enabled | bool
+        - name: Seed the 1Password service-account token
+          ansible.builtin.copy:
+            content: "{{ devenv_bootstrap_op_sa_token }}"
+            dest: "{{ devenv_bootstrap_op_dir }}/service-account-token"
+            mode: '0600'
+          no_log: true
+          when: devenv_bootstrap_op_sa_enabled | bool
+        - name: Remove stale Connect credentials when using service-account mode
+          ansible.builtin.file:
+            path: "{{ devenv_bootstrap_op_dir }}/{{ item }}"
+            state: absent
+          loop:
+            - connect-host
+            - connect-token
+          when: devenv_bootstrap_op_sa_enabled | bool
+        - name: Remove a stale service-account token when using Connect mode
+          ansible.builtin.file:
+            path: "{{ devenv_bootstrap_op_dir }}/service-account-token"
+            state: absent
+          when: devenv_bootstrap_op_connect_enabled | bool
+        - name: Ensure the container's envs directory exists
+          ansible.builtin.file:
+            path: "{{ devenv_bootstrap_envs_dir }}"
+            state: directory
+            mode: '0755'
+        - name: Install the scenario 1Password test env files
+          ansible.builtin.copy:
+            src: envs/{{ item }}
+            dest: "{{ devenv_bootstrap_envs_dir }}/{{ item }}"
+            mode: '0644'
+          loop: "{{ devenv_bootstrap_op_env_files }}"

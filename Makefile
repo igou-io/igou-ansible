@@ -55,3 +55,27 @@ aap-bootstrap-connect: _check-inv ## Seed the Onepassword Connect credential (ne
 
 ao-export: ## Export a published Automation Orchestrator workflow version to YAML (WF=<workflow-id> VER=<version>)
 	@WF="$(WF)" VER="$(VER)" ./hack/ao-export.sh
+
+# Local KubeVirt tests. Functional execution is deliberately outside Actions.
+export MOLECULE_GLOB := molecule/*/molecule.yml
+MOLECULE_SCENARIO ?= default
+MOLECULE_SCENARIOS ?= default linux-node-exporter linux-maintenance
+MOLECULE_WORKERS ?= 3
+.PHONY: molecule-test molecule-test-all molecule-test-batch molecule-converge molecule-verify molecule-destroy molecule-matrix
+molecule-test:
+	molecule test -s $(MOLECULE_SCENARIO)
+molecule-test-all:
+	molecule test --all
+molecule-test-batch:
+	@test -n "$(MOLECULE_SCENARIOS)" || { echo "Set MOLECULE_SCENARIOS to the scenarios to run"; exit 1; }
+	@case "$(MOLECULE_WORKERS)" in ''|*[!0-9]*) echo "MOLECULE_WORKERS must be a positive integer" >&2; exit 1 ;; esac; test "$(MOLECULE_WORKERS)" -gt 0
+	MOLECULE_DEPENDENCY_ENABLED=true molecule dependency -s $(firstword $(MOLECULE_SCENARIOS))
+	printf '%s\n' $(MOLECULE_SCENARIOS) | xargs -r -n 1 -P $(MOLECULE_WORKERS) env MOLECULE_DEPENDENCY_ENABLED=false molecule test -s
+molecule-converge:
+	molecule converge -s $(MOLECULE_SCENARIO)
+molecule-verify:
+	molecule verify -s $(MOLECULE_SCENARIO)
+molecule-destroy:
+	molecule destroy -s $(MOLECULE_SCENARIO)
+molecule-matrix:
+	molecule matrix -s $(MOLECULE_SCENARIO) test

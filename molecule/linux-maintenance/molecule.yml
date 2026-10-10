@@ -1,0 +1,13 @@
+---
+scenario:
+  name: linux-maintenance
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - destroy

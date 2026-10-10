@@ -1,0 +1,8 @@
+---
+kiosk_grafana_url: http://127.0.0.1:3000
+kiosk_grafana_token: molecule-dummy-token
+kiosk_dashboard_path: /d/mock/dashboard?orgId=1
+kiosk_start_browser: false
+kiosk_cog_env:
+  WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+  WEBKIT_DISABLE_COMPOSITING_MODE: '1'

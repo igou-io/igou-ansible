@@ -72,6 +72,13 @@
     casval_replica_map:
       up: 1
       down: 0
+    casval_cache_namespace: openshift-virtualization-os-images
+    casval_cache_node: casval.igou.systems
+    casval_cache_annotation: molecule.igou.systems/cache-node-uid
+    casval_cache_seeds:
+      - centos-stream10-casval
+      - win11-casval
+      - win2k25-casval
   tasks:
 
     - name: Assert casval_state is up, down, or status
@@ -153,6 +160,10 @@
     - name: Report a retained lease or read-only ownership check
       when: casval_state == 'status' or (casval_state == 'up' and casval_retain_lease)
       block:
+        - name: Ensure the retained lease has usable local image seeds
+          ansible.builtin.include_tasks: tasks/casval_image_cache.yml
+          when: casval_state == 'up'
+
         - name: Publish the existing lease status
           ansible.builtin.set_stats:
             per_host: false
@@ -278,6 +289,37 @@
               metadata:
                 annotations:
                   automation.igou.systems/casval-lease-expires: "{{ casval_expiry | string }}"
+
+        - name: Recover and warm the local Molecule image cache
+          block:
+            - name: Ensure shared image seeds are usable
+              ansible.builtin.include_tasks: tasks/casval_image_cache.yml
+          rescue:
+            - name: Restore the existing lease or release a failed cold acquisition
+              kubernetes.core.k8s_json_patch:
+                api_version: "{{ casval_machineset_api_version }}"
+                kind: MachineSet
+                name: "{{ casval_machineset_name }}"
+                namespace: "{{ casval_machineset_namespace }}"
+                patch:
+                  - op: test
+                    path: /metadata/annotations/automation.igou.systems~1casval-lease-id
+                    value: "{{ casval_lease_owner }}"
+                  - op: replace
+                    path: /metadata/annotations/automation.igou.systems~1casval-lease-id
+                    value: "{{ casval_lease_owner_before }}"
+                  - op: replace
+                    path: /metadata/annotations/automation.igou.systems~1casval-lease-expires
+                    value: "{{ casval_expiry_before | string }}"
+                  - op: replace
+                    path: /spec/replicas
+                    value: "{{ casval_replicas_before | int }}"
+            - name: Report failed cache acquisition without leaving an orphaned lease
+              ansible.builtin.fail:
+                msg: >-
+                  Casval image cache recovery failed. The previous lease and
+                  replica count were restored. Inspect the three local image
+                  feeds, correct the import failure and retry acquisition.
 
     - name: Wait for the casval Machine to be deleted
       kubernetes.core.k8s_info:

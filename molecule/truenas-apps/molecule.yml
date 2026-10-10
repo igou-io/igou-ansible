@@ -1,0 +1,24 @@
+---
+scenario:
+  name: truenas-apps
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - destroy
+ansible:
+  playbooks:
+    prepare: prepare.yml
+  executor:
+    args:
+      ansible_playbook:
+        - --inventory=${MOLECULE_PROJECT_DIRECTORY}/molecule/shared/inventory/
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+        - --extra-vars=@${MOLECULE_SCENARIO_DIRECTORY}/overrides.yml
+        - --skip-tags=datasets

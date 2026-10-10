@@ -1,0 +1,233 @@
+---
+- name: Verify the devenv host deployment health
+  hosts: devenv-devenv
+  gather_facts: false
+  vars:
+    cs_login_title: code-server login
+    cs_password_input: name="password"
+  tasks:
+    - name: Collect service facts
+      ansible.builtin.service_facts:
+      become: true
+    - name: Assert the docker daemon is running
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['docker.service'].state == 'running'
+        fail_msg: docker.service is not running
+    - name: Assert firewalld is running (prepare enabled it)
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['firewalld.service'].state == 'running'
+        fail_msg: firewalld.service is not running — the bootstrap firewalld tasks were gated off and this scenario verified nothing (#399/#408)
+    - name: List the firewalld ports and rich rules (runtime + permanent)
+      ansible.builtin.command:
+        cmd: firewall-cmd {{ item }}
+      become: true
+      register: __fw_lists
+      changed_when: false
+      loop:
+        - --list-ports
+        - --list-rich-rules
+        - --permanent --list-ports
+        - --permanent --list-rich-rules
+    - name: Assert the devenv service ports are open, runtime and permanent (#399)
+      ansible.builtin.assert:
+        that:
+          - '''8080/tcp'' in __fw_lists.results[0].stdout'
+          - '''9100/tcp'' in __fw_lists.results[0].stdout'
+          - '''8080/tcp'' in __fw_lists.results[2].stdout'
+          - '''9100/tcp'' in __fw_lists.results[2].stdout'
+        fail_msg: 'code-server/node_exporter ports missing from firewalld: runtime [{{ __fw_lists.results[0].stdout }}], permanent [{{ __fw_lists.results[2].stdout }}]'
+    - name: Assert the TFTP-reply accept rules are present, runtime and permanent (#408)
+      ansible.builtin.assert:
+        that:
+          - __fw_lists.results[1].stdout is search('source address="' ~ item ~ '/32"')
+          - __fw_lists.results[3].stdout is search('source address="' ~ item ~ '/32"')
+        fail_msg: 'TFTP-reply rich rule for {{ item }} missing: runtime [{{ __fw_lists.results[1].stdout }}], permanent [{{ __fw_lists.results[3].stdout }}]'
+      loop:
+        - 10.10.9.1
+        - 10.10.45.1
+    - name: Assert the docker scratch disk is what backs /home/docker-data
+      ansible.builtin.command:
+        cmd: findmnt -n -o SOURCE /home/docker-data
+      register: __docker_mount
+      changed_when: false
+      failed_when: __docker_mount.rc != 0
+    - name: Inspect the legacy standalone code-server container
+      community.docker.docker_container_info:
+        name: igou-devenv-code-server
+      become: true
+      register: __legacy_cs
+    - name: Assert the legacy standalone code-server container is absent
+      ansible.builtin.assert:
+        that:
+          - not __legacy_cs.exists
+        fail_msg: the legacy igou-devenv-code-server container still exists — bootstrap should have removed it in favor of the native devcontainer
+    - name: Inspect the igou-devenv devcontainer
+      community.docker.docker_container_info:
+        name: igou-devenv
+      become: true
+      register: __devcontainer
+    - name: Assert the igou-devenv devcontainer is running
+      ansible.builtin.assert:
+        that:
+          - __devcontainer.exists
+          - __devcontainer.container.State.Running
+          - not __devcontainer.container.State.Restarting
+        fail_msg: the igou-devenv devcontainer is not running
+    - name: Read the igou-devenv.service enabled + active state
+      register: __unit_state
+      changed_when: false
+      ansible.builtin.systemd_service:
+        name: igou-devenv.service
+    - name: Assert the igou-devenv.service unit is enabled and active
+      ansible.builtin.assert:
+        that:
+          - __unit_state.status.UnitFileState == 'enabled'
+          - __unit_state.status.ActiveState == 'active'
+        fail_msg: igou-devenv.service must be enabled and active.
+    - name: Probe code-server over HTTPS (self-signed) until it answers
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        return_content: true
+      register: __cs_http
+      retries: 12
+      delay: 5
+      until: __cs_http.status == 200
+    - name: Assert the unauthenticated response is the code-server LOGIN page
+      ansible.builtin.assert:
+        that:
+          - cs_login_title in __cs_http.content
+          - cs_password_input in __cs_http.content
+        fail_msg: port 8080 answered but did not serve the code-server login page — authentication does not look enforced
+    - name: Probe code-server with a forged session cookie
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        return_content: true
+        headers:
+          Cookie: code-server-session=forged-not-a-real-token
+      register: __cs_forged
+    - name: Assert the forged cookie is bounced to the login page
+      ansible.builtin.assert:
+        that:
+          - cs_password_input in __cs_forged.content
+        fail_msg: a forged session cookie was not sent to the login page — code-server is serving the workbench without valid credentials
+    - name: Check the devcontainer CLI is installed for the login user
+      ansible.builtin.command:
+        cmd: ~/.local/bin/devcontainer --version
+      register: __devcontainer_cli
+      changed_when: false
+    - name: Check the igou-devenv repo clone
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir | default('/home/igou') }}/igou-devenv/.git"
+      register: __devenv_repo
+    - name: Assert devcontainer prerequisites are in place
+      ansible.builtin.assert:
+        that:
+          - __devcontainer_cli.rc == 0
+          - __devenv_repo.stat.exists
+          - __devenv_repo.stat.isdir
+        fail_msg: devcontainer CLI or the igou-devenv clone is missing
+- name: Verify the devcontainer's own test suite passes in-container
+  hosts: devenv-devenv
+  gather_facts: true
+  vars:
+    devenv_dir: "{{ ansible_user_dir }}/igou-devenv"
+    devenv_path: "{{ ansible_user_dir }}/.local/bin:{{ ansible_env.PATH }}"
+  tasks:
+    - name: Inspect the devcontainer container
+      community.docker.docker_container_info:
+        name: igou-devenv
+      become: true
+      register: __devcontainer
+    - name: Assert the devcontainer container is running
+      ansible.builtin.assert:
+        that:
+          - __devcontainer.exists
+          - __devcontainer.container.State.Running
+          - not __devcontainer.container.State.Restarting
+        fail_msg: the igou-devenv devcontainer is not running
+    - name: Run the in-container tool suite (make test-tools)
+      ansible.builtin.command:
+        cmd: make test-tools
+        chdir: "{{ devenv_dir }}"
+      environment:
+        PATH: "{{ devenv_path }}"
+      register: __test_tools
+      changed_when: false
+- name: Verify code-server through its provisioner endpoint
+  hosts: devenv
+  gather_facts: false
+  tasks:
+    - name: Request the external login page
+      ansible.builtin.uri:
+        url: https://{{ mp_kubevirt_endpoints['code-server'].host }}:{{ mp_kubevirt_endpoints['code-server'].port }}/
+        validate_certs: false
+        return_content: true
+      delegate_to: localhost
+      register: molecule_editor_response
+    - name: Require authentication at the external endpoint
+      ansible.builtin.assert:
+        that:
+          - '''code-server login'' in molecule_editor_response.content'
+          - '''name="password"'' in molecule_editor_response.content'
+        fail_msg: The externally reachable editor must require authentication.
+- name: Verify core health + devcontainer autostart survive a VM reboot
+  hosts: devenv-devenv
+  gather_facts: false
+  become: true
+  vars:
+    cs_login_title: code-server login
+    cs_password_input: name="password"
+    devenv_bootstrap_label: label=devcontainer.local_folder=/home/igou/igou-devenv
+  tasks:
+    - name: Reboot the KubeVirt VM and wait for it to come back
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+    - name: Wait for docker to be running again after the reboot
+      ansible.builtin.service_facts:
+      register: __svc_post
+      until: __svc_post.ansible_facts.services['docker.service'].state | default('') == 'running'
+      retries: 12
+      delay: 5
+    - name: Assert the scratch disk is still mounted at /home/docker-data
+      ansible.builtin.command:
+        cmd: findmnt -n -o SOURCE /home/docker-data
+      register: __docker_mount_post
+      changed_when: false
+      failed_when: __docker_mount_post.rc != 0
+    - name: Wait for igou-devenv.service to autostart the devcontainer
+      register: __unit_post
+      changed_when: false
+      until: __unit_post.status.ActiveState == 'active'
+      retries: 60
+      delay: 5
+      ansible.builtin.systemd_service:
+        name: igou-devenv.service
+    - name: Capture the devcontainer id after the reboot
+      ansible.builtin.command:
+        cmd: docker ps -q --filter "{{ devenv_bootstrap_label }}"
+      register: __cid_post
+      changed_when: false
+    - name: Assert the devcontainer auto-restarted via systemd (no manual step)
+      ansible.builtin.assert:
+        that:
+          - __cid_post.stdout | length > 0
+        fail_msg: the igou-devenv devcontainer did not come back after reboot — igou-devenv.service should have autostarted it (`devcontainer up`)
+    - name: Probe code-server over HTTPS after the reboot until it answers
+      ansible.builtin.uri:
+        url: https://localhost:8080/
+        validate_certs: false
+        return_content: true
+      register: __cs_http_post
+      retries: 36
+      delay: 5
+      until: __cs_http_post.status == 200
+    - name: Assert code-server serves the login page after the reboot
+      ansible.builtin.assert:
+        that:
+          - cs_login_title in __cs_http_post.content
+          - cs_password_input in __cs_http_post.content
+        fail_msg: code-server did not come back on the login page after reboot

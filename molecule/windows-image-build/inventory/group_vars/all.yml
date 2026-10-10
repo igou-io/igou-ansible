@@ -1,0 +1,3 @@
+---
+molecule_image_name: golden-win2k25-{{ molecule_consumer_run_id }}
+molecule_profile_overrides: "{{ molecule_guest_profiles.windows }}"

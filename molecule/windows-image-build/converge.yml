@@ -1,0 +1,11 @@
+---
+- name: Exercise the newly built Windows clone through PSRP
+  hosts: windows
+  gather_facts: true
+  tasks:
+    - name: Require the clone to be Windows Server 2025
+      ansible.builtin.assert:
+        that:
+          - '''2025'' in ansible_os_name'
+    - name: Exercise the authenticated management connection
+      ansible.windows.win_ping: null

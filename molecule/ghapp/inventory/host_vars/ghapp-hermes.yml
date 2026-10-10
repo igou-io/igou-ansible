@@ -1,0 +1,10 @@
+---
+hermes_ghapp_client_id_lookup: "{{ lookup('ansible.builtin.pipe', 'op read op://awx/igou-hermes-github-app/client_id') }}"
+hermes_ghapp_installations_lookup:
+  david-igou: |-
+    {{ lookup('ansible.builtin.pipe',
+              'op read "op://awx/igou-hermes-github-app/installation_id_david-igou"') }}
+  igou-io: |-
+    {{ lookup('ansible.builtin.pipe',
+              'op read op://awx/igou-hermes-github-app/installation_id_igou-io') }}
+hermes_ghapp_private_key_lookup: "{{ lookup('ansible.builtin.pipe', 'op read op://awx/igou-hermes-github-app/private_key') }}"

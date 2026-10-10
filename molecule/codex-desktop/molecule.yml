@@ -1,0 +1,7 @@
+---
+scenario:
+  name: codex-desktop
+ansible:
+  playbooks:
+    create: create.yml
+    prepare: prepare.yml

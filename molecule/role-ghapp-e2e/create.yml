@@ -1,3 +1,0 @@
----
-- name: Provision molecule instances
-  import_playbook: david_igou.molecule_provisioners.create

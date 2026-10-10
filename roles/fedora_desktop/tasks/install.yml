@@ -35,20 +35,17 @@
     - npm
     - npx
 
-- name: Fedora desktop | Install the pinned coding tools
+- name: Fedora desktop | Install the latest coding tools
   community.general.npm:
-    name: "{{ item.name }}"
-    version: "{{ item.version }}"
+    name: "{{ item }}"
     global: true
-    state: present
+    state: latest
     executable: /usr/local/bin/npm
   environment:
     PATH: /usr/local/bin:/usr/bin:/bin
   loop:
-    - name: t3
-      version: "{{ fedora_desktop_t3_version }}"
-    - name: '@openai/codex'
-      version: "{{ fedora_desktop_codex_version }}"
+    - t3
+    - '@openai/codex'
   notify: Fedora desktop | Restart T3
 
 - name: Fedora desktop | Expose coding tool commands
@@ -93,16 +90,11 @@
     fingerprint: "{{ fedora_desktop_openai_signing_fingerprint }}"
     state: present
 
-- name: Fedora desktop | Read installed RPMs
-  ansible.builtin.package_facts:
-    manager: auto
-
-- name: Fedora desktop | Bootstrap the official signed desktop RPM
+- name: Fedora desktop | Install the latest official signed desktop RPM  # noqa: package-latest -- desktop applications intentionally track latest
   ansible.builtin.dnf:
     name: "{{ fedora_desktop_openai_rpm_url }}"
-    state: present
+    state: latest
     disable_gpg_check: false
-  when: "'chatgpt' not in ansible_facts['packages']"
 
 - name: Fedora desktop | Import Google's Chrome signing key
   ansible.builtin.rpm_key:

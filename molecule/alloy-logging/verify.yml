@@ -1,0 +1,32 @@
+---
+- name: Verify a new journal message reaches Loki through Alloy
+  hosts: linux_logging
+  gather_facts: false
+  vars:
+    molecule_log_marker: molecule-{{ molecule_consumer_run_id }}-{{ lookup('ansible.builtin.password', '/dev/null length=12 chars=ascii_lowercase') }}
+  tasks:
+    - name: Freeze a unique marker for this verification
+      ansible.builtin.set_fact:
+        molecule_logging_marker: "{{ molecule_log_marker }}"
+    - name: Emit a new message into the system journal
+      ansible.builtin.command:
+        argv:
+          - logger
+          - --tag
+          - molecule
+          - "{{ molecule_logging_marker }}"
+      changed_when: true
+    - name: Query the receiving Loki from outside the VM
+      ansible.builtin.uri:
+        url: http://{{ mp_kubevirt_endpoints.loki.host }}:{{ mp_kubevirt_endpoints.loki.port }}/loki/api/v1/query_range?query={{ ('{scenario="alloy-logging",job="systemd-journal"} |= "' ~ molecule_logging_marker ~ '"') | urlencode }}
+        return_content: true
+      delegate_to: localhost
+      register: molecule_loki_query
+      retries: 30
+      delay: 5
+      until: molecule_loki_query.json.data.result | default([]) | length > 0
+    - name: Require the receiver to contain the unique message
+      ansible.builtin.assert:
+        that:
+          - molecule_loki_query.json.status == 'success'
+          - molecule_logging_marker in (molecule_loki_query.json.data.result | to_json)

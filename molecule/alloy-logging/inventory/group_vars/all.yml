@@ -1,0 +1,9 @@
+---
+alloy_loki_url: http://127.0.0.1:3100/loki/api/v1/push
+alloy_extra_labels:
+  scenario: alloy-logging
+molecule_loki_image: docker.io/grafana/loki:3.5.0
+molecule_profile_overrides:
+  application_ports:
+    - name: loki
+      port: 3100

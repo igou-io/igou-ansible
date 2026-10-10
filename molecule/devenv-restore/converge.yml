@@ -1,0 +1,29 @@
+---
+- name: Upload a real backup from the disposable home
+  ansible.builtin.import_playbook: ../../playbooks/devenv/backup.yml
+- name: Prepare different pre-restore state and a live bind-mounted consumer
+  hosts: devenv
+  gather_facts: false
+  tasks:
+    - name: Replace the live agent state with a different marker
+      ansible.builtin.copy:
+        dest: /home/igou/.claude.json
+        content: '{"marker":"molecule-before-restore"}'
+        mode: '0644'
+    - name: Start the consumer on the pre-restore state
+      ansible.builtin.systemd_service:
+        name: molecule-devenv.service
+        state: started
+        daemon_reload: true
+      become: true
+    - name: Prove the consumer initially serves the old state
+      ansible.builtin.uri:
+        url: http://{{ mp_kubevirt_endpoints['restored-state'].host }}:{{ mp_kubevirt_endpoints['restored-state'].port }}/
+        return_content: true
+      delegate_to: localhost
+      register: molecule_state_before
+      retries: 30
+      delay: 5
+      until: '''molecule-before-restore'' in (molecule_state_before.content | default(''''))'
+- name: Restore with the real quiesce, rollback and extraction playbook
+  ansible.builtin.import_playbook: ../../playbooks/devenv/restore.yml

@@ -1,0 +1,27 @@
+---
+- name: Manage run-scoped Windows specialization Secrets
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Manage each Windows guest's answer file
+      kubernetes.core.k8s:
+        state: "{{ molecule_sysprep_state | default('present') }}"
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ item }}-sysprep-{{ molecule_consumer_run_id }}"
+            namespace: "{{ molecule_namespace }}"
+            labels:
+              molecule.igou.systems/consumer-run: "{{ molecule_consumer_run_id }}"
+          stringData:
+            unattend.xml: "{{ lookup('ansible.builtin.template', playbook_dir ~ '/templates/windows_unattend.xml.j2') if (molecule_sysprep_state | default('present')) == 'present' else '' }}"
+      vars:
+        windows_computer_name: "{{ item }}"
+        windows_admin_password: "{{ molecule_windows_password_lookup }}"
+        windows_unattend_admin_mode: "{{ hostvars[item].molecule_windows_admin_mode | default('builtin') }}"
+        windows_admin_user: "{{ hostvars[item].mp.kubevirt.admin_user | default('Administrator') }}"
+      loop: "{{ groups['windows_guests'] | default([]) }}"
+      no_log: true
+      when: molecule_consumer_run_id | length > 0

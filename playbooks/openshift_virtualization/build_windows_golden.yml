@@ -34,6 +34,9 @@
     # --- Interface contract (see issue #343 phase 1, part A) ---------------
     # REQUIRED. Namespace used for BOTH the build VM and the published DataSource.
     windows_golden_namespace: ""
+    # Optional soft placement; the required nested-worker exclusion stays fixed.
+    windows_golden_preferred_node_affinity: []
+    windows_golden_tolerations: []
     # Local Administrator / auto-logon password for the throwaway build VM.
     # Empty -> a random throwaway is generated at runtime (see the "Generate a
     # throwaway build-VM admin password" task). Safe to auto-generate because
@@ -304,8 +307,10 @@
                     # Keep Windows VMs OFF the TrueNAS-hosted worker (nested virt
                     # unsupported). Belt-and-suspenders with the HCO workloads
                     # nodePlacement exclusion.
+                    tolerations: "{{ windows_golden_tolerations }}"
                     affinity:
                       nodeAffinity:
+                        preferredDuringSchedulingIgnoredDuringExecution: "{{ windows_golden_preferred_node_affinity }}"
                         requiredDuringSchedulingIgnoredDuringExecution:
                           nodeSelectorTerms:
                             - matchExpressions:

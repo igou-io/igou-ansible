@@ -1,3 +1,0 @@
----
-- name: Prepare molecule instances
-  import_playbook: david_igou.molecule_provisioners.prepare

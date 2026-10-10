@@ -1,0 +1,7 @@
+---
+- name: Check cluster and inventory prerequisites
+  ansible.builtin.import_playbook: preflight.yml
+- name: Create scenario-owned Windows specialization Secrets
+  ansible.builtin.import_playbook: windows_sysprep.yml
+- name: Provision disposable guests
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.create

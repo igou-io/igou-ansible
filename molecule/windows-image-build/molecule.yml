@@ -1,0 +1,15 @@
+---
+scenario:
+  name: windows-image-build
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy
+ansible:
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml

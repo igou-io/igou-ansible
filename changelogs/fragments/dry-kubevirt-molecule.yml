@@ -1,0 +1,4 @@
+---
+minor_changes:
+  - Centralized KubeVirt Molecule configuration, pinned test dependencies and Windows specialization, with soft Casval placement across use-case scenarios (https://github.com/igou-io/igou-ansible/pull/587).
+  - Consolidated general Windows coverage and scaffolded Linux runtime, maintenance, logging, UPS and devenv restore scenarios for review before validation.

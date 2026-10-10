@@ -1,0 +1,3 @@
+---
+- name: Apply converge
+  ansible.builtin.import_playbook: ../../playbooks/upsmonitor/converge.yml

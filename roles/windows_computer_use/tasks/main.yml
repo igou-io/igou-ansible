@@ -2,6 +2,13 @@
 # --- Computer-use readiness ------------------------------------------
 # LAB-ONLY tradeoff: Winlogon auto-logon stores the password readably in
 # HKLM. Takes effect at next boot; rollout restarts the VM.
+- name: Remove the image's finite auto-logon counter
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
+    name: AutoLogonCount
+    state: absent
+  when: windows_computer_use_autologon | bool
+
 - name: Enable console auto-logon for the admin user
   ansible.windows.win_regedit:
     path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon

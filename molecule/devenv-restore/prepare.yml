@@ -1,0 +1,84 @@
+---
+- name: Wait for the disposable restore target
+  ansible.builtin.import_playbook: ../shared/prepare.yml
+- name: Prepare a disposable object store and home state
+  hosts: devenv
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install the fixture container runtime
+      ansible.builtin.dnf:
+        name: podman
+        state: present
+    - name: Create object-store data directories
+      ansible.builtin.file:
+        path: /srv/molecule-s3
+        state: directory
+        owner: '10001'
+        group: '10001'
+        mode: '0755'
+    - name: Start the disposable S3 store
+      containers.podman.podman_container:
+        name: molecule-s3
+        image: "{{ molecule_s3_image }}"
+        state: started
+        publish:
+          - 9000:9000
+        volume:
+          - /srv/molecule-s3:/data:Z
+        env:
+          RUSTFS_ACCESS_KEY: "{{ molecule_s3_credentials.access_key_lookup }}"
+          RUSTFS_SECRET_KEY: "{{ molecule_s3_credentials.secret_key_lookup }}"
+      no_log: true
+    - name: Wait for the fixture's S3 listener
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 9000
+        timeout: 300
+    - name: Create a versioned test-only bucket
+      amazon.aws.s3_bucket:
+        name: devenv-backups
+        endpoint_url: "{{ devenv_s3_endpoint }}"
+        access_key: "{{ molecule_s3_credentials.access_key_lookup }}"
+        secret_key: "{{ molecule_s3_credentials.secret_key_lookup }}"
+        region: us-east-1
+        versioning: true
+        state: present
+      delegate_to: localhost
+      become: false
+      register: molecule_restore_bucket
+      retries: 20
+      delay: 5
+      until: molecule_restore_bucket is succeeded
+      no_log: true
+    - name: Create the primary state directory
+      ansible.builtin.file:
+        path: /home/igou/.claude-container
+        state: directory
+        owner: igou
+        group: igou
+        mode: '0700'
+    - name: Seed synthetic agent state
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        content: '{"marker":"molecule-backup-state"}'
+        owner: igou
+        group: igou
+        mode: '0644'
+      loop:
+        - /home/igou/.claude.json
+        - /home/igou/.claude-container/state.json
+    - name: Install a real service holding an individual state-file bind mount
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/molecule-devenv.service
+        mode: '0644'
+        content: |
+          [Unit]
+          After=network-online.target
+          Wants=network-online.target
+          [Service]
+          ExecStart=/usr/bin/podman run --rm --name molecule-state-reader --publish 8081:80 --volume /home/igou/.claude.json:/usr/share/nginx/html/index.html:ro,Z docker.io/library/nginx:stable-alpine
+          ExecStop=/usr/bin/podman stop molecule-state-reader
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target

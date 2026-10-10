@@ -1,0 +1,123 @@
+---
+- name: Verify the freshly installed desktop
+  hosts: molecule
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Request the real T3 endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3773
+        status_code: 200
+    - name: Read installed desktop packages
+      ansible.builtin.package_facts:
+        manager: auto
+    - name: Require the installed desktop RPM
+      ansible.builtin.assert:
+        that: '''chatgpt'' in ansible_facts[''packages'']'
+    - name: Query the latest desktop release from the official package repository
+      ansible.builtin.command:
+        argv:
+          - dnf5
+          - --quiet
+          - --refresh
+          - --repo=openai-chatgpt
+          - repoquery
+          - --available
+          - --arch=x86_64
+          - --latest-limit=1
+          - --queryformat=%{version}-%{release}
+          - chatgpt
+      register: codex_desktop_test_latest_app
+      changed_when: false
+    - name: Require the latest published desktop app
+      ansible.builtin.assert:
+        that:
+          - codex_desktop_test_latest_app.stdout | trim | length > 0
+          - >-
+            ansible_facts['packages']['chatgpt'][0].version ~ '-' ~
+            ansible_facts['packages']['chatgpt'][0].release ==
+            codex_desktop_test_latest_app.stdout | trim
+        fail_msg: The installed desktop app must match the latest official repository release.
+    - name: Require actual node exporter metrics
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9100/metrics
+        status_code: 200
+        return_content: true
+      register: codex_desktop_test_metrics
+    - name: Require guest OS metrics
+      ansible.builtin.assert:
+        that: '''node_uname_info'' in codex_desktop_test_metrics.content'
+    - name: Run the installed Codex CLI
+      ansible.builtin.command: /usr/local/bin/codex --version
+      register: codex_desktop_test_cli
+      changed_when: false
+    - name: Read the current Codex CLI release from npm
+      ansible.builtin.uri:
+        url: https://registry.npmjs.org/@openai%2Fcodex/latest
+        return_content: true
+      register: codex_desktop_test_latest_cli
+    - name: Require the latest published Codex CLI
+      ansible.builtin.assert:
+        that:
+          - codex_desktop_test_cli.stdout | trim == 'codex-cli ' ~ codex_desktop_test_latest_cli.json.version
+        fail_msg: The installed Codex CLI must match npm's latest release.
+    - name: Run the installed T3 CLI
+      ansible.builtin.command: /usr/local/bin/t3 --version
+      register: codex_desktop_test_t3
+      changed_when: false
+    - name: Read the current T3 release from npm
+      ansible.builtin.uri:
+        url: https://registry.npmjs.org/t3/latest
+        return_content: true
+      register: codex_desktop_test_latest_t3
+    - name: Require the latest published T3 server
+      ansible.builtin.assert:
+        that:
+          - codex_desktop_test_t3.stdout | trim == 't3 v' ~ codex_desktop_test_latest_t3.json.version
+        fail_msg: The installed T3 server must match npm's latest release.
+    - name: Require a running GNOME session for the unprivileged desktop user
+      ansible.builtin.command: pgrep -u 1100 -x gnome-shell
+      changed_when: false
+      retries: 12
+      delay: 10
+      register: codex_desktop_test_gnome
+      until: codex_desktop_test_gnome.rc == 0
+    - name: Require the desktop app to autostart in the user session
+      ansible.builtin.command: pgrep -u 1100 -x ChatGPT
+      changed_when: false
+      retries: 12
+      delay: 10
+      register: codex_desktop_test_app
+      until: codex_desktop_test_app.rc == 0
+    - name: Resolve the desktop user's HTTPS browser
+      ansible.builtin.command: xdg-mime query default x-scheme-handler/https
+      become: true
+      become_user: codex
+      changed_when: false
+      register: codex_desktop_test_browser
+    - name: Require Firefox to handle desktop links
+      ansible.builtin.assert:
+        that: codex_desktop_test_browser.stdout == 'org.mozilla.firefox.desktop'
+    - name: Require a functioning guest agent
+      changed_when: false
+      ansible.builtin.systemd_service:
+        name: qemu-guest-agent.service
+      register: codex_desktop_test_agent
+    - name: Require the guest agent to be active
+      ansible.builtin.assert:
+        that:
+          - codex_desktop_test_agent.status.ActiveState == 'active'
+    - name: Read SELinux enforcement
+      ansible.builtin.command: getenforce
+      changed_when: false
+      register: codex_desktop_test_selinux
+    - name: Require SELinux to remain enforced
+      ansible.builtin.assert:
+        that: codex_desktop_test_selinux.stdout == 'Enforcing'
+    - name: Create a workspace as the unprivileged desktop user
+      ansible.builtin.tempfile:
+        path: /home/codex/workspaces
+        state: directory
+        prefix: molecule-install-
+      become: true
+      become_user: codex

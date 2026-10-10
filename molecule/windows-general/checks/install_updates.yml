@@ -1,0 +1,33 @@
+---
+- name: Verify — independent evidence for install_updates
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Re-search the category — converge must have left it clean (found=0)
+      ansible.windows.win_updates:
+        category_names:
+          - Definition Updates
+        reject_list:
+          - KB4052623
+        state: searched
+      register: _searched
+      until: (_searched.found_update_count | default(-1) | int) == 0
+      retries: 3
+      delay: 60
+    - name: Assert the category is clean after converge and nothing failed
+      ansible.builtin.assert:
+        that:
+          - (_searched.found_update_count | int) == 0
+          - (_searched.failed_update_count | default(0) | int) == 0
+        fail_msg: 'win_updates state=searched did not confirm a clean category after converge: found={{ _searched.found_update_count | default(''undefined'') }} failed={{ _searched.failed_update_count | default(''undefined'') }}. If found is nonzero for a freshly published definition, the external feed churned — re-run the scenario (see README).'
+        success_msg: 'Category clean after converge: found_update_count=0, failed_update_count= {{ _searched.failed_update_count | default(0) }}.'
+    - name: Stat the sysprep specialize completion marker
+      ansible.windows.win_stat:
+        path: C:\molecule-specialize-done.txt
+      register: _specialize_marker
+    - name: Assert the specialize marker file is present
+      ansible.builtin.assert:
+        that:
+          - _specialize_marker.stat.exists
+        fail_msg: C:\molecule-specialize-done.txt is missing — the sysprep unattend FirstLogonCommands did not complete, so the specialize path is suspect.
+        success_msg: Sysprep specialize marker present.

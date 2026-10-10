@@ -29,21 +29,13 @@ argument_specs:
         type: str
         default: '26.10.0'
         description: Node.js version pinned independently from the Fedora release.
-      fedora_desktop_t3_version:
-        type: str
-        default: '0.0.45'
-        description: T3 npm package version.
-      fedora_desktop_codex_version:
-        type: str
-        default: '0.160.1'
-        description: Codex CLI npm package version.
       fedora_desktop_t3_port:
         type: int
         default: 3773
         description: T3 loopback listener port.
       fedora_desktop_openai_rpm_url:
         type: str
-        description: Official desktop bootstrap RPM URL.
+        description: Official latest desktop RPM URL, checked on every converge.
       fedora_desktop_openai_signing_key_url:
         type: str
         description: Reviewed OpenAI Linux repository signing key bundle URL.

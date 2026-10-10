@@ -1,0 +1,12 @@
+---
+molecule_s3_credentials:
+  access_key_lookup: molecule-s3-access
+  secret_key_lookup: molecule-only-s3-secret
+molecule_s3_image: docker.io/rustfs/rustfs:1.0.0-beta.8
+molecule_profile_overrides:
+  memory: 4Gi
+  application_ports:
+    - name: s3
+      port: 9000
+    - name: restored-state
+      port: 8081

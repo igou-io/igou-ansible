@@ -1,0 +1,22 @@
+---
+node_exporter_listen_address: 0.0.0.0:9100
+nut_exporter_listen_address: 0.0.0.0:9199
+nut_upsmon_password_lookup: molecule-only-upsmon
+nut_monitor_password_lookup: molecule-only-monitor
+nut_upses:
+  - name: apc
+    driver: dummy-ups
+    port: /etc/nut/apc.dev
+    options:
+      mode: dummy-loop
+  - name: cyberpower
+    driver: dummy-ups
+    port: /etc/nut/cyberpower.dev
+    options:
+      mode: dummy-loop
+molecule_profile_overrides:
+  application_ports:
+    - name: nut-metrics
+      port: 9199
+    - name: node-metrics
+      port: 9100

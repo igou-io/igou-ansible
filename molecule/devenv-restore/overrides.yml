@@ -1,0 +1,9 @@
+---
+ansible_limit: devenv  # noqa: var-naming[read-only] -- repository caller target convention
+devenv_backup_min_bytes: 100
+devenv_restore_min_bytes: 100
+devenv_restore_confirm: true
+devenv_restore_service: molecule-devenv.service
+devenv_s3_endpoint: http://{{ hostvars['restore-stream10'].mp_kubevirt_endpoints.s3.host }}:{{ hostvars['restore-stream10'].mp_kubevirt_endpoints.s3.port }}
+devenv_s3_access_key: "{{ molecule_s3_credentials.access_key_lookup }}"
+devenv_s3_secret_key: "{{ molecule_s3_credentials.secret_key_lookup }}"

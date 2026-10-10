@@ -1,8 +1,0 @@
----
-- name: Configure the upstream Fedora guest using the production role
-  hosts: molecule
-  become: true
-  gather_facts: true
-  roles:
-    - role: fedora_desktop
-    - role: prometheus.prometheus.node_exporter

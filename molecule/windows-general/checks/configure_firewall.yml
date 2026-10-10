@@ -1,0 +1,45 @@
+---
+- name: Verify — independent in-guest firewall evidence
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Read all firewall profile states (independent read)
+      ansible.windows.win_shell: |
+        Get-NetFirewallProfile -All |
+          ForEach-Object { [pscustomobject]@{ Name = $_.Name; Enabled = ("$($_.Enabled)" -eq 'True') } } |
+          ConvertTo-Json -Compress
+      register: _profiles
+      changed_when: false
+    - name: Assert Domain, Private and Public firewall profiles are all enabled
+      ansible.builtin.assert:
+        that:
+          - (_profiles.stdout | from_json) | length == 3
+          - (_profiles.stdout | from_json) | selectattr('Enabled', 'equalto', true) | list | length == 3
+        fail_msg: 'Not all firewall profiles are enabled: {{ _profiles.stdout | from_json }}.'
+        success_msg: All three firewall profiles (Domain/Private/Public) are enabled.
+    - name: Read the custom firewall rules (independent read)
+      ansible.windows.win_shell: |
+        $in7777  = Get-NetFirewallRule -DisplayName 'Allow molecule inbound TCP 7777' -ErrorAction SilentlyContinue
+        $out7777 = Get-NetFirewallRule -DisplayName 'Allow molecule outbound TCP 7777' -ErrorAction SilentlyContinue
+        $gone    = Get-NetFirewallRule -DisplayName 'Remove legacy molecule TCP 7779' -ErrorAction SilentlyContinue
+        [pscustomobject]@{
+          in_exists   = [bool]$in7777
+          in_enabled  = [bool](@($in7777  | Where-Object { "$($_.Enabled)" -eq 'True' }).Count)
+          out_exists  = [bool]$out7777
+          out_enabled = [bool](@($out7777 | Where-Object { "$($_.Enabled)" -eq 'True' }).Count)
+          gone_exists = [bool]$gone
+        } | ConvertTo-Json -Compress
+      register: _rules
+      changed_when: false
+    - name: Assert the custom rules are present+enabled and the absent one is gone
+      vars:
+        _r: "{{ _rules.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - _r.in_exists
+          - _r.in_enabled
+          - _r.out_exists
+          - _r.out_enabled
+          - not _r.gone_exists
+        fail_msg: 'Firewall rule state is wrong: {{ _r }}. Expected inbound+outbound TCP 7777 present and enabled, and TCP 7779 removed.'
+        success_msg: Custom TCP 7777 rules (in+out) present and enabled; the TCP 7779 rule was removed.

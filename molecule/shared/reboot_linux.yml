@@ -1,0 +1,21 @@
+---
+- name: Reboot disposable Linux guests and require new boot identities
+  hosts: molecule
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the original boot identity
+      ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
+      register: molecule_boot_before
+      changed_when: false
+    - name: Reboot the disposable guest
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+    - name: Read the new boot identity
+      ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
+      register: molecule_boot_after
+      changed_when: false
+    - name: Require a completed reboot
+      ansible.builtin.assert:
+        that:
+          - molecule_boot_before.stdout != molecule_boot_after.stdout

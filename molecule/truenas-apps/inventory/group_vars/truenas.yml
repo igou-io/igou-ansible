@@ -1,0 +1,19 @@
+---
+truenas_docker_networks: []
+truenas_docker_containers_default_pool: tank
+truenas_docker_containers_default_owner: '950'
+truenas_docker_containers_default_group: '950'
+truenas_docker_containers:
+  - name: nginx-mock
+    state: present
+    image: docker.io/library/nginx:mainline-alpine
+    config_files:
+      - content: |
+          server {
+              listen 8080;
+              location / { return 200 "{{ molecule_config_marker | default('initial') }}"; }
+          }
+        dest: config/default.conf
+        mount: /etc/nginx/conf.d/default.conf
+    env:
+      MOLECULE_MARKER: issue-330

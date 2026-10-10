@@ -16,10 +16,8 @@ join-key argument accepts only a resolved short-lived key.
 | `fedora_desktop_state_dir` | `/var/lib/codex-desktop` |
 | `fedora_desktop_packages` | GNOME, browser, guest access, time sync, native build and SELinux utilities |
 | `fedora_desktop_node_version` | `26.10.0`, matching the maintained devenv Node pin |
-| `fedora_desktop_t3_version` | `0.0.45`, matching the maintained devenv T3 pin |
-| `fedora_desktop_codex_version` | `0.160.1`, matching the maintained devenv Codex pin |
 | `fedora_desktop_t3_port` | `3773`, loopback listener |
-| `fedora_desktop_openai_rpm_url` | Official x86_64 latest bootstrap RPM |
+| `fedora_desktop_openai_rpm_url` | Official x86_64 latest RPM, checked on every converge |
 | `fedora_desktop_openai_signing_key_url` | Reviewed official Linux signing bundle |
 | `fedora_desktop_openai_signing_fingerprint` | Expected fingerprint; key import fails on mismatch |
 | `fedora_desktop_chrome` | `false`: optional Chrome |
@@ -44,6 +42,11 @@ is no state-destruction interface. Sign-in, encrypted keyring enrollment/unlock,
 and T3 pairing remain interactive. GNOME uses its normal Wayland session and
 the official app's normal session autostart; SELinux is retained.
 
+Codex CLI and T3 track npm's `latest` releases. Every converge also installs or
+upgrades the signed desktop app from the official latest RPM URL. Their former
+version inputs are removed; Node.js keeps its independent pin. Idempotence and
+version checks assume upstream releases stay unchanged during a test run.
+
 Tailscale uses native `--state=mem:`. Its identity and Serve configuration are
 disposable across daemon restarts; desktop files and app credentials remain on
 the retained disk. The controller must supply a fresh ephemeral join key after
@@ -51,9 +54,10 @@ a restart and reapply Serve. The role detaches the former Tailscale bind mount
 without deleting its old storage. Remove an existing persistent device from
 the tailnet once during migration; it is not covered by ephemeral cleanup.
 
-Functional scenario: `molecule test -s role-fedora-desktop`. It provisions a
+Functional scenario: `molecule test -s codex-desktop`. It provisions a
 fresh Fedora VM on KubeVirt, installs and verifies the desktop with Tailscale
-disabled, checks idempotency, then removes the disposable VM and disks. Run it
+disabled, checks current published tool versions and idempotency, then removes
+the disposable VM and disks. Run it
 locally with the `ocp-ansible-molecule` credential profile. Teardown waits for
 the VM, VMI, boot DataVolume/PVC, and SSH Service to disappear. Operator runbook:
 [Fedora Codex Desktop](https://github.com/igou-io/igou-docs/blob/main/openshift/Fedora%20Codex%20Desktop.md).

@@ -1,0 +1,8 @@
+---
+ansible_limit: molecule  # noqa: var-naming[read-only] -- repository caller target convention
+user: igou
+keys: "{{ baseline_authorized_keys }}"
+github_users: []
+exclusive: true
+linux_install_packages:
+  - curl

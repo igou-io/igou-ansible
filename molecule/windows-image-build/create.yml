@@ -1,0 +1,7 @@
+---
+- name: Establish the isolated build identity and cluster preflight
+  ansible.builtin.import_playbook: ../shared/preflight.yml
+- name: Build the generalized Windows image with the real installer pipeline
+  ansible.builtin.import_playbook: ../../playbooks/openshift_virtualization/build_windows_golden.yml
+- name: Clone the new image with the common provisioner lifecycle
+  ansible.builtin.import_playbook: ../shared/create.yml

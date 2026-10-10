@@ -1,0 +1,29 @@
+---
+- name: Verify the maintained administrator can log in and elevate after reboot
+  hosts: molecule
+  gather_facts: false
+  vars:
+    ansible_user: igou
+    ansible_become: false
+  tasks:
+    - name: Establish a fresh administrator connection
+      ansible.builtin.meta: reset_connection
+    - name: Execute with the installed package as the administrator
+      ansible.builtin.command: curl --version  # noqa: command-instead-of-module -- execute the installed CLI, not fetch a URL
+      changed_when: false
+    - name: Exercise passwordless sudo
+      ansible.builtin.command: sudo -n id -u
+      register: molecule_sudo_identity
+      changed_when: false
+    - name: Create a user namespace without administrator privileges
+      ansible.builtin.command:
+        argv:
+          - unshare
+          - --user
+          - --map-root-user
+          - "true"
+      changed_when: false
+    - name: Require root elevation
+      ansible.builtin.assert:
+        that:
+          - molecule_sudo_identity.stdout == '0'

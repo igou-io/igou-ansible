@@ -1,0 +1,36 @@
+---
+- name: Validate the shared cluster and scenario context
+  ansible.builtin.import_playbook: ../shared/preflight.yml
+- name: Resolve the latest Fedora cloud image for KubeVirt
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    codex_desktop_image_arch: x86_64
+  tasks:
+    - name: Fetch current upstream Fedora metadata
+      ansible.builtin.uri:
+        url: https://fedoraproject.org/releases.json
+        return_content: true
+      register: codex_desktop_test_metadata
+    - name: Select the current upstream image with the production resolver
+      ansible.builtin.include_tasks: ../../playbooks/codex_desktop/tasks/select_image.yml
+      vars:
+        codex_desktop_release_metadata: "{{ codex_desktop_test_metadata.json }}"
+    - name: Pass resolved image values into the scenario's VM inventory
+      ansible.builtin.add_host:
+        name: fedora-desktop-test
+        groups:
+          - molecule
+        mp:
+          kubevirt:
+            boot_source:
+              type: data_volume_url
+              url: "{{ codex_desktop_image.link }}"
+              size: 50Gi
+              storage_class: "{{ molecule_storage_class }}"
+              volume_mode: Block
+              access_modes:
+                - ReadWriteOnce
+- name: Create the disposable VM through the provisioner collection
+  ansible.builtin.import_playbook: ../shared/create.yml

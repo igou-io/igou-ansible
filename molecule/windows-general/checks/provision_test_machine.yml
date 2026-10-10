@@ -1,0 +1,57 @@
+---
+- name: Verify — independent in-guest evidence for provision_test_machine
+  hosts: windows
+  gather_facts: false
+  vars:
+    test_user: apptester
+    seven_zip_exe: C:\Program Files\7-Zip\7z.exe
+  tasks:
+    - name: Read the test user and its Remote Desktop membership (independent read)
+      ansible.windows.win_shell: |
+        $u = Get-LocalUser -Name {{ test_user }} -ErrorAction SilentlyContinue
+        $rdp = @(Get-LocalGroupMember -Group 'Remote Desktop Users' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+        [pscustomobject]@{
+          user_exists  = [bool]$u
+          user_enabled = [bool]($u -and $u.Enabled)
+          in_rdp_group = [bool](@($rdp | Where-Object { $_ -like '*\{{ test_user }}' }).Count)
+        } | ConvertTo-Json -Compress
+      register: _user
+      changed_when: false
+    - name: Assert the test user exists, is enabled, and can use Remote Desktop
+      vars:
+        _u: "{{ _user.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - _u.user_exists
+          - _u.user_enabled
+          - _u.in_rdp_group
+        fail_msg: 'Test user state is wrong: {{ _u }}. Expected {{ test_user }} present+enabled and a member of Remote Desktop Users.'
+        success_msg: "{{ test_user }} exists, is enabled, and is a Remote Desktop user."
+    - name: Validate the test user's password in-guest (LogonUser-style)
+      ansible.windows.win_shell: |
+        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+        $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine', $env:COMPUTERNAME)
+        if ($ctx.ValidateCredentials($env:MOL_TEST_USER, $env:MOL_TEST_PW)) { 'VALID' } else { 'INVALID' }
+      environment:
+        MOL_TEST_USER: "{{ test_user }}"
+        MOL_TEST_PW: "{{ molecule_windows_password_lookup }}"
+      register: _cred
+      changed_when: false
+      no_log: true
+    - name: Assert the test user's password authenticates
+      ansible.builtin.assert:
+        that:
+          - '''VALID'' in _cred.stdout'
+        fail_msg: In-guest credential validation for {{ test_user }} did not return VALID — the password the playbook set does not authenticate.
+        success_msg: "{{ test_user }}'s password validated in-guest (LogonUser) — the account can actually log in."
+    - name: Read the RDP fDenyTSConnections registry value (independent read)
+      ansible.windows.win_reg_stat:
+        path: HKLM:\System\CurrentControlSet\Control\Terminal Server
+        name: fDenyTSConnections
+      register: _rdp_reg
+    - name: Assert Remote Desktop connections are allowed (fDenyTSConnections=0)
+      ansible.builtin.assert:
+        that:
+          - _rdp_reg.value == 0
+        fail_msg: fDenyTSConnections={{ _rdp_reg.value | default('absent') }}; expected 0 (Remote Desktop connections allowed).
+        success_msg: Remote Desktop connections are allowed (fDenyTSConnections=0).

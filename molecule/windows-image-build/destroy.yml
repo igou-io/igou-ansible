@@ -1,0 +1,33 @@
+---
+- name: Remove the provisioner-owned clone and shared specialization Secrets
+  ansible.builtin.import_playbook: ../shared/destroy.yml
+- name: Remove only the image artifacts owned by this scenario run
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Remove each exact owned resource
+      kubernetes.core.k8s:
+        state: absent
+        api_version: "{{ item.api_version }}"
+        kind: "{{ item.kind }}"
+        name: "{{ item.name }}"
+        namespace: "{{ molecule_namespace }}"
+        wait: true
+      loop:
+        - api_version: kubevirt.io/v1
+          kind: VirtualMachine
+          name: "{{ molecule_image_name }}-build"
+        - api_version: cdi.kubevirt.io/v1beta1
+          kind: DataSource
+          name: "{{ molecule_image_name }}"
+        - api_version: cdi.kubevirt.io/v1beta1
+          kind: DataVolume
+          name: "{{ molecule_image_name }}"
+        - api_version: cdi.kubevirt.io/v1beta1
+          kind: DataVolume
+          name: "{{ molecule_image_name }}-installcd"
+        - api_version: v1
+          kind: Secret
+          name: "{{ molecule_image_name }}-unattend"
+      when: molecule_consumer_run_id | length > 0

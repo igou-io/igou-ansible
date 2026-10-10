@@ -1,0 +1,6 @@
+ansible-core==2.21.4
+molecule==26.9.0
+kubernetes==36.0.3
+jmespath==1.1.0
+pypsrp==0.9.1
+boto3>=1.35.0,<2.0

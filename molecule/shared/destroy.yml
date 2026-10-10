@@ -1,0 +1,7 @@
+---
+- name: Destroy only provisioner-owned resources
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
+- name: Remove this run's Windows specialization Secrets
+  ansible.builtin.import_playbook: windows_sysprep.yml
+  vars:
+    molecule_sysprep_state: absent

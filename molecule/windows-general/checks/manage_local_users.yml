@@ -1,0 +1,62 @@
+---
+- name: Verify — independent in-guest local-account evidence
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Read local user existence and enablement (independent read)
+      ansible.windows.win_shell: |
+        $u = Get-LocalUser -Name moluser -ErrorAction SilentlyContinue
+        $g = Get-LocalUser -Name molgone -ErrorAction SilentlyContinue
+        [pscustomobject]@{
+          user_exists  = [bool]$u
+          user_enabled = [bool]($u -and $u.Enabled)
+          gone_exists  = [bool]$g
+        } | ConvertTo-Json -Compress
+      register: _users
+      changed_when: false
+    - name: Assert moluser exists+enabled and molgone was removed
+      vars:
+        _u: "{{ _users.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - _u.user_exists
+          - _u.user_enabled
+          - not _u.gone_exists
+        fail_msg: 'Local user state is wrong: {{ _u }}. Expected moluser present+enabled and molgone absent (prepare had created molgone).'
+        success_msg: moluser is present and enabled; molgone was removed.
+    - name: Read group membership for moluser (independent read)
+      ansible.windows.win_shell: |
+        $admins  = @(Get-LocalGroupMember -Group Administrators -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+        $testers = @(Get-LocalGroupMember -Group AppTesters     -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+        [pscustomobject]@{
+          in_admins  = [bool](@($admins  | Where-Object { $_ -like '*\moluser' }).Count)
+          in_testers = [bool](@($testers | Where-Object { $_ -like '*\moluser' }).Count)
+        } | ConvertTo-Json -Compress
+      register: _groups
+      changed_when: false
+    - name: Assert moluser is a member of Administrators and AppTesters
+      vars:
+        _g: "{{ _groups.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - _g.in_admins
+          - _g.in_testers
+        fail_msg: 'moluser group membership is wrong: {{ _g }}. Expected membership in both Administrators and the created AppTesters group.'
+        success_msg: moluser is a member of Administrators and AppTesters.
+- name: Verify — the created user's password actually authenticates
+  hosts: windows
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    ansible_user: moluser
+    ansible_password: "{{ molecule_windows_password_lookup }}"
+  tasks:
+    - name: Run win_whoami over psrp as moluser
+      ansible.windows.win_whoami: null
+      register: _whoami
+    - name: Assert the authenticated identity is moluser
+      ansible.builtin.assert:
+        that:
+          - (_whoami.account.account_name | lower) == 'moluser'
+        fail_msg: Logged in over psrp but the identity is {{ _whoami.account.account_name | default('unknown') }}, not moluser — the created user's credentials did not authenticate as expected.
+        success_msg: Authenticated a fresh psrp session as moluser — the password the playbook set works.

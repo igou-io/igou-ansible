@@ -1,0 +1,44 @@
+---
+- name: Wait for the provisioned guest
+  ansible.builtin.import_playbook: ../shared/prepare.yml
+- name: Prepare a real disposable Loki receiver inside the guest
+  hosts: linux_logging
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Install the receiver runtime
+      ansible.builtin.package:
+        name: podman
+        state: present
+    - name: Deliver the receiver configuration
+      ansible.builtin.copy:
+        src: loki.yml
+        dest: /etc/molecule-loki.yml
+        mode: '0644'
+    - name: Start Loki with a reboot-persistent systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/molecule-loki.service
+        mode: '0644'
+        content: |
+          [Unit]
+          After=network-online.target
+          Wants=network-online.target
+          [Service]
+          ExecStart=/usr/bin/podman run --rm --name molecule-loki --publish 3100:3100 --volume /etc/molecule-loki.yml:/etc/loki/local-config.yaml:ro,Z {{ molecule_loki_image }} -config.file=/etc/loki/local-config.yaml
+          ExecStop=/usr/bin/podman stop molecule-loki
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+    - name: Start the receiver
+      ansible.builtin.systemd_service:
+        name: molecule-loki.service
+        enabled: true
+        state: started
+        daemon_reload: true
+    - name: Wait for Loki readiness
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3100/ready
+      register: molecule_loki_ready
+      until: molecule_loki_ready.status | default(0) == 200
+      retries: 60
+      delay: 5

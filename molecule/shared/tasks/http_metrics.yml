@@ -1,0 +1,16 @@
+---
+- name: Scrape metrics from outside the guest through the provisioner endpoint
+  ansible.builtin.uri:
+    url: http://{{ mp_kubevirt_endpoints[molecule_metrics_endpoint].host }}:{{ mp_kubevirt_endpoints[molecule_metrics_endpoint].port }}{{ molecule_metrics_path | default('/metrics') }}
+    return_content: true
+  delegate_to: localhost
+  register: molecule_metrics_response
+  retries: 12
+  delay: 5
+  until: molecule_metrics_response.status | default(0) == 200
+- name: Require the promised metric families
+  ansible.builtin.assert:
+    that:
+      - item in molecule_metrics_response.content
+    fail_msg: Missing {{ item }} in the external scrape.
+  loop: "{{ molecule_metrics_required }}"

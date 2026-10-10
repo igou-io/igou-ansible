@@ -1,0 +1,6 @@
+---
+scenario:
+  name: ghapp
+ansible:
+  playbooks:
+    prepare: prepare.yml

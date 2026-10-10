@@ -1,0 +1,16 @@
+---
+scenario:
+  name: windows-general
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - side_effect
+    - idempotence
+    - verify
+    - destroy
+ansible:
+  playbooks:
+    prepare: prepare.yml

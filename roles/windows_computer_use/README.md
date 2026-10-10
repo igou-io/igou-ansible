@@ -11,7 +11,8 @@ toasts, and holds a fixed resolution for deterministic screenshots.
 ## What it does
 
 - **Console auto-logon** as the connect user + **never lock / never blank** the
-  desktop (`windows_computer_use_autologon`).
+  desktop (`windows_computer_use_autologon`). Removes the image's finite
+  `AutoLogonCount` so login remains enabled after subsequent reboots.
 - **Silent admin elevation off the secure desktop** — `EnableLUA` stays `1` so
   MSIX/Store apps still run (`windows_computer_use_quiet_uac`).
 - **Toast notifications off** for the connect user
@@ -63,7 +64,8 @@ The role is **idempotent** — a re-run reports `changed: false`.
 ## Testing
 
 Functional Molecule scenario:
-[`molecule/role-windows_computer_use/`](../../molecule/role-windows_computer_use/) —
+[`molecule/windows-general/`](../../molecule/windows-general/) —
 provisions a `win11` golden clone on the live cluster, applies the role over
-psrp, and verifies each setting with independent registry / `powercfg` /
-scheduled-task reads (never the password).
+psrp, reboots and checks the console session before idempotence, and verifies
+settings with independent registry / `powercfg` / scheduled-task reads (never
+the password).
