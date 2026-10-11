@@ -6,7 +6,7 @@ truenas_docker_containers_default_group: '950'
 truenas_docker_containers:
   - name: nginx-mock
     state: present
-    image: docker.io/library/nginx:mainline-alpine
+    image: docker.io/library/nginx:mainline-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
     config_files:
       - content: |
           server {
