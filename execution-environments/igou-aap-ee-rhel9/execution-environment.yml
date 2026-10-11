@@ -92,7 +92,7 @@ dependencies:
         # 2.7 collection targets the next platform release.
         version: "2.6.20260504"
       - name: ansible.hub
-        version: "1.1.1"
+        version: "1.1.2"
       - name: ansible.eda
         version: "2.13.0"
       - name: ansible.controller
