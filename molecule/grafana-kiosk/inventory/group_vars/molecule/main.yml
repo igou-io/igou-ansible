@@ -3,7 +3,7 @@ mp_kubevirt_wait_timeout: 600
 molecule_profile_overrides:
   boot_source:
     type: container_disk
-    image: quay.io/containerdisks/debian:13
+    image: quay.io/containerdisks/debian:13@sha256:6b992c4a8a62ca57858cbbf60110e673928d27b2885ea2a106660bc26b112b5b
   ssh_user: debian
   cpu:
     cores: 2
