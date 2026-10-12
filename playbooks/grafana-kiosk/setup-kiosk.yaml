@@ -74,12 +74,16 @@
     # grafana-kiosk release pinning (chromium stack). Upstream publishes no
     # checksums file, so sha256s are computed from the release assets and
     # pinned here per version/arch. Extend the map when bumping the version.
-    _kiosk_gk_version: "{{ kiosk_grafana_kiosk_version | default('1.0.12') }}"
+    _kiosk_gk_version: "{{ kiosk_grafana_kiosk_version | default('1.0.13') }}"
     _kiosk_gk_arch: >-
       {{ {'x86_64': 'amd64',
           'aarch64': 'arm64',
           'armv7l': 'armv7'}[ansible_architecture] }}
     _kiosk_gk_checksums:
+      "1.0.13":
+        arm64: a0103bc72caf84131ea6bdca03b4fed6c33c7de14ccf923355b3e77391f7cb3a
+        amd64: b0a88bcce27765cad951e030c076451e64f0958b591214deb39f690e153e68dc
+        armv7: 00eddf34391cf493032ddf1184e5c65507766e47b8d7725d0546c7868d798d02
       "1.0.12":
         arm64: 8a3a8553d98ac91563677b3660c4d962bb5582c5d4f9c5cb3a0742cae8e49e47
         amd64: 3bd8f535149e98b7ef72110fa1020963d5da0b97602cd232a0766f0554905696
