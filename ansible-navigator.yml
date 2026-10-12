@@ -33,7 +33,7 @@ ansible-navigator:
         - K8S_AUTH_HOST
         - K8S_AUTH_VERIFY_SSL
         - MOLECULE_NO_LOG
-    image: quay.io/igou/igou-awx-ee:latest
+    image: quay.io/igou/igou-awx-ee:latest@sha256:ba60383f0f94d7cdcf2aa285bcc8aba24566c1d273241ba1b56d0fb0726ce993
     volume-mounts:
       - dest: /root/.kube
         options: Z
