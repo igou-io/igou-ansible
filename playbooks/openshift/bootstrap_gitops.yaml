@@ -462,7 +462,7 @@
                       envFrom:
                         - configMapRef:
                             name: environment-variables
-                      image: quay.io/raffaelespazzoli/raffa-envsub:1.1
+                      image: quay.io/raffaelespazzoli/raffa-envsub:1.1@sha256:826306cd869900efd22c7bd780899bbed4d34e3d3a899717f0d8ceb63f3ad21d
                       imagePullPolicy: Always
                       securityContext:
                         runAsNonRoot: true
