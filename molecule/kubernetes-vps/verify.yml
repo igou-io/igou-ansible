@@ -51,8 +51,8 @@
       changed_when: false
       no_log: true
       loop:
-        - name: dns-token
-          namespace: cert-manager
+        - name: gateway-public-tls
+          namespace: nginx-gateway
         - name: operator-oauth
           namespace: tailscale
         - name: gotify-admin
@@ -61,10 +61,44 @@
     - name: Assert the credentials were distributed through the local store
       ansible.builtin.assert:
         that:
-          - ((vps_test_credentials.results[0].stdout | from_json).data['api-token'] | b64decode) == 'fixture-cloudflare'
+          - (vps_test_credentials.results[0].stdout | from_json).type == 'kubernetes.io/tls'
+          - ((vps_test_credentials.results[0].stdout | from_json).data['tls.crt'] | b64decode) == vps_test_tls_bundle['tls.crt']
+          - ((vps_test_credentials.results[0].stdout | from_json).data['tls.key'] | b64decode) == vps_test_tls_bundle['tls.key']
           - ((vps_test_credentials.results[1].stdout | from_json).data.client_id | b64decode) == 'fixture-client'
           - ((vps_test_credentials.results[1].stdout | from_json).data.client_secret | b64decode) == 'fixture-secret'
           - ((vps_test_credentials.results[2].stdout | from_json).data.password | b64decode) == 'fixture-gotify'
+      no_log: true
+
+    - name: Rotate the dummy mirrored certificate and private key together
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - patch
+          - secret/vps-public-tls
+          - --namespace=external-secrets
+          - --type=merge
+          - --patch
+          - >-
+            {"data":{"bundle":"{{ vps_test_tls_rotated_bundle | to_json | b64encode }}"}}
+      changed_when: true
+      no_log: true
+
+    - name: Ask ESO to reconcile the renewed certificate immediately
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl annotate externalsecret/gateway-public-tls --namespace=nginx-gateway
+        force-sync={{ now(utc=true).strftime('%s') }} --overwrite
+      changed_when: true
+
+    - name: Confirm the renewed pair reaches the Gateway Secret together
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get secret/gateway-public-tls --namespace=nginx-gateway --output=json
+      register: vps_test_tls_rotated
+      changed_when: false
+      until:
+        - ((vps_test_tls_rotated.stdout | from_json).data['tls.crt'] | b64decode) == vps_test_tls_rotated_bundle['tls.crt']
+        - ((vps_test_tls_rotated.stdout | from_json).data['tls.key'] | b64decode) == vps_test_tls_rotated_bundle['tls.key']
+      retries: 20
+      delay: 3
       no_log: true
 
     - name: Rotate the dummy mirrored Gotify credential

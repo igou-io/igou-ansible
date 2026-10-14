@@ -79,10 +79,11 @@
           apiVersion: v1
           kind: Secret
           metadata:
-            name: vps-cloudflare
+            name: vps-public-tls
             namespace: external-secrets
+          type: Opaque
           data:
-            api-token: "{{ 'fixture-cloudflare' | b64encode }}"
+            bundle: "{{ vps_test_tls_bundle | to_json | b64encode }}"
           ---
           apiVersion: v1
           kind: Secret
@@ -101,7 +102,7 @@
           data:
             password: "{{ 'fixture-gotify' | b64encode }}"
           ---
-          {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/gateway-api/dns-token-externalsecret.yaml') }}
+          {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/gateway-api/gateway-public-tls-externalsecret.yaml') }}
           {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/tailscale-operator/operator-oauth-externalsecret.yaml') }}
           {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/gotify/gotify-admin-externalsecret.yaml') }}
 
@@ -126,8 +127,8 @@
           - --timeout=180s
       changed_when: false
       loop:
-        - name: dns-token
-          namespace: cert-manager
+        - name: gateway-public-tls
+          namespace: nginx-gateway
         - name: operator-oauth
           namespace: tailscale
         - name: gotify-admin
