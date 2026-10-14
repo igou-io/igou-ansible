@@ -14,6 +14,18 @@
           - k3s_release_version is match('^v[0-9]+\.[0-9]+\.[0-9]+\+k3s[0-9]+$')
         fail_msg: Select exactly one VPS host and a pinned k3s release.
 
+    - name: Inspect the legacy host exporter unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/node_exporter.service
+      register: vps_legacy_exporter_unit
+
+    - name: Disable the legacy host exporter before Kubernetes takes ownership
+      ansible.builtin.systemd_service:
+        name: node_exporter.service
+        state: stopped
+        enabled: false
+      when: vps_legacy_exporter_unit.stat.exists
+
     - name: Install host networking prerequisites
       ansible.builtin.apt:
         name:
@@ -106,54 +118,10 @@
       when: vps_manage_tailscale | default(true) | bool
       no_log: true
 
-    - name: Discover the current host Tailscale address
-      ansible.builtin.command:
-        argv:
-          - tailscale
-          - ip
-          - "-4"
-      changed_when: false
-      register: vps_tailnet_address
-      when: vps_manage_tailscale | default(true) | bool
-
-    - name: Set the verified exporter bind address
-      ansible.builtin.set_fact:
-        node_exporter_listen_address: "{{ vps_tailnet_address.stdout | trim }}:9100"
-      when: vps_manage_tailscale | default(true) | bool
-
   roles:
     - role: xanmanning.k3s
-    - role: prometheus.prometheus.node_exporter
-      vars:
-        node_exporter_web_listen_address: "{{ node_exporter_listen_address }}"
 
   tasks:
-    - name: Make node exporter wait for host Tailscale during boot
-      when: vps_manage_tailscale | default(true) | bool
-      block:
-        - name: Create the exporter service override directory
-          ansible.builtin.file:
-            path: /etc/systemd/system/node_exporter.service.d
-            state: directory
-            owner: root
-            group: root
-            mode: "0755"
-
-        - name: Configure the exporter tailnet dependency
-          ansible.builtin.copy:
-            dest: /etc/systemd/system/node_exporter.service.d/tailscale.conf
-            content: |
-              [Unit]
-              Requires=tailscaled.service
-              After=tailscaled.service
-              [Service]
-              Restart=on-failure
-              RestartSec=10s
-            owner: root
-            group: root
-            mode: "0644"
-          notify: Restart VPS node exporter
-
     - name: Create the kubelet configuration directory
       ansible.builtin.file:
         path: /var/lib/rancher/k3s/agent/etc/kubelet.conf.d
@@ -244,10 +212,4 @@
     - name: Restart VPS k3s
       ansible.builtin.systemd_service:
         name: k3s.service
-        state: restarted
-
-    - name: Restart VPS node exporter
-      ansible.builtin.systemd_service:
-        name: node_exporter.service
-        daemon_reload: true
         state: restarted

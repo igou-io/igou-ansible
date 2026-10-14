@@ -1,3 +1,44 @@
 ---
 - name: Bootstrap the isolated VPS test server
   ansible.builtin.import_playbook: ../../playbooks/kubernetes/bootstrap-vps.yaml
+- name: Apply the actual VPS GitOps exporter to the disposable cluster
+  hosts: molecule
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Copy the committed namespace and exporter manifests
+      ansible.builtin.copy:
+        src: "{{ vps_test_manifest_directory }}/{{ item.source }}"
+        dest: "/etc/rancher/k3s/{{ item.destination }}"
+        owner: root
+        group: root
+        mode: "0600"
+      loop:
+        - source: bootstrap/vps-system-namespace.yaml
+          destination: vps-test-namespace.yaml
+        - source: platform/node-exporter/node-exporter-daemonset.yaml
+          destination: vps-test-node-exporter.yaml
+
+    - name: Reconcile the real node-exporter DaemonSet
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - apply
+          - --namespace=vps-system
+          - --filename=/etc/rancher/k3s/vps-test-namespace.yaml
+          - --filename=/etc/rancher/k3s/vps-test-node-exporter.yaml
+      register: vps_test_exporter_apply
+      changed_when: "' created' in vps_test_exporter_apply.stdout or ' configured' in vps_test_exporter_apply.stdout"
+
+    - name: Wait for the exporter pod to become ready
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - rollout
+          - status
+          - daemonset/node-exporter
+          - --namespace=vps-system
+          - --timeout=180s
+      changed_when: false

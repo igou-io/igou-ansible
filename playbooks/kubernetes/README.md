@@ -10,8 +10,8 @@ cluster lifetime, don't mix.
 | `prepare-k3s-datastore.yml`       | ZFS pool + data-dir mounts on the control plane (run first).   |
 | `install-kubernetes-cluster.yml`  | Alternative. Install kubeadm-based kubernetes via `geerlingguy.kubernetes` (+ `geerlingguy.containerd`). |
 | `bootstrap-gitops.yaml`           | Post-install: seeds the ESO Connect token, installs argocd, applies the igou-kubernetes app-of-apps root. Runs against `localhost`, talks to whatever `KUBECONFIG` points at. |
-| `bootstrap-vps.yaml` | Standalone Debian VPS: public API firewall guard, host Tailscale, lean pinned k3s, and tailnet-bound node exporter. |
-| `publish-vps-access.yaml` | Applies the VPS repository's bootstrap RBAC and publishes separate generated Argo/ESO credentials to the management vault. |
+| `bootstrap-vps.yaml` | Standalone Debian VPS: public API firewall guard, host Tailscale, and lean pinned k3s; node-exporter is a GitOps-managed pod. |
+| `publish-vps-access.yaml` | Applies the VPS repository's bootstrap namespaces, RBAC and node-exporter DaemonSet; waits for the pod and publishes separate generated Argo/ESO credentials to the management vault. |
 
 ## Standalone VPS
 
@@ -25,7 +25,9 @@ resources, live in `igou-kubernetes/clusters/vps/`. The VPS runs neither local
 Argo CD nor ESO. Do not use the rk8s install/bootstrap path unchanged:
 it disables a firewall, installs homelab storage clients, and installs local
 controllers. The public firewall guard must be active before the first k3s
-startup and remain a service dependency. Operational guidance is in
+startup and remain a service dependency. Node-exporter runs as a host-network
+DaemonSet in `vps-system`; the guard blocks public TCP 9100. The shared
+host exporter playbook refuses `cluster_name=vps`. Operational guidance is in
 `igou-docs/kubernetes/VPS Kubernetes Architecture and Migration.md`.
 
 ## Inventory

@@ -17,6 +17,13 @@
   become: true
   gather_facts: true
 
+  pre_tasks:
+    - name: Keep the VPS exporter under Kubernetes ownership
+      ansible.builtin.assert:
+        that:
+          - cluster_name | default('') != 'vps'
+        fail_msg: The VPS node-exporter is a GitOps-managed DaemonSet; reconcile clusters/vps/platform/node-exporter instead of this host service playbook.
+
   roles:
     - role: prometheus.prometheus.node_exporter
       vars:

@@ -6,3 +6,6 @@ vps_test_guest_overrides:
     - name: api
       port: 6443
       protocol: TCP
+    - name: exporter
+      port: 9100
+      protocol: TCP

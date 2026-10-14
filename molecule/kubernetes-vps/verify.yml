@@ -45,11 +45,48 @@
       changed_when: false
       register: vps_test_deployments
 
-    - name: Confirm the host exporter responds locally
+    - name: Confirm the exporter pod serves host metrics
       ansible.builtin.uri:
         url: http://127.0.0.1:9100/metrics
         return_content: true
       register: vps_test_exporter
+
+    - name: Confirm public metrics access is blocked
+      ansible.builtin.uri:
+        url: "http://{{ mp_kubevirt_endpoints.exporter.host }}:{{ mp_kubevirt_endpoints.exporter.port }}/metrics"
+        timeout: 3
+      delegate_to: localhost
+      become: false
+      failed_when: false
+      register: vps_test_public_metrics
+
+    - name: Inspect the exporter pod
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - pods
+          - --namespace=vps-system
+          - --selector=app.kubernetes.io/name=node-exporter
+          - --output=json
+      changed_when: false
+      register: vps_test_exporter_pods
+
+    - name: Inspect the retired host exporter service
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - show
+          - node_exporter.service
+          - --property=ActiveState,UnitFileState
+      changed_when: false
+      register: vps_test_legacy_service
+
+    - name: Read the actual guest memory total
+      ansible.builtin.command: cat /proc/meminfo
+      changed_when: false
+      register: vps_test_host_memory
 
     - name: Assert the required behavior
       ansible.builtin.assert:
@@ -60,4 +97,12 @@
           - "'traefik' not in ((vps_test_deployments.stdout | from_json)['items'] | map(attribute='metadata.name') | list)"
           - "'metrics-server' not in ((vps_test_deployments.stdout | from_json)['items'] | map(attribute='metadata.name') | list)"
           - "'node_memory_MemAvailable_bytes' in vps_test_exporter.content"
-        fail_msg: The isolated VPS must provide a working API and exporter while blocking its public API path.
+          - vps_test_public_metrics.status == -1
+          - (vps_test_exporter_pods.stdout | from_json)['items'] | length == 1
+          - (vps_test_exporter_pods.stdout | from_json)['items'][0].status.phase == 'Running'
+          - "'ActiveState=inactive' in vps_test_legacy_service.stdout_lines"
+          - "'UnitFileState=disabled' in vps_test_legacy_service.stdout_lines"
+          - >-
+            (vps_test_exporter.content | regex_findall('(?m)^node_memory_MemTotal_bytes ([0-9.e+-]+)$') | first | float) ==
+            (vps_test_host_memory.stdout | regex_findall('(?m)^MemTotal:[ ]+([0-9]+) kB$') | first | int) * 1024
+        fail_msg: The isolated VPS must report host metrics from its exporter pod, retire the host service, and block public API and metrics access.

@@ -3,7 +3,6 @@ cluster_name: vps
 vps_manage_tailscale: false
 vps_tailscale_authkey_lookup: ""
 vps_public_interface: "{{ ansible_facts['default_ipv4']['interface'] }}"
-node_exporter_listen_address: 127.0.0.1:9100
 k3s_control_node: true
 k3s_become: true
 k3s_become_for_all: true
@@ -24,3 +23,4 @@ k3s_server:
     - metrics-server
   kubelet-arg:
     - fail-swap-on=false
+vps_test_manifest_directory: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/../igou-kubernetes/clusters/vps"

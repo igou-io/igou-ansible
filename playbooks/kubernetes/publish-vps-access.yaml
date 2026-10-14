@@ -26,7 +26,7 @@
         group: root
         mode: "0600"
 
-    - name: Establish the service accounts and namespace-scoped secret writer
+    - name: Establish management identities and the Kubernetes node exporter
       # The server has no Kubernetes Python client; use its bundled CLI to
       # apply the same GitOps resources, rather than installing another SDK.
       ansible.builtin.command:
@@ -37,6 +37,18 @@
           - --filename=/etc/rancher/k3s/vps-access.yaml
       register: vps_access_apply
       changed_when: "' created' in vps_access_apply.stdout or ' configured' in vps_access_apply.stdout"
+
+    - name: Wait for the Kubernetes exporter before publishing management access
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - rollout
+          - status
+          - daemonset/node-exporter
+          - --namespace=vps-system
+          - --timeout=180s
+      changed_when: false
 
     - name: Read the generated Argo service-account credential privately
       ansible.builtin.command:
