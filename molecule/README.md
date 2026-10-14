@@ -72,7 +72,7 @@ set during an isolated lifecycle requires destroying that run first.
 | `devenv-restore` | Stream 10, disposable versioned S3 store, real backup/restore, rollback archive and live container bind-mount refresh. |
 | `grafana-kiosk` | Debian x64 Cog and Chromium guests; dashboard navigation and kiosk behavior against the existing HTTP fixture. |
 | `linux-node-exporter` | Stream 10, external CPU/memory/identity metrics after reboot. |
-| `kubernetes-vps` | Debian 13, 2 vCPUs/2 GiB: real standalone k3s bootstrap, public API firewall denial, local API/encryption checks, real node-exporter pod/host metrics, legacy service retirement, public metrics denial, idempotence and cleanup. Host Tailscale enrollment is excluded from the disposable fixture. |
+| `kubernetes-vps` | Debian 13, 2 vCPUs/2 GiB: real standalone k3s bootstrap, public API firewall denial, local API/encryption checks, namespace/access-only AAP seed, authenticated cluster-admin Argo identity, real node-exporter pod/host metrics, local ESO/ClusterSecretStore mapping and rotation, mirror-reader RBAC, legacy service retirement, public metrics denial, idempotence and cleanup. Host Tailscale enrollment and OpenShift PushSecret delivery are excluded from the disposable fixture. |
 | `linux-maintenance` | Stream 10 baseline, packages, exclusive SSH keys, update and reboot; fresh admin SSH and passwordless sudo. |
 | `linux-podman-quadlets` | Stream 10 rootless service account, TLS proxy, routing/redirects/auth/denials, Hugo revisions, config restart, update invocation, reboot and teardown/migration cleanup. |
 | `alloy-logging` | Stream 10 journal sender and real Loki receiver; a unique post-reboot message must arrive at Loki. |
@@ -167,8 +167,10 @@ make molecule-destroy MOLECULE_SCENARIO=linux-node-exporter
 Bare `molecule test -s <use-case>` uses the same base. `default` remains usable for
 bare commands. `make molecule-test-all` includes costly image builds and
 credentialed integration tests; individual scenarios are the intended starting
-point. The `kubernetes-vps` fixture reads the real node-exporter manifest from the
-sibling `igou-kubernetes` checkout; both repositories must be present.
+point. The `kubernetes-vps` fixture reads the real seed, exporter, ESO chart, local
+store and consuming ExternalSecrets from the sibling `igou-kubernetes` checkout;
+both repositories must be present. Dummy mirrors replace OpenShift delivery.
+The private Tailscale API path and central PushSecrets require rollout acceptance.
 Functional execution stays outside GitHub Actions. Actions install the
 same root `requirements.yml` for static checks. Playbooks, Molecule and the AWX
 EE share these Galaxy versions, including the pinned provisioner; the RHEL EE

@@ -1,0 +1,68 @@
+---
+- name: Require one explicitly selected VPS
+  ansible.builtin.assert:
+    that:
+      - ansible_play_hosts_all | length == 1
+      - cluster_name == 'vps'
+    fail_msg: Select exactly one VPS host for namespace and Argo identity seeding.
+
+- name: Render the committed namespace and Argo identity seed on the controller
+  ansible.builtin.set_fact:
+    vps_access_manifest: "{{ vps_bootstrap_manifest_lookup }}"
+
+- name: Stage the declarative seed on the server
+  ansible.builtin.copy:
+    content: "{{ vps_access_manifest }}"
+    dest: /etc/rancher/k3s/vps-access.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Inspect existing namespaces before comparing namespaced access resources
+  # A dry-run diff cannot create the namespaces needed by later seed objects.
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - --kubeconfig=/etc/rancher/k3s/k3s.yaml
+      - get
+      - namespaces
+      - --output=json
+  register: vps_access_namespaces
+  changed_when: false
+
+- name: Identify namespaces that need initial creation
+  ansible.builtin.set_fact:
+    vps_access_missing_namespaces: >-
+      {{ (vps_access_manifest | from_yaml_all | selectattr('kind', 'equalto', 'Namespace') | map(attribute='metadata.name') | list)
+         | difference((vps_access_namespaces.stdout | from_json)['items'] | map(attribute='metadata.name') | list) }}
+
+- name: Compare the namespace and identity seed using the administrator kubeconfig
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - --kubeconfig=/etc/rancher/k3s/k3s.yaml
+      - diff
+      - --server-side
+      - --field-manager=vps-bootstrap
+      - --filename=/etc/rancher/k3s/vps-access.yaml
+  register: vps_access_diff
+  changed_when: false
+  failed_when: vps_access_diff.rc not in [0, 1]
+  when: vps_access_missing_namespaces | length == 0
+  no_log: true
+
+- name: Seed changed namespaces and the Argo identity using the administrator kubeconfig
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - --kubeconfig=/etc/rancher/k3s/k3s.yaml
+      - apply
+      - --server-side
+      - --field-manager=vps-bootstrap
+      - --filename=/etc/rancher/k3s/vps-access.yaml
+  when: vps_access_missing_namespaces | length > 0 or vps_access_diff.rc == 1
+  changed_when: true
+  no_log: true

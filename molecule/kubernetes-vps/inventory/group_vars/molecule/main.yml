@@ -24,3 +24,4 @@ k3s_server:
   kubelet-arg:
     - fail-swap-on=false
 vps_test_manifest_directory: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/../igou-kubernetes/clusters/vps"
+vps_bootstrap_manifest_lookup: "{{ lookup('kubernetes.core.kustomize', dir=vps_test_manifest_directory ~ '/seed') }}"

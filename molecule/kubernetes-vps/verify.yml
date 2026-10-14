@@ -4,6 +4,144 @@
   become: true
   gather_facts: false
   tasks:
+    - name: Confirm the seeded credential authenticates as the Argo service account
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl --kubeconfig=/etc/rancher/k3s/vps-test-argocd.yaml
+        auth whoami --output=json
+      changed_when: false
+      register: vps_test_identity
+
+    - name: Confirm the seeded credential can administer the cluster
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl --kubeconfig=/etc/rancher/k3s/vps-test-argocd.yaml
+        auth can-i '*' '*' --all-namespaces
+      changed_when: false
+      register: vps_test_admin
+
+    - name: Check the mirror reader permissions
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl auth can-i {{ item.action }} secrets
+        --namespace={{ item.namespace }} --as=system:serviceaccount:external-secrets:vps-secrets-reader
+      register: vps_test_reader
+      changed_when: false
+      failed_when: vps_test_reader.rc not in [0, 1]
+      loop:
+        - action: get
+          namespace: external-secrets
+          expected: 'yes'
+        - action: update
+          namespace: external-secrets
+          expected: 'no'
+        - action: get
+          namespace: kube-system
+          expected: 'no'
+
+    - name: Assert mirror access is read only and scoped
+      ansible.builtin.assert:
+        that:
+          - item.stdout == item.item.expected
+      loop: "{{ vps_test_reader.results }}"
+      loop_control:
+        label: "{{ item.item.action }} in {{ item.item.namespace }}"
+
+    - name: Confirm the three application credential mappings
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl get secret/{{ item.name }} --namespace={{ item.namespace }} --output=json
+      register: vps_test_credentials
+      changed_when: false
+      no_log: true
+      loop:
+        - name: cloudflare-api-token
+          namespace: cert-manager
+        - name: operator-oauth
+          namespace: tailscale
+        - name: gotify-admin
+          namespace: gotify
+
+    - name: Assert the credentials were distributed through the local store
+      ansible.builtin.assert:
+        that:
+          - ((vps_test_credentials.results[0].stdout | from_json).data['api-token'] | b64decode) == 'fixture-cloudflare'
+          - ((vps_test_credentials.results[1].stdout | from_json).data.client_id | b64decode) == 'fixture-client'
+          - ((vps_test_credentials.results[1].stdout | from_json).data.client_secret | b64decode) == 'fixture-secret'
+          - ((vps_test_credentials.results[2].stdout | from_json).data.password | b64decode) == 'fixture-gotify'
+      no_log: true
+
+    - name: Rotate the dummy mirrored Gotify credential
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - patch
+          - secret/vps-gotify
+          - --namespace=external-secrets
+          - --type=merge
+          - --patch
+          - >-
+            {"data":{"password":"{{ 'fixture-rotated' | b64encode }}"}}
+      changed_when: true
+      no_log: true
+
+    - name: Ask ESO to reconcile the changed mirror immediately
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl annotate externalsecret/gotify-admin --namespace=gotify
+        force-sync={{ now(utc=true).strftime('%s') }} --overwrite
+      changed_when: true
+
+    - name: Confirm local rotation reaches the application namespace
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get secret/gotify-admin --namespace=gotify --output=json
+      register: vps_test_rotated
+      changed_when: false
+      until: ((vps_test_rotated.stdout | from_json).data.password | b64decode) == 'fixture-rotated'
+      retries: 20
+      delay: 3
+      no_log: true
+
+    - name: Confirm ESO has only its controller deployment
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get deployments --namespace=external-secrets --output=json
+      register: vps_test_eso
+      changed_when: false
+
+    - name: Stage an ExternalSecret in a namespace outside the store allowlist
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/vps-test-denied.yaml
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          apiVersion: external-secrets.io/v1
+          kind: ExternalSecret
+          metadata:
+            name: denied-mirror
+            namespace: igou-io
+          spec:
+            secretStoreRef:
+              name: vps-secrets
+              kind: ClusterSecretStore
+            target:
+              name: denied-mirror
+            data:
+              - secretKey: password
+                remoteRef:
+                  key: vps-gotify
+                  property: password
+
+    - name: Request distribution in the unapproved namespace
+      ansible.builtin.command: /usr/local/bin/k3s kubectl apply --filename=/etc/rancher/k3s/vps-test-denied.yaml
+      register: vps_test_denied_apply
+      changed_when: "' created' in vps_test_denied_apply.stdout or ' configured' in vps_test_denied_apply.stdout"
+
+    - name: Confirm ESO rejects the unapproved namespace
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl wait externalsecret/denied-mirror --namespace=igou-io
+        --for=condition=Ready=false --timeout=60s
+      changed_when: false
+
+    - name: Confirm the unapproved namespace receives no Secret
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get secret/denied-mirror --namespace=igou-io --ignore-not-found --output=name
+      register: vps_test_denied_secret
+      changed_when: false
+
     - name: Confirm the local authenticated API is healthy
       ansible.builtin.command:
         argv:
@@ -91,6 +229,10 @@
     - name: Assert the required behavior
       ansible.builtin.assert:
         that:
+          - (vps_test_identity.stdout | from_json).status.userInfo.username == 'system:serviceaccount:argocd:vps-argocd'
+          - vps_test_admin.stdout == 'yes'
+          - vps_test_denied_secret.stdout | length == 0
+          - (vps_test_eso.stdout | from_json)['items'] | map(attribute='metadata.name') | list == ['external-secrets']
           - vps_test_ready.stdout == 'ok'
           - vps_test_public.status == -1
           - "'Encryption Status: Enabled' in vps_test_encryption.stdout"

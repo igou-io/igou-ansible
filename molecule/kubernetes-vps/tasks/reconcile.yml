@@ -1,0 +1,26 @@
+---
+- name: Render the committed GitOps bundle on the controller
+  # Reuse a scratch file; the API diff below determines actual changes.
+  ansible.builtin.copy:
+    content: "{{ lookup('kubernetes.core.kustomize', dir=vps_test_manifest_directory ~ '/' ~ vps_test_bundle, enable_helm=true) }}"
+    dest: /etc/rancher/k3s/vps-test-gitops.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  changed_when: false
+
+- name: Compare the rendered bundle with the cluster
+  ansible.builtin.command: >-
+    /usr/local/bin/k3s kubectl diff --server-side --field-manager=vps-molecule
+    --filename=/etc/rancher/k3s/vps-test-gitops.yaml
+  register: vps_test_diff
+  changed_when: false
+  failed_when: vps_test_diff.rc not in [0, 1]
+  no_log: true
+
+- name: Reconcile changed resources with server-side apply
+  ansible.builtin.command: >-
+    /usr/local/bin/k3s kubectl apply --server-side --field-manager=vps-molecule
+    --filename=/etc/rancher/k3s/vps-test-gitops.yaml
+  when: vps_test_diff.rc == 1
+  changed_when: true
