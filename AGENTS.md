@@ -115,7 +115,7 @@ not flag a template as a literal password.
 ### Molecule testing
 
 Scenarios in `molecule/` are named for use cases (`codex-desktop`,
-`windows-general`, `linux-podman-quadlets`), without playbook/role prefixes.
+`windows-general`, `kubernetes-vps`), without playbook/role prefixes.
 All guests use `david_igou.molecule_provisioners`' KubeVirt backend on
 OpenShift. Shared configuration lives in `.config/molecule/config.yml`,
 shared dependencies in root `requirements.yml`, and inventory defaults,

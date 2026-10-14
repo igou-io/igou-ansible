@@ -1,6 +1,6 @@
 # Molecule scenarios
 
-Molecule discovers all 16 scenarios through the shared configuration. Three fresh
+Molecule discovers all 15 scenarios through the shared configuration. Three fresh
 mixed-OS batches passed Linux smoke, node-exporter and Windows general lifecycles
 on Casval, including idempotence, functional verification and cleanup. A separate
 Linux maintenance lifecycle also passed. Cold reinstall/cache recovery passed
@@ -74,7 +74,6 @@ set during an isolated lifecycle requires destroying that run first.
 | `linux-node-exporter` | Stream 10, external CPU/memory/identity metrics after reboot. |
 | `kubernetes-vps` | Debian 13, 2 vCPUs/2 GiB: real standalone k3s bootstrap, public API firewall denial, local API/encryption checks, namespace/access-only AAP seed, authenticated cluster-admin Argo identity, real node-exporter pod/host metrics, local ESO/ClusterSecretStore mapping and rotation (including the TLS bundle), mirror-reader RBAC, public metrics denial, idempotence and cleanup. Host Tailscale enrollment and OpenShift PushSecret delivery are excluded from the disposable fixture. |
 | `linux-maintenance` | Stream 10 baseline, packages, exclusive SSH keys, update and reboot; fresh admin SSH and passwordless sudo. |
-| `linux-podman-quadlets` | Stream 10 rootless service account, TLS proxy, routing/redirects/auth/denials, Hugo revisions, config restart, update invocation, reboot and teardown/migration cleanup. |
 | `alloy-logging` | Stream 10 journal sender and real Loki receiver; a unique post-reboot message must arrive at Loki. |
 | `upsmonitor` | Debian x64, two NUT dummy UPS drivers, real NUT/exporter stack and per-UPS external metrics after reboot. |
 | `windows-general` | Windows 11 and Server 2025; accounts, apps, services, firewall, scheduled tasks, bounded Defender updates, facts, RDP, server IIS, client debloat/readiness/power/visual effects. |
