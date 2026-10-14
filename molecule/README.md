@@ -5,7 +5,7 @@ mixed-OS batches passed Linux smoke, node-exporter and Windows general lifecycle
 on Casval, including idempotence, functional verification and cleanup. A separate
 Linux maintenance lifecycle also passed. Cold reinstall/cache recovery passed
 with one BMC warm restart needed to boot the cleaning agent. These results do not
-certify every scenario in the table below.
+verify every scenario in the table below.
 
 All disposable guests use `david_igou.molecule_provisioners` **0.0.6-alpha** with
 KubeVirt on `https://api.ocp.igou.systems:6443`. Scenario names describe use cases;
@@ -235,7 +235,7 @@ If cleanup fails, retain its state and run the matching `molecule-destroy` targe
 The common generated Ansible configuration enables SSH pipelining, 16 forks and
 task timing. Forks parallelize guest tasks; they do not cap VM or scenario count.
 For repeated development on an already-created guest, use `molecule-converge`
-and `molecule-verify`, then destroy when done. Full certification still uses
+and `molecule-verify`, then destroy when done. Full lifecycle testing still uses
 `molecule-test` with a fresh clone, idempotence and teardown.
 
 Debian container-disk guests keep their existing node image-cache path. Fedora
