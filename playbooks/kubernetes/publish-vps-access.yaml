@@ -24,7 +24,7 @@
           - kubectl
           - get
           - secret
-          - vps-argocd-auth
+          - argocd-manager-token
           - --namespace=argocd
           - --output=json
       changed_when: false

@@ -21,7 +21,7 @@
     - name: Check the mirror reader permissions
       ansible.builtin.command: >-
         /usr/local/bin/k3s kubectl auth can-i {{ item.action }} secrets
-        --namespace={{ item.namespace }} --as=system:serviceaccount:external-secrets:vps-secrets-reader
+        --namespace={{ item.namespace }} --as=system:serviceaccount:external-secrets:mirror-reader
       register: vps_test_reader
       changed_when: false
       failed_when: vps_test_reader.rc not in [0, 1]
@@ -51,7 +51,7 @@
       changed_when: false
       no_log: true
       loop:
-        - name: cloudflare-api-token
+        - name: dns-token
           namespace: cert-manager
         - name: operator-oauth
           namespace: tailscale
@@ -116,7 +116,7 @@
             namespace: igou-io
           spec:
             secretStoreRef:
-              name: vps-secrets
+              name: local-mirrors
               kind: ClusterSecretStore
             target:
               name: denied-mirror
@@ -205,7 +205,7 @@
           - kubectl
           - get
           - pods
-          - --namespace=vps-system
+          - --namespace=node-exporter
           - --selector=app.kubernetes.io/name=node-exporter
           - --output=json
       changed_when: false
@@ -229,7 +229,7 @@
     - name: Assert the required behavior
       ansible.builtin.assert:
         that:
-          - (vps_test_identity.stdout | from_json).status.userInfo.username == 'system:serviceaccount:argocd:vps-argocd'
+          - (vps_test_identity.stdout | from_json).status.userInfo.username == 'system:serviceaccount:argocd:argocd-manager'
           - vps_test_admin.stdout == 'yes'
           - vps_test_denied_secret.stdout | length == 0
           - (vps_test_eso.stdout | from_json)['items'] | map(attribute='metadata.name') | list == ['external-secrets']

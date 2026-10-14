@@ -15,7 +15,7 @@
           - /usr/local/bin/k3s
           - kubectl
           - get
-          - secret/vps-argocd-auth
+          - secret/argocd-manager-token
           - --namespace=argocd
           - --output=json
       changed_when: false
@@ -55,13 +55,13 @@
       ansible.builtin.include_tasks: tasks/reconcile.yml
       loop:
         - bootstrap
-        - platform/external-secrets
-        - platform/secret-store
+        - external-secrets-operator
+        - external-secrets-config
       loop_control:
         loop_var: vps_test_bundle
 
     - name: Wait for the exporter pod to become ready
-      ansible.builtin.command: /usr/local/bin/k3s kubectl rollout status daemonset/node-exporter --namespace=vps-system --timeout=180s
+      ansible.builtin.command: /usr/local/bin/k3s kubectl rollout status daemonset/node-exporter --namespace=node-exporter --timeout=180s
       changed_when: false
 
     - name: Wait for the single ESO controller
@@ -100,9 +100,9 @@
           data:
             password: "{{ 'fixture-gotify' | b64encode }}"
           ---
-          {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/gateway/cloudflare-api-token-externalsecret.yaml') }}
-          {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/platform/tailscale-operator/operator-oauth-externalsecret.yaml') }}
-          {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/applications/gotify/gotify-admin-externalsecret.yaml') }}
+          {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/gateway-api/dns-token-externalsecret.yaml') }}
+          {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/tailscale-operator/operator-oauth-externalsecret.yaml') }}
+          {{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/gotify/gotify-admin-externalsecret.yaml') }}
 
     - name: Reconcile the fixture mirrors and actual application mappings
       ansible.builtin.command: /usr/local/bin/k3s kubectl apply --filename=/etc/rancher/k3s/vps-test-secrets.yaml
@@ -110,7 +110,7 @@
       changed_when: "' created' in vps_test_secrets_apply.stdout or ' configured' in vps_test_secrets_apply.stdout"
 
     - name: Wait for the local ClusterSecretStore to authenticate
-      ansible.builtin.command: /usr/local/bin/k3s kubectl wait clustersecretstore/vps-secrets --for=condition=Ready --timeout=180s
+      ansible.builtin.command: /usr/local/bin/k3s kubectl wait clustersecretstore/local-mirrors --for=condition=Ready --timeout=180s
       changed_when: false
 
     - name: Wait for each application credential to be distributed
@@ -125,7 +125,7 @@
           - --timeout=180s
       changed_when: false
       loop:
-        - name: cloudflare-api-token
+        - name: dns-token
           namespace: cert-manager
         - name: operator-oauth
           namespace: tailscale
