@@ -57,6 +57,7 @@
         - bootstrap
         - external-secrets-operator
         - external-secrets-config
+        - node-exporter
       loop_control:
         loop_var: vps_test_bundle
 
