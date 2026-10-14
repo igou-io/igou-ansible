@@ -10,6 +10,23 @@ cluster lifetime, don't mix.
 | `prepare-k3s-datastore.yml`       | ZFS pool + data-dir mounts on the control plane (run first).   |
 | `install-kubernetes-cluster.yml`  | Alternative. Install kubeadm-based kubernetes via `geerlingguy.kubernetes` (+ `geerlingguy.containerd`). |
 | `bootstrap-gitops.yaml`           | Post-install: seeds the ESO Connect token, installs argocd, applies the igou-kubernetes app-of-apps root. Runs against `localhost`, talks to whatever `KUBECONFIG` points at. |
+| `bootstrap-vps.yaml` | Standalone Debian VPS: public API firewall guard, host Tailscale, lean pinned k3s, and tailnet-bound node exporter. |
+| `publish-vps-access.yaml` | Applies the VPS repository's bootstrap RBAC and publishes separate generated Argo/ESO credentials to the management vault. |
+
+## Standalone VPS
+
+The VPS is cluster `vps`, inventory host `igou.io`. Target both VPS playbooks
+explicitly with `ansible_limit=igou.io`; their default target is `none`.
+AAP templates are `vps_bootstrap_host` and `vps_publish_access`.
+Host settings and all secret lookup expressions belong in inventory.
+
+Kubernetes manifests, including the OpenShift-side Argo/ESO management
+resources, live in `igou-kubernetes/clusters/vps/`. The VPS runs neither local
+Argo CD nor ESO. Do not use the rk8s install/bootstrap path unchanged:
+it disables a firewall, installs homelab storage clients, and installs local
+controllers. The public firewall guard must be active before the first k3s
+startup and remain a service dependency. Operational guidance is in
+`igou-docs/kubernetes/VPS Kubernetes Architecture and Migration.md`.
 
 ## Inventory
 

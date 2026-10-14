@@ -1,0 +1,2 @@
+---
+ansible_limit: molecule  # noqa: var-naming[read-only] -- repository caller target convention

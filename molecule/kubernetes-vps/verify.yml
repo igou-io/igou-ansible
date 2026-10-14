@@ -1,0 +1,63 @@
+---
+- name: Verify Kubernetes works behind the public firewall guard
+  hosts: molecule
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Confirm the local authenticated API is healthy
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - --raw=/readyz
+      changed_when: false
+      register: vps_test_ready
+
+    - name: Confirm API access through the public interface is blocked
+      ansible.builtin.uri:
+        url: "https://{{ mp_kubevirt_endpoints.api.host }}:{{ mp_kubevirt_endpoints.api.port }}/readyz"
+        validate_certs: false
+        timeout: 3
+      delegate_to: localhost
+      become: false
+      failed_when: false
+      register: vps_test_public
+
+    - name: Confirm Secret encryption is enabled
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - secrets-encrypt
+          - status
+      changed_when: false
+      register: vps_test_encryption
+
+    - name: Verify lightweight packaged workloads
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - deployments
+          - --namespace=kube-system
+          - -o=json
+      changed_when: false
+      register: vps_test_deployments
+
+    - name: Confirm the host exporter responds locally
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9100/metrics
+        return_content: true
+      register: vps_test_exporter
+
+    - name: Assert the required behavior
+      ansible.builtin.assert:
+        that:
+          - vps_test_ready.stdout == 'ok'
+          - vps_test_public.status == -1
+          - "'Encryption Status: Enabled' in vps_test_encryption.stdout"
+          - "'traefik' not in ((vps_test_deployments.stdout | from_json)['items'] | map(attribute='metadata.name') | list)"
+          - "'metrics-server' not in ((vps_test_deployments.stdout | from_json)['items'] | map(attribute='metadata.name') | list)"
+          - "'node_memory_MemAvailable_bytes' in vps_test_exporter.content"
+        fail_msg: The isolated VPS must provide a working API and exporter while blocking its public API path.

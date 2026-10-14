@@ -1,0 +1,3 @@
+---
+- name: Bootstrap the isolated VPS test server
+  ansible.builtin.import_playbook: ../../playbooks/kubernetes/bootstrap-vps.yaml

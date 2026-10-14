@@ -1,0 +1,11 @@
+{{ ansible_managed | comment }}
+# Own only this table; preserve Tailscale and Kubernetes NAT/filter rules.
+add table inet vps_guard
+flush table inet vps_guard
+table inet vps_guard {
+  chain public_management {
+    type filter hook prerouting priority -150; policy accept;
+    iifname "{{ vps_public_interface }}" tcp dport { 6443, 10250, 9100, 30000-32767 } drop
+    iifname "{{ vps_public_interface }}" udp dport { 8472, 30000-32767 } drop
+  }
+}

@@ -1,6 +1,6 @@
 # Molecule scenarios
 
-Molecule discovers all 15 scenarios through the shared configuration. Three fresh
+Molecule discovers all 16 scenarios through the shared configuration. Three fresh
 mixed-OS batches passed Linux smoke, node-exporter and Windows general lifecycles
 on Casval, including idempotence, functional verification and cleanup. A separate
 Linux maintenance lifecycle also passed. Cold reinstall/cache recovery passed
@@ -72,6 +72,7 @@ set during an isolated lifecycle requires destroying that run first.
 | `devenv-restore` | Stream 10, disposable versioned S3 store, real backup/restore, rollback archive and live container bind-mount refresh. |
 | `grafana-kiosk` | Debian x64 Cog and Chromium guests; dashboard navigation and kiosk behavior against the existing HTTP fixture. |
 | `linux-node-exporter` | Stream 10, external CPU/memory/identity metrics after reboot. |
+| `kubernetes-vps` | Debian 13, 2 vCPUs/2 GiB: real standalone k3s bootstrap, public API firewall denial, local API/encryption checks, private exporter behavior, idempotence and cleanup. Host Tailscale enrollment is excluded from the disposable fixture. |
 | `linux-maintenance` | Stream 10 baseline, packages, exclusive SSH keys, update and reboot; fresh admin SSH and passwordless sudo. |
 | `linux-podman-quadlets` | Stream 10 rootless service account, TLS proxy, routing/redirects/auth/denials, Hugo revisions, config restart, update invocation, reboot and teardown/migration cleanup. |
 | `alloy-logging` | Stream 10 journal sender and real Loki receiver; a unique post-reboot message must arrive at Loki. |
