@@ -1,0 +1,30 @@
+---
+- name: Read legacy seed objects of this kind
+  kubernetes.core.k8s_info:
+    api_version: "{{ 'v1' if casval_cache_kind == 'PersistentVolumeClaim' else 'snapshot.storage.k8s.io/v1' if casval_cache_kind == 'VolumeSnapshot' else 'cdi.kubevirt.io/v1beta1' }}"
+    kind: "{{ casval_cache_kind }}"
+    namespace: "{{ casval_cache_namespace }}"
+    label_selectors:
+      - "cdi.kubevirt.io/dataImportCron in ({{ casval_cache_seeds | join(',') }})"
+  register: casval_cache_legacy_objects
+  no_log: true
+
+- name: Detach legacy seed objects from CDI cleanup
+  kubernetes.core.k8s:
+    state: patched
+    api_version: "{{ item.apiVersion }}"
+    kind: "{{ casval_cache_kind }}"
+    name: "{{ item.metadata.name }}"
+    namespace: "{{ casval_cache_namespace }}"
+    definition:
+      metadata:
+        uid: "{{ item.metadata.uid }}"
+        labels:
+          molecule.igou.systems/image-cache: casval
+          molecule.igou.systems/seed: "{{ item.metadata.labels['cdi.kubevirt.io/dataImportCron'] }}"
+          cdi.kubevirt.io/dataImportCron: null
+          cdi.kubevirt.io/dataImportCron.cleanup: null
+  loop: "{{ casval_cache_legacy_objects.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  no_log: true

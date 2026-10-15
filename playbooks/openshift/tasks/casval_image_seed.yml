@@ -1,157 +1,151 @@
 ---
-- name: Recover seed metadata from an earlier Casval installation
-  when: casval_cache_reset
-  block:
-    - name: Read only this image feed's generated claims
-      kubernetes.core.k8s_info:
-        kind: PersistentVolumeClaim
-        namespace: "{{ casval_cache_namespace }}"
-        label_selectors:
-          - "cdi.kubevirt.io/dataImportCron={{ casval_cache_seed }}"
-      register: casval_cache_old_claims
-      no_log: true
-
-    # Preserve imports already started on this installation, including retries
-    # after a partial warm-up. Only pre-installation metadata can be stale.
-    - name: Select claims created before this Casval installation
-      ansible.builtin.set_fact:
-        casval_cache_old_claims:
-          resources: "{{ casval_cache_old_claims.resources | selectattr('metadata.creationTimestamp', 'lt', casval_cache_node_created) | list }}"
-      no_log: true
-
-    - name: Refuse to delete claims outside the local image cache
-      ansible.builtin.assert:
-        that:
-          - casval_cache_old_claims.resources | map(attribute='spec.storageClassName') | reject('equalto', 'lvms-casval') | list | length == 0
-        fail_msg: Cache recovery refuses to delete a claim outside lvms-casval.
-
-    - name: Read this feed's stale DataVolumes
-      kubernetes.core.k8s_info:
-        api_version: cdi.kubevirt.io/v1beta1
-        kind: DataVolume
-        namespace: "{{ casval_cache_namespace }}"
-        label_selectors:
-          - "cdi.kubevirt.io/dataImportCron={{ casval_cache_seed }}"
-      register: casval_cache_old_volumes
-      no_log: true
-
-    - name: Remove this feed's stale DataVolumes
-      kubernetes.core.k8s:
-        state: absent
-        api_version: cdi.kubevirt.io/v1beta1
-        kind: DataVolume
-        name: "{{ item.metadata.name }}"
-        namespace: "{{ casval_cache_namespace }}"
-        delete_options:
-          propagationPolicy: Foreground
-          preconditions:
-            uid: "{{ item.metadata.uid }}"
-      loop: "{{ casval_cache_old_volumes.resources | selectattr('metadata.creationTimestamp', 'lt', casval_cache_node_created) | list }}"
-      loop_control:
-        label: "{{ item.metadata.name }}"
-      no_log: true
-
-    # CDI can immediately recreate the same name. Wait for the old identities,
-    # rather than requiring names shared with replacement imports to disappear.
-    - name: Wait for stale DataVolume identities to disappear
-      kubernetes.core.k8s_info:
-        api_version: cdi.kubevirt.io/v1beta1
-        kind: DataVolume
-        namespace: "{{ casval_cache_namespace }}"
-        label_selectors:
-          - "cdi.kubevirt.io/dataImportCron={{ casval_cache_seed }}"
-      register: casval_cache_remaining_volumes
-      retries: 60
-      delay: 5
-      until: >-
-        casval_cache_remaining_volumes.resources | map(attribute='metadata.uid') | list
-        | intersect(casval_cache_old_volumes.resources
-        | selectattr('metadata.creationTimestamp', 'lt', casval_cache_node_created)
-        | map(attribute='metadata.uid') | list) | length == 0
-      no_log: true
-
-    - name: Read claims that remain after dependent cleanup
-      kubernetes.core.k8s_info:
-        kind: PersistentVolumeClaim
-        namespace: "{{ casval_cache_namespace }}"
-        label_selectors:
-          - "cdi.kubevirt.io/dataImportCron={{ casval_cache_seed }}"
-      register: casval_cache_remaining_claims
-      no_log: true
-
-    - name: Remove this feed's surviving stale claims
-      kubernetes.core.k8s:
-        state: absent
-        kind: PersistentVolumeClaim
-        name: "{{ item.metadata.name }}"
-        namespace: "{{ casval_cache_namespace }}"
-        delete_options:
-          preconditions:
-            uid: "{{ item.metadata.uid }}"
-      loop: "{{ casval_cache_remaining_claims.resources | selectattr('metadata.creationTimestamp', 'lt', casval_cache_node_created) | list }}"
-      loop_control:
-        label: "{{ item.metadata.name }}"
-      no_log: true
-
-    - name: Wait for stale claim identities to disappear
-      kubernetes.core.k8s_info:
-        kind: PersistentVolumeClaim
-        namespace: "{{ casval_cache_namespace }}"
-        label_selectors:
-          - "cdi.kubevirt.io/dataImportCron={{ casval_cache_seed }}"
-      register: casval_cache_surviving_claims
-      retries: 60
-      delay: 5
-      until: >-
-        casval_cache_surviving_claims.resources | map(attribute='metadata.uid') | list
-        | intersect(casval_cache_old_claims.resources | map(attribute='metadata.uid') | list)
-        | length == 0
-      no_log: true
-
-- name: Wait for the feed's current backing PVC
+- name: Resolve the authoritative golden DataSource
   kubernetes.core.k8s_info:
     api_version: cdi.kubevirt.io/v1beta1
     kind: DataSource
-    name: "{{ casval_cache_seed }}"
+    name: "{{ casval_cache_definition.source }}"
     namespace: "{{ casval_cache_namespace }}"
-  register: casval_cache_source
-  retries: 120
-  delay: 10
-  until:
-    - casval_cache_source.resources | length == 1
-    - casval_cache_source.resources[0].spec.source.pvc is defined
-    - casval_cache_source.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
+  register: casval_cache_golden
+
+- name: Require a ready PVC-backed golden image
+  ansible.builtin.assert:
+    that:
+      - casval_cache_golden.resources | length == 1
+      - casval_cache_golden.resources[0].spec.source.pvc is defined
+      - casval_cache_golden.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
+    fail_msg: "Golden DataSource {{ casval_cache_definition.source }} must be ready before refreshing Casval."
+
+- name: Read the authoritative golden claim identity
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    name: "{{ casval_cache_golden.resources[0].spec.source.pvc.name }}"
+    namespace: "{{ casval_cache_golden.resources[0].spec.source.pvc.namespace | default(casval_cache_namespace) }}"
+  register: casval_cache_golden_claim
   no_log: true
 
-- name: Require a completed import for the backing PVC
+- name: Require the authoritative golden claim to be bound
+  ansible.builtin.assert:
+    that:
+      - casval_cache_golden_claim.resources | length == 1
+      - casval_cache_golden_claim.resources[0].status.phase == 'Bound'
+      - casval_cache_golden_claim.resources[0].spec.storageClassName != 'lvms-casval'
+    fail_msg: The authoritative golden must be a Bound claim on shared storage.
+
+- name: Identify this source revision's local seed
+  ansible.builtin.set_fact:
+    casval_cache_seed: "{{ casval_cache_definition.name }}"
+    casval_cache_seed_name: "{{ casval_cache_definition.name }}-{{ (casval_cache_golden_claim.resources[0].metadata.uid | hash('sha256'))[:12] }}"
+
+- name: Recover metadata left by a previous Casval installation
+  ansible.builtin.include_tasks: casval_cache_collect.yml
+  vars:
+    casval_cache_collect_stale: true
+  when: casval_cache_reset
+
+- name: Create or resume this revision's local seed copy
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: cdi.kubevirt.io/v1beta1
+      kind: DataVolume
+      metadata:
+        name: "{{ casval_cache_seed_name }}"
+        namespace: "{{ casval_cache_namespace }}"
+        labels:
+          molecule.igou.systems/image-cache: casval
+          molecule.igou.systems/seed: "{{ casval_cache_seed }}"
+        annotations:
+          cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+      spec:
+        source:
+          pvc:
+            name: "{{ casval_cache_golden_claim.resources[0].metadata.name }}"
+            namespace: "{{ casval_cache_golden_claim.resources[0].metadata.namespace }}"
+        storage:
+          storageClassName: lvms-casval
+          accessModes:
+            - ReadWriteOnce
+          volumeMode: Block
+          resources:
+            requests:
+              storage: "{{ casval_cache_definition.size }}"
+  no_log: true
+
+- name: Wait for this revision's completed local seed copy
   kubernetes.core.k8s_info:
     api_version: cdi.kubevirt.io/v1beta1
     kind: DataVolume
-    name: "{{ casval_cache_source.resources[0].spec.source.pvc.name }}"
+    name: "{{ casval_cache_seed_name }}"
     namespace: "{{ casval_cache_namespace }}"
   register: casval_cache_volume
   retries: 120
   delay: 10
-  until:
-    - casval_cache_volume.resources | length == 1
-    - casval_cache_volume.resources[0].status.phase == 'Succeeded'
+  until: casval_cache_volume.resources | length == 1 and casval_cache_volume.resources[0].status.phase | default('') in ['Succeeded', 'Failed']
+  failed_when: casval_cache_volume.resources | length == 1 and casval_cache_volume.resources[0].status.phase | default('') == 'Failed'
   no_log: true
 
 - name: Read the completed seed claim
   kubernetes.core.k8s_info:
     kind: PersistentVolumeClaim
-    name: "{{ casval_cache_source.resources[0].spec.source.pvc.name }}"
+    name: "{{ casval_cache_seed_name }}"
     namespace: "{{ casval_cache_namespace }}"
   register: casval_cache_claim
   no_log: true
 
-- name: Require a local block seed belonging to this import
+- name: Require a completed local block claim
   ansible.builtin.assert:
     that:
       - casval_cache_claim.resources | length == 1
       - casval_cache_claim.resources[0].status.phase == 'Bound'
       - casval_cache_claim.resources[0].spec.storageClassName == 'lvms-casval'
       - casval_cache_claim.resources[0].spec.volumeMode == 'Block'
-      - casval_cache_claim.resources[0].metadata.labels['cdi.kubevirt.io/dataImportCron'] == casval_cache_seed
-      - not casval_cache_reset or casval_cache_claim.resources[0].metadata.uid not in (casval_cache_old_claims.resources | map(attribute='metadata.uid') | list)
-    fail_msg: "Seed {{ casval_cache_seed }} must contain a completed local import; stale Bound metadata is insufficient."
+      - casval_cache_claim.resources[0].spec.accessModes == ['ReadWriteOnce']
+    fail_msg: "Seed {{ casval_cache_seed }} must contain a completed local block copy."
+
+- name: Label the completed claim for cache cleanup and backup exclusion
+  kubernetes.core.k8s:
+    state: patched
+    kind: PersistentVolumeClaim
+    name: "{{ casval_cache_seed_name }}"
+    namespace: "{{ casval_cache_namespace }}"
+    definition:
+      metadata:
+        uid: "{{ casval_cache_claim.resources[0].metadata.uid }}"
+        labels:
+          molecule.igou.systems/image-cache: casval
+          molecule.igou.systems/seed: "{{ casval_cache_seed }}"
+  no_log: true
+
+- name: Publish the completed revision under the stable DataSource name
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: cdi.kubevirt.io/v1beta1
+      kind: DataSource
+      metadata:
+        name: "{{ casval_cache_seed }}"
+        namespace: "{{ casval_cache_namespace }}"
+        labels:
+          molecule.igou.systems/image-cache: casval
+          molecule.igou.systems/seed: "{{ casval_cache_seed }}"
+      spec:
+        source:
+          pvc:
+            name: "{{ casval_cache_seed_name }}"
+            namespace: "{{ casval_cache_namespace }}"
+
+- name: Wait for the stable DataSource to report the new seed ready
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataSource
+    name: "{{ casval_cache_seed }}"
+    namespace: "{{ casval_cache_namespace }}"
+  register: casval_cache_published
+  retries: 30
+  delay: 2
+  until: casval_cache_published.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
+
+- name: Collect previous revisions after publishing the completed seed
+  ansible.builtin.include_tasks: casval_cache_collect.yml
+  vars:
+    casval_cache_collect_stale: false

@@ -1,23 +1,28 @@
 ---
-- name: Read the GitOps-managed Casval image feeds
+- name: Read the GitOps-managed Casval cache definition
   kubernetes.core.k8s_info:
-    api_version: cdi.kubevirt.io/v1beta1
-    kind: DataImportCron
+    kind: ConfigMap
+    name: casval-image-cache
     namespace: "{{ casval_cache_namespace }}"
-    label_selectors:
-      - molecule.igou.systems/image-cache=casval
-  register: casval_cache_feeds
+  register: casval_cache_config
 
 # GPU-only leases still work before the optional Molecule component is deployed.
 - name: Prepare the deployed local image cache
-  when: casval_cache_feeds.resources | length > 0
+  when: casval_cache_config.resources | length > 0
   block:
-    - name: Require exactly the expected Casval image feeds
+    - name: Load the seed definitions
+      ansible.builtin.set_fact:
+        casval_cache_definitions: "{{ casval_cache_config.resources[0].data['seeds.yml'] | from_yaml }}"
+
+    - name: Require exactly the expected Casval image seeds
       ansible.builtin.assert:
         that:
-          - casval_cache_feeds.resources | map(attribute='metadata.name') | sort == casval_cache_seeds | sort
-          - casval_cache_feeds.resources | map(attribute='spec.template.spec.storage.storageClassName') | unique | list == ['lvms-casval']
-        fail_msg: Casval cache recovery only manages the three declared lvms-casval image feeds.
+          - casval_cache_definitions | map(attribute='name') | sort == casval_cache_seeds | sort
+          - casval_cache_definitions | map(attribute='source') | sort == ['centos-stream10', 'win11', 'win2k25']
+        fail_msg: Casval cache acquisition only manages the three declared local image seeds.
+
+    - name: Retire the legacy scheduled image feeds without deleting seeds
+      ansible.builtin.include_tasks: casval_cache_migrate.yml
 
     - name: Wait for the Casval volume group
       kubernetes.core.k8s_info:
@@ -48,11 +53,20 @@
           {{ (casval_cache_current_node.resources[0].metadata.annotations | default({})).get(casval_cache_annotation, '')
              != casval_cache_current_node.resources[0].metadata.uid }}
 
-    - name: Recover each stale seed and wait for usable data
-      ansible.builtin.include_tasks: casval_image_seed.yml
-      loop: "{{ casval_cache_seeds }}"
-      loop_control:
-        loop_var: casval_cache_seed
+    - name: Refresh the seeds for this acquisition
+      block:
+        - name: Recover each stale seed and wait for usable data
+          ansible.builtin.include_tasks: casval_image_seed.yml
+          loop: "{{ casval_cache_definitions }}"
+          loop_control:
+            loop_var: casval_cache_definition
+      rescue:
+        - name: Remove unfinished imports before a failed acquisition can release Casval
+          ansible.builtin.include_tasks: casval_cache_cleanup.yml
+
+        - name: Report the failed cache refresh
+          ansible.builtin.fail:
+            msg: Casval cache refresh failed; completed seeds were preserved and unfinished imports were removed.
 
     - name: Mark this installation's cache ready after all imports succeed
       kubernetes.core.k8s:

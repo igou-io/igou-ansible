@@ -1,0 +1,26 @@
+---
+- name: Read this seed's cache objects
+  kubernetes.core.k8s_info:
+    api_version: "{{ 'v1' if item == 'PersistentVolumeClaim' else 'cdi.kubevirt.io/v1beta1' }}"
+    kind: "{{ item }}"
+    namespace: "{{ casval_cache_namespace }}"
+    label_selectors:
+      - molecule.igou.systems/image-cache=casval
+      - "molecule.igou.systems/seed={{ casval_cache_seed }}"
+  loop:
+    - DataVolume
+    - PersistentVolumeClaim
+  register: casval_cache_objects
+  no_log: true
+
+- name: Remove stale or superseded objects from this local seed
+  ansible.builtin.include_tasks: casval_cache_remove.yml
+  loop: "{{ casval_cache_objects.results | map(attribute='resources') | flatten }}"
+  loop_control:
+    loop_var: casval_cache_object
+    label: "{{ casval_cache_object.metadata.name }}"
+  when: >-
+    (casval_cache_object.metadata.creationTimestamp < casval_cache_node_created)
+    if casval_cache_collect_stale
+    else (casval_cache_object.metadata.name != casval_cache_seed_name)
+  no_log: true

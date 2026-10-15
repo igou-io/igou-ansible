@@ -191,9 +191,12 @@ and recheck its hardware inventory before adding disks.
 The cache keeps one seed for each of
 CentOS Stream 10, Windows 11 and Server 2025 on `lvms-casval`; tests snapshot-clone
 the same class using RWO Block volumes. Windows requires a first TrueNAS-to-local
-copy per golden PVC generation. CentOS imports directly from its registry feed.
-Hourly polling updates stable DataSources after the new seed succeeds. Windows
-refresh detects a replacement PVC UID, not changes to disk bytes in place.
+copy per golden PVC generation. CentOS copies the shared `centos-stream10`
+DataSource. Acquisition checks all three shared backing PVC UIDs and updates
+stable local DataSources only after their new copies succeed. There is no
+hourly Casval polling and no pending import while the node is offline. Replace
+authoritative PVCs to publish new revisions; edits to disk bytes in place do
+not trigger a refresh.
 
 Use `molecule_boot_sources` for complete host boot mappings: the provisioner
 replaces nested mappings rather than recursively merging them. Shared preflight
@@ -202,16 +205,30 @@ Casval placement, normal consumer binding and CDI's actual `cloneType: snapshot`
 a copy fallback fails the run. It prints selected disk information without clone
 tokens. No test lifecycle mounts or deletes shared seeds.
 
-Acquire or renew through `casval_scale` after deploying the feeds. Acquisition
+Acquire or renew through `casval_scale` after deploying the cache definition. Acquisition
 warms all three seeds and marks the current node UID cache-ready. A fresh
 installation resets only cache claims that predate the node; retries preserve
-imports already created on that installation. Molecule rejects a missing or
+completed imports already created on that installation. Release and failed
+acquisition remove unfinished copies. Molecule rejects a missing or
 stale cache marker. Reboots reuse seeds without copying them again.
 
 Hold one Casval lease for the batch and cleanup; extend it before expiry if
 needed. A reboot preserves local seeds. Destructive reprovisioning loses them
 and requires reseeding; a stale Bound PVC alone does not prove its data survived.
 Operational recovery is documented in the companion `igou-docs` runbook.
+
+The cache lifecycle has a credential-free local API regression under
+`molecule/casval-cache/logic/`. Run it in the repository's execution environment:
+
+```bash
+ansible-navigator run molecule/casval-cache/logic/verify.yml --mode stdout
+```
+
+It exercises production tasks with real `kubernetes.core` modules against a
+local Kubernetes/CDI simulator: legacy cleanup labels, reuse, source refresh,
+failed-copy cleanup, reprovisioning, release and storage-boundary rejection.
+It does not validate real CSI copies or snapshot cloning; those remain the
+managed acquisition and existing Molecule storage checks' responsibility.
 
 ```bash
 make molecule-test-batch \

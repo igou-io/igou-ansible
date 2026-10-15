@@ -8,7 +8,7 @@
     fail_msg: Casval must be Ready and schedulable with an active lease before using lvms-casval. Local disks cannot fall back to another worker.
   when: molecule_guest_boot_source.storage_class | default('') == 'lvms-casval'
 
-- name: Check the GitOps-managed local golden image
+- name: Check the lease-managed local golden image
   when:
     - molecule_guest_boot_source.type == 'data_volume_source_ref'
     - molecule_guest_boot_source.source_ref.namespace == molecule_image_namespace

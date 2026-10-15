@@ -1,0 +1,22 @@
+---
+- name: Refuse to delete objects outside Casval-local seed storage
+  ansible.builtin.assert:
+    that:
+      - casval_cache_object.metadata.labels['molecule.igou.systems/image-cache'] == 'casval'
+      - casval_cache_object.metadata.labels['molecule.igou.systems/seed'] in casval_cache_seeds
+      - (casval_cache_object.spec.storageClassName if casval_cache_object.kind == 'PersistentVolumeClaim' else casval_cache_object.spec.storage.storageClassName) == 'lvms-casval'
+    fail_msg: Cache cleanup refuses to delete objects outside the declared local seeds.
+
+- name: Remove the selected local seed object and wait for dependent cleanup
+  kubernetes.core.k8s:
+    state: absent
+    api_version: "{{ casval_cache_object.apiVersion }}"
+    kind: "{{ casval_cache_object.kind }}"
+    name: "{{ casval_cache_object.metadata.name }}"
+    namespace: "{{ casval_cache_namespace }}"
+    wait: true
+    delete_options:
+      propagationPolicy: Foreground
+      preconditions:
+        uid: "{{ casval_cache_object.metadata.uid }}"
+  no_log: true

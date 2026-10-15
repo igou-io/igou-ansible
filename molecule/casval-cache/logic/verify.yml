@@ -1,0 +1,236 @@
+---
+- name: Verify the Casval cache lifecycle against a local Kubernetes API fixture
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    casval_cache_namespace: openshift-virtualization-os-images
+    casval_cache_node: casval.igou.systems
+    casval_cache_annotation: molecule.igou.systems/cache-node-uid
+    casval_cache_seeds:
+      - centos-stream10-casval
+      - win11-casval
+      - win2k25-casval
+    casval_test_url: http://127.0.0.1:18765
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ casval_test_url }}"
+      api_key: local-fixture-no-credentials
+      validate_certs: false
+  tasks:
+    - name: Start the local API simulator without cluster credentials
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/api.py"
+          - '18765'
+          - "{{ playbook_dir }}/cache-config.yml"
+      async: 600
+      poll: 0
+      changed_when: false
+
+    - name: Exercise production cache tasks
+      block:
+        - name: Wait for the simulator
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            return_content: true
+          register: casval_test_state
+          retries: 10
+          delay: 1
+          until: casval_test_state.status == 200
+
+        - name: Acquire a cache with legacy complete and pending imports
+          ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_image_cache.yml
+
+        - name: Read the migrated cache
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            return_content: true
+          register: casval_test_state
+
+        - name: Require preserved legacy data and exactly three completed replacements
+          ansible.builtin.assert:
+            that:
+              - casval_test_state.json.objects | selectattr('kind', 'equalto', 'DataImportCron') | list | length == 0
+              - casval_test_state.json.objects | selectattr('kind', 'equalto', 'DataVolume') | list | length == 3
+              - casval_test_state.json.events | selectattr('action', 'equalto', 'copy') | list | length == 3
+              - casval_test_state.json.events | selectattr('action', 'equalto', 'retired') | map(attribute='protected') | min >= 3
+              - casval_test_state.json.events | selectattr('action', 'equalto', 'legacy_cleanup') | list | length == 0
+              - casval_test_state.json.objects | selectattr('kind', 'equalto', 'DataVolume') | map(attribute='status.phase') | unique | list == ['Succeeded']
+
+        - name: Start a new acquisition observation
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            method: POST
+            body_format: json
+            body:
+              checkpoint: true
+
+        - name: Acquire the same source revisions again
+          ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_image_cache.yml
+
+        - name: Inspect the repeated acquisition
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            return_content: true
+          register: casval_test_reuse
+
+        - name: Require reuse without new copies or deletion
+          ansible.builtin.assert:
+            that:
+              - casval_test_reuse.json.events | selectattr('action', 'equalto', 'copy') | list | length == 0
+              - casval_test_reuse.json.events | selectattr('action', 'equalto', 'delete') | list | length == 0
+
+        - name: Publish a newer golden image without acquiring Casval
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            method: POST
+            body_format: json
+            body:
+              revision: true
+              fail: true
+              checkpoint: true
+          register: casval_test_offline
+
+        - name: Require no automatic import when a golden changes
+          ansible.builtin.assert:
+            that:
+              - casval_test_offline.json.events | length == 0
+              - casval_test_offline.json.objects | selectattr('kind', 'equalto', 'DataImportCron') | list | length == 0
+
+        - name: Exercise a failed refresh
+          block:
+            - name: Attempt acquisition with a broken golden copy
+              ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_image_cache.yml
+            - name: Record an unexpected successful refresh
+              ansible.builtin.set_fact:
+                casval_test_failure_caught: false
+          rescue:
+            - name: Record the expected refresh failure
+              ansible.builtin.set_fact:
+                casval_test_failure_caught: true
+
+        - name: Inspect the failed refresh cleanup
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            return_content: true
+          register: casval_test_failed
+
+        - name: Require the last usable seed and no unfinished copies
+          ansible.builtin.assert:
+            that:
+              - casval_test_failure_caught
+              - casval_test_failed.json.objects | selectattr('kind', 'equalto', 'DataSource') | selectattr('metadata.name', 'equalto', 'centos-stream10-casval') | map(attribute='spec.source') | list == casval_test_reuse.json.objects | selectattr('kind', 'equalto', 'DataSource') | selectattr('metadata.name', 'equalto', 'centos-stream10-casval') | map(attribute='spec.source') | list
+              - casval_test_failed.json.objects | selectattr('kind', 'equalto', 'DataVolume') | map(attribute='status.phase') | unique | list == ['Succeeded']
+              - casval_test_failed.json.objects | selectattr('kind', 'equalto', 'PersistentVolumeClaim') | map(attribute='status.phase') | unique | list == ['Bound']
+
+        - name: Repair the copy source
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            method: POST
+            body_format: json
+            body:
+              fail: false
+              checkpoint: true
+
+        - name: Refresh the changed source successfully
+          ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_image_cache.yml
+
+        - name: Inspect the successful refresh
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            return_content: true
+          register: casval_test_refreshed
+
+        - name: Require only the changed image to be recopied
+          ansible.builtin.assert:
+            that:
+              - casval_test_refreshed.json.events | selectattr('action', 'equalto', 'copy') | list | length == 1
+              - casval_test_refreshed.json.objects | selectattr('kind', 'equalto', 'DataVolume') | list | length == 3
+
+        - name: Simulate destructive reprovisioning
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            method: POST
+            body_format: json
+            body:
+              reprovision: true
+              checkpoint: true
+
+        - name: Rebuild the cache on the new installation
+          ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_image_cache.yml
+
+        - name: Inspect the recovered installation
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            return_content: true
+          register: casval_test_recovered
+
+        - name: Require fresh copies and the matching installation marker
+          vars:
+            casval_test_node: "{{ casval_test_recovered.json.objects | selectattr('kind', 'equalto', 'Node') | first }}"
+          ansible.builtin.assert:
+            that:
+              - casval_test_recovered.json.events | selectattr('action', 'equalto', 'copy') | list | length == 3
+              - casval_test_node.metadata.annotations[casval_cache_annotation] == casval_test_node.metadata.uid
+
+        - name: Release a cache containing an unfinished copy
+          ansible.builtin.include_tasks: release.yml
+
+        - name: Remove the optional cache definition
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            method: POST
+            body_format: json
+            body:
+              absent: true
+              checkpoint: true
+
+        - name: Preserve GPU-only acquisitions without a cache deployment
+          ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_image_cache.yml
+
+        - name: Inspect the GPU-only acquisition
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            return_content: true
+          register: casval_test_optional
+
+        - name: Require the optional cache path to perform no writes
+          ansible.builtin.assert:
+            that: casval_test_optional.json.events | length == 0
+
+        - name: Restore legacy fixtures with Casval offline
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            method: POST
+            body_format: json
+            body:
+              reset: true
+              offline: true
+              checkpoint: true
+
+        - name: Migrate and release the legacy cache without provisioning Casval
+          ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_cache_release.yml
+
+        - name: Inspect the offline migration
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_test"
+            return_content: true
+          register: casval_test_offline_release
+
+        - name: Require completed legacy seeds to survive without new imports
+          ansible.builtin.assert:
+            that:
+              - casval_test_offline_release.json.events | selectattr('action', 'equalto', 'copy') | list | length == 0
+              - casval_test_offline_release.json.events | selectattr('action', 'equalto', 'legacy_cleanup') | list | length == 0
+              - casval_test_offline_release.json.objects | selectattr('kind', 'equalto', 'DataImportCron') | list | length == 0
+              - casval_test_offline_release.json.objects | selectattr('kind', 'equalto', 'DataVolume') | list | length == 3
+              - casval_test_offline_release.json.objects | selectattr('kind', 'equalto', 'DataSource') | list | length == 6
+              - casval_test_offline_release.json.objects | selectattr('kind', 'equalto', 'PersistentVolumeClaim') | map(attribute='status.phase') | unique | list == ['Bound']
+      always:
+        - name: Stop the local API simulator
+          ansible.builtin.uri:
+            url: "{{ casval_test_url }}/_stop"
+            method: POST
