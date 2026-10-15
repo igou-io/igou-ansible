@@ -66,28 +66,63 @@
         fail_msg: Multiple vps-k3s items exist; do not overwrite an ambiguous credential.
       no_log: true
 
-    - name: Publish generated management credentials through Connect
-      onepassword.connect.generic_item:
-        vault_id: "{{ vps_access_vault_id }}"
-        uuid: >-
-          {{ ((vps_access_items.json | selectattr('title', 'equalto', 'vps-k3s') | list | first).id)
-             if (vps_access_items.json | selectattr('title', 'equalto', 'vps-k3s') | list | length > 0) else omit }}
-        name: vps-k3s
-        category: api_credential
-        state: present
-        fields:
-          - label: argocd_token
-            field_type: concealed
+    - name: Read the existing management item privately
+      ansible.builtin.uri:
+        url: "{{ vps_connect_host_lookup }}/v1/vaults/{{ vps_access_vault_id }}/items/{{ (vps_access_items.json | selectattr('title', 'equalto', 'vps-k3s') | first).id }}"
+        headers:
+          Authorization: "Bearer {{ vps_connect_token_lookup }}"
+        return_content: true
+      delegate_to: localhost
+      become: false
+      register: vps_access_existing_item
+      when: vps_access_items.json | selectattr('title', 'equalto', 'vps-k3s') | list | length == 1
+      no_log: true
+
+    - name: Prepare the generated management credential fields privately
+      ansible.builtin.set_fact:
+        vps_access_fields:
+          - id: argocd_token
+            label: argocd_token
+            type: CONCEALED
             value: "{{ vps_argocd_access.resources[0]['data']['token'] | b64decode }}"
           # k8s_info redacts returned CA data when it matches its input kubeconfig.
-          - label: ca_data
-            field_type: concealed
+          - id: ca_data
+            label: ca_data
+            type: CONCEALED
             value: "{{ vps_admin_kubeconfig.clusters[0].cluster['certificate-authority-data'] }}"
-          - label: kubeconfig
-            field_type: concealed
+          - id: kubeconfig
+            label: kubeconfig
+            type: CONCEALED
             value: >-
               {{ (vps_admin_access.content | b64decode |
                   replace('https://127.0.0.1:6443', 'https://' ~ vps_tailnet_fqdn ~ ':6443')) | b64encode }}
+      no_log: true
+
+    - name: Create or update changed management credentials through Connect
+      ansible.builtin.uri:
+        url: >-
+          {{ vps_connect_host_lookup }}/v1/vaults/{{ vps_access_vault_id }}/items{{
+             '/' ~ vps_access_existing_item.json.id if vps_access_existing_item.json is defined else '' }}
+        method: "{{ 'PUT' if vps_access_existing_item.json is defined else 'POST' }}"
+        headers:
+          Authorization: "Bearer {{ vps_connect_token_lookup }}"
+        body_format: json
+        body: >-
+          {{ (vps_access_existing_item.json | default({})) | combine({
+               'vault': {'id': vps_access_vault_id},
+               'title': 'vps-k3s',
+               'category': 'API_CREDENTIAL',
+               'fields': (vps_access_existing_item.json.fields | default([]) |
+                 rejectattr('label', 'in', vps_access_fields | map(attribute='label') | list) | list) + vps_access_fields}) }}
+        status_code:
+          - 200
+          - 201
       delegate_to: localhost
       become: false
+      when: >-
+        (vps_access_existing_item.json.fields | default([]) |
+          selectattr('label', 'in', vps_access_fields | map(attribute='label') | list) |
+          items2dict(key_name='label', value_name='value')) !=
+        (vps_access_fields | items2dict(key_name='label', value_name='value'))
+      changed_when: true
       no_log: true
