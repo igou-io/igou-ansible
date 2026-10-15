@@ -1,0 +1,16 @@
+---
+- name: Read the optional Casval cache definition before release
+  kubernetes.core.k8s_info:
+    kind: ConfigMap
+    name: casval-image-cache
+    namespace: "{{ casval_cache_namespace }}"
+  register: casval_cache_release_config
+
+- name: Stop the deployed cache before releasing its storage
+  when: casval_cache_release_config.resources | length > 0
+  block:
+    - name: Retire any remaining legacy image feeds
+      ansible.builtin.include_tasks: casval_cache_migrate.yml
+
+    - name: Remove incomplete local copies
+      ansible.builtin.include_tasks: casval_cache_cleanup.yml

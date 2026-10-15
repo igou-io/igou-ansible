@@ -1,0 +1,84 @@
+---
+- name: Request an unfinished copy with no phase yet
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: cdi.kubevirt.io/v1beta1
+      kind: DataVolume
+      metadata:
+        name: win11-casval-interrupted
+        namespace: "{{ casval_cache_namespace }}"
+        labels:
+          molecule.igou.systems/image-cache: casval
+          molecule.igou.systems/seed: win11-casval
+      spec:
+        source:
+          pvc:
+            name: win11
+            namespace: "{{ casval_cache_namespace }}"
+        storage:
+          storageClassName: lvms-casval
+          volumeMode: Block
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 50Gi
+
+- name: Make the copy unfinished in the fixture
+  kubernetes.core.k8s:
+    state: patched
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataVolume
+    name: win11-casval-interrupted
+    namespace: "{{ casval_cache_namespace }}"
+    definition:
+      status:
+        phase: null
+
+- name: Run production release cleanup
+  ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_cache_release.yml
+
+- name: Inspect release cleanup
+  ansible.builtin.uri:
+    url: "{{ casval_test_url }}/_test"
+    return_content: true
+  register: casval_test_released
+
+- name: Require no unfinished imports and preserve completed seeds
+  ansible.builtin.assert:
+    that:
+      - casval_test_released.json.objects | selectattr('kind', 'equalto', 'DataVolume') | list | length == 3
+      - casval_test_released.json.objects | selectattr('kind', 'equalto', 'DataVolume') | map(attribute='status.phase') | unique | list == ['Succeeded']
+
+- name: Introduce a mislabeled shared-storage claim
+  ansible.builtin.uri:
+    url: "{{ casval_test_url }}/_test"
+    method: POST
+    body_format: json
+    body:
+      unsafe: true
+
+- name: Exercise the storage boundary guard
+  block:
+    - name: Attempt cleanup of a mislabeled shared-storage object
+      ansible.builtin.include_tasks: ../../../playbooks/openshift/tasks/casval_cache_cleanup.yml
+    - name: Record an unexpected deletion
+      ansible.builtin.set_fact:
+        casval_test_boundary_caught: false
+  rescue:
+    - name: Record the expected storage boundary rejection
+      ansible.builtin.set_fact:
+        casval_test_boundary_caught: true
+
+- name: Inspect the protected shared claim
+  ansible.builtin.uri:
+    url: "{{ casval_test_url }}/_test"
+    return_content: true
+  register: casval_test_boundary
+
+- name: Require shared storage to remain untouched
+  ansible.builtin.assert:
+    that:
+      - casval_test_boundary_caught
+      - casval_test_boundary.json.objects | selectattr('metadata.name', 'equalto', 'foreign') | list | length == 1

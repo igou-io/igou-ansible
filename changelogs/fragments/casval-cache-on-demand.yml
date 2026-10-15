@@ -1,0 +1,4 @@
+---
+bugfixes:
+  - casval_scale - refreshed local image seeds only during lease acquisition and removed unfinished copies before release, avoiding expected offline import alerts (https://github.com/igou-io/igou-ansible/pull/604).
+  - casval_scale - preserved legacy seed objects before retiring scheduled image feeds and published replacement seeds only after their copies succeeded.

@@ -1,0 +1,37 @@
+---
+- name: Read unfinished local cache DataVolumes
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataVolume
+    namespace: "{{ casval_cache_namespace }}"
+    label_selectors:
+      - molecule.igou.systems/image-cache=casval
+  register: casval_cache_unfinished
+  no_log: true
+
+- name: Remove unfinished copies while preserving completed seeds
+  ansible.builtin.include_tasks: casval_cache_remove.yml
+  loop: "{{ casval_cache_unfinished.resources }}"
+  loop_control:
+    loop_var: casval_cache_object
+    label: "{{ casval_cache_object.metadata.name }}"
+  when: casval_cache_object.status.phase | default('') != 'Succeeded'
+  no_log: true
+
+- name: Read unbound cache claims left without a completed copy
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    namespace: "{{ casval_cache_namespace }}"
+    label_selectors:
+      - molecule.igou.systems/image-cache=casval
+  register: casval_cache_unbound
+  no_log: true
+
+- name: Remove unbound cache claims before the node is released
+  ansible.builtin.include_tasks: casval_cache_remove.yml
+  loop: "{{ casval_cache_unbound.resources }}"
+  loop_control:
+    loop_var: casval_cache_object
+    label: "{{ casval_cache_object.metadata.name }}"
+  when: casval_cache_object.status.phase | default('') != 'Bound'
+  no_log: true

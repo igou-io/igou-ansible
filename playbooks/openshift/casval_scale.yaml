@@ -235,6 +235,12 @@
               automation.igou.systems/casval-lease-expires: "0"
       when: casval_state == 'up'
 
+    - name: Stop unfinished cache work before releasing the node
+      ansible.builtin.include_tasks: tasks/casval_cache_release.yml
+      when:
+        - casval_state == 'down'
+        - casval_scale_allowed
+
     - name: Scale the casval-worker MachineSet
       kubernetes.core.k8s:
         state: patched
@@ -319,7 +325,7 @@
                 msg: >-
                   Casval image cache recovery failed. The previous lease and
                   replica count were restored. Inspect the three local image
-                  feeds, correct the import failure and retry acquisition.
+                  seeds, correct the copy failure and retry acquisition.
 
     - name: Wait for the casval Machine to be deleted
       kubernetes.core.k8s_info:

@@ -1,0 +1,63 @@
+---
+- name: Read the legacy Casval image feeds
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataImportCron
+    namespace: "{{ casval_cache_namespace }}"
+    label_selectors:
+      - molecule.igou.systems/image-cache=casval
+  register: casval_cache_legacy
+
+- name: Refuse to migrate unrelated image feeds
+  ansible.builtin.assert:
+    that:
+      - casval_cache_legacy.resources | map(attribute='metadata.name') | difference(casval_cache_seeds) | length == 0
+      - casval_cache_legacy.resources | map(attribute='spec.template.spec.storage.storageClassName') | reject('equalto', 'lvms-casval') | list | length == 0
+    fail_msg: Cache migration only manages the three declared Casval-local feeds.
+
+- name: Disable polling and automatic garbage collection before migrating
+  kubernetes.core.k8s:
+    state: patched
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataImportCron
+    name: "{{ item.metadata.name }}"
+    namespace: "{{ casval_cache_namespace }}"
+    definition:
+      metadata:
+        uid: "{{ item.metadata.uid }}"
+      spec:
+        schedule: ""
+        retentionPolicy: RetainAll
+        garbageCollect: Never
+  loop: "{{ casval_cache_legacy.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+
+# RetainAll does not remove CDI's existing dataImportCron.cleanup labels.
+# Detach the resources from the old feed before deleting it: its cleanup
+# reconciler selects those labels, even after the DataImportCron is gone.
+- name: Preserve legacy seed objects before removing their image feeds
+  ansible.builtin.include_tasks: casval_cache_retain.yml
+  loop:
+    - DataSource
+    - DataVolume
+    - PersistentVolumeClaim
+    - VolumeSnapshot
+  loop_control:
+    loop_var: casval_cache_kind
+  when: casval_cache_legacy.resources | length > 0
+
+- name: Remove the retired image feeds
+  kubernetes.core.k8s:
+    state: absent
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataImportCron
+    name: "{{ item.metadata.name }}"
+    namespace: "{{ casval_cache_namespace }}"
+    wait: true
+    delete_options:
+      preconditions:
+        uid: "{{ item.metadata.uid }}"
+  loop: "{{ casval_cache_legacy.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
