@@ -15,27 +15,9 @@
       - casval_cache_legacy.resources | map(attribute='spec.template.spec.storage.storageClassName') | reject('equalto', 'lvms-casval') | list | length == 0
     fail_msg: Cache migration only manages the three declared Casval-local feeds.
 
-- name: Disable polling and automatic garbage collection before migrating
-  kubernetes.core.k8s:
-    state: patched
-    api_version: cdi.kubevirt.io/v1beta1
-    kind: DataImportCron
-    name: "{{ item.metadata.name }}"
-    namespace: "{{ casval_cache_namespace }}"
-    definition:
-      metadata:
-        uid: "{{ item.metadata.uid }}"
-      spec:
-        schedule: ""
-        retentionPolicy: RetainAll
-        garbageCollect: Never
-  loop: "{{ casval_cache_legacy.resources }}"
-  loop_control:
-    label: "{{ item.metadata.name }}"
-
-# RetainAll does not remove CDI's existing dataImportCron.cleanup labels.
-# Detach the resources from the old feed before deleting it: its cleanup
-# reconciler selects those labels, even after the DataImportCron is gone.
+# The installed CDI webhook makes the entire DataImportCron spec immutable.
+# Its deletion reconciler selects child objects by their persisted cleanup
+# labels, not the deleted cron's retentionPolicy. Detach those labels instead.
 - name: Preserve legacy seed objects before removing their image feeds
   ansible.builtin.include_tasks: casval_cache_retain.yml
   loop:
@@ -58,6 +40,7 @@
     delete_options:
       preconditions:
         uid: "{{ item.metadata.uid }}"
+        resourceVersion: "{{ item.metadata.resourceVersion }}"
   loop: "{{ casval_cache_legacy.resources }}"
   loop_control:
     label: "{{ item.metadata.name }}"

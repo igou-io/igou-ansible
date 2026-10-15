@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - casval_scale - retired legacy cache feeds using metadata-only cleanup protection, matching the installed CDI webhook's immutable DataImportCron specs.

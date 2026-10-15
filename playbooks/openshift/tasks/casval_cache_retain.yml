@@ -28,3 +28,15 @@
   loop_control:
     label: "{{ item.metadata.name }}"
   no_log: true
+
+- name: Verify no objects of this kind remain in the legacy cleanup selector
+  kubernetes.core.k8s_info:
+    api_version: "{{ 'v1' if casval_cache_kind == 'PersistentVolumeClaim' else 'snapshot.storage.k8s.io/v1' if casval_cache_kind == 'VolumeSnapshot' else 'cdi.kubevirt.io/v1beta1' }}"
+    kind: "{{ casval_cache_kind }}"
+    namespace: "{{ casval_cache_namespace }}"
+    label_selectors:
+      - "cdi.kubevirt.io/dataImportCron in ({{ casval_cache_seeds | join(',') }})"
+      - cdi.kubevirt.io/dataImportCron.cleanup=true
+  register: casval_cache_cleanup_candidates
+  failed_when: casval_cache_cleanup_candidates.resources | length > 0
+  no_log: true

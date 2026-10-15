@@ -196,6 +196,9 @@ class API(BaseHTTPRequestHandler):
             delete(key)
             return self.reply({'kind': 'Status', 'status': 'Success', 'code': 200})
         old = copy.deepcopy(current)
+        if current is not None and kind == 'DataImportCron' and 'spec' in body and body['spec'] != current['spec']:
+            return self.reply({'kind': 'Status', 'status': 'Failure', 'reason': 'Invalid',
+                               'message': 'Cannot update DataImportCron Spec', 'code': 422}, 422)
         if current is None:
             current = put(kind, name, namespace=namespace)
         merge(current, body)
