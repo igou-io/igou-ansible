@@ -1,0 +1,9 @@
+---
+- name: Reconcile the committed GitOps bundle through the Kubernetes API
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: vps-molecule
+    definition: "{{ lookup('kubernetes.core.kustomize', dir=vps_test_manifest_directory ~ '/' ~ vps_test_bundle, enable_helm=true) | from_yaml_all | list }}"
+  no_log: true

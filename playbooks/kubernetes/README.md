@@ -10,6 +10,33 @@ cluster lifetime, don't mix.
 | `prepare-k3s-datastore.yml`       | ZFS pool + data-dir mounts on the control plane (run first).   |
 | `install-kubernetes-cluster.yml`  | Alternative. Install kubeadm-based kubernetes via `geerlingguy.kubernetes` (+ `geerlingguy.containerd`). |
 | `bootstrap-gitops.yaml`           | Post-install: seeds the ESO Connect token, installs argocd, applies the igou-kubernetes app-of-apps root. Runs against `localhost`, talks to whatever `KUBECONFIG` points at. |
+| `bootstrap-vps.yaml` | Standalone Debian VPS: public API firewall guard, host Tailscale, and lean pinned k3s; node-exporter is a GitOps-managed pod. |
+| `publish-vps-access.yaml` | Seeds seven namespaces and the cluster-admin Argo identity through the Kubernetes API using system:admin, then publishes its generated token, CA and administrator kubeconfig to the management vault. Seeds no pods or separate ESO credential. |
+
+## Standalone VPS
+
+The VPS is cluster `vps`, inventory host `igou.io`. Target both VPS playbooks
+explicitly with `ansible_limit=igou.io`; their default target is `none`.
+AAP templates are `vps_bootstrap_host` and `vps_publish_access`.
+Host settings and all secret lookup expressions belong in inventory.
+Bootstrap installs Debian `python3-kubernetes` and `python3-jsonpatch` for the
+API modules. The publisher reads the native admin kubeconfig into memory and
+uses `kubernetes.core.k8s` over localhost. It stages no manifests or Secret files
+under `/etc/rancher/k3s`; k3s owns its native admin kubeconfig there.
+These Python libraries add no running daemon.
+
+VPS Kubernetes manifests live in `igou-kubernetes/clusters/vps/`. OpenShift-side
+Argo/ESO management resources live in
+`igou-openshift/clusters/ocp/{vps-gitops,vps,vps-secrets}/`. A dedicated Argo CD
+instance runs on OpenShift; one ESO controller on the VPS distributes mirrored
+Secrets through `ClusterSecretStore/local-mirrors`. Do not use the rk8s install/bootstrap path unchanged:
+it disables a firewall, installs homelab storage clients, and installs local
+controllers. The public firewall guard must be active before the first k3s
+startup and remain a service dependency. Node-exporter runs as a host-network
+DaemonSet in `node-exporter`, rendered from the Prometheus community Helm chart;
+the guard blocks public TCP 9100. GitOps installs it after the AAP seed. The shared
+host exporter playbook refuses `cluster_name=vps`. Operational guidance is in
+`igou-docs/kubernetes/VPS Kubernetes Architecture and Migration.md`.
 
 ## Inventory
 

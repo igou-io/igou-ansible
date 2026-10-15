@@ -1,0 +1,14 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=VPS public management port guard
+Before=k3s.service
+After=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft --file /etc/nftables.d/vps-guard.nft
+ExecReload=/usr/sbin/nft --file /etc/nftables.d/vps-guard.nft
+
+[Install]
+WantedBy=multi-user.target

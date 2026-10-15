@@ -1,0 +1,6 @@
+---
+scenario:
+  name: kubernetes-vps
+ansible:
+  playbooks:
+    prepare: prepare.yml

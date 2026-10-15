@@ -1,0 +1,42 @@
+---
+- name: Require one explicitly selected VPS
+  ansible.builtin.assert:
+    that:
+      - ansible_play_hosts_all | length == 1
+      - cluster_name == 'vps'
+    fail_msg: Select exactly one VPS host for namespace and Argo identity seeding.
+
+- name: Render the committed namespace and Argo identity seed on the controller
+  ansible.builtin.set_fact:
+    vps_access_manifest: "{{ vps_bootstrap_manifest_lookup }}"
+
+- name: Read the native administrator kubeconfig privately
+  ansible.builtin.slurp:
+    src: /etc/rancher/k3s/k3s.yaml
+  register: vps_admin_access
+  no_log: true
+
+- name: Load administrator API authentication into memory
+  ansible.builtin.set_fact:
+    vps_admin_kubeconfig: "{{ vps_admin_access.content | b64decode | from_yaml }}"
+  no_log: true
+
+- name: Seed namespaces through the Kubernetes API
+  kubernetes.core.k8s:
+    kubeconfig: "{{ vps_admin_kubeconfig }}"
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: vps-bootstrap
+    definition: "{{ vps_access_manifest | from_yaml_all | selectattr('kind', 'equalto', 'Namespace') | list }}"
+  no_log: true
+
+- name: Seed the Argo identity and token Secret through the Kubernetes API
+  kubernetes.core.k8s:
+    kubeconfig: "{{ vps_admin_kubeconfig }}"
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: vps-bootstrap
+    definition: "{{ vps_access_manifest | from_yaml_all | rejectattr('kind', 'equalto', 'Namespace') | list }}"
+  no_log: true

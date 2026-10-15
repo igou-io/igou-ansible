@@ -1,0 +1,92 @@
+---
+- name: Seed VPS namespaces and Argo identity and publish controller access
+  hosts: "{{ ansible_limit | default('none') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require the intended standalone VPS and management credential inputs
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all == ['igou.io']
+          - cluster_name == 'vps'
+          - vps_connect_host_lookup | length > 0
+          - vps_connect_token_lookup | length > 0
+        fail_msg: Select igou.io and provide controller-side Connect credentials.
+      no_log: true
+
+    - name: Seed only namespaces and the Argo access identity
+      ansible.builtin.include_tasks: tasks/seed-vps-access.yml
+
+    - name: Read the generated Argo service-account credential through the API
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ vps_admin_kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        name: argocd-manager-token
+        namespace: argocd
+      register: vps_argocd_access
+      until:
+        - vps_argocd_access.resources | length == 1
+        - vps_argocd_access.resources[0].get('data', {}).get('token', '') | length > 0
+      retries: 15
+      delay: 2
+      no_log: true
+
+    - name: Resolve the management vault ID
+      ansible.builtin.uri:
+        url: "{{ vps_connect_host_lookup }}/v1/vaults"
+        headers:
+          Authorization: "Bearer {{ vps_connect_token_lookup }}"
+        return_content: true
+      delegate_to: localhost
+      become: false
+      register: vps_access_vaults
+      no_log: true
+
+    - name: Select the exact management vault
+      ansible.builtin.set_fact:
+        vps_access_vault_id: "{{ (vps_access_vaults.json | selectattr('name', 'equalto', 'lab_agents') | list | first).id }}"
+      no_log: true
+
+    - name: Find an existing VPS access item without revealing contents
+      ansible.builtin.uri:
+        url: "{{ vps_connect_host_lookup }}/v1/vaults/{{ vps_access_vault_id }}/items"
+        headers:
+          Authorization: "Bearer {{ vps_connect_token_lookup }}"
+        return_content: true
+      delegate_to: localhost
+      become: false
+      register: vps_access_items
+      no_log: true
+
+    - name: Require an unambiguous access item
+      ansible.builtin.assert:
+        that:
+          - vps_access_items.json | selectattr('title', 'equalto', 'vps-k3s') | list | length <= 1
+        fail_msg: Multiple vps-k3s items exist; do not overwrite an ambiguous credential.
+      no_log: true
+
+    - name: Publish generated management credentials through Connect
+      onepassword.connect.generic_item:
+        vault_id: "{{ vps_access_vault_id }}"
+        uuid: >-
+          {{ ((vps_access_items.json | selectattr('title', 'equalto', 'vps-k3s') | list | first).id)
+             if (vps_access_items.json | selectattr('title', 'equalto', 'vps-k3s') | list | length > 0) else omit }}
+        name: vps-k3s
+        category: api_credential
+        state: present
+        fields:
+          - label: argocd_token
+            field_type: concealed
+            value: "{{ vps_argocd_access.resources[0]['data']['token'] | b64decode }}"
+          - label: ca_data
+            field_type: concealed
+            value: "{{ vps_argocd_access.resources[0]['data']['ca.crt'] }}"
+          - label: kubeconfig
+            field_type: concealed
+            value: >-
+              {{ (vps_admin_access.content | b64decode |
+                  replace('https://127.0.0.1:6443', 'https://' ~ vps_tailnet_fqdn ~ ':6443')) | b64encode }}
+      delegate_to: localhost
+      become: false
+      no_log: true

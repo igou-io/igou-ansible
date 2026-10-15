@@ -1,0 +1,335 @@
+---
+- name: Verify Kubernetes works behind the public firewall guard
+  hosts: molecule
+  become: true
+  gather_facts: false
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ vps_admin_kubeconfig }}"
+  tasks:
+    - name: Read the native administrator kubeconfig privately
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/k3s.yaml
+      register: vps_admin_access
+      no_log: true
+
+    - name: Load administrator API authentication into memory
+      ansible.builtin.set_fact:
+        vps_admin_kubeconfig: "{{ vps_admin_access.content | b64decode | from_yaml }}"
+      no_log: true
+
+    - name: Read the seeded Argo credential through the API
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: argocd-manager-token
+        namespace: argocd
+      register: vps_test_access
+      until:
+        - vps_test_access.resources | length == 1
+        - vps_test_access.resources[0].get('data', {}).get('token', '') | length > 0
+      retries: 15
+      delay: 2
+      no_log: true
+
+    - name: Build the Argo API client configuration in memory
+      ansible.builtin.set_fact:
+        vps_test_argocd_kubeconfig:
+          apiVersion: v1
+          kind: Config
+          clusters:
+            - name: vps
+              cluster:
+                server: https://127.0.0.1:6443
+                certificate-authority-data: "{{ vps_test_access.resources[0].data['ca.crt'] }}"
+          users:
+            - name: argocd
+              user:
+                token: "{{ vps_test_access.resources[0].data.token | b64decode }}"
+          contexts:
+            - name: vps
+              context:
+                cluster: vps
+                user: argocd
+          current-context: vps
+      no_log: true
+
+    - name: Confirm the seeded credential authenticates as the Argo service account
+      kubernetes.core.k8s:
+        kubeconfig: "{{ vps_test_argocd_kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: authentication.k8s.io/v1
+          kind: SelfSubjectReview
+          metadata: {}
+          spec: {}
+      changed_when: false
+      register: vps_test_identity
+      no_log: true
+
+    - name: Confirm the seeded credential can administer the cluster
+      kubernetes.core.k8s:
+        kubeconfig: "{{ vps_test_argocd_kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: authorization.k8s.io/v1
+          kind: SelfSubjectAccessReview
+          metadata: {}
+          spec:
+            resourceAttributes:
+              group: '*'
+              resource: '*'
+              verb: '*'
+      changed_when: false
+      register: vps_test_admin
+      no_log: true
+
+    - name: Check the mirror reader permissions
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl auth can-i {{ item.action }} secrets
+        --namespace={{ item.namespace }} --as=system:serviceaccount:external-secrets:mirror-reader
+      register: vps_test_reader
+      changed_when: false
+      failed_when: vps_test_reader.rc not in [0, 1]
+      loop:
+        - action: get
+          namespace: external-secrets
+          expected: 'yes'
+        - action: update
+          namespace: external-secrets
+          expected: 'no'
+        - action: get
+          namespace: kube-system
+          expected: 'no'
+
+    - name: Assert mirror access is read only and scoped
+      ansible.builtin.assert:
+        that:
+          - item.stdout == item.item.expected
+      loop: "{{ vps_test_reader.results }}"
+      loop_control:
+        label: "{{ item.item.action }} in {{ item.item.namespace }}"
+
+    - name: Confirm the three application credential mappings
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: "{{ item.name }}"
+        namespace: "{{ item.namespace }}"
+      register: vps_test_credentials
+      no_log: true
+      loop:
+        - name: gateway-public-tls
+          namespace: nginx-gateway
+        - name: operator-oauth
+          namespace: tailscale
+        - name: gotify-admin
+          namespace: gotify
+
+    - name: Assert the credentials were distributed through the local store
+      ansible.builtin.assert:
+        that:
+          - vps_test_credentials.results[0].resources[0].type == 'kubernetes.io/tls'
+          - (vps_test_credentials.results[0].resources[0].data['tls.crt'] | b64decode) == vps_test_tls_bundle['tls.crt']
+          - (vps_test_credentials.results[0].resources[0].data['tls.key'] | b64decode) == vps_test_tls_bundle['tls.key']
+          - (vps_test_credentials.results[1].resources[0].data.client_id | b64decode) == 'fixture-client'
+          - (vps_test_credentials.results[1].resources[0].data.client_secret | b64decode) == 'fixture-secret'
+          - (vps_test_credentials.results[2].resources[0].data.password | b64decode) == 'fixture-gotify'
+      no_log: true
+
+    - name: Rotate the dummy mirrored certificate and private key together
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: vps-public-tls
+            namespace: external-secrets
+          data:
+            bundle: "{{ vps_test_tls_rotated_bundle | to_json | b64encode }}"
+      no_log: true
+
+    - name: Ask ESO to reconcile the renewed certificate immediately
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl annotate externalsecret/gateway-public-tls --namespace=nginx-gateway
+        force-sync={{ now(utc=true).strftime('%s') }} --overwrite
+      changed_when: true
+
+    - name: Confirm the renewed pair reaches the Gateway Secret together
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: gateway-public-tls
+        namespace: nginx-gateway
+      register: vps_test_tls_rotated
+      until:
+        - (vps_test_tls_rotated.resources[0].data['tls.crt'] | b64decode) == vps_test_tls_rotated_bundle['tls.crt']
+        - (vps_test_tls_rotated.resources[0].data['tls.key'] | b64decode) == vps_test_tls_rotated_bundle['tls.key']
+      retries: 20
+      delay: 3
+      no_log: true
+
+    - name: Rotate the dummy mirrored Gotify credential
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: vps-gotify
+            namespace: external-secrets
+          data:
+            password: "{{ 'fixture-rotated' | b64encode }}"
+      no_log: true
+
+    - name: Ask ESO to reconcile the changed mirror immediately
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl annotate externalsecret/gotify-admin --namespace=gotify
+        force-sync={{ now(utc=true).strftime('%s') }} --overwrite
+      changed_when: true
+
+    - name: Confirm local rotation reaches the application namespace
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: gotify-admin
+        namespace: gotify
+      register: vps_test_rotated
+      until: (vps_test_rotated.resources[0].data.password | b64decode) == 'fixture-rotated'
+      retries: 20
+      delay: 3
+      no_log: true
+
+    - name: Confirm ESO has only its controller deployment
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get deployments --namespace=external-secrets --output=json
+      register: vps_test_eso
+      changed_when: false
+
+    - name: Request distribution in a namespace outside the store allowlist
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: external-secrets.io/v1
+          kind: ExternalSecret
+          metadata:
+            name: denied-mirror
+            namespace: igou-io
+          spec:
+            secretStoreRef:
+              name: local-mirrors
+              kind: ClusterSecretStore
+            target:
+              name: denied-mirror
+            data:
+              - secretKey: password
+                remoteRef:
+                  key: vps-gotify
+                  property: password
+
+    - name: Confirm ESO rejects the unapproved namespace
+      ansible.builtin.command: >-
+        /usr/local/bin/k3s kubectl wait externalsecret/denied-mirror --namespace=igou-io
+        --for=condition=Ready=false --timeout=60s
+      changed_when: false
+
+    - name: Confirm the unapproved namespace receives no Secret
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get secret/denied-mirror --namespace=igou-io --ignore-not-found --output=name
+      register: vps_test_denied_secret
+      changed_when: false
+
+    - name: Confirm the local authenticated API is healthy
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - --raw=/readyz
+      changed_when: false
+      register: vps_test_ready
+
+    - name: Confirm API access through the public interface is blocked
+      ansible.builtin.uri:
+        url: "https://{{ mp_kubevirt_endpoints.api.host }}:{{ mp_kubevirt_endpoints.api.port }}/readyz"
+        validate_certs: false
+        timeout: 3
+      delegate_to: localhost
+      become: false
+      failed_when: false
+      register: vps_test_public
+
+    - name: Confirm Secret encryption is enabled
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - secrets-encrypt
+          - status
+      changed_when: false
+      register: vps_test_encryption
+
+    - name: Verify lightweight packaged workloads
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - deployments
+          - --namespace=kube-system
+          - -o=json
+      changed_when: false
+      register: vps_test_deployments
+
+    - name: Confirm the exporter pod serves host metrics
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9100/metrics
+        return_content: true
+      register: vps_test_exporter
+
+    - name: Confirm public metrics access is blocked
+      ansible.builtin.uri:
+        url: "http://{{ mp_kubevirt_endpoints.exporter.host }}:{{ mp_kubevirt_endpoints.exporter.port }}/metrics"
+        timeout: 3
+      delegate_to: localhost
+      become: false
+      failed_when: false
+      register: vps_test_public_metrics
+
+    - name: Inspect the exporter pod
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - pods
+          - --namespace=node-exporter
+          - --selector=app.kubernetes.io/name=node-exporter
+          - --output=json
+      changed_when: false
+      register: vps_test_exporter_pods
+
+    - name: Read the actual guest memory total
+      ansible.builtin.command: cat /proc/meminfo
+      changed_when: false
+      register: vps_test_host_memory
+
+    - name: Assert the required behavior
+      ansible.builtin.assert:
+        that:
+          - vps_test_identity.result.status.userInfo.username == 'system:serviceaccount:argocd:argocd-manager'
+          - vps_test_admin.result.status.allowed
+          - vps_test_denied_secret.stdout | length == 0
+          - (vps_test_eso.stdout | from_json)['items'] | map(attribute='metadata.name') | list == ['external-secrets']
+          - vps_test_ready.stdout == 'ok'
+          - vps_test_public.status == -1
+          - "'Encryption Status: Enabled' in vps_test_encryption.stdout"
+          - "'traefik' not in ((vps_test_deployments.stdout | from_json)['items'] | map(attribute='metadata.name') | list)"
+          - "'metrics-server' not in ((vps_test_deployments.stdout | from_json)['items'] | map(attribute='metadata.name') | list)"
+          - "'node_memory_MemAvailable_bytes' in vps_test_exporter.content"
+          - vps_test_public_metrics.status == -1
+          - (vps_test_exporter_pods.stdout | from_json)['items'] | length == 1
+          - (vps_test_exporter_pods.stdout | from_json)['items'][0].status.phase == 'Running'
+          - >-
+            (vps_test_exporter.content | regex_findall('(?m)^node_memory_MemTotal_bytes ([0-9.e+-]+)$') | first | float) ==
+            (vps_test_host_memory.stdout | regex_findall('(?m)^MemTotal:[ ]+([0-9]+) kB$') | first | int) * 1024
+        fail_msg: The isolated VPS must report host metrics from its exporter pod and block public API and metrics access.
+      no_log: true

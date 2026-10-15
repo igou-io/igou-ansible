@@ -1,11 +1,11 @@
 # Molecule scenarios
 
-Molecule discovers all 15 scenarios through the shared configuration. Three fresh
+Molecule discovers all 16 scenarios through the shared configuration. Three fresh
 mixed-OS batches passed Linux smoke, node-exporter and Windows general lifecycles
 on Casval, including idempotence, functional verification and cleanup. A separate
 Linux maintenance lifecycle also passed. Cold reinstall/cache recovery passed
 with one BMC warm restart needed to boot the cleaning agent. These results do not
-certify every scenario in the table below.
+verify every scenario in the table below.
 
 All disposable guests use `david_igou.molecule_provisioners` **0.0.6-alpha** with
 KubeVirt on `https://api.ocp.igou.systems:6443`. Scenario names describe use cases;
@@ -72,6 +72,7 @@ set during an isolated lifecycle requires destroying that run first.
 | `devenv-restore` | Stream 10, disposable versioned S3 store, real backup/restore, rollback archive and live container bind-mount refresh. |
 | `grafana-kiosk` | Debian x64 Cog and Chromium guests; dashboard navigation and kiosk behavior against the existing HTTP fixture. |
 | `linux-node-exporter` | Stream 10, external CPU/memory/identity metrics after reboot. |
+| `kubernetes-vps` | Debian 13, 2 vCPUs/2 GiB: real standalone k3s bootstrap, public API firewall denial, local API/encryption checks, namespace/access-only AAP seed, authenticated cluster-admin Argo identity, real node-exporter pod/host metrics, local ESO/ClusterSecretStore mapping and rotation (including the TLS bundle), mirror-reader RBAC, public metrics denial, idempotence and cleanup. Host Tailscale enrollment and OpenShift PushSecret delivery are excluded from the disposable fixture. |
 | `linux-maintenance` | Stream 10 baseline, packages, exclusive SSH keys, update and reboot; fresh admin SSH and passwordless sudo. |
 | `linux-podman-quadlets` | Stream 10 rootless service account, TLS proxy, routing/redirects/auth/denials, Hugo revisions, config restart, update invocation, reboot and teardown/migration cleanup. |
 | `alloy-logging` | Stream 10 journal sender and real Loki receiver; a unique post-reboot message must arrive at Loki. |
@@ -166,7 +167,15 @@ make molecule-destroy MOLECULE_SCENARIO=linux-node-exporter
 Bare `molecule test -s <use-case>` uses the same base. `default` remains usable for
 bare commands. `make molecule-test-all` includes costly image builds and
 credentialed integration tests; individual scenarios are the intended starting
-point. Functional execution stays outside GitHub Actions. Actions install the
+point. The `kubernetes-vps` fixture reads the real seed, exporter, ESO chart, local
+store and consuming ExternalSecrets from the sibling `igou-kubernetes` checkout;
+both repositories must be present. Seed objects and dummy mirrored Secrets go
+directly to the Kubernetes API, without staging manifests or client kubeconfigs.
+Dummy mirrors replace OpenShift delivery,
+including a JSON certificate/key bundle. Placeholder TLS strings exercise
+distribution and pair rotation; they do not prove certificate validity or HTTPS.
+The private Tailscale API path and central PushSecrets require rollout acceptance.
+Functional execution stays outside GitHub Actions. Actions install the
 same root `requirements.yml` for static checks. Playbooks, Molecule and the AWX
 EE share these Galaxy versions, including the pinned provisioner; the RHEL EE
 keeps its own inline Galaxy list. Python controller packages remain in
@@ -228,7 +237,7 @@ If cleanup fails, retain its state and run the matching `molecule-destroy` targe
 The common generated Ansible configuration enables SSH pipelining, 16 forks and
 task timing. Forks parallelize guest tasks; they do not cap VM or scenario count.
 For repeated development on an already-created guest, use `molecule-converge`
-and `molecule-verify`, then destroy when done. Full certification still uses
+and `molecule-verify`, then destroy when done. Full lifecycle testing still uses
 `molecule-test` with a fresh clone, idempotence and teardown.
 
 Debian container-disk guests keep their existing node image-cache path. Fedora

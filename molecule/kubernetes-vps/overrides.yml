@@ -1,0 +1,8 @@
+---
+ansible_limit: molecule  # noqa: var-naming[read-only] -- repository caller target convention
+vps_test_tls_bundle:
+  tls.crt: fixture-certificate
+  tls.key: fixture-private-key
+vps_test_tls_rotated_bundle:
+  tls.crt: fixture-renewed-certificate
+  tls.key: fixture-renewed-private-key

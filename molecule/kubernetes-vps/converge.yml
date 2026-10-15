@@ -1,0 +1,98 @@
+---
+- name: Bootstrap the isolated VPS test server
+  ansible.builtin.import_playbook: ../../playbooks/kubernetes/bootstrap-vps.yaml
+- name: Seed access and reconcile the real VPS exporter and secret distribution
+  hosts: molecule
+  become: true
+  gather_facts: false
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ vps_admin_kubeconfig }}"
+  tasks:
+    - name: Seed the namespaces and Argo identity using the production tasks
+      ansible.builtin.include_tasks: ../../playbooks/kubernetes/tasks/seed-vps-access.yml
+
+    - name: Reconcile the committed GitOps bundles
+      ansible.builtin.include_tasks: tasks/reconcile.yml
+      loop:
+        - bootstrap
+        - external-secrets-operator
+        - external-secrets-config
+        - node-exporter
+      loop_control:
+        loop_var: vps_test_bundle
+
+    - name: Wait for the exporter pod to become ready
+      ansible.builtin.command: /usr/local/bin/k3s kubectl rollout status daemonset/node-exporter --namespace=node-exporter --timeout=180s
+      changed_when: false
+
+    - name: Wait for the single ESO controller
+      ansible.builtin.command: /usr/local/bin/k3s kubectl rollout status deployment/external-secrets --namespace=external-secrets --timeout=180s
+      changed_when: false
+
+    - name: Seed dummy mirrored credentials through the Kubernetes API
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        server_side_apply:
+          field_manager: vps-molecule
+        definition:
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: vps-public-tls
+              namespace: external-secrets
+            type: Opaque
+            data:
+              bundle: "{{ vps_test_tls_bundle | to_json | b64encode }}"
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: vps-tailscale
+              namespace: external-secrets
+            data:
+              client_id: "{{ 'fixture-client' | b64encode }}"
+              client_secret: "{{ 'fixture-secret' | b64encode }}"
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: vps-gotify
+              namespace: external-secrets
+            data:
+              password: "{{ 'fixture-gotify' | b64encode }}"
+      no_log: true
+
+    - name: Reconcile the real consuming ExternalSecrets through the API
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        server_side_apply:
+          field_manager: vps-molecule
+        definition: "{{ lookup('ansible.builtin.file', vps_test_manifest_directory ~ '/' ~ item) | from_yaml }}"
+      loop:
+        - gateway-api/gateway-public-tls-externalsecret.yaml
+        - tailscale-operator/operator-oauth-externalsecret.yaml
+        - gotify/gotify-admin-externalsecret.yaml
+
+    - name: Wait for the local ClusterSecretStore to authenticate
+      ansible.builtin.command: /usr/local/bin/k3s kubectl wait clustersecretstore/local-mirrors --for=condition=Ready --timeout=180s
+      changed_when: false
+
+    - name: Wait for each application credential to be distributed
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - wait
+          - externalsecret/{{ item.name }}
+          - --namespace={{ item.namespace }}
+          - --for=condition=Ready
+          - --timeout=180s
+      changed_when: false
+      loop:
+        - name: gateway-public-tls
+          namespace: nginx-gateway
+        - name: operator-oauth
+          namespace: tailscale
+        - name: gotify-admin
+          namespace: gotify
