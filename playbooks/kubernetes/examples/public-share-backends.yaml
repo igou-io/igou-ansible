@@ -1,0 +1,11 @@
+---
+# Merge into inventory group_vars/all/public_sharing.yml after deploying the app.
+public_share_backends:
+  arena:
+    service: arena-public
+    tailnet_fqdn: ocp-public-arena.weasel-alioth.ts.net
+    # Optional: pin service_uid after the Service is created.
+    ports:
+      HTTP: 8080
+      TCP: 27015
+      UDP: 27016

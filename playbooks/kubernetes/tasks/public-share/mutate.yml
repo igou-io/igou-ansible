@@ -1,0 +1,59 @@
+---
+- name: Read the latest object before changing it
+  kubernetes.core.k8s_info:
+    api_version: "{{ public_share_object.apiVersion }}"
+    kind: "{{ public_share_object.kind }}"
+    namespace: "{{ public_share_object.metadata.namespace }}"
+    name: "{{ public_share_object.metadata.name }}"
+  register: public_share_current
+
+- name: Mutate a still-owned resource
+  when:
+    - public_share_current.resources | length == 1
+    - public_share_current.resources | public_share_selected(public_share_object.metadata.labels['sharing.igou.io/id'], public_share_object.metadata.annotations['sharing.igou.io/owner']) | length == 1
+  block:
+    - name: Update expiration without changing public endpoints
+      kubernetes.core.k8s_json_patch:
+        api_version: "{{ public_share_object.apiVersion }}"
+        kind: "{{ public_share_object.kind }}"
+        namespace: "{{ public_share_object.metadata.namespace }}"
+        name: "{{ public_share_object.metadata.name }}"
+        patch:
+          - op: test
+            path: /metadata/uid
+            value: "{{ public_share_current.resources[0].metadata.uid }}"
+          - op: test
+            path: /metadata/resourceVersion
+            value: "{{ public_share_current.resources[0].metadata.resourceVersion }}"
+          - op: add
+            path: /metadata/annotations/sharing.igou.io~1expires-at
+            value: "{{ public_share_new_expiry }}"
+      when:
+        - public_share_action == 'extend'
+        - public_share_current.resources[0].metadata.annotations['sharing.igou.io/expires-at'] != public_share_new_expiry
+
+    - name: Delete removed or currently expired objects
+      when:
+        - public_share_action in ['remove', 'cleanup']
+        - public_share_action == 'remove' or public_share_current.resources[0] | public_share_expired(public_share_now)
+      block:
+        - name: Delete exactly the observed UID and resource version
+          kubernetes.core.k8s:
+            state: absent
+            api_version: "{{ public_share_object.apiVersion }}"
+            kind: "{{ public_share_object.kind }}"
+            namespace: "{{ public_share_object.metadata.namespace }}"
+            name: "{{ public_share_object.metadata.name }}"
+            delete_options:
+              preconditions:
+                uid: "{{ public_share_current.resources[0].metadata.uid }}"
+                resourceVersion: "{{ public_share_current.resources[0].metadata.resourceVersion }}"
+          register: public_share_delete
+          failed_when: public_share_delete.failed | default(false) and not (public_share_delete | public_share_conflict)
+      rescue:
+        - name: Report an object needing another cleanup attempt
+          ansible.builtin.debug:
+            msg: "Cleanup failed for {{ public_share_object.kind }}/{{ public_share_object.metadata.name }}; retry on the next hourly run."
+        - name: Record cleanup failure without stopping other deletions
+          ansible.builtin.set_fact:
+            public_share_cleanup_failed: true

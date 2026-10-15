@@ -79,3 +79,12 @@ molecule-destroy:
 	molecule destroy -s $(MOLECULE_SCENARIO)
 molecule-matrix:
 	molecule matrix -s $(MOLECULE_SCENARIO) test
+
+PYTHON ?= python3
+.PHONY: test-public-sharing test-public-sharing-lifecycle
+
+test-public-sharing: ## Check public-share validation and manifest generation without credentials
+	$(PYTHON) -m unittest discover -s tests/unit -v
+
+test-public-sharing-lifecycle: ## Exercise the real playbooks through the EE against a local API fixture
+	$(PYTHON) -m unittest discover -s molecule/kubernetes-vps/logic -p 'test_public_share.py' -v

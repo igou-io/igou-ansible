@@ -287,3 +287,9 @@ The local storage checks cover boot disks. Windows preferences also persist EFI
 and vTPM state in small KubeVirt-managed claims using the cluster's RWX state
 storage (`freenas-nfs-ssd-csi` in current validation). Those claims are owned by
 the disposable VM and must disappear during teardown alongside its boot disk.
+
+The `kubernetes-vps/logic` public-share fixture exercises the production AAP
+playbooks against a loopback-only API through the existing EE, without guests
+or cluster access. Run `make test-public-sharing-lifecycle PYTHON=.venv/bin/python`.
+It covers create, expiration updates, hourly-cleanup behavior, deletion conflicts,
+partial failures, and owner boundaries; it does not test live forwarding.
