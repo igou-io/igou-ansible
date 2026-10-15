@@ -41,7 +41,7 @@
             - name: vps
               cluster:
                 server: https://127.0.0.1:6443
-                certificate-authority-data: "{{ vps_test_access.resources[0].data['ca.crt'] }}"
+                certificate-authority-data: "{{ vps_admin_kubeconfig.clusters[0].cluster['certificate-authority-data'] }}"
           users:
             - name: argocd
               user:
