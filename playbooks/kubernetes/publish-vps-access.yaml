@@ -79,9 +79,10 @@
           - label: argocd_token
             field_type: concealed
             value: "{{ vps_argocd_access.resources[0]['data']['token'] | b64decode }}"
+          # k8s_info redacts returned CA data when it matches its input kubeconfig.
           - label: ca_data
             field_type: concealed
-            value: "{{ vps_argocd_access.resources[0]['data']['ca.crt'] }}"
+            value: "{{ vps_admin_kubeconfig.clusters[0].cluster['certificate-authority-data'] }}"
           - label: kubeconfig
             field_type: concealed
             value: >-
