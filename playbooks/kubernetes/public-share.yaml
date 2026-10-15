@@ -35,6 +35,7 @@
         public_share_objects: []
 
     - name: Read only reviewed resource kinds and namespaces
+      no_log: true
       kubernetes.core.k8s_info:
         api_version: "{{ public_share_scope.api_version }}"
         kind: "{{ public_share_scope.kind }}"

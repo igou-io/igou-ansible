@@ -50,6 +50,7 @@ class LifecycleTests(unittest.TestCase):
                 '--pull-policy', 'never', '--container-options=--network=host', '-e', '@' + str(config)]
         result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=180)
         Path(self.temp.name, f'{action}.log').write_text(result.stdout + result.stderr)
+        self.assertNotIn('fixture-only', result.stdout + result.stderr)
         if success:
             self.assertEqual(result.returncode, 0, result.stdout[-6000:] + result.stderr)
         else:

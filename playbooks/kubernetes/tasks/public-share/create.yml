@@ -21,6 +21,7 @@
            public_share_protocols, public_share_tcp_port, public_share_udp_port) }}
 
 - name: Read the OpenShift endpoint with the dedicated reader
+  no_log: true
   kubernetes.core.k8s_info:
     kubeconfig: "{{ public_share_ocp_connection }}"
     api_version: v1
@@ -37,6 +38,7 @@
     fail_msg: The approved Service must select public-services pods and expose the selected ports through Tailscale.
 
 - name: Read the fixed public Gateway
+  no_log: true
   kubernetes.core.k8s_info:
     api_version: gateway.networking.k8s.io/v1
     kind: Gateway
@@ -52,6 +54,7 @@
     fail_msg: The requested Gateway listeners must exist and be free.
 
 - name: Require unused object names before creating the share
+  no_log: true
   kubernetes.core.k8s_info:
     api_version: "{{ public_share_definition.apiVersion }}"
     kind: "{{ public_share_definition.kind }}"
@@ -69,6 +72,7 @@
     fail_msg: This job's resource names already exist; use List or Extend instead of overwriting them.
 
 - name: Create Services and grants before public routes
+  no_log: true
   kubernetes.core.k8s:
     state: present
     definition: "{{ public_share_definition }}"
