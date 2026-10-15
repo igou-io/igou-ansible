@@ -11,7 +11,7 @@ cluster lifetime, don't mix.
 | `install-kubernetes-cluster.yml`  | Alternative. Install kubeadm-based kubernetes via `geerlingguy.kubernetes` (+ `geerlingguy.containerd`). |
 | `bootstrap-gitops.yaml`           | Post-install: seeds the ESO Connect token, installs argocd, applies the igou-kubernetes app-of-apps root. Runs against `localhost`, talks to whatever `KUBECONFIG` points at. |
 | `bootstrap-vps.yaml` | Standalone Debian VPS: public API firewall guard, host Tailscale, and lean pinned k3s; node-exporter is a GitOps-managed pod. |
-| `publish-vps-access.yaml` | Seeds seven namespaces and the cluster-admin Argo identity using system:admin, then publishes its generated token, CA and administrator kubeconfig to the management vault. Seeds no pods or separate ESO credential. |
+| `publish-vps-access.yaml` | Seeds seven namespaces and the cluster-admin Argo identity through the Kubernetes API using system:admin, then publishes its generated token, CA and administrator kubeconfig to the management vault. Seeds no pods or separate ESO credential. |
 
 ## Standalone VPS
 
@@ -19,6 +19,11 @@ The VPS is cluster `vps`, inventory host `igou.io`. Target both VPS playbooks
 explicitly with `ansible_limit=igou.io`; their default target is `none`.
 AAP templates are `vps_bootstrap_host` and `vps_publish_access`.
 Host settings and all secret lookup expressions belong in inventory.
+Bootstrap installs Debian `python3-kubernetes` and `python3-jsonpatch` for the
+API modules. The publisher reads the native admin kubeconfig into memory and
+uses `kubernetes.core.k8s` over localhost. It stages no manifests or Secret files
+under `/etc/rancher/k3s`; k3s owns its native admin kubeconfig there.
+These Python libraries add no running daemon.
 
 VPS Kubernetes manifests live in `igou-kubernetes/clusters/vps/`. OpenShift-side
 Argo/ESO management resources live in

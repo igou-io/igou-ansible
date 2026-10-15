@@ -17,27 +17,19 @@
     - name: Seed only namespaces and the Argo access identity
       ansible.builtin.include_tasks: tasks/seed-vps-access.yml
 
-    - name: Read the generated Argo service-account credential privately
-      ansible.builtin.command:
-        argv:
-          - /usr/local/bin/k3s
-          - kubectl
-          - get
-          - secret
-          - argocd-manager-token
-          - --namespace=argocd
-          - --output=json
-      changed_when: false
+    - name: Read the generated Argo service-account credential through the API
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ vps_admin_kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        name: argocd-manager-token
+        namespace: argocd
       register: vps_argocd_access
-      until: (vps_argocd_access.stdout | from_json).get('data', {}).get('token', '') | length > 0
+      until:
+        - vps_argocd_access.resources | length == 1
+        - vps_argocd_access.resources[0].get('data', {}).get('token', '') | length > 0
       retries: 15
       delay: 2
-      no_log: true
-
-    - name: Read the local administrator kubeconfig privately
-      ansible.builtin.slurp:
-        src: /etc/rancher/k3s/k3s.yaml
-      register: vps_admin_access
       no_log: true
 
     - name: Resolve the management vault ID
@@ -86,10 +78,10 @@
         fields:
           - label: argocd_token
             field_type: concealed
-            value: "{{ (vps_argocd_access.stdout | from_json)['data']['token'] | b64decode }}"
+            value: "{{ vps_argocd_access.resources[0]['data']['token'] | b64decode }}"
           - label: ca_data
             field_type: concealed
-            value: "{{ (vps_argocd_access.stdout | from_json)['data']['ca.crt'] }}"
+            value: "{{ vps_argocd_access.resources[0]['data']['ca.crt'] }}"
           - label: kubeconfig
             field_type: concealed
             value: >-

@@ -14,19 +14,7 @@
           - k3s_release_version is match('^v[0-9]+\.[0-9]+\.[0-9]+\+k3s[0-9]+$')
         fail_msg: Select exactly one VPS host and a pinned k3s release.
 
-    - name: Inspect the legacy host exporter unit
-      ansible.builtin.stat:
-        path: /etc/systemd/system/node_exporter.service
-      register: vps_legacy_exporter_unit
-
-    - name: Disable the legacy host exporter before Kubernetes takes ownership
-      ansible.builtin.systemd_service:
-        name: node_exporter.service
-        state: stopped
-        enabled: false
-      when: vps_legacy_exporter_unit.stat.exists
-
-    - name: Install host networking prerequisites
+    - name: Install host networking and API client prerequisites
       ansible.builtin.apt:
         name:
           - ca-certificates
@@ -34,6 +22,8 @@
           - conntrack
           - iptables
           - nftables
+          - python3-kubernetes
+          - python3-jsonpatch
         state: present
         update_cache: true
         cache_valid_time: 3600

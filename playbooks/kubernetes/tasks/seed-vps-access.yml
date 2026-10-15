@@ -10,59 +10,33 @@
   ansible.builtin.set_fact:
     vps_access_manifest: "{{ vps_bootstrap_manifest_lookup }}"
 
-- name: Stage the declarative seed on the server
-  ansible.builtin.copy:
-    content: "{{ vps_access_manifest }}"
-    dest: /etc/rancher/k3s/vps-access.yaml
-    owner: root
-    group: root
-    mode: "0600"
-
-- name: Inspect existing namespaces before comparing namespaced access resources
-  # A dry-run diff cannot create the namespaces needed by later seed objects.
-  ansible.builtin.command:
-    argv:
-      - /usr/local/bin/k3s
-      - kubectl
-      - --kubeconfig=/etc/rancher/k3s/k3s.yaml
-      - get
-      - namespaces
-      - --output=json
-  register: vps_access_namespaces
-  changed_when: false
-
-- name: Identify namespaces that need initial creation
-  ansible.builtin.set_fact:
-    vps_access_missing_namespaces: >-
-      {{ (vps_access_manifest | from_yaml_all | selectattr('kind', 'equalto', 'Namespace') | map(attribute='metadata.name') | list)
-         | difference((vps_access_namespaces.stdout | from_json)['items'] | map(attribute='metadata.name') | list) }}
-
-- name: Compare the namespace and identity seed using the administrator kubeconfig
-  ansible.builtin.command:
-    argv:
-      - /usr/local/bin/k3s
-      - kubectl
-      - --kubeconfig=/etc/rancher/k3s/k3s.yaml
-      - diff
-      - --server-side
-      - --field-manager=vps-bootstrap
-      - --filename=/etc/rancher/k3s/vps-access.yaml
-  register: vps_access_diff
-  changed_when: false
-  failed_when: vps_access_diff.rc not in [0, 1]
-  when: vps_access_missing_namespaces | length == 0
+- name: Read the native administrator kubeconfig privately
+  ansible.builtin.slurp:
+    src: /etc/rancher/k3s/k3s.yaml
+  register: vps_admin_access
   no_log: true
 
-- name: Seed changed namespaces and the Argo identity using the administrator kubeconfig
-  ansible.builtin.command:
-    argv:
-      - /usr/local/bin/k3s
-      - kubectl
-      - --kubeconfig=/etc/rancher/k3s/k3s.yaml
-      - apply
-      - --server-side
-      - --field-manager=vps-bootstrap
-      - --filename=/etc/rancher/k3s/vps-access.yaml
-  when: vps_access_missing_namespaces | length > 0 or vps_access_diff.rc == 1
-  changed_when: true
+- name: Load administrator API authentication into memory
+  ansible.builtin.set_fact:
+    vps_admin_kubeconfig: "{{ vps_admin_access.content | b64decode | from_yaml }}"
+  no_log: true
+
+- name: Seed namespaces through the Kubernetes API
+  kubernetes.core.k8s:
+    kubeconfig: "{{ vps_admin_kubeconfig }}"
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: vps-bootstrap
+    definition: "{{ vps_access_manifest | from_yaml_all | selectattr('kind', 'equalto', 'Namespace') | list }}"
+  no_log: true
+
+- name: Seed the Argo identity and token Secret through the Kubernetes API
+  kubernetes.core.k8s:
+    kubeconfig: "{{ vps_admin_kubeconfig }}"
+    state: present
+    apply: true
+    server_side_apply:
+      field_manager: vps-bootstrap
+    definition: "{{ vps_access_manifest | from_yaml_all | rejectattr('kind', 'equalto', 'Namespace') | list }}"
   no_log: true
