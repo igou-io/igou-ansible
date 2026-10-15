@@ -11,7 +11,7 @@ cluster lifetime, don't mix.
 | `install-kubernetes-cluster.yml`  | Alternative. Install kubeadm-based kubernetes via `geerlingguy.kubernetes` (+ `geerlingguy.containerd`). |
 | `bootstrap-gitops.yaml`           | Post-install: seeds the ESO Connect token, installs argocd, applies the igou-kubernetes app-of-apps root. Runs against `localhost`, talks to whatever `KUBECONFIG` points at. |
 | `bootstrap-vps.yaml` | Standalone Debian VPS: public API firewall guard, host Tailscale, and lean pinned k3s; node-exporter is a GitOps-managed pod. |
-| `publish-vps-access.yaml` | Seeds seven namespaces and the cluster-admin Argo identity through the Kubernetes API using system:admin, then publishes its generated token, CA and administrator kubeconfig to the management vault. Seeds no pods or separate ESO credential. |
+| `publish-vps-access.yaml` | Seeds only the `argocd` namespace and cluster-admin Argo identity through the Kubernetes API using system:admin, then publishes its generated token, CA and administrator kubeconfig to the management vault. Argo's wave-0 `bootstrap` Application creates the other namespaces; adding a workload namespace needs no AAP run. Seeds no pods or separate ESO credential. |
 
 ## Standalone VPS
 
