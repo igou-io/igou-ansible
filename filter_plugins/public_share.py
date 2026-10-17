@@ -120,7 +120,7 @@ def render(backend, share_id, owner, expires, protocols, tcp_port=0, udp_port=0)
     service_ports = [{k: p[k] for k in ("name", "port", "protocol")} for p in ports]
     add("Service", name, "public-services", {"type": "ExternalName", "externalName": "placeholder",
         "ports": service_ports}, annotations={"tailscale.com/tailnet-fqdn": fqdn,
-        "tailscale.com/hostname": "vps-egress-" + share_id, "tailscale.com/tags": "tag:vps-public-egress",
+        "tailscale.com/hostname": "vps-egress-" + share_id, "tailscale.com/tags": "tag:vps-public-service",
         "tailscale.com/proxy-class": "metrics"})
     add("Service", bridge, "tailscale", {"type": "ClusterIP", "selector": selector,
         "ports": [{k: p[k] for k in ("name", "port", "targetPort", "protocol")} for p in ports]})

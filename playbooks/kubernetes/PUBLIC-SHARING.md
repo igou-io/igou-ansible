@@ -21,14 +21,18 @@ Expiry means removal on the next successful hourly run, without session-cutoff
 or control-plane-outage guarantees.
 
 Install the paired OpenShift public-services component and VPS public-sharing
-RBAC/listener configuration first. Configure wildcard DNS, the exact Tailscale
-publication tags/grants, and deploy the application in OpenShift public-services.
+RBAC/listener configuration first. Configure wildcard DNS and the shared
+Tailscale tags: `tag:vps-public-service` for VPS egress proxies and
+`tag:ocp-public-service` for OpenShift endpoints. One grant permits all TCP
+and UDP ports from the VPS tag to the OpenShift tag. Deploy the application
+in OpenShift public-services.
 The catalog starts empty. `examples/public-share-backends.yaml` has three
 entries matching `igou-openshift/test-workloads/public-services/`: `http`
 selects nginx on TCP 8080, `tcp` selects the separate hostname server on TCP
 9000, and `udp` selects the UDP echo server on UDP 9000. Install the workload
-and its Tailscale endpoint, then configure the grants before approving the
-entry in inventory. Each entry declares only its own protocol.
+and its Tailscale endpoint before approving the entry in inventory. Each entry
+declares only its own protocol; adding an entry requires no new tailnet tags
+or grants. Services and NetworkPolicies constrain the backend ports.
 
 The three static VPS examples in `igou-kubernetes/examples/public-services/`
 show the same forwarding objects grouped by protocol. AAP creates temporary
