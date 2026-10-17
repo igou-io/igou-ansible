@@ -1,0 +1,20 @@
+---
+# Merge into inventory group_vars/all/public_sharing.yml after installing the
+# workload and Tailscale endpoint from igou-openshift/test-workloads/public-services/.
+public_share_backends:
+  http:
+    service: public-web-test-public
+    tailnet_fqdn: ocp-public-web-test.weasel-alioth.ts.net
+    # Optional: pin service_uid after the Service is created.
+    ports:
+      HTTP: 8080
+  tcp:
+    service: tcp-hostname-public
+    tailnet_fqdn: ocp-public-tcp-hostname.weasel-alioth.ts.net
+    ports:
+      TCP: 9000
+  udp:
+    service: udp-echo-public
+    tailnet_fqdn: ocp-public-udp-echo.weasel-alioth.ts.net
+    ports:
+      UDP: 9000

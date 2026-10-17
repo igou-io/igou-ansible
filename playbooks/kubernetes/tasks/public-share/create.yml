@@ -1,0 +1,86 @@
+---
+- name: Require an approved backend and AAP operation identity
+  ansible.builtin.assert:
+    that:
+      - awx_job_id is defined
+      - public_share_backend | default('') in (public_share_backends | default({}))
+    fail_msg: Add an approved backend to inventory before publishing it.
+
+- name: Build a unique share with expiration on every object
+  ansible.builtin.set_fact:
+    public_share_created_id: "ps-{{ awx_job_id }}"
+    public_share_new_expiry: "{{ public_share_expires_at | public_share_expiry(public_share_now) }}"
+    public_share_ocp_connection: "{{ public_share_ocp_kubeconfig_lookup }}"
+  no_log: true
+
+- name: Render the approved forwarding objects
+  ansible.builtin.set_fact:
+    public_share_definitions: >-
+      {{ public_share_backends[public_share_backend] | public_share_render(
+           public_share_created_id, public_share_owner, public_share_new_expiry,
+           public_share_protocols, public_share_tcp_port, public_share_udp_port) }}
+
+- name: Read the OpenShift endpoint with the dedicated reader
+  no_log: true
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ public_share_ocp_connection }}"
+    api_version: v1
+    kind: Service
+    name: "{{ public_share_backends[public_share_backend].service }}"
+    namespace: public-services
+  register: public_share_ocp_service
+
+- name: Verify the namespace and the declared backend ports
+  ansible.builtin.assert:
+    that:
+      - public_share_ocp_service.resources | length == 1
+      - public_share_ocp_service.resources[0] | public_share_check_backend(public_share_backends[public_share_backend], public_share_protocols)
+    fail_msg: The approved Service must select public-services pods and expose the selected ports through Tailscale.
+
+- name: Read the fixed public Gateway
+  no_log: true
+  kubernetes.core.k8s_info:
+    api_version: gateway.networking.k8s.io/v1
+    kind: Gateway
+    name: public
+    namespace: nginx-gateway
+  register: public_share_gateway
+
+- name: Check listeners and reject occupied public endpoints
+  ansible.builtin.assert:
+    that:
+      - public_share_gateway.resources | length == 1
+      - public_share_definitions | public_share_check_routes(public_share_objects, public_share_gateway.resources[0])
+    fail_msg: The requested Gateway listeners must exist and be free.
+
+- name: Require unused object names before creating the share
+  no_log: true
+  kubernetes.core.k8s_info:
+    api_version: "{{ public_share_definition.apiVersion }}"
+    kind: "{{ public_share_definition.kind }}"
+    name: "{{ public_share_definition.metadata.name }}"
+    namespace: "{{ public_share_definition.metadata.namespace }}"
+  loop: "{{ public_share_definitions }}"
+  loop_control:
+    loop_var: public_share_definition
+    label: "{{ public_share_definition.kind }}/{{ public_share_definition.metadata.name }}"
+  register: public_share_name_checks
+
+- name: Refuse to adopt any existing resource
+  ansible.builtin.assert:
+    that: public_share_name_checks.results | map(attribute='resources') | flatten | length == 0
+    fail_msg: This job's resource names already exist; use List or Extend instead of overwriting them.
+
+- name: Create Services and grants before public routes
+  no_log: true
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ public_share_definition }}"
+  loop: "{{ public_share_definitions }}"
+  loop_control:
+    loop_var: public_share_definition
+    label: "{{ public_share_definition.kind }}/{{ public_share_definition.metadata.name }}"
+
+- name: Select the created objects for the job result
+  ansible.builtin.set_fact:
+    public_share_selected: "{{ public_share_definitions }}"

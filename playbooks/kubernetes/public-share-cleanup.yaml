@@ -1,0 +1,5 @@
+---
+- name: Remove expired VPS public shares
+  ansible.builtin.import_playbook: public-share.yaml
+  vars:
+    public_share_action: cleanup

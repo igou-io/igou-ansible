@@ -1,0 +1,100 @@
+---
+- name: Manage temporary public forwarding through the VPS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    public_share_action: list
+    public_share_id: ''
+    public_share_expires_at: ''
+    public_share_protocols: HTTP
+    public_share_tcp_port: 0
+    public_share_udp_port: 0
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ public_share_vps_connection }}"
+  tasks:
+    - name: Validate the requested operation and authenticated caller
+      ansible.builtin.assert:
+        that:
+          - public_share_action in ['create', 'extend', 'remove', 'list', 'cleanup']
+          - public_share_action == 'cleanup' or awx_user_id is defined
+          - public_share_action not in ['extend', 'remove'] or public_share_id is match('^ps-[a-z0-9-]{1,30}$')
+        fail_msg: Use the AAP survey and an authenticated launching user.
+
+    - name: Resolve controller-side credentials once without logging them
+      ansible.builtin.set_fact:
+        public_share_vps_connection: "{{ public_share_vps_kubeconfig_lookup }}"
+      no_log: true
+
+    - name: Set the owner and a single UTC observation for this run
+      ansible.builtin.set_fact:
+        public_share_owner: "{{ 'aap-user-' ~ awx_user_id if awx_user_id is defined else '' }}"
+        public_share_now: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        public_share_scopes: "{{ '' | public_share_scopes }}"
+        public_share_objects: []
+
+    - name: Read only reviewed resource kinds and namespaces
+      no_log: true
+      kubernetes.core.k8s_info:
+        api_version: "{{ public_share_scope.api_version }}"
+        kind: "{{ public_share_scope.kind }}"
+        namespace: "{{ public_share_scope.namespace }}"
+      loop: "{{ public_share_scopes }}"
+      loop_control:
+        loop_var: public_share_scope
+        label: "{{ public_share_scope.namespace }}/{{ public_share_scope.kind }}"
+      register: public_share_discovery
+
+    - name: Gather managed objects across the allowed scopes
+      ansible.builtin.set_fact:
+        public_share_objects: "{{ public_share_objects + public_share_result.resources }}"
+      loop: "{{ public_share_discovery.results }}"
+      loop_control:
+        loop_var: public_share_result
+        label: "{{ public_share_result.public_share_scope.kind }}"
+
+    - name: Select the caller's objects or all objects for scheduled cleanup
+      ansible.builtin.set_fact:
+        public_share_selected: >-
+          {{ public_share_objects | public_share_selected(
+               public_share_id, '' if public_share_action == 'cleanup' else public_share_owner) }}
+
+    - name: Require an existing owned share before mutation
+      ansible.builtin.assert:
+        that: public_share_selected | length > 0
+        fail_msg: No objects exist for this share and caller.
+      when: public_share_action == 'extend'
+
+    - name: Create the selected forwarding path
+      ansible.builtin.include_tasks: tasks/public-share/create.yml
+      when: public_share_action == 'create'
+
+    - name: Validate the new expiration before updating any object
+      ansible.builtin.set_fact:
+        public_share_new_expiry: "{{ public_share_expires_at | public_share_expiry(public_share_now) }}"
+      when: public_share_action == 'extend'
+
+    - name: Update or delete each selected object with concurrency checks
+      ansible.builtin.include_tasks: tasks/public-share/mutate.yml
+      loop: "{{ public_share_selected }}"
+      loop_control:
+        loop_var: public_share_object
+        label: "{{ public_share_object.kind }}/{{ public_share_object.metadata.name }}"
+      when: public_share_action in ['extend', 'remove', 'cleanup']
+
+    - name: Report malformed dates and cleanup failures after processing all objects
+      ansible.builtin.assert:
+        that:
+          - not (public_share_cleanup_failed | default(false))
+          - public_share_selected | public_share_invalid_expiries | length == 0
+        fail_msg: Some objects need attention; valid expired objects were still processed.
+      when: public_share_action == 'cleanup'
+
+    - name: Return resource references without credentials
+      ansible.builtin.set_stats:
+        data:
+          public_share_resources: >-
+            {{ public_share_selected | public_share_summary }}
+          public_share_expiration: "{{ public_share_new_expiry | default('') }}"
+          public_share_created_id: "{{ public_share_created_id | default('') }}"
