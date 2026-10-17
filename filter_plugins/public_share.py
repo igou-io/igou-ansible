@@ -194,6 +194,27 @@ def check_routes(desired, existing, gateway):
     return True
 
 
+def available(backends):
+    """Describe approved Create inputs; port availability is checked on Create."""
+    entries = []
+    for name, backend in sorted(backends.items()):
+        examples = []
+        ports = {p: backend["ports"][p] for p in ("HTTP", "TCP", "UDP")
+                 if p in backend.get("ports", {})}
+        for protocol in ports:
+            inputs = {"public_share_action": "create", "public_share_backend": name,
+                      "public_share_protocols": [protocol], "public_share_expires_at": ""}
+            if protocol == "TCP":
+                inputs["public_share_tcp_port"] = 27010
+            elif protocol == "UDP":
+                inputs["public_share_udp_port"] = 27018
+            examples.append(inputs)
+        entries.append({"backend": name, "namespace": "public-services",
+                        "service": backend["service"], "backend_ports": ports,
+                        "create_examples": examples})
+    return entries
+
+
 def summary(objects):
     shares = {}
     for obj in objects:
@@ -214,7 +235,8 @@ def summary(objects):
 
 class FilterModule:
     def filters(self):
-        return {"public_share_summary": summary, "public_share_invalid_expiries": invalid_expiries, "public_share_conflict": conflict,
+        return {"public_share_available": available,
+                "public_share_summary": summary, "public_share_invalid_expiries": invalid_expiries, "public_share_conflict": conflict,
                 "public_share_expiry": expiry, "public_share_selected": selected,
                 "public_share_expired": expired, "public_share_render": render,
                 "public_share_check_backend": check_backend, "public_share_check_routes": check_routes,

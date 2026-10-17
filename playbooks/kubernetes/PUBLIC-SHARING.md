@@ -1,10 +1,33 @@
 # Temporary public sharing
 
-`public-share.yaml` supports `create`, `extend`, `remove`, and `list` through
-one AAP survey. `public-share-cleanup.yaml` removes expired managed resources;
+`public-share.yaml` supports `create`, `extend`, `remove`, `list-active`, and
+`list-available` through one AAP survey. `public-share-cleanup.yaml` removes expired managed resources;
 the inventory schedule runs it hourly. Every created Service, route, grant,
 and NetworkPolicy carries the same share ID, owner, and UTC expiry annotation.
 No application pods, namespaces, Secrets, or persistent data are cleanup targets.
+
+Start with `list-available` (the default action). It prints the approved backend
+names, Services, supported protocols/backend ports, public port ranges, and
+copyable Create inputs for each supported protocol. It also returns the listing
+in job artifacts. This reads the inventory catalog without querying either
+cluster or resolving cluster credentials. Example TCP/UDP ports are candidates;
+Create checks availability when you submit the request.
+
+Use `list-active` to show your current shares, endpoints, and expiration dates
+in job output and artifacts. An optional share ID narrows the listing. Shares
+remain listed until removed, including those awaiting hourly expiry cleanup.
+The former `list` action is replaced by `list-active`.
+
+For example, `list-available` supplies these inputs for the TCP backend:
+
+```yaml
+public_share_action: create
+public_share_backend: tcp
+public_share_protocols:
+  - TCP
+public_share_tcp_port: 27010
+public_share_expires_at: ''
+```
 
 Create uses the approved `public_share_backends` inventory catalog and an AAP
 job ID (`ps-<job-id>`). Select HTTP, TCP, and/or UDP. HTTP gets
