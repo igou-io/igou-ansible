@@ -1,11 +1,20 @@
 {{ ansible_managed | comment }}
-# Own only this table; preserve Tailscale and Kubernetes NAT/filter rules.
+# Filter before k3s HostPort/NodePort DNAT; preserve Tailscale/Kubernetes tables.
 add table inet vps_guard
 flush table inet vps_guard
 table inet vps_guard {
-  chain public_management {
+  chain public_ingress {
     type filter hook prerouting priority -150; policy accept;
-    iifname "{{ vps_public_interface }}" tcp dport { 6443, 10250, 9100, 30000-32767 } drop
-    iifname "{{ vps_public_interface }}" udp dport { 8472, 30000-32767 } drop
+    iifname != "{{ vps_public_interface }}" return
+    ct state invalid drop
+    ct state established,related accept
+    ip protocol icmp accept
+    meta l4proto ipv6-icmp accept
+    tcp dport { {{ vps_public_tcp_ports | join(', ') }} } accept
+    udp dport { {{ vps_public_udp_ports | join(', ') }} } accept
+    # Preserve DHCP renewal if the provider assigns the interface dynamically.
+    udp sport 67 udp dport 68 accept
+    udp sport 547 udp dport 546 accept
+    drop
   }
 }

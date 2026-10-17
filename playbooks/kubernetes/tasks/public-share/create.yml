@@ -6,10 +6,15 @@
       - public_share_backend | default('') in (public_share_backends | default({}))
     fail_msg: Add an approved backend to inventory before publishing it.
 
+- name: Enforce owner and global share budgets before creating resources
+  ansible.builtin.assert:
+    that:
+      - public_share_objects | public_share_check_budget(public_share_owner, public_share_max_active | default(8), public_share_max_active_per_owner | default(3))
+
 - name: Build a unique share with expiration on every object
   ansible.builtin.set_fact:
     public_share_created_id: "ps-{{ awx_job_id }}"
-    public_share_new_expiry: "{{ public_share_expires_at | public_share_expiry(public_share_now) }}"
+    public_share_new_expiry: "{{ public_share_expires_at | public_share_expiry(public_share_now, public_share_max_lease_hours | default(24)) }}"
     public_share_ocp_connection: "{{ public_share_ocp_kubeconfig_lookup }}"
   no_log: true
 

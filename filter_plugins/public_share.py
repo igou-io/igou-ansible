@@ -30,9 +30,13 @@ def timestamp(value):
         raise AnsibleFilterError("Invalid expiration date") from exc
 
 
-def expiry(value, now):
+def expiry(value, now, max_hours=24):
     current = timestamp(now)
     result = timestamp(value) if value else current + timedelta(hours=2)
+    if not isinstance(max_hours, int) or isinstance(max_hours, bool) or max_hours < 2:
+        raise AnsibleFilterError("Maximum lease must be an integer of at least two hours")
+    if result > current + timedelta(hours=max_hours):
+        raise AnsibleFilterError(f"Expiration cannot be more than {max_hours} hours from now")
     if result <= current:
         raise AnsibleFilterError("Expiration must be in the future")
     return result.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -68,6 +72,18 @@ def invalid_expiries(objects):
         except AnsibleFilterError:
             invalid.append(obj["metadata"]["name"])
     return invalid
+
+
+def check_budget(objects, owner, max_total=8, max_owner=3):
+    for limit in (max_total, max_owner):
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise AnsibleFilterError("Share budgets must be positive integers")
+    # Count partial and expired-but-not-removed shares too: their resources still exist.
+    total = {o["metadata"]["labels"][ID] for o in objects if owned(o)}
+    caller = {o["metadata"]["labels"][ID] for o in objects if owned(o, owner=owner)}
+    if len(total) >= max_total or len(caller) >= max_owner:
+        raise AnsibleFilterError("Share budget reached; remove a share or wait for successful cleanup")
+    return True
 
 
 def conflict(result):
@@ -121,7 +137,7 @@ def render(backend, share_id, owner, expires, protocols, tcp_port=0, udp_port=0)
     add("Service", name, "public-services", {"type": "ExternalName", "externalName": "placeholder",
         "ports": service_ports}, annotations={"tailscale.com/tailnet-fqdn": fqdn,
         "tailscale.com/hostname": "vps-egress-" + share_id, "tailscale.com/tags": "tag:vps-public-service",
-        "tailscale.com/proxy-class": "metrics"})
+        "tailscale.com/proxy-class": "public-services"})
     add("Service", bridge, "tailscale", {"type": "ClusterIP", "selector": selector,
         "ports": [{k: p[k] for k in ("name", "port", "targetPort", "protocol")} for p in ports]})
     add("ReferenceGrant", name, "tailscale", {
@@ -130,7 +146,8 @@ def render(backend, share_id, owner, expires, protocols, tcp_port=0, udp_port=0)
         "gateway.networking.k8s.io/v1beta1")
     add("NetworkPolicy", name, "tailscale", {"podSelector": {"matchLabels": selector},
         "policyTypes": ["Ingress"], "ingress": [{"from": [{"namespaceSelector": {
-            "matchLabels": {"kubernetes.io/metadata.name": "nginx-gateway"}}}],
+            "matchLabels": {"kubernetes.io/metadata.name": "nginx-gateway"}},
+            "podSelector": {"matchLabels": {"gateway.networking.k8s.io/gateway-name": "public"}}}],
         "ports": [{"port": p["port"], "protocol": p["protocol"]} for p in ports]}]}, "networking.k8s.io/v1")
     for port in ports:
         protocol = port["routeProtocol"]
@@ -239,5 +256,6 @@ class FilterModule:
                 "public_share_summary": summary, "public_share_invalid_expiries": invalid_expiries, "public_share_conflict": conflict,
                 "public_share_expiry": expiry, "public_share_selected": selected,
                 "public_share_expired": expired, "public_share_render": render,
+                "public_share_check_budget": check_budget,
                 "public_share_check_backend": check_backend, "public_share_check_routes": check_routes,
                 "public_share_scopes": lambda _: deepcopy(SCOPES)}

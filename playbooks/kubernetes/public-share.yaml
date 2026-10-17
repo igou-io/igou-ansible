@@ -34,6 +34,9 @@
                 TCP: 27010-27017
                 UDP: 27018-27025
               expiration: UTC YYYY-MM-DDTHH:MM:SSZ; blank defaults to two hours
+              max_lease_hours: "{{ public_share_max_lease_hours | default(24) }}"
+              max_active: "{{ public_share_max_active | default(8) }}"
+              max_active_per_owner: "{{ public_share_max_active_per_owner | default(3) }}"
               port_selection: Examples use the first pool port. Create checks whether the chosen port is free.
 
         - name: Show available backends and copyable Create inputs
@@ -101,7 +104,7 @@
 
     - name: Validate the new expiration before updating any object
       ansible.builtin.set_fact:
-        public_share_new_expiry: "{{ public_share_expires_at | public_share_expiry(public_share_now) }}"
+        public_share_new_expiry: "{{ public_share_expires_at | public_share_expiry(public_share_now, public_share_max_lease_hours | default(24)) }}"
       when: public_share_action == 'extend'
 
     - name: Update or delete each selected object with concurrency checks
