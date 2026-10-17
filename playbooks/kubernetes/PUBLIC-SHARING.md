@@ -26,7 +26,7 @@ Tailscale tags: `tag:vps-public-service` for VPS egress proxies and
 `tag:ocp-public-service` for OpenShift endpoints. One grant permits all TCP
 and UDP ports from the VPS tag to the OpenShift tag. Deploy the application
 in OpenShift public-services.
-The catalog starts empty. `examples/public-share-backends.yaml` has three
+The catalog is configured in inventory. `igou-ansible/examples/public-share-backends.yaml` has three
 entries matching `igou-openshift/test-workloads/public-services/`: `http`
 selects nginx on TCP 8080, `tcp` selects the separate hostname server on TCP
 9000, and `udp` selects the UDP echo server on UDP 9000. Install the workload
