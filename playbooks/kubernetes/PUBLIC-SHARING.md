@@ -30,7 +30,12 @@ endpoint and its grants before adding the catalog entries. Choose `web-test`
 with HTTP for HTTPS, or `web-test-tcp` with TCP for a raw TCP listener carrying
 the same HTTP traffic. They use separate catalog entries because one share
 cannot map HTTP and TCP to the same backend port. The server does not serve
-UDP. Publishing an absent/unapproved backend fails.
+UDP. The `udp-echo` catalog entry uses the staged workload in
+`igou-openshift/test-workloads/public-services-udp` and the chart's matching
+`examples/udp-values.yaml` endpoint on UDP 9000. Select UDP and a public port
+from the pool, such as 27018. After publication, send `echo hello` to the
+returned hostname/port and expect `hello`. Publishing an absent/unapproved
+backend fails.
 
 Before enabling the AAP jobs, store base64-encoded kubeconfig dictionaries in
 1Password item `vps-public-sharing` in `lab_aap`, fields `vps_kubeconfig` and
