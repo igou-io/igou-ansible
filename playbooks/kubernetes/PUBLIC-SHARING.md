@@ -23,19 +23,19 @@ or control-plane-outage guarantees.
 Install the paired OpenShift public-services component and VPS public-sharing
 RBAC/listener configuration first. Configure wildcard DNS, the exact Tailscale
 publication tags/grants, and deploy the application in OpenShift public-services.
-The catalog starts empty. `examples/public-share-backends.yaml` targets the
-deployed `public-web-test` fixture on TCP 8080. Its Tailscale endpoint is still
-staged in the OpenShift chart's `examples/web-test-values.yaml`; install that
-endpoint and its grants before adding the catalog entries. Choose `web-test`
-with HTTP for HTTPS, or `web-test-tcp` with TCP for a raw TCP listener carrying
-the same HTTP traffic. They use separate catalog entries because one share
-cannot map HTTP and TCP to the same backend port. The server does not serve
-UDP. The `udp-echo` catalog entry uses the staged workload in
-`igou-openshift/test-workloads/public-services-udp` and the chart's matching
-`examples/udp-values.yaml` endpoint on UDP 9000. Select UDP and a public port
-from the pool, such as 27018. After publication, send `echo hello` to the
-returned hostname/port and expect `hello`. Publishing an absent/unapproved
-backend fails.
+The catalog starts empty. `examples/public-share-backends.yaml` has three
+entries matching `igou-openshift/test-workloads/public-services/`: `http`
+selects nginx on TCP 8080, `tcp` selects the separate hostname server on TCP
+9000, and `udp` selects the UDP echo server on UDP 9000. Install the workload
+and its Tailscale endpoint, then configure the grants before approving the
+entry in inventory. Each entry declares only its own protocol.
+
+The three static VPS examples in `igou-kubernetes/examples/public-services/`
+show the same forwarding objects grouped by protocol. AAP creates temporary
+objects with its own share ID and expiration. The job returns the public
+hostname/port; use curl for HTTP, a TCP connection to receive the TCP server's
+hostname, or `echo hello` to receive a UDP reply. Publishing an absent or
+unapproved backend fails.
 
 Before enabling the AAP jobs, store base64-encoded kubeconfig dictionaries in
 1Password item `vps-public-sharing` in `lab_aap`, fields `vps_kubeconfig` and
