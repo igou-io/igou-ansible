@@ -23,8 +23,14 @@ or control-plane-outage guarantees.
 Install the paired OpenShift public-services component and VPS public-sharing
 RBAC/listener configuration first. Configure wildcard DNS, the exact Tailscale
 publication tags/grants, and deploy the application in OpenShift public-services.
-The catalog starts empty; `examples/public-share-backends.yaml` is an example,
-not a deployed application. Publishing an absent/unapproved backend fails.
+The catalog starts empty. `examples/public-share-backends.yaml` targets the
+deployed `public-web-test` fixture on TCP 8080. Its Tailscale endpoint is still
+staged in the OpenShift chart's `examples/web-test-values.yaml`; install that
+endpoint and its grants before adding the catalog entries. Choose `web-test`
+with HTTP for HTTPS, or `web-test-tcp` with TCP for a raw TCP listener carrying
+the same HTTP traffic. They use separate catalog entries because one share
+cannot map HTTP and TCP to the same backend port. The server does not serve
+UDP. Publishing an absent/unapproved backend fails.
 
 Before enabling the AAP jobs, store base64-encoded kubeconfig dictionaries in
 1Password item `vps-public-sharing` in `lab_aap`, fields `vps_kubeconfig` and
