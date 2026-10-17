@@ -43,17 +43,3 @@ owns the full lookups; playbooks do not write client kubeconfigs to disk.
 AAP callers need execute permission on `vps_public_share`; keep the separate
 `vps_public_share_cleanup` template restricted to platform operators. The
 manual template disables simultaneous runs and arbitrary extra variables.
-
-Validation without cluster credentials:
-
-```bash
-make test-public-sharing PYTHON=.venv/bin/python
-make test-public-sharing-lifecycle PYTHON=.venv/bin/python
-```
-
-The lifecycle check uses `ansible-navigator` and the local `igou-awx-ee` image
-against a loopback-only Kubernetes API simulator. Set `PUBLIC_SHARE_TEST_EE`
-to another installed EE image if needed. It exercises the real playbooks,
-including a renewal racing DELETE, partial failure, malformed dates,
-cross-owner removal, and preservation of unrelated resources. It does not
-prove live Gateway/Tailscale connectivity.
