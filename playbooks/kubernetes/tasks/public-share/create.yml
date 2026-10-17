@@ -69,7 +69,7 @@
 - name: Refuse to adopt any existing resource
   ansible.builtin.assert:
     that: public_share_name_checks.results | map(attribute='resources') | flatten | length == 0
-    fail_msg: This job's resource names already exist; use List or Extend instead of overwriting them.
+    fail_msg: This job's resource names already exist; use list-active or extend instead of overwriting them.
 
 - name: Create Services and grants before public routes
   no_log: true

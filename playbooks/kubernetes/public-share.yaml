@@ -4,7 +4,7 @@
   connection: local
   gather_facts: false
   vars:
-    public_share_action: list
+    public_share_action: list-available
     public_share_id: ''
     public_share_expires_at: ''
     public_share_protocols: HTTP
@@ -17,10 +17,39 @@
     - name: Validate the requested operation and authenticated caller
       ansible.builtin.assert:
         that:
-          - public_share_action in ['create', 'extend', 'remove', 'list', 'cleanup']
+          - public_share_action in ['create', 'extend', 'remove', 'list-active', 'list-available', 'cleanup']
           - public_share_action == 'cleanup' or awx_user_id is defined
           - public_share_action not in ['extend', 'remove'] or public_share_id is match('^ps-[a-z0-9-]{1,30}$')
         fail_msg: Use the AAP survey and an authenticated launching user.
+
+    - name: List approved backends and Create inputs
+      when: public_share_action == 'list-available'
+      block:
+        - name: Build the available backend listing
+          ansible.builtin.set_fact:
+            public_share_available_backends: "{{ public_share_backends | default({}) | public_share_available }}"
+            public_share_create_options:
+              public_ports:
+                HTTP: 443
+                TCP: 27010-27017
+                UDP: 27018-27025
+              expiration: UTC YYYY-MM-DDTHH:MM:SSZ; blank defaults to two hours
+              port_selection: Examples use the first pool port. Create checks whether the chosen port is free.
+
+        - name: Show available backends and copyable Create inputs
+          ansible.builtin.debug:
+            msg:
+              options: "{{ public_share_create_options }}"
+              backends: "{{ public_share_available_backends }}"
+
+        - name: Return the available backend listing as job artifacts
+          ansible.builtin.set_stats:
+            data:
+              public_share_available_backends: "{{ public_share_available_backends }}"
+              public_share_create_options: "{{ public_share_create_options }}"
+
+        - name: Finish the catalog listing
+          ansible.builtin.meta: end_play
 
     - name: Resolve controller-side credentials once without logging them
       ansible.builtin.set_fact:
@@ -90,6 +119,11 @@
           - public_share_selected | public_share_invalid_expiries | length == 0
         fail_msg: Some objects need attention; valid expired objects were still processed.
       when: public_share_action == 'cleanup'
+
+    - name: Show the caller's active shares
+      ansible.builtin.debug:
+        msg: "{{ public_share_selected | public_share_summary }}"
+      when: public_share_action == 'list-active'
 
     - name: Return resource references without credentials
       ansible.builtin.set_stats:
