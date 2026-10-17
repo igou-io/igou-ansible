@@ -36,6 +36,15 @@
         group: root
         mode: "0755"
 
+    - name: Require explicit public listener allowlists
+      ansible.builtin.assert:
+        that:
+          - vps_public_tcp_ports | default([]) | length > 0
+          - vps_public_udp_ports | default([]) | length > 0
+          - vps_public_tcp_ports | map('string') | select('match', '^[0-9]+(-[0-9]+)?$') | list | length == vps_public_tcp_ports | length
+          - vps_public_udp_ports | map('string') | select('match', '^[0-9]+(-[0-9]+)?$') | list | length == vps_public_udp_ports | length
+        fail_msg: Define reviewed public TCP and UDP port allowlists in host inventory.
+
     - name: Configure the public interface firewall guard
       ansible.builtin.template:
         src: templates/vps-guard.nft.j2

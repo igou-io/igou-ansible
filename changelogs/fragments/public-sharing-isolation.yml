@@ -1,0 +1,6 @@
+---
+security_fixes:
+  - public-share - bounded lease renewals and owner/global share counts, and restricted proxy ingress to public Gateway pods.
+  - bootstrap-vps - replaced the public management-port denylist with explicit TCP/UDP listener allowlists before k3s NAT.
+minor_changes:
+  - public-share - consumed only AAP-injected scoped kubeconfigs; removed runtime dependency on a shared Connect token.
