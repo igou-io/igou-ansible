@@ -22,8 +22,13 @@ SCOPES = [
 
 
 def timestamp(value):
+    # YAML inventory/runner serialization can decode ISO UTC text as datetime.
+    if isinstance(value, datetime):
+        if value.tzinfo is not None and value.utcoffset() == timedelta(0) and not value.microsecond:
+            return value.astimezone(timezone.utc)
+        raise AnsibleFilterError("Expiration must be a whole-second UTC timestamp")
     if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", value):
-        raise AnsibleFilterError("Expiration must be UTC YYYY-MM-DDTHH:MM:SSZ")
+        raise AnsibleFilterError(f"Expiration must be UTC YYYY-MM-DDTHH:MM:SSZ (received {type(value).__name__})")
     try:
         return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     except ValueError as exc:
