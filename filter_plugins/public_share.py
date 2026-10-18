@@ -30,7 +30,7 @@ def timestamp(value):
         raise AnsibleFilterError("Invalid expiration date") from exc
 
 
-def expiry(value, now, max_hours=24):
+def expiry(value, now, max_hours=72):
     current = timestamp(now)
     result = timestamp(value) if value else current + timedelta(hours=2)
     if not isinstance(max_hours, int) or isinstance(max_hours, bool) or max_hours < 2:

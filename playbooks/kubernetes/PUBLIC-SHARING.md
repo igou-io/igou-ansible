@@ -34,7 +34,7 @@ job ID (`ps-<job-id>`). Select HTTP, TCP, and/or UDP. HTTP gets
 `https://ps-<job-id>.igou.io`; TCP uses a chosen port from 27010–27017 and UDP
 from 27018–27025. Backend ports come from the catalog. Empty expiry defaults
 to two hours; an explicit date uses `YYYY-MM-DDTHH:MM:SSZ`. The default
-maximum lease is 24 hours from each create/extend request, with eight total
+maximum lease is 72 hours from each create/extend request, with eight total
 shares and three per owner. Inventory configures these limits. Existing partial
 and expired shares count until removed; extension renews a lease and is not an
 absolute lifetime cap. Cleanup remains hourly.
@@ -58,8 +58,10 @@ entries matching `igou-openshift/test-workloads/public-services/`: `http`
 selects nginx on TCP 8080, `tcp` selects the separate hostname server on TCP
 9000, and `udp` selects the UDP echo server on UDP 9000. Install the workload
 and its Tailscale endpoint before approving the entry in inventory. Each entry
-declares only its own protocol; adding an entry requires no new tailnet tags
-or grants. Services and NetworkPolicies constrain the backend ports.
+declares only its own protocol. The public examples use `example.ts.net`;
+replace that suffix in private inventory with your tailnet suffix. Adding an
+entry requires no new tailnet tags or grants. Services and NetworkPolicies
+constrain the backend ports.
 
 The three static VPS examples in `igou-kubernetes/examples/public-services/`
 show the same forwarding objects grouped by protocol. AAP creates temporary
@@ -72,13 +74,15 @@ Before enabling the AAP jobs, store base64-encoded kubeconfig dictionaries in
 1Password item `vps-public-sharing` in `lab_aap`, fields `vps_kubeconfig` and
 `ocp_kubeconfig`. Use only the staged `aap-public-share` VPS identity and
 `aap-public-share-reader` OpenShift identity, with the correct cluster CA and
-private API server. Use bounded TokenRequest credentials and rotate them before expiry. Do not use the Argo/ESO cluster-admin token. Managed AAP configuration resolves the full inventory lookups into the
+private API server. Use bounded TokenRequest credentials and rotate them before
+expiry. Do not use the Argo/ESO cluster-admin token. Managed AAP configuration
+resolves the full inventory lookups into the
 `public-sharing-kubeconfigs` credential. The sharing templates attach only this
-credential and the digest-pinned `public-sharing-ee`; they receive no Connect
+credential and reuse the existing `igou-awx-ee`; they receive no Connect
 token. AAP writes the two secret kubeconfigs to per-job temporary credential
 files, exposed by `PUBLIC_SHARE_VPS_KUBECONFIG` and
 `PUBLIC_SHARE_OCP_KUBECONFIG`. Playbooks read these files without logging them.
-Sync credential types, credentials and execution environments before templates.
+Sync credential types and credentials before templates.
 For an authorized local run, supply those same environment variables with
 paths to the dedicated scoped kubeconfigs.
 
