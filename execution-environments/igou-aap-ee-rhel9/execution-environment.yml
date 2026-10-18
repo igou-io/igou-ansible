@@ -71,15 +71,15 @@ dependencies:
       - name: community.routeros
         version: "3.22.0"
       - name: community.crypto
-        version: "3.4.0"
+        version: "3.5.0"
       - name: community.general
-        version: "13.4.0"
+        version: "13.5.0"
       - name: redhat.satellite
         version: "5.11.0"
       - name: redhat.insights
         version: "1.3.1"
       - name: containers.podman
-        version: "1.20.2"
+        version: "1.21.1"
       - name: community.postgresql
         version: "5.0.0"
       - name: infra.ah_configuration
