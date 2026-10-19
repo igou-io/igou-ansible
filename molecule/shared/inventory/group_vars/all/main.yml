@@ -69,7 +69,7 @@ molecule_guest_profiles:
   debian:
     boot_source:
       type: container_disk
-      image: quay.io/containerdisks/debian:13@sha256:6b992c4a8a62ca57858cbbf60110e673928d27b2885ea2a106660bc26b112b5b
+      image: quay.io/containerdisks/debian:13@sha256:ea15993d4b3f9c9ed85219b9f769c4c983e8a5c66841125e8b47c984b70e4d7d
     ssh_user: debian
     memory: 2Gi
   windows:
