@@ -67,7 +67,7 @@
     # against the postStart exec teardown race that reaped freshly-forked
     # services, plus the ghapp post-create guard from v2026.07.12-2.
     devenv_repo_version: v2026.09.29-2
-    devenv_image: ghcr.io/igou-io/igou-devenv:2026.09.29-2@sha256:84ecf443aac448f50ecee95994d4b4876893a45decde2fd2c23397b417f49f8d
+    devenv_image: ghcr.io/igou-io/igou-devenv:2026.10.19@sha256:d94035c19fde28d3ced1b76752475141db74910b3560c322141bba69a068e42f
     devenv_launch_devcontainer: true
 
     # GitHub App runtime tokens (ghapp, local-mint mode). ON by default so the
