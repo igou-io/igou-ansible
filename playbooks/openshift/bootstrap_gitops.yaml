@@ -166,6 +166,8 @@
                 name: openshift-gitops
                 namespace: openshift-gitops
               spec:
+                notifications:
+                  enabled: true
                 resourceTrackingMethod: annotation
                 # --helm-kube-version pins the Kubernetes version kustomize hands to
                 # `helm template` for its Capabilities.KubeVersion. Without it, helm
@@ -660,6 +662,23 @@
                       maxDuration: 3m
           retries: 50
           delay: 15
+
+    # Enable notifications on an existing installation without rerunning bootstrap.
+    - name: Enable OpenShift GitOps notifications
+      tags:
+        - never
+        - gitops-notifications
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: argoproj.io/v1beta1
+          kind: ArgoCD
+          metadata:
+            name: openshift-gitops
+            namespace: openshift-gitops
+          spec:
+            notifications:
+              enabled: true
 
     # Apply only RBAC to an existing installation without rerunning bootstrap.
     - name: Configure OpenShift GitOps user access
