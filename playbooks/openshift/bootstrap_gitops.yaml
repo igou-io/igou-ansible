@@ -166,6 +166,8 @@
                 name: openshift-gitops
                 namespace: openshift-gitops
               spec:
+                notifications:
+                  enabled: true
                 resourceTrackingMethod: annotation
                 # --helm-kube-version pins the Kubernetes version kustomize hands to
                 # `helm template` for its Capabilities.KubeVersion. Without it, helm

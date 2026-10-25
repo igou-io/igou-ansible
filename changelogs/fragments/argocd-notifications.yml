@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - Enabled the Argo CD notifications controller in the OpenShift GitOps bootstrap so GitOps-managed Slack services and project subscriptions can deliver alerts.
