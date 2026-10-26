@@ -18,21 +18,20 @@ dependencies:
     system:
       - openshift-clients
   python_interpreter:
-    package_system: python3.12
-    python_path: /usr/bin/python3.12
+    package_system: python3.14
+    python_path: /usr/bin/python3.14
   ansible_core:
     package_pip: ansible-core
   ansible_runner:
     package_pip: ansible-runner
   system:
-    - python3-jinja2 [platform:rpm]
     - which [platform:rpm]
     - git-core [platform:rpm]
     - git [platform:rpm]
     - libcurl-devel [platform:rpm]
     - systemd-devel [platform:rpm]
     - gcc [platform:rpm]
-    - python3.12-devel [platform:rpm]
+    - python3.14-devel [platform:rpm]
     - openssl-devel [platform:rpm]
     - libxml2-devel [platform:rpm]
     - libxslt-devel [platform:rpm]
@@ -41,7 +40,6 @@ dependencies:
     - pkg-config [platform:rpm]
     - systemd-devel [platform:rpm]
     - gcc [platform:rpm]
-    - python3.11-devel [platform:rpm]
   python: requirements.txt
   galaxy:
     # Every collection is pinned to an exact version. Unpinned, each
@@ -113,6 +111,8 @@ additional_build_steps:
     RUN microdnf install -y git-core
   append_base: |
     RUN $PYCMD -m pip install -U pip
+    RUN ln -sf /usr/bin/python3.14 /usr/local/bin/python3 && \
+        ln -sf /usr/bin/python3.14 /usr/local/bin/python
 
     # Configure Terraform Repo
     RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo

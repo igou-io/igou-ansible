@@ -10,12 +10,10 @@ on:
     inputs:
       EE_FOLDER_NAME:
         description: 'name of the folder where the EE is located (will become the name of the EE)'
-        default: ''
         required: true
         type: string
       EE_IMAGE_TAG:
         description: 'just one tag for image build'
-        default: 'latest'
         required: true
         type: string
       QUAY_USER:
@@ -23,6 +21,9 @@ on:
         required: true
         type: string
     secrets:
+      AH_TOKEN:
+        description: Automation Hub token for entitled collections
+        required: false
       QUAY_PASSWORD:
         description: 'needed for registry login'
         required: false
@@ -45,6 +46,11 @@ jobs:
       # In this job, all steps begin with a name
       - name: Checkout repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.14"
 
       - name: Install python requirements (ansible-builder)
         run: pip install ansible-builder==3.1.1

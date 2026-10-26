@@ -3,13 +3,13 @@ version: 3
 images:
   base_image:
     # renovate: datasource=docker depName=quay.io/centos/centos
-    name: quay.io/centos/centos:stream10-minimal@sha256:a539e45d56132cce9d9a8f4915abd0531988bd3d0682e0ebbb317dde77304679
+    name: quay.io/centos/centos:stream10-minimal@sha256:8fbb87d170163f9783d5ed654eaad294fbe87c9cd9d4e2fd54b5951cfb14f246
 options:
   package_manager_path: /usr/bin/microdnf
 dependencies:
   python_interpreter:
-    package_system: python3.12
-    python_path: /usr/bin/python3.12
+    package_system: python3.14
+    python_path: /usr/bin/python3.14
   ansible_core:
     # renovate: datasource=pypi depName=ansible-core
     package_pip: ansible-core==2.21.5
@@ -18,7 +18,7 @@ dependencies:
     package_pip: ansible-runner==2.4.3
   galaxy: ../../requirements.yml
   system: |
-    python3.12-devel [platform:rpm compile]
+    python3.14-devel [platform:rpm compile]
     libcurl-devel [platform:rpm compile]
     krb5-devel [platform:rpm compile]
     krb5-workstation [platform:rpm]
@@ -48,6 +48,8 @@ additional_build_steps:
     RUN microdnf install -y git-core
   append_base: |
     RUN $PYCMD -m pip install -U pip
+    RUN ln -sf /usr/bin/python3.14 /usr/local/bin/python3 && \
+        ln -sf /usr/bin/python3.14 /usr/local/bin/python
 
     # Configure Terraform Repo
     RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
@@ -64,7 +66,7 @@ additional_build_steps:
         rm -f /tmp/receptor.tar.gz
     RUN mkdir -p /var/run/receptor && \
         git lfs install --system && \
-        alternatives --install /usr/bin/python python /usr/bin/python3.12 312
+        alternatives --install /usr/bin/python python /usr/bin/python3.14 314
     # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize extractVersion=^kustomize/(?<version>.*)$
     ARG KUSTOMIZE_VERSION="v5.8.3"
     # renovate: datasource=github-releases depName=helm/helm
