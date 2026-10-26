@@ -5,6 +5,14 @@
   ],
   "packageRules": [
     {
+      "description": "Managed Python environments stay on the supported 3.14 series; review a minor upgrade explicitly.",
+      "matchDepNames": [
+        "python",
+        "cpython"
+      ],
+      "allowedVersions": ">=3.14 <3.15"
+    },
+    {
       "matchManagers": ["github-actions"],
       "groupName": "github-actions"
     },
@@ -36,8 +44,7 @@
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["docker"],
       "groupName": "ee container images",
-      "minimumReleaseAge": null,
-      "minimumReleaseAgeBehaviour": "age-only"
+      "minimumReleaseAge": null
     },
     {
       "matchManagers": ["custom.regex"],

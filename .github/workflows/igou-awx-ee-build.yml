@@ -34,5 +34,6 @@ jobs:
       EE_IMAGE_TAG: 'latest'
       QUAY_USER: 'igou'
     secrets:
+      AH_TOKEN: ${{ secrets.AH_TOKEN }}
       QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
       QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
