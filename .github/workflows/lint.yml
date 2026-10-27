@@ -34,7 +34,8 @@ jobs:
           ansible-galaxy role install -r requirements.yml
 
       - name: Run ansible-lint
-        run: ansible-lint --profile=production
+        # Dependencies were installed above with the RC metadata override.
+        run: ansible-lint --offline --profile=production
 
   yamllint:
     name: yamllint
