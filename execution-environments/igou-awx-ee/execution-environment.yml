@@ -8,17 +8,15 @@ options:
   package_manager_path: /usr/bin/microdnf
 dependencies:
   python_interpreter:
-    package_system: python3.14
-    python_path: /usr/bin/python3.14
+    python_path: /usr/local/bin/python3.15
   ansible_core:
     # renovate: datasource=pypi depName=ansible-core
-    package_pip: ansible-core==2.21.5
+    package_pip: ansible-core==2.22.0rc1
   ansible_runner:
     # renovate: datasource=pypi depName=ansible-runner
     package_pip: ansible-runner==2.4.3
   galaxy: ../../requirements.yml
   system: |
-    python3.14-devel [platform:rpm compile]
     libcurl-devel [platform:rpm compile]
     krb5-devel [platform:rpm compile]
     krb5-workstation [platform:rpm]
@@ -43,13 +41,19 @@ dependencies:
     tar
     gnupg2
   python: requirements.txt
+additional_build_files:
+  - src: ../install-python.sh
+    dest: python
 additional_build_steps:
+  prepend_galaxy:
+    # Allow collection metadata to lag the core RC during installation only.
+    - ENV ANSIBLE_COLLECTIONS_ON_ANSIBLE_VERSION_MISMATCH=ignore
   prepend_base: |
+    COPY _build/python/install-python.sh /tmp/install-python.sh
+    RUN bash /tmp/install-python.sh /usr/bin/microdnf readline-devel && rm /tmp/install-python.sh
     RUN microdnf install -y git-core
   append_base: |
     RUN $PYCMD -m pip install -U pip
-    RUN ln -sf /usr/bin/python3.14 /usr/local/bin/python3 && \
-        ln -sf /usr/bin/python3.14 /usr/local/bin/python
 
     # Configure Terraform Repo
     RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
@@ -65,8 +69,7 @@ additional_build_steps:
         chmod +x /usr/bin/receptor && \
         rm -f /tmp/receptor.tar.gz
     RUN mkdir -p /var/run/receptor && \
-        git lfs install --system && \
-        alternatives --install /usr/bin/python python /usr/bin/python3.14 314
+        git lfs install --system
     # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize extractVersion=^kustomize/(?<version>.*)$
     ARG KUSTOMIZE_VERSION="v5.8.3"
     # renovate: datasource=github-releases depName=helm/helm
@@ -87,3 +90,5 @@ additional_build_steps:
     RUN curl -L -o /usr/local/bin/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-amd64" && \
         chmod +x /usr/local/bin/virtctl
     RUN oc version && virtctl version --client && python -V && ansible --version && ansible-galaxy collection list
+    RUN python -m pip check && \
+        python -c 'import sys, ansible.release; assert sys.version_info[:2] == (3, 15); assert ansible.release.__version__ == "2.22.0rc1"'

@@ -20,12 +20,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install ansible-lint
-        run: pip install ansible-lint
+        run: pip install ansible-lint 'ansible-core==2.22.0rc1'
 
       - name: Install shared repository dependencies
+        env:
+          # Collection metadata can lag the core RC; retain runtime warnings.
+          ANSIBLE_COLLECTIONS_ON_ANSIBLE_VERSION_MISMATCH: ignore
         run: |
           ansible-galaxy collection install -r requirements.yml
           ansible-galaxy role install -r requirements.yml
@@ -43,7 +46,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install yamllint
         run: pip install yamllint

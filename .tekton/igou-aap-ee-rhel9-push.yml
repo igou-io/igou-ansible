@@ -6,7 +6,7 @@ metadata:
   annotations:
     pipelinesascode.tekton.dev/on-event: "[push]"
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
-    pipelinesascode.tekton.dev/on-path-change: "[execution-environments/igou-aap-ee-rhel9/execution-environment.yml, execution-environments/igou-aap-ee-rhel9/requirements.txt]"
+    pipelinesascode.tekton.dev/on-path-change: "[execution-environments/igou-aap-ee-rhel9/execution-environment.yml, execution-environments/igou-aap-ee-rhel9/requirements.txt, execution-environments/install-python.sh]"
     pipelinesascode.tekton.dev/task: "[.tekton/tasks/ansible-builder-task.yml, .tekton/tasks/buildah-galaxy-task.yml]"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:

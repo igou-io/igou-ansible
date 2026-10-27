@@ -10,6 +10,7 @@ on:
       - main
     paths:
       - 'execution-environments/igou-awx-ee/**'
+      - 'execution-environments/install-python.sh'
       - 'requirements.yml'
 
   # Schedule workflow run at 00:00 on Sunday
