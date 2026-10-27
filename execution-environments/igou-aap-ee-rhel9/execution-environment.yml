@@ -3,8 +3,9 @@
 # by .tekton/igou-aap-ee-rhel9-push.yml on every PaC trigger.
 #
 # base_image below is the in-cluster mirror of
-# registry.redhat.io/ansible-automation-platform-27/ee-minimal-rhel9,
-# matching the deployed AAP gateway 2.7 / controller 4.8.0.
+# registry.redhat.io/ansible-automation-platform-27/ee-minimal-rhel9:2.20.
+# The floating stable stream supplies both Python and Ansible; do not replace
+# either with source builds or PyPI packages.
 version: 3
 build_arg_defaults:
   ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: '--pre'
@@ -18,12 +19,7 @@ dependencies:
     system:
       - openshift-clients
   python_interpreter:
-    python_path: /usr/local/bin/python3.15
-  ansible_core:
-    # renovate: datasource=pypi depName=ansible-core
-    package_pip: ansible-core==2.22.0rc1
-  ansible_runner:
-    package_pip: ansible-runner
+    python_path: /usr/bin/python3
   system:
     - which [platform:rpm]
     - git-core [platform:rpm]
@@ -105,16 +101,12 @@ dependencies:
         # actually works around it. Pinning just stops the image drifting
         # while that stands.
         version: "4.10.0"
-additional_build_files:
-  - src: ../install-python.sh
-    dest: python
 additional_build_steps:
   prepend_base: |
-    COPY _build/python/install-python.sh /tmp/install-python.sh
-    RUN bash /tmp/install-python.sh /usr/bin/microdnf && rm /tmp/install-python.sh
     RUN microdnf install -y git-core
   append_base: |
-    RUN $PYCMD -m pip install -U pip
+    # Fail the build if collection dependencies replace Red Hat's core.
+    RUN $PYCMD -c 'import ansible.release, pathlib; pathlib.Path("/etc/redhat-ansible-core-version").write_text(ansible.release.__version__)'
 
     # Configure Terraform Repo
     RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
@@ -134,5 +126,5 @@ additional_build_steps:
   append_final: |
     RUN rm -f /etc/ansible/ansible.cfg
     RUN ansible-galaxy collection list
-    RUN python -m pip check && \
-        python -c 'import sys, ansible.release; assert sys.version_info[:2] == (3, 15); assert ansible.release.__version__ == "2.22.0rc1"'
+    RUN $PYCMD -m pip check && \
+        $PYCMD -c 'import ansible.release, pathlib; assert ansible.release.__version__ == pathlib.Path("/etc/redhat-ansible-core-version").read_text()'

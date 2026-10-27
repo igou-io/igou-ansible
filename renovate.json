@@ -111,24 +111,18 @@
       "groupName": "devenv bootstrap release",
       "versioning": "regex:^v?(?<major>\\d{4})\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?<build>\\d+))?$",
       "automerge": false
-    },
-    {
-      "description": "A Python source update also needs the python.org SHA-256 refreshed",
-      "matchFileNames": ["execution-environments/install-python.sh"],
-      "groupName": "python runtime",
-      "automerge": false
     }
   ],
   "customManagers": [
     {
       "description": "Update pinned CLI tool versions in Containerfiles and EE definitions via '# renovate:' comments",
       "customType": "regex",
-      "managerFilePatterns": ["/Containerfile$/", "/Dockerfile$/", "/execution-environment\\.yml$/", "/install-python\\.sh$/"],
+      "managerFilePatterns": ["/Containerfile$/", "/Dockerfile$/", "/execution-environment\\.yml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?(?: versioning=(?<versioning>\\S+))?\\n\\s*(?:ARG )?\\w+_VERSION=\"(?<currentValue>[^\"]+)\"",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:ARG )?\\w+_VERSION=\"(?<currentValue>[^\"]+)\"",
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*package_pip: \\S+==[\"']?(?<currentValue>[^\"'\\s]+)"
       ],
-      "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}semver{{/if}}"
+      "versioningTemplate": "semver"
     },
     {
       "description": "Track and pin Docker base images in execution-environment.yml files",
