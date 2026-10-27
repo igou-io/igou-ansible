@@ -53,6 +53,13 @@ for (const entries of [requirements.roles, requirements.collections]) {
 }
 const awx = parseSingleYaml(await read('execution-environments/igou-awx-ee/execution-environment.yml'));
 assert.equal(path.resolve('execution-environments/igou-awx-ee', awx.dependencies.galaxy), path.resolve(requirementsFile));
+const awxFile = 'execution-environments/igou-awx-ee/execution-environment.yml';
+const fedora = extract(await read(awxFile), awxFile).find((dep) => dep.depName === 'registry.fedoraproject.org/fedora');
+assert.ok(fedora, 'The Fedora base must remain managed by Renovate');
+assert.equal((await route(fedora, 'custom.regex', 'major')).automerge, false,
+  'A Fedora release can change the native Python minor and needs review');
+assert.equal((await route(fedora, 'custom.regex', 'digest')).automerge, true,
+  'Fedora digest refreshes retain the inherited merge policy');
 const rhel = parseSingleYaml(await read('execution-environments/igou-aap-ee-rhel9/execution-environment.yml'));
 assert.ok(Array.isArray(rhel.dependencies.galaxy.collections), 'The RHEL EE retains its separate Galaxy list');
 assert.ok(!rhel.dependencies.galaxy.collections.some((dep) => dep.name === provisioner.depName));
