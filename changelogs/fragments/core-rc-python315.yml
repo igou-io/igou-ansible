@@ -1,5 +1,5 @@
 ---
 minor_changes:
-  - Execution environments and CI adopted Python 3.15 and ansible-core 2.22.0rc1 for release-candidate evaluation.
+  - Execution environments and CI adopted Python 3.15 and ansible-core 2.22.0rc1 for release-candidate evaluation (https://github.com/igou-io/igou-ansible/pull/626).
   - Execution environments built checksum-pinned CPython under /usr/local while preserving distro Python.
   - AWX and CI dependency installation bypassed collection core-version metadata checks while retaining runtime compatibility warnings.
