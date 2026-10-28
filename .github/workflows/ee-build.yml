@@ -128,12 +128,12 @@ jobs:
           echo "## :pushpin: Ansible info:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "`podman run ${{ inputs.EE_FOLDER_NAME }} ansible --version`" >> $GITHUB_STEP_SUMMARY
+          echo "`podman run ${{ inputs.EE_FOLDER_NAME }}:${{ inputs.EE_IMAGE_TAG }} ansible --version`" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "## :pushpin: Installed collections:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "`podman run ${{ inputs.EE_FOLDER_NAME }} ansible-galaxy collection list`" >> $GITHUB_STEP_SUMMARY
+          echo "`podman run ${{ inputs.EE_FOLDER_NAME }}:${{ inputs.EE_IMAGE_TAG }} ansible-galaxy collection list`" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "## :pushpin: Containerfile:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

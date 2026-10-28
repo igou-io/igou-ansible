@@ -160,13 +160,14 @@
       "automerge": false
     },
     {
-      "description": "Automerge enabled prerelease updates after CI without release-age or schedule delays",
+      "description": "Automerge enabled prerelease updates without CI, release-age or schedule gates",
       "matchBaseBranches": [
         "prerelease"
       ],
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": false,
+      "ignoreTests": true,
       "minimumReleaseAge": null,
       "schedule": [
         "at any time"

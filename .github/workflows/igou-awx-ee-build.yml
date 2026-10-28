@@ -13,7 +13,7 @@ on:
       - 'requirements.yml'
       - '.github/workflows/ee-build.yml'
       - '.github/workflows/igou-awx-ee-build.yml'
-  # Triggers the workflow on push events but only for the main branch
+  # Build changed EE definitions on both publication branches
   push:
     branches:
       - main
@@ -30,7 +30,10 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+concurrency:
+  group: awx-ee-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   call-deploy-workflow:
     # The reusable workflow's SBOM/attestation steps can't exceed the

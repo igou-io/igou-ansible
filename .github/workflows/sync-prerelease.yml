@@ -1,0 +1,69 @@
+---
+name: Sync main into prerelease
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '17 1 * * 0'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-prerelease
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted main scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check whether the prerelease setup is merged
+        id: ready
+        run: |
+          if git cat-file -e origin/prerelease:.github/workflows/sync-prerelease.yml 2>/dev/null; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Prerelease setup is not merged yet; skipping.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Merge main without waiting for CI
+        if: steps.ready.outputs.enabled == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git worktree add "$RUNNER_TEMP/prerelease" origin/prerelease
+          cd "$RUNNER_TEMP/prerelease"
+          if ! bash "$GITHUB_WORKSPACE/.github/scripts/merge-main-into-prerelease.sh" origin/main; then
+            echo 'Main backport has conflicts beyond the Core pin. Resolve manually; prerelease was not pushed.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # The built-in token can copy workflow files already present on main,
+          # but cannot publish a new combination of workflow contents.
+          git diff --exit-code origin/main -- .github/workflows
+          git push origin HEAD:refs/heads/prerelease
+          echo "Prerelease now contains main at $(git rev-parse origin/main)." >> "$GITHUB_STEP_SUMMARY"
+
+      # GITHUB_TOKEN pushes do not trigger push workflows. Dispatch explicitly;
+      # the weekly run also refreshes RPMs when there was nothing new to merge.
+      - name: Request a prerelease image build
+        if: steps.ready.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'Content-Type: application/json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/igou-awx-ee-build.yml/dispatches" \
+            --data '{"ref":"prerelease"}'
