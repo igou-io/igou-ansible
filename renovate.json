@@ -3,14 +3,17 @@
   "extends": [
     "github>igou-io/igou-devenv//renovate-base.json"
   ],
+  "baseBranchPatterns": [
+    "main",
+    "prerelease"
+  ],
   "packageRules": [
     {
-      "description": "Managed Python environments stay on the supported 3.14 series; review a minor upgrade explicitly.",
-      "matchDepNames": [
-        "python",
-        "cpython"
+      "description": "Keep normal dependency updates on main; prerelease tracks Core and Fedora only",
+      "matchBaseBranches": [
+        "prerelease"
       ],
-      "allowedVersions": ">=3.14 <3.15"
+      "enabled": false
     },
     {
       "matchManagers": ["github-actions"],
@@ -103,6 +106,75 @@
       "groupName": "devenv bootstrap release",
       "versioning": "regex:^v?(?<major>\\d{4})\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?<build>\\d+))?$",
       "automerge": false
+    },
+    {
+      "description": "Keep main on stable Ansible Core releases",
+      "enabled": true,
+      "matchDatasources": [
+        "pypi"
+      ],
+      "matchPackageNames": [
+        "ansible-core"
+      ],
+      "versioning": "pep440",
+      "ignoreUnstable": true,
+      "respectLatest": true,
+      "minimumReleaseAge": "0 days",
+      "schedule": [
+        "at any time"
+      ],
+      "groupName": "ansible-core",
+      "automerge": false
+    },
+    {
+      "description": "Allow published Ansible previews on prerelease",
+      "matchBaseBranches": [
+        "prerelease"
+      ],
+      "matchDatasources": [
+        "pypi"
+      ],
+      "matchPackageNames": [
+        "ansible-core"
+      ],
+      "ignoreUnstable": false,
+      "respectLatest": false
+    },
+    {
+      "description": "Use released Fedora versions instead of development image tags",
+      "enabled": true,
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "registry.fedoraproject.org/fedora-minimal"
+      ],
+      "overrideDatasource": "endoflife-date",
+      "overridePackageName": "fedora",
+      "registryUrls": [
+        "https://endoflife.date/api"
+      ],
+      "versioning": "loose",
+      "minimumReleaseAge": "0 days",
+      "pinDigests": false,
+      "automerge": false
+    },
+    {
+      "description": "Automerge enabled prerelease updates without CI, release-age or schedule gates",
+      "matchBaseBranches": [
+        "prerelease"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false,
+      "ignoreTests": true,
+      "minimumReleaseAge": null,
+      "schedule": [
+        "at any time"
+      ],
+      "automergeSchedule": [
+        "at any time"
+      ]
     }
   ],
   "customManagers": [

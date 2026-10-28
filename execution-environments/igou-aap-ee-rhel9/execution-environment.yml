@@ -3,8 +3,9 @@
 # by .tekton/igou-aap-ee-rhel9-push.yml on every PaC trigger.
 #
 # base_image below is the in-cluster mirror of
-# registry.redhat.io/ansible-automation-platform-27/ee-minimal-rhel9,
-# matching the deployed AAP gateway 2.7 / controller 4.8.0.
+# registry.redhat.io/ansible-automation-platform-27/ee-minimal-rhel9:2.20.
+# The floating stable stream supplies both Python and Ansible; do not replace
+# either with source builds or PyPI packages.
 version: 3
 build_arg_defaults:
   ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: '--pre'
@@ -18,12 +19,7 @@ dependencies:
     system:
       - openshift-clients
   python_interpreter:
-    package_system: python3.14
-    python_path: /usr/bin/python3.14
-  ansible_core:
-    package_pip: ansible-core
-  ansible_runner:
-    package_pip: ansible-runner
+    python_path: /usr/bin/python3
   system:
     - which [platform:rpm]
     - git-core [platform:rpm]
@@ -31,7 +27,6 @@ dependencies:
     - libcurl-devel [platform:rpm]
     - systemd-devel [platform:rpm]
     - gcc [platform:rpm]
-    - python3.14-devel [platform:rpm]
     - openssl-devel [platform:rpm]
     - libxml2-devel [platform:rpm]
     - libxslt-devel [platform:rpm]
@@ -110,10 +105,6 @@ additional_build_steps:
   prepend_base: |
     RUN microdnf install -y git-core
   append_base: |
-    RUN $PYCMD -m pip install -U pip
-    RUN ln -sf /usr/bin/python3.14 /usr/local/bin/python3 && \
-        ln -sf /usr/bin/python3.14 /usr/local/bin/python
-
     # Configure Terraform Repo
     RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 
@@ -132,3 +123,4 @@ additional_build_steps:
   append_final: |
     RUN rm -f /etc/ansible/ansible.cfg
     RUN ansible-galaxy collection list
+    RUN $PYCMD -m pip check
