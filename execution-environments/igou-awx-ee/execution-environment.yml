@@ -7,6 +7,11 @@ images:
 options:
   package_manager_path: /usr/bin/dnf
 dependencies:
+  exclude:
+    python:
+      # arensb.truenas declares docsite tooling in its root requirements.
+      - antsibull-docs
+      - antsibull-changelog
   python_interpreter:
     package_system: python3
     python_path: /usr/bin/python3.15
@@ -37,7 +42,6 @@ dependencies:
     openssl [platform:rpm]
     nmstate
     1password-cli
-    terraform
     coreos-installer
     tar
     gnupg2
@@ -47,14 +51,10 @@ additional_build_steps:
     # Allow collection metadata to lag the core RC during installation only.
     - ENV ANSIBLE_COLLECTIONS_ON_ANSIBLE_VERSION_MISMATCH=ignore
   prepend_base: |
+    RUN printf '\ninstall_weak_deps=False\n' >> /etc/dnf/dnf.conf
     RUN dnf install -y python3 python3-pip python-unversioned-command git-core && dnf clean all
   append_base: |
     RUN $PYCMD -m pip install -U pip
-
-    # HashiCorp has not published a Fedora 45 repository yet. Its Terraform
-    # RPM is a standalone Go binary; use the signed Fedora 44 repository.
-    RUN curl -fsSL -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/fedora/hashicorp.repo && \
-        sed -i 's/$releasever/44/g' /etc/yum.repos.d/hashicorp.repo
 
     RUN rpm --import https://downloads.1password.com/linux/keys/1password.asc && \
     sh -c 'echo -e "[1password]\nname=1Password Stable Channel\nbaseurl=https://downloads.1password.com/linux/rpm/stable/\$basearch\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://downloads.1password.com/linux/keys/1password.asc" > /etc/yum.repos.d/1password.repo'

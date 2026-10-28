@@ -3,3 +3,4 @@ minor_changes:
   - The AWX execution environment adopted Fedora 45 minimal with native Python 3.15 packages and ansible-core 2.22.0rc1 for release-candidate evaluation (https://github.com/igou-io/igou-ansible/pull/626).
   - The RHEL9 execution environment retained Python and Ansible from Red Hat's stable minimal EE stream without source builds or PyPI core overrides.
   - AWX and CI dependency installation bypassed collection core-version metadata checks while retaining runtime compatibility warnings.
+  - The AWX image excluded documentation tooling and weak RPM dependencies, removed Terraform, and squashed build layers to discard temporary artifacts.

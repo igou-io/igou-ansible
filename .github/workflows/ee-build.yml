@@ -68,6 +68,7 @@ jobs:
         working-directory: execution-environments/${{ inputs.EE_FOLDER_NAME }}
         run: |
           ansible-builder build -v 3 \
+          --container-runtime podman --squash new \
           --build-arg AH_TOKEN=${{ secrets.AH_TOKEN }} \
           --context=../${{ inputs.EE_FOLDER_NAME }} \
           --tag=${{ inputs.EE_FOLDER_NAME }}:${{ inputs.EE_IMAGE_TAG }} \

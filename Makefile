@@ -26,7 +26,7 @@ syntax-check:
 
 ee:
 	cd execution-environments/igou-awx-ee && \
-		ansible-builder build -v 3 --tag igou-awx-ee:latest
+		ansible-builder build -v 3 --container-runtime podman --squash new --tag igou-awx-ee:latest
 
 pac-sim:
 	tkn pac resolve -f .tekton/igou-aap-ee-rhel9-push.yml | oc create -n ci-igou-ansible -f -
