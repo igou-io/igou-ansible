@@ -17,7 +17,7 @@ dependencies:
     python_path: /usr/bin/python3
   ansible_core:
     # renovate: datasource=pypi depName=ansible-core
-    package_pip: ansible-core==2.21.5
+    package_pip: ansible-core==2.22.0rc2
   ansible_runner:
     # renovate: datasource=pypi depName=ansible-runner
     package_pip: ansible-runner==2.4.3
@@ -47,6 +47,9 @@ dependencies:
     gnupg2
   python: requirements.txt
 additional_build_steps:
+  prepend_galaxy:
+    # Published previews can be newer than collection compatibility metadata.
+    - ENV ANSIBLE_COLLECTIONS_ON_ANSIBLE_VERSION_MISMATCH=ignore
   prepend_base: |
     RUN printf '\ninstall_weak_deps=False\n' >> /etc/dnf/dnf.conf
     RUN dnf --refresh upgrade -y && dnf install -y python3 python3-pip python-unversioned-command git-core && dnf clean all

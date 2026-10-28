@@ -29,6 +29,8 @@ jobs:
           pip install "$(awk '/package_pip: ansible-core==/ {print $2}' execution-environments/igou-awx-ee/execution-environment.yml)"
 
       - name: Install dependencies
+        env:
+          ANSIBLE_COLLECTIONS_ON_ANSIBLE_VERSION_MISMATCH: ignore
         run: |
           ansible-galaxy collection install -r requirements.yml
           ansible-galaxy role install -r requirements.yml
