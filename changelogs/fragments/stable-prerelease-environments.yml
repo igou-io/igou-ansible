@@ -8,3 +8,4 @@ minor_changes:
   - Renovate tracked released Fedora versions without digest pins through its built-in endoflife-date datasource and applied branch-specific Ansible Core policies.
   - Renovate automatically merged enabled prerelease-branch updates without CI, release-age, or schedule gates; main retained manual Core and Fedora review.
   - Main changes were automatically merged into prerelease on main pushes and weekly, preserving its Core pin; other conflicts stopped without pushing and Molecule remained manual.
+  - The Fedora job EE removed the unused Receptor binary, receptorctl dependency, and Receptor runtime directory while retaining ansible-runner.
