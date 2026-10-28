@@ -163,7 +163,7 @@
       ],
       "minimumReleaseAge": null,
       "prBodyNotes": [
-        "Notification only: this field does not select or install Python. Review Fedora RPM availability, Red Hat EE availability, and Ansible controller compatibility before adopting a new minor."
+        "Notification only: this field does not select or install Python. Review Fedora RPM availability and Ansible controller compatibility before adopting a new minor."
       ]
     }
   ],

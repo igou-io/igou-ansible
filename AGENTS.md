@@ -92,8 +92,9 @@ The RHEL EE keeps its separate inline Galaxy list in
 The AWX EE's `runtime.env` pins its native Python RPM; keep it compatible with
 the selected Fedora release and Core version. Its upstream Python field is a
 notification only. Builds verify the RPM pin and record the actual runtime in
-`/usr/share/igou/runtime.json`; CI artifacts and Tekton results add the published
-image digest. RHEL Python/Core remain supplied by the Red Hat base image.
+`/usr/share/igou/runtime.json`; its CI artifacts add the published image digest.
+RHEL uses Red Hat's floating stable EE image and its supplied Python/Core,
+without independent Python/Core pins or custom runtime tracking.
 
 ### Roles
 

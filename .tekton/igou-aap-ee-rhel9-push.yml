@@ -6,7 +6,7 @@ metadata:
   annotations:
     pipelinesascode.tekton.dev/on-event: "[push]"
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
-    pipelinesascode.tekton.dev/on-path-change: "[execution-environments/igou-aap-ee-rhel9/**, hack/runtime-manifest.py, .tekton/tasks/**]"
+    pipelinesascode.tekton.dev/on-path-change: "[execution-environments/igou-aap-ee-rhel9/execution-environment.yml, execution-environments/igou-aap-ee-rhel9/requirements.txt]"
     pipelinesascode.tekton.dev/task: "[.tekton/tasks/ansible-builder-task.yml, .tekton/tasks/buildah-galaxy-task.yml]"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:
@@ -97,8 +97,6 @@ spec:
         taskRef:
           name: buildah-galaxy
         params:
-          - name: REVISION
-            value: "$(tasks.fetch-source.results.COMMIT)"
           - name: DOCKERFILE
             value: "Containerfile"
           - name: CONTEXT
