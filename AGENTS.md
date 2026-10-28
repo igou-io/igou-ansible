@@ -81,7 +81,7 @@ quirks, and points to the authoritative [Managing the Armbian SBC Fleet](https:/
 
 Built with `ansible-builder`, defined in `execution-environments/`. Each has `execution-environment.yml` + supporting files. CI builds publish the images when their definitions change.
 
-- `igou-awx-ee` - Primary EE (Fedora 45 minimal, native Python 3.15, includes 1password-cli, oc, helm, kustomize; Terraform is excluded)
+- `igou-awx-ee` - Primary EE (Fedora 45, native Python 3.15, includes 1password-cli, oc, helm, kustomize; Terraform is excluded)
 - `igou-aap-ee-rhel9` - AAP on RHEL9
 
 Use root `requirements.yml` as the single Galaxy dependency manifest for
