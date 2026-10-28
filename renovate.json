@@ -9,6 +9,13 @@
   ],
   "packageRules": [
     {
+      "description": "Keep normal dependency updates on main; devel tracks Core and Fedora only",
+      "matchBaseBranches": [
+        "devel"
+      ],
+      "enabled": false
+    },
+    {
       "matchManagers": ["github-actions"],
       "groupName": "github-actions"
     },
@@ -102,6 +109,7 @@
     },
     {
       "description": "Keep main on stable Ansible Core releases",
+      "enabled": true,
       "matchDatasources": [
         "pypi"
       ],
@@ -134,6 +142,7 @@
     },
     {
       "description": "Use released Fedora versions instead of development image tags",
+      "enabled": true,
       "matchDatasources": [
         "docker"
       ],
