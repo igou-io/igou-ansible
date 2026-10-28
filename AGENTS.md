@@ -81,7 +81,7 @@ quirks, and points to the authoritative [Managing the Armbian SBC Fleet](https:/
 
 Built with `ansible-builder`, defined in `execution-environments/`. Each has `execution-environment.yml` + supporting files. CI builds publish the images when their definitions change.
 
-- `igou-awx-ee` - Primary EE (Fedora 45 minimal, native Python 3.15, includes 1password-cli, oc, helm, kustomize; Terraform is excluded)
+- `igou-awx-ee` - Primary EE (released Fedora minimal, native Python, includes 1password-cli, oc, helm, kustomize; Terraform is excluded)
 - `igou-aap-ee-rhel9` - AAP on RHEL9
 
 Use root `requirements.yml` as the single Galaxy dependency manifest for
@@ -93,6 +93,12 @@ The AWX EE installs the current Python RPMs from its selected Fedora release.
 Builds pull the base image, disable layer caching, refresh packages, and log
 Python/Ansible versions and dependency checks. Python has no custom Renovate
 tracker, exact RPM pin, or runtime manifest.
+`main` uses stable Ansible Core and publishes `:latest`; `devel` uses published
+alpha/beta/RC releases and publishes `:devel`. Both use released Fedora and
+its native interpreter. Renovate checks both branches: Fedora versions come
+from the built-in endoflife-date datasource, and Core prereleases are allowed
+only on `devel`. Fedora images have no digest pins. CI installs Core from the
+EE definition so it cannot drift from the image pin.
 RHEL uses Red Hat's floating stable EE image and its supplied Python/Core,
 without independent Python/Core pins or custom runtime tracking.
 

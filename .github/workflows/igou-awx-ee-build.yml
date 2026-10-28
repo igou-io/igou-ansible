@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+      - devel
     paths:
       - 'execution-environments/igou-awx-ee/**'
       - 'requirements.yml'
@@ -16,6 +17,7 @@ on:
   push:
     branches:
       - main
+      - devel
     paths:
       - 'execution-environments/igou-awx-ee/**'
       - 'requirements.yml'
@@ -39,9 +41,9 @@ jobs:
       attestations: write
     uses:  ./.github/workflows/ee-build.yml
     with:
-      PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+      PUBLISH: ${{ contains(fromJSON('["refs/heads/main", "refs/heads/devel"]'), github.ref) && github.event_name != 'pull_request' }}
       EE_FOLDER_NAME: 'igou-awx-ee'
-      EE_IMAGE_TAG: 'latest'
+      EE_IMAGE_TAG: ${{ github.ref == 'refs/heads/devel' && 'devel' || 'latest' }}
       QUAY_USER: 'igou'
     secrets:
       AH_TOKEN: ${{ secrets.AH_TOKEN }}

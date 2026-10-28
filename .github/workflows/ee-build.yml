@@ -9,7 +9,7 @@ on:
   workflow_call:
     inputs:
       PUBLISH:
-        description: Publish only tested main-branch builds
+        description: Publish trusted main or devel branch builds
         type: boolean
         default: false
       EE_FOLDER_NAME:
@@ -54,7 +54,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
-          python-version: "3.15"
+          python-version: "3.14"
 
       - name: Install python requirements (ansible-builder)
         run: pip install ansible-builder==3.1.1
@@ -114,7 +114,7 @@ jobs:
           artifact-name: ${{ inputs.EE_FOLDER_NAME }}-sbom
           output-file: ${{ inputs.EE_FOLDER_NAME }}.spdx.json
           format: spdx-json
-          dependency-snapshot: true
+          dependency-snapshot: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Print summary
         if: inputs.PUBLISH
