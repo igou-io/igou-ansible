@@ -10,7 +10,7 @@
         "docker"
       ],
       "matchPackageNames": [
-        "registry.fedoraproject.org/fedora"
+        "registry.fedoraproject.org/fedora-minimal"
       ],
       "automerge": false,
       "pinDigests": false
