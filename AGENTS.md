@@ -93,12 +93,15 @@ The AWX EE installs the current Python RPMs from its selected Fedora release.
 Builds pull the base image, disable layer caching, refresh packages, and log
 Python/Ansible versions and dependency checks. Python has no custom Renovate
 tracker, exact RPM pin, or runtime manifest.
-`main` uses stable Ansible Core and publishes `:latest`; `devel` uses published
-alpha/beta/RC releases and publishes `:devel`. Both use released Fedora and
+`main` uses stable Ansible Core and publishes `:latest`; `prerelease` uses published
+alpha/beta/RC releases and publishes `:prerelease`. Both use released Fedora and
 its native interpreter. Renovate checks both branches: Fedora versions come
 from the built-in endoflife-date datasource, and Core prereleases are allowed
-only on `devel`. Fedora images have no digest pins. CI installs Core from the
+only on `prerelease`. Fedora images have no digest pins. CI installs Core from the
 EE definition so it cannot drift from the image pin.
+Only Core and Fedora receive automated updates on `prerelease`; Renovate merges
+them after CI passes without release-age or schedule delays. Main retains manual
+Core and Fedora review.
 RHEL uses Red Hat's floating stable EE image and its supplied Python/Core,
 without independent Python/Core pins or custom runtime tracking.
 

@@ -9,7 +9,7 @@ on:
   workflow_call:
     inputs:
       PUBLISH:
-        description: Publish trusted main or devel branch builds
+        description: Publish trusted main or prerelease branch builds
         type: boolean
         default: false
       EE_FOLDER_NAME:
