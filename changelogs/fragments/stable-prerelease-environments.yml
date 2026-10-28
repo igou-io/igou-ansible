@@ -6,4 +6,5 @@ minor_changes:
   - The AWX image excluded documentation tooling and weak RPM dependencies, removed Terraform, and squashed build layers to discard temporary artifacts.
   - Fedora builds refreshed distro Python packages and logged runtime versions and dependency checks, without a custom Python updater or runtime manifest.
   - Renovate tracked released Fedora versions without digest pins through its built-in endoflife-date datasource and applied branch-specific Ansible Core policies.
-  - Renovate automatically merged enabled prerelease-branch updates after passing CI without release-age or schedule delays; main retained manual Core and Fedora review.
+  - Renovate automatically merged enabled prerelease-branch updates without CI, release-age, or schedule gates; main retained manual Core and Fedora review.
+  - Main changes were automatically merged into prerelease on main pushes and weekly, preserving its Core pin; other conflicts stopped without pushing and Molecule remained manual.

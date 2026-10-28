@@ -129,7 +129,9 @@ Use the local managed toolchain with Molecule 26.9.0, compatible ansible-core,
 `oc`, Kubernetes Python dependencies, PSRP dependencies and boto3/botocore for
 restore. Activate the scoped `ocp-ansible-molecule` profile and verify identity.
 Install local controller dependencies in a project virtual environment so the
-Ansible process can import them:
+Ansible process can import them. `requirements-molecule.txt` pins the same Core
+version as the AWX EE for the checked-out branch. On `prerelease`, this virtual
+environment uses the preview Core independently of stable Ansible in devenv:
 
 ```bash
 python3 -m venv .venv

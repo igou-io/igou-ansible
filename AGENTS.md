@@ -100,8 +100,12 @@ from the built-in endoflife-date datasource, and Core prereleases are allowed
 only on `prerelease`. Fedora images have no digest pins. CI installs Core from the
 EE definition so it cannot drift from the image pin.
 Only Core and Fedora receive automated updates on `prerelease`; Renovate merges
-them after CI passes without release-age or schedule delays. Main retains manual
-Core and Fedora review.
+them without CI, release-age or schedule gates. CI results are informational on
+that branch; Molecule runs manually. Main retains manual Core and Fedora review.
+The main-only sync workflow merges main into prerelease on each main push and
+weekly, preserving the EE and Molecule preview Core pins. Other conflicts stop without pushing.
+It explicitly dispatches a prerelease image build after syncing; publication
+still requires the image build to succeed.
 RHEL uses Red Hat's floating stable EE image and its supplied Python/Core,
 without independent Python/Core pins or custom runtime tracking.
 
