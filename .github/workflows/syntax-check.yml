@@ -5,11 +5,11 @@ name: Playbook syntax check
   push:
     branches:
       - main
-      - devel
+      - prerelease
   pull_request:
     branches:
       - main
-      - devel
+      - prerelease
 
 jobs:
   syntax-check:

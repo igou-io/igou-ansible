@@ -2,7 +2,8 @@
 minor_changes:
   - The AWX execution environment adopted released Fedora minimal and its native Python, with stable Ansible Core on main (https://github.com/igou-io/igou-ansible/pull/626).
   - The RHEL9 execution environment retained Python and Ansible from Red Hat's stable minimal EE stream without source builds or PyPI core overrides.
-  - Main and devel builds published separate latest and devel image tags; only devel accepted published Ansible alpha, beta, and RC releases.
+  - Main and prerelease builds published separate latest and prerelease image tags; only prerelease accepted published Ansible alpha, beta, and RC releases.
   - The AWX image excluded documentation tooling and weak RPM dependencies, removed Terraform, and squashed build layers to discard temporary artifacts.
   - Fedora builds refreshed distro Python packages and logged runtime versions and dependency checks, without a custom Python updater or runtime manifest.
   - Renovate tracked released Fedora versions without digest pins through its built-in endoflife-date datasource and applied branch-specific Ansible Core policies.
+  - Renovate automatically merged enabled prerelease-branch updates after passing CI without release-age or schedule delays; main retained manual Core and Fedora review.

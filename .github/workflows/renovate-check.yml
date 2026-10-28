@@ -5,7 +5,7 @@ name: Renovate coverage
   pull_request:
     branches:
       - main
-      - devel
+      - prerelease
     paths:
       - renovate.json
       - requirements.yml

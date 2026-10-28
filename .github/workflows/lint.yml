@@ -5,11 +5,11 @@ name: Lint
   push:
     branches:
       - main
-      - devel
+      - prerelease
   pull_request:
     branches:
       - main
-      - devel
+      - prerelease
 
 jobs:
   ansible-lint:
