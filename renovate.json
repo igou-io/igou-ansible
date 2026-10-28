@@ -23,7 +23,7 @@
     {
       "description": "Review Fedora release upgrades because they can change the native Python minor version",
       "matchDatasources": ["docker"],
-      "matchPackageNames": ["registry.fedoraproject.org/fedora"],
+      "matchPackageNames": ["registry.fedoraproject.org/fedora-minimal"],
       "matchUpdateTypes": ["major"],
       "automerge": false
     },

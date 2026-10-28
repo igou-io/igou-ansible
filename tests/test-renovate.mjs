@@ -54,7 +54,7 @@ for (const entries of [requirements.roles, requirements.collections]) {
 const awx = parseSingleYaml(await read('execution-environments/igou-awx-ee/execution-environment.yml'));
 assert.equal(path.resolve('execution-environments/igou-awx-ee', awx.dependencies.galaxy), path.resolve(requirementsFile));
 const awxFile = 'execution-environments/igou-awx-ee/execution-environment.yml';
-const fedora = extract(await read(awxFile), awxFile).find((dep) => dep.depName === 'registry.fedoraproject.org/fedora');
+const fedora = extract(await read(awxFile), awxFile).find((dep) => dep.depName === 'registry.fedoraproject.org/fedora-minimal');
 assert.ok(fedora, 'The Fedora base must remain managed by Renovate');
 assert.equal((await route(fedora, 'custom.regex', 'major')).automerge, false,
   'A Fedora release can change the native Python minor and needs review');

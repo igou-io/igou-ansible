@@ -2,8 +2,8 @@
 version: 3
 images:
   base_image:
-    # renovate: datasource=docker depName=registry.fedoraproject.org/fedora
-    name: registry.fedoraproject.org/fedora:45@sha256:8b50fca0271e8011f4ffc9467ae5f1981d9565a961895780df199d5ff01767c2
+    # renovate: datasource=docker depName=registry.fedoraproject.org/fedora-minimal
+    name: registry.fedoraproject.org/fedora-minimal:45@sha256:7f8177bcde6aefc9932c84611d82f526727f8d8d2f576f9268ca6f78908247dd
 options:
   package_manager_path: /usr/bin/dnf
 dependencies:
