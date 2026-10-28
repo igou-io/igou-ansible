@@ -89,10 +89,10 @@ playbooks, Molecule and the AWX EE, including the pinned Molecule provisioner.
 The RHEL EE keeps its separate inline Galaxy list in
 `execution-environments/igou-aap-ee-rhel9/execution-environment.yml`.
 
-The AWX EE's `runtime.env` pins its native Python RPM; keep it compatible with
-the selected Fedora release and Core version. Its upstream Python field is a
-notification only. Builds verify the RPM pin and record the actual runtime in
-`/usr/share/igou/runtime.json`; its CI artifacts add the published image digest.
+The AWX EE installs the current Python RPMs from its selected Fedora release.
+Builds pull the base image, disable layer caching, refresh packages, and log
+Python/Ansible versions and dependency checks. Python has no custom Renovate
+tracker, exact RPM pin, or runtime manifest.
 RHEL uses Red Hat's floating stable EE image and its supplied Python/Core,
 without independent Python/Core pins or custom runtime tracking.
 

@@ -74,7 +74,7 @@ jobs:
         run: |
           ansible-builder build -v 3 \
           --container-runtime podman --squash new \
-          --build-arg RUNTIME_REVISION=${{ github.sha }} \
+          --extra-build-cli-args="--pull=always --no-cache" \
           --build-arg AH_TOKEN=${{ secrets.AH_TOKEN }} \
           --context=../${{ inputs.EE_FOLDER_NAME }} \
           --tag=${{ inputs.EE_FOLDER_NAME }}:${{ inputs.EE_IMAGE_TAG }} \
@@ -92,31 +92,6 @@ jobs:
           registry: quay.io/${{ inputs.QUAY_USER }}/
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
-
-      - name: Record tested runtime
-        env:
-          RUNTIME_IMAGE: quay.io/${{ inputs.QUAY_USER }}/${{ inputs.EE_FOLDER_NAME }}
-          RUNTIME_DIGEST: ${{ steps.push-to-quay.outputs.digest }}
-          RUNTIME_REVISION: ${{ github.sha }}
-          LOCAL_IMAGE: ${{ inputs.EE_FOLDER_NAME }}:${{ inputs.EE_IMAGE_TAG }}
-        run: |
-          podman run --rm --entrypoint python "$LOCAL_IMAGE" \
-            /usr/local/libexec/igou-runtime-manifest.py \
-            --revision "$RUNTIME_REVISION" --image "$RUNTIME_IMAGE" --digest "$RUNTIME_DIGEST" \
-            > runtime.json
-          {
-            echo '## Tested runtime'
-            echo 'A null registry digest means this image was tested locally and was not published.'
-            echo '```json'
-            cat runtime.json
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload runtime manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: ${{ inputs.EE_FOLDER_NAME }}-runtime
-          path: runtime.json
 
       # Attestation lives in GitHub's attestation store only (no
       # push-to-registry: quay.io referrers support isn't guaranteed).

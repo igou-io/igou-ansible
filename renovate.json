@@ -1,15 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "dependencyDashboard": true,
-  "customDatasources": {
-    "fedora-python": {
-      "defaultRegistryUrlTemplate": "https://packages.fedoraproject.org/pkgs/python3.15/python3/fedora-45.html",
-      "format": "plain",
-      "transformTemplates": [
-        "($lines := releases.version[$match($, /^<title>python3-([0-9][0-9A-Za-z.+~^:-]*) - Fedora Packages<\\/title>$/)]; $assert($count($lines)=1, \"Expected one stable Fedora Python package title\"); {\"releases\": [{\"version\": $match($lines, /^<title>python3-([0-9][0-9A-Za-z.+~^:-]*) - Fedora Packages<\\/title>$/).groups[0]}], \"sourceUrl\": \"https://packages.fedoraproject.org/pkgs/python3.15/python3/\"})"
-      ]
-    }
-  },
   "extends": [
     "github>igou-io/igou-devenv//renovate-base.json"
   ],
@@ -23,19 +13,15 @@
       "automerge": false
     },
     {
-      "description": "Managed Python environments stay on the supported 3.15 series; review a minor upgrade explicitly.",
-      "matchDepNames": [
-        "python",
-        "cpython"
-      ],
-      "allowedVersions": ">=3.15,<3.16"
-    },
-    {
       "description": "Review Fedora release upgrades because they can change the native Python minor version",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["registry.fedoraproject.org/fedora-minimal"],
-      "matchUpdateTypes": ["major"],
-      "automerge": false
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "registry.fedoraproject.org/fedora-minimal"
+      ],
+      "automerge": false,
+      "pinDigests": false
     },
     {
       "matchManagers": ["github-actions"],
@@ -128,43 +114,6 @@
       "groupName": "devenv bootstrap release",
       "versioning": "regex:^v?(?<major>\\d{4})\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?<build>\\d+))?$",
       "automerge": false
-    },
-    {
-      "description": "Review native Python RPM changes daily, including Fedora rebuilds",
-      "matchDatasources": [
-        "custom.fedora-python"
-      ],
-      "matchPackageNames": [
-        "python3"
-      ],
-      "versioning": "rpm",
-      "allowedVersions": "/^3\\.15\\./",
-      "groupName": "Fedora Python runtime",
-      "automerge": false,
-      "schedule": [
-        "at any time"
-      ],
-      "minimumReleaseAge": null,
-      "prBodyNotes": [
-        "CI installs the tracked Fedora RPM and verifies the final interpreter. The runtime artifact records the Python/Core versions, source revision and published image digest."
-      ]
-    },
-    {
-      "description": "Notify about stable upstream Python releases without changing the native runtime",
-      "matchDepNames": [
-        "python-upstream"
-      ],
-      "versioning": "python",
-      "ignoreUnstable": true,
-      "groupName": "upstream Python release notice",
-      "automerge": false,
-      "schedule": [
-        "at any time"
-      ],
-      "minimumReleaseAge": null,
-      "prBodyNotes": [
-        "Notification only: this field does not select or install Python. Review Fedora RPM availability and Ansible controller compatibility before adopting a new minor."
-      ]
     }
   ],
   "customManagers": [
@@ -271,17 +220,6 @@
       "datasourceTemplate": "docker",
       "currentValueTemplate": "{{#if currentValue}}{{{currentValue}}}{{else}}latest{{/if}}",
       "autoReplaceStringTemplate": "{{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}"
-    },
-    {
-      "description": "Track the native Fedora Python RPM and the independent upstream release notice",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^execution-environments/igou-awx-ee/runtime\\.env$/"
-      ],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nPYTHON_\\w+_VERSION=\"(?<currentValue>[^\"]+)\""
-      ],
-      "packageNameTemplate": "{{#if (equals datasource \"python-version\")}}python{{else}}{{{depName}}}{{/if}}"
     }
   ]
 }

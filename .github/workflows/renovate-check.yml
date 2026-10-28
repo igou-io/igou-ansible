@@ -9,7 +9,6 @@ name: Renovate coverage
       - renovate.json
       - requirements.yml
       - execution-environments/**/execution-environment.yml
-      - execution-environments/**/runtime.env
       - ansible-navigator.yml
       - playbooks/**
       - roles/fedora_desktop/defaults/main.yml
