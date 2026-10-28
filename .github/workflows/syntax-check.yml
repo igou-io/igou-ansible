@@ -5,9 +5,11 @@ name: Playbook syntax check
   push:
     branches:
       - main
+      - prerelease
   pull_request:
     branches:
       - main
+      - prerelease
 
 jobs:
   syntax-check:
@@ -23,7 +25,8 @@ jobs:
           python-version: "3.14"
 
       - name: Install ansible-core
-        run: pip install ansible-core
+        run: |
+          pip install "$(awk '/package_pip: ansible-core==/ {print $2}' execution-environments/igou-awx-ee/execution-environment.yml)"
 
       - name: Install dependencies
         run: |

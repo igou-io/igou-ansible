@@ -81,13 +81,33 @@ quirks, and points to the authoritative [Managing the Armbian SBC Fleet](https:/
 
 Built with `ansible-builder`, defined in `execution-environments/`. Each has `execution-environment.yml` + supporting files. CI builds publish the images when their definitions change.
 
-- `igou-awx-ee` - Primary EE (CentOS Stream 10, includes terraform, 1password-cli, oc, helm, kustomize)
+- `igou-awx-ee` - Primary EE (released Fedora minimal, native Python, includes 1password-cli, oc, helm, kustomize; Terraform is excluded)
 - `igou-aap-ee-rhel9` - AAP on RHEL9
 
 Use root `requirements.yml` as the single Galaxy dependency manifest for
 playbooks, Molecule and the AWX EE, including the pinned Molecule provisioner.
 The RHEL EE keeps its separate inline Galaxy list in
 `execution-environments/igou-aap-ee-rhel9/execution-environment.yml`.
+
+The AWX EE installs the current Python RPMs from its selected Fedora release.
+Builds pull the base image, disable layer caching, refresh packages, and log
+Python/Ansible versions and dependency checks. Python has no custom Renovate
+tracker, exact RPM pin, or runtime manifest.
+`main` uses stable Ansible Core and publishes `:latest`; `prerelease` uses published
+alpha/beta/RC releases and publishes `:prerelease`. Both use released Fedora and
+its native interpreter. Renovate checks both branches: Fedora versions come
+from the built-in endoflife-date datasource, and Core prereleases are allowed
+only on `prerelease`. Fedora images have no digest pins. CI installs Core from the
+EE definition so it cannot drift from the image pin.
+Only Core and Fedora receive automated updates on `prerelease`; Renovate merges
+them without CI, release-age or schedule gates. CI results are informational on
+that branch; Molecule runs manually. Main retains manual Core and Fedora review.
+The main-only sync workflow merges main into prerelease on each main push and
+weekly, preserving the EE and Molecule preview Core pins. Other conflicts stop without pushing.
+It explicitly dispatches a prerelease image build after syncing; publication
+still requires the image build to succeed.
+RHEL uses Red Hat's floating stable EE image and its supplied Python/Core,
+without independent Python/Core pins or custom runtime tracking.
 
 ### Roles
 

@@ -5,9 +5,11 @@ name: Lint
   push:
     branches:
       - main
+      - prerelease
   pull_request:
     branches:
       - main
+      - prerelease
 
 jobs:
   ansible-lint:
@@ -23,7 +25,8 @@ jobs:
           python-version: "3.14"
 
       - name: Install ansible-lint
-        run: pip install ansible-lint
+        run: |
+          pip install ansible-lint "$(awk '/package_pip: ansible-core==/ {print $2}' execution-environments/igou-awx-ee/execution-environment.yml)"
 
       - name: Install shared repository dependencies
         run: |
@@ -31,7 +34,8 @@ jobs:
           ansible-galaxy role install -r requirements.yml
 
       - name: Run ansible-lint
-        run: ansible-lint --profile=production
+        # Reuse the dependencies installed above.
+        run: ansible-lint --offline --profile=production
 
   yamllint:
     name: yamllint

@@ -1,4 +1,5 @@
 AAP_NAV_CFG := playbooks/aap/ansible-navigator.yml
+EE_IMAGE_TAG ?= latest
 
 .PHONY: lint yamllint syntax-check ee _check-inv aap-configure aap-sync-credentials aap-sync-templates aap-bootstrap-connect ao-export
 
@@ -26,7 +27,7 @@ syntax-check:
 
 ee:
 	cd execution-environments/igou-awx-ee && \
-		ansible-builder build -v 3 --tag igou-awx-ee:latest
+		ansible-builder build -v 3 --container-runtime podman --squash new --extra-build-cli-args="--pull=always --no-cache" --tag igou-awx-ee:$(EE_IMAGE_TAG)
 
 pac-sim:
 	tkn pac resolve -f .tekton/igou-aap-ee-rhel9-push.yml | oc create -n ci-igou-ansible -f -

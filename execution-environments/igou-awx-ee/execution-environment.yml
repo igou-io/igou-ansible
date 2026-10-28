@@ -2,14 +2,19 @@
 version: 3
 images:
   base_image:
-    # renovate: datasource=docker depName=quay.io/centos/centos
-    name: quay.io/centos/centos:stream10-minimal@sha256:8fbb87d170163f9783d5ed654eaad294fbe87c9cd9d4e2fd54b5951cfb14f246
+    # renovate: datasource=docker depName=registry.fedoraproject.org/fedora-minimal
+    name: registry.fedoraproject.org/fedora-minimal:44
 options:
-  package_manager_path: /usr/bin/microdnf
+  package_manager_path: /usr/bin/dnf
 dependencies:
+  exclude:
+    python:
+      # arensb.truenas declares docsite tooling in its root requirements.
+      - antsibull-docs
+      - antsibull-changelog
   python_interpreter:
-    package_system: python3.14
-    python_path: /usr/bin/python3.14
+    package_system: python3
+    python_path: /usr/bin/python3
   ansible_core:
     # renovate: datasource=pypi depName=ansible-core
     package_pip: ansible-core==2.21.5
@@ -18,7 +23,7 @@ dependencies:
     package_pip: ansible-runner==2.4.3
   galaxy: ../../requirements.yml
   system: |
-    python3.14-devel [platform:rpm compile]
+    python3-devel [platform:rpm compile]
     libcurl-devel [platform:rpm compile]
     krb5-devel [platform:rpm compile]
     krb5-workstation [platform:rpm]
@@ -27,7 +32,6 @@ dependencies:
     git-lfs [platform:rpm]
     sshpass [platform:rpm]
     rsync [platform:rpm]
-    epel-release [platform:rpm]
     unzip [platform:rpm]
     podman-remote [platform:rpm]
     cmake [platform:rpm compile]
@@ -38,35 +42,22 @@ dependencies:
     openssl [platform:rpm]
     nmstate
     1password-cli
-    terraform
     coreos-installer
     tar
     gnupg2
   python: requirements.txt
 additional_build_steps:
   prepend_base: |
-    RUN microdnf install -y git-core
+    RUN printf '\ninstall_weak_deps=False\n' >> /etc/dnf/dnf.conf
+    RUN dnf --refresh upgrade -y && dnf install -y python3 python3-pip python-unversioned-command git-core && dnf clean all
   append_base: |
     RUN $PYCMD -m pip install -U pip
-    RUN ln -sf /usr/bin/python3.14 /usr/local/bin/python3 && \
-        ln -sf /usr/bin/python3.14 /usr/local/bin/python
-
-    # Configure Terraform Repo
-    RUN curl -o /etc/yum.repos.d/hashicorp.repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 
     RUN rpm --import https://downloads.1password.com/linux/keys/1password.asc && \
     sh -c 'echo -e "[1password]\nname=1Password Stable Channel\nbaseurl=https://downloads.1password.com/linux/rpm/stable/\$basearch\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://downloads.1password.com/linux/keys/1password.asc" > /etc/yum.repos.d/1password.repo'
 
   append_final: |
-    # renovate: datasource=github-releases depName=ansible/receptor
-    ARG RECEPTOR_VERSION="v1.6.9"
-    RUN curl -L -o /tmp/receptor.tar.gz "https://github.com/ansible/receptor/releases/download/${RECEPTOR_VERSION}/receptor_${RECEPTOR_VERSION#v}_linux_amd64.tar.gz" && \
-        tar xzf /tmp/receptor.tar.gz -C /usr/bin/ receptor && \
-        chmod +x /usr/bin/receptor && \
-        rm -f /tmp/receptor.tar.gz
-    RUN mkdir -p /var/run/receptor && \
-        git lfs install --system && \
-        alternatives --install /usr/bin/python python /usr/bin/python3.14 314
+    RUN git lfs install --system
     # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize extractVersion=^kustomize/(?<version>.*)$
     ARG KUSTOMIZE_VERSION="v5.8.3"
     # renovate: datasource=github-releases depName=helm/helm
@@ -87,3 +78,4 @@ additional_build_steps:
     RUN curl -L -o /usr/local/bin/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-amd64" && \
         chmod +x /usr/local/bin/virtctl
     RUN oc version && virtctl version --client && python -V && ansible --version && ansible-galaxy collection list
+    RUN rpm -q python3 python3-libs && python3 -m pip check
