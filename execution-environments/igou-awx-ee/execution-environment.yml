@@ -46,13 +46,19 @@ dependencies:
     tar
     gnupg2
   python: requirements.txt
+additional_build_files:
+  - src: runtime.env
+    dest: runtime
+  - src: ../../hack/runtime-manifest.py
+    dest: runtime
 additional_build_steps:
   prepend_galaxy:
     # Allow collection metadata to lag the core RC during installation only.
     - ENV ANSIBLE_COLLECTIONS_ON_ANSIBLE_VERSION_MISMATCH=ignore
   prepend_base: |
+    COPY _build/runtime/runtime.env /usr/share/igou/runtime.env
     RUN printf '\ninstall_weak_deps=False\n' >> /etc/dnf/dnf.conf
-    RUN dnf install -y python3 python3-pip python-unversioned-command git-core && dnf clean all
+    RUN . /usr/share/igou/runtime.env && dnf install -y "python3-${PYTHON_RPM_VERSION}" python3-pip python-unversioned-command git-core && dnf clean all
   append_base: |
     RUN $PYCMD -m pip install -U pip
 
@@ -60,6 +66,8 @@ additional_build_steps:
     sh -c 'echo -e "[1password]\nname=1Password Stable Channel\nbaseurl=https://downloads.1password.com/linux/rpm/stable/\$basearch\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://downloads.1password.com/linux/keys/1password.asc" > /etc/yum.repos.d/1password.repo'
 
   append_final: |
+    ARG RUNTIME_REVISION=unknown
+    COPY _build/runtime/runtime-manifest.py /usr/local/libexec/igou-runtime-manifest.py
     # renovate: datasource=github-releases depName=ansible/receptor
     ARG RECEPTOR_VERSION="v1.6.9"
     RUN curl -L -o /tmp/receptor.tar.gz "https://github.com/ansible/receptor/releases/download/${RECEPTOR_VERSION}/receptor_${RECEPTOR_VERSION#v}_linux_amd64.tar.gz" && \
@@ -90,3 +98,5 @@ additional_build_steps:
     RUN oc version && virtctl version --client && python -V && ansible --version && ansible-galaxy collection list
     RUN python -m pip check && \
         python -c 'import sys, ansible.release; assert sys.version_info[:2] == (3, 15); assert ansible.release.__version__ == "2.22.0rc1"'
+    RUN . /usr/share/igou/runtime.env && test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' python3)" = "$PYTHON_RPM_VERSION"
+    RUN python /usr/local/libexec/igou-runtime-manifest.py --revision "$RUNTIME_REVISION" > /usr/share/igou/runtime.json

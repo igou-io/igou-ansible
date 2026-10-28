@@ -89,6 +89,12 @@ playbooks, Molecule and the AWX EE, including the pinned Molecule provisioner.
 The RHEL EE keeps its separate inline Galaxy list in
 `execution-environments/igou-aap-ee-rhel9/execution-environment.yml`.
 
+The AWX EE's `runtime.env` pins its native Python RPM; keep it compatible with
+the selected Fedora release and Core version. Its upstream Python field is a
+notification only. Builds verify the RPM pin and record the actual runtime in
+`/usr/share/igou/runtime.json`; CI artifacts and Tekton results add the published
+image digest. RHEL Python/Core remain supplied by the Red Hat base image.
+
 ### Roles
 
 Mix of community galaxy roles (pinned versions in `requirements.yml`) and custom roles in `roles/`: `alloy`, `kubevirt_vm_provision`, `kubevirt_vm_snapshot`, `rpi_boot_render`, `rpi_eeprom`, `rpi_rootfs`, `tailscale_serve`, `windows_computer_use`, `windows_debloat`, `windows_desktop_apps`, `windows_power`, `zfs_pool`.

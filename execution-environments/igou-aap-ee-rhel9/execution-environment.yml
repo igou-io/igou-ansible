@@ -101,6 +101,9 @@ dependencies:
         # actually works around it. Pinning just stops the image drifting
         # while that stands.
         version: "4.10.0"
+additional_build_files:
+  - src: ../../hack/runtime-manifest.py
+    dest: runtime
 additional_build_steps:
   prepend_base: |
     RUN microdnf install -y git-core
@@ -124,7 +127,10 @@ additional_build_steps:
     - ARG ANSIBLE_GALAXY_SERVER_VALIDATED_TOKEN
     - ARG ANSIBLE_GALAXY_SERVER_COMMUNITY_URL
   append_final: |
+    ARG RUNTIME_REVISION=unknown
+    COPY _build/runtime/runtime-manifest.py /usr/local/libexec/igou-runtime-manifest.py
     RUN rm -f /etc/ansible/ansible.cfg
     RUN ansible-galaxy collection list
     RUN $PYCMD -m pip check && \
         $PYCMD -c 'import ansible.release, pathlib; assert ansible.release.__version__ == pathlib.Path("/etc/redhat-ansible-core-version").read_text()'
+    RUN mkdir -p /usr/share/igou && $PYCMD /usr/local/libexec/igou-runtime-manifest.py --revision "$RUNTIME_REVISION" > /usr/share/igou/runtime.json

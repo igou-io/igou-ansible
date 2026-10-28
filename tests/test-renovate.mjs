@@ -17,6 +17,7 @@ const { matchRegexOrGlob } = await load('util/string-match.js');
 const { parseSingleYaml } = await load('util/yaml.js');
 const { doAutoReplace } = await load('workers/repository/update/branch/auto-replace.js');
 const { GlobalConfig } = await load('config/global.js');
+const { CustomDatasource } = await load('modules/datasource/custom/index.js');
 const temporaryRepo = await fs.mkdtemp(path.join(os.tmpdir(), 'ansible-renovate-'));
 GlobalConfig.set({ localDir: temporaryRepo, platform: 'local' });
 process.on('exit', () => rmSync(temporaryRepo, { recursive: true, force: true }));
@@ -63,6 +64,34 @@ assert.equal((await route(fedora, 'custom.regex', 'digest')).automerge, true,
 const rhel = parseSingleYaml(await read('execution-environments/igou-aap-ee-rhel9/execution-environment.yml'));
 assert.ok(Array.isArray(rhel.dependencies.galaxy.collections), 'The RHEL EE retains its separate Galaxy list');
 assert.ok(!rhel.dependencies.galaxy.collections.some((dep) => dep.name === provisioner.depName));
+
+const runtimeFile = 'execution-environments/igou-awx-ee/runtime.env';
+const runtimeContent = await read(runtimeFile);
+const runtimes = extract(runtimeContent, runtimeFile);
+assert.equal(runtimes.length, 2, 'Track the installed Fedora RPM independently of upstream notices');
+for (const dep of runtimes) {
+  const policy = await route(dep);
+  assert.equal(policy.automerge, false);
+  assert.deepEqual(policy.schedule, ['at any time']);
+  assert.equal(policy.minimumReleaseAge, null, 'RPM and Python feeds have no release timestamps');
+  const native = dep.datasource === 'custom.fedora-python';
+  assert.equal(dep.packageName, native ? 'python3' : 'python');
+  assert.equal(policy.versioning, native ? 'rpm' : 'python');
+  assert.equal(policy.allowedVersions, native ? '/^3\\.15\\./' : undefined,
+    'The independent upstream notice must allow future Python minors');
+  const next = native ? '3.15.1-1.fc45' : '3.16.0';
+  const updated = await doAutoReplace({ ...dep, manager: 'regex', newValue: next }, runtimeContent, false);
+  assert.equal(updated, runtimeContent.replace(dep.replaceString, dep.replaceString.replace(dep.currentValue, next)));
+}
+const fedoraSource = new CustomDatasource();
+const lookupFedora = () => fedoraSource.getReleases({ datasource: 'custom.fedora-python',
+  packageName: 'python3', customDatasources: config.customDatasources });
+fedoraSource.http.getPlain = async () => ({ body:
+  '<html>\n<title>python3-3.15.0-2.fc45 - Fedora Packages</title>\n</html>\n' });
+assert.equal((await lookupFedora()).releases[0].version, '3.15.0-2.fc45',
+  'Track Fedora RPM rebuilds even when the upstream Python version is unchanged');
+fedoraSource.http.getPlain = async () => ({ body: '<html>temporarily unavailable</html>\n' });
+assert.equal(await lookupFedora(), null, 'Missing Fedora metadata must not produce a fabricated update');
 
 for (const dep of galaxy.filter((item) => item.datasource === 'github-tags')) {
   const policy = await route({ ...dep, packageFile: requirementsFile }, 'ansible-galaxy');

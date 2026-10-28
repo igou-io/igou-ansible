@@ -4,3 +4,4 @@ minor_changes:
   - The RHEL9 execution environment retained Python and Ansible from Red Hat's stable minimal EE stream without source builds or PyPI core overrides.
   - AWX and CI dependency installation bypassed collection core-version metadata checks while retaining runtime compatibility warnings.
   - The AWX image excluded documentation tooling and weak RPM dependencies, removed Terraform, and squashed build layers to discard temporary artifacts.
+  - Daily Renovate checks tracked Fedora's Python RPM separately from upstream Python release notices, and builds recorded the actual Python/Core versions with source revision and published digest.
