@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - Granted the OpenShift global-admins group Argo CD administrator access in the bootstrap defaults so its members can view and manage applications through SSO.
