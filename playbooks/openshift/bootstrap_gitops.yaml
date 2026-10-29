@@ -12,6 +12,7 @@
       policy: |
         g, system:cluster-admins, role:admin
         g, cluster-admins, role:admin
+        g, global-admins, role:admin
         g, admin, role:admin
         g, homepage, role:readonly
       scopes: '[groups]'
