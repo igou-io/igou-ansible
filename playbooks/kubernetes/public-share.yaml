@@ -6,6 +6,7 @@
   vars:
     public_share_action: list-available
     public_share_id: ''
+    public_share_subdomain: ''
     public_share_expires_at: ''
     public_share_protocols: HTTP
     public_share_tcp_port: 0
@@ -38,6 +39,7 @@
               max_active: "{{ public_share_max_active | default(8) }}"
               max_active_per_owner: "{{ public_share_max_active_per_owner | default(3) }}"
               port_selection: Examples use the first pool port. Create checks whether the chosen port is free.
+              subdomain: Optional label under sharing.igou.io; blank uses ps-jobid. The ps- prefix is reserved.
 
         - name: Show available backends and copyable Create inputs
           ansible.builtin.debug:
