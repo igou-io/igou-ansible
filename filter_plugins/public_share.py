@@ -103,7 +103,7 @@ def subdomain(value, share_id):
     if (not isinstance(value, str)
             or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", value)):
         raise AnsibleFilterError("Subdomain must be 1-63 lowercase letters, digits or internal hyphens")
-    if value in {"www", "gotify"} or value.startswith("ps-"):
+    if value.startswith("ps-"):
         raise AnsibleFilterError("This subdomain is reserved")
     return value
 
@@ -119,7 +119,7 @@ def render(backend, share_id, owner, expires, protocols, tcp_port=0, udp_port=0,
     timestamp(expires)
     if not owner:
         raise AnsibleFilterError("An authenticated owner is required")
-    hostname = subdomain(endpoint_subdomain, share_id) + ".igou.io"
+    hostname = subdomain(endpoint_subdomain, share_id) + ".sharing.igou.io"
     fqdn = backend.get("tailnet_fqdn", "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*\.[a-z0-9-]+\.ts\.net", fqdn):
         raise AnsibleFilterError("Backend must be an approved full MagicDNS name")

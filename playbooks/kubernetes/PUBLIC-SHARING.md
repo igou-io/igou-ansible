@@ -29,17 +29,19 @@ public_share_tcp_port: 27010
 public_share_expires_at: ''
 ```
 
-Optional `public_share_subdomain: demo` selects `demo.igou.io` for all of the
-share's HTTPS/TCP/UDP endpoints. Blank input preserves the generated hostname.
-Use 1–63 lowercase letters, digits, or internal hyphens. `www`, `gotify`, and
-the `ps-` prefix are reserved; names held by existing shares are rejected even
+Optional `public_share_subdomain: demo` selects `demo.sharing.igou.io` for all
+of the share's HTTPS/TCP/UDP endpoints. Blank input generates
+`ps-<job-id>.sharing.igou.io`. Use 1–63 lowercase letters, digits, or internal
+hyphens. The `ps-` prefix is reserved; names held by existing shares are rejected even
 when the share is expired but not yet removed. Extend and Remove still use
 the generated share ID; they cannot change the hostname. Apply the matching
-VPS admission policy and managed AAP survey before enabling custom names.
+VPS admission policy, managed AAP survey, and Gateway certificate covering
+`*.sharing.igou.io` before enabling new names. Existing root-domain shares
+retain their addresses and remain extendable and removable.
 
 Create uses the approved `public_share_backends` inventory catalog and an AAP
 job ID (`ps-<job-id>`). Select HTTP, TCP, and/or UDP. HTTP gets
-`https://ps-<job-id>.igou.io`; TCP uses a chosen port from 27010–27017 and UDP
+`https://ps-<job-id>.sharing.igou.io`; TCP uses a chosen port from 27010–27017 and UDP
 from 27018–27025. Backend ports come from the catalog. Empty expiry defaults
 to two hours; an explicit date uses `YYYY-MM-DDTHH:MM:SSZ`. The default
 maximum lease is 72 hours from each create/extend request, with eight total
