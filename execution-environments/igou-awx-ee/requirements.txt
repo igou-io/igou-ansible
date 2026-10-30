@@ -1,4 +1,3 @@
-awxkit==24.6.1
 ncclient==0.7.1
 paramiko==5.0.0
 pykerberos==1.2.4
