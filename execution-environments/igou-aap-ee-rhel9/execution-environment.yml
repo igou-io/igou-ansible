@@ -16,6 +16,9 @@ options:
   package_manager_path: /usr/bin/microdnf
 dependencies:
   exclude:
+    python:
+      # Unused controller import/export modules must not pull this client back in.
+      - awxkit
     system:
       - openshift-clients
   python_interpreter:
