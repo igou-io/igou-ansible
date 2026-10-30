@@ -22,7 +22,9 @@ dependencies:
     system:
       - openshift-clients
   python_interpreter:
-    python_path: /usr/bin/python3
+    # System dependencies can install RHEL's python3 RPM (3.9); use the
+    # interpreter supplied with Ansible in the vendor EE instead.
+    python_path: /usr/bin/python3.12
   system:
     - which [platform:rpm]
     - git-core [platform:rpm]
