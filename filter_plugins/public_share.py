@@ -9,6 +9,7 @@ MANAGED = "public-share-aap"
 ID = "sharing.igou.io/id"
 OWNER = "sharing.igou.io/owner"
 EXPIRY = "sharing.igou.io/expires-at"
+HOSTNAME = "sharing.igou.io/hostname"
 SCOPES = [
     {"api_version": "gateway.networking.k8s.io/v1", "kind": kind, "namespace": "public-services"}
     for kind in ("HTTPRoute", "TCPRoute", "UDPRoute")
@@ -96,12 +97,29 @@ def conflict(result):
     return bool(re.search(r'"code"\s*:\s*409\b', result.get("msg", "")))
 
 
-def render(backend, share_id, owner, expires, protocols, tcp_port=0, udp_port=0):
+def subdomain(value, share_id):
+    if value == "":
+        return share_id
+    if (not isinstance(value, str)
+            or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", value)):
+        raise AnsibleFilterError("Subdomain must be 1-63 lowercase letters, digits or internal hyphens")
+    if value in {"www", "gotify"} or value.startswith("ps-"):
+        raise AnsibleFilterError("This subdomain is reserved")
+    return value
+
+
+def hostname_matches(hostname, pattern):
+    return (pattern == "*" or hostname == pattern
+            or (pattern.startswith("*.") and hostname.endswith(pattern[1:])))
+
+
+def render(backend, share_id, owner, expires, protocols, tcp_port=0, udp_port=0, endpoint_subdomain=""):
     if not re.fullmatch(r"ps-[a-z0-9-]{1,30}", str(share_id)):
         raise AnsibleFilterError("Share ID must be ps- followed by at most 30 lowercase letters/digits/hyphens")
     timestamp(expires)
     if not owner:
         raise AnsibleFilterError("An authenticated owner is required")
+    hostname = subdomain(endpoint_subdomain, share_id) + ".igou.io"
     fqdn = backend.get("tailnet_fqdn", "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*\.[a-z0-9-]+\.ts\.net", fqdn):
         raise AnsibleFilterError("Backend must be an approved full MagicDNS name")
@@ -162,11 +180,11 @@ def render(backend, share_id, owner, expires, protocols, tcp_port=0, udp_port=0)
         spec = {"parentRefs": [{"group": "gateway.networking.k8s.io", "kind": "Gateway", "name": "public",
                                 "namespace": "nginx-gateway", "sectionName": listener}], "rules": [rule]}
         if protocol == "HTTP":
-            spec["hostnames"] = [share_id + ".igou.io"]
+            spec["hostnames"] = [hostname]
             rule["matches"] = [{"path": {"type": "PathPrefix", "value": "/"}}]
             rule["timeouts"] = {"request": "0s"}
         add(protocol + "Route", share_id + "-" + protocol.lower(), "public-services", spec,
-            "gateway.networking.k8s.io/v1")
+            "gateway.networking.k8s.io/v1", annotations={HOSTNAME: hostname})
     return objects
 
 
@@ -191,6 +209,21 @@ def check_backend(service, backend, protocols):
 
 def check_routes(desired, existing, gateway):
     listeners = {l["name"]: l for l in gateway.get("spec", {}).get("listeners", [])}
+    hostname = next((o["metadata"]["annotations"].get(HOSTNAME)
+                     for o in desired if o["kind"].endswith("Route")), None)
+    for old in existing:
+        if not old["kind"].endswith("Route"):
+            continue
+        if not any(p.get("name") == "public"
+                   and p.get("namespace", old["metadata"]["namespace"]) == "nginx-gateway"
+                   for p in old.get("spec", {}).get("parentRefs", [])):
+            continue
+        hosts = ([old["metadata"].get("annotations", {}).get(HOSTNAME)]
+                 if old["metadata"].get("annotations", {}).get(HOSTNAME) else [])
+        if old["kind"] == "HTTPRoute":
+            hosts += old.get("spec", {}).get("hostnames", []) or ["*"]
+        if hostname and any(hostname_matches(hostname, h) for h in hosts):
+            raise AnsibleFilterError("Public hostname is already in use")
     for route in [o for o in desired if o["kind"].endswith("Route")]:
         ref = route["spec"]["parentRefs"][0]
         listener = listeners.get(ref["sectionName"], {})
@@ -209,8 +242,9 @@ def check_routes(desired, existing, gateway):
                 if parent.get("name") != "public" or parent.get("namespace", old["metadata"]["namespace"]) != "nginx-gateway":
                     continue
                 same_listener = parent.get("sectionName") in (None, ref["sectionName"])
-                overlaps = (expected != "HTTPS" or bool(set(old["spec"].get("hostnames", []))
-                                                        & set(route["spec"].get("hostnames", []))))
+                overlaps = (expected != "HTTPS" or any(
+                    hostname_matches(h, pattern) for h in route["spec"].get("hostnames", [])
+                    for pattern in old["spec"].get("hostnames", []) or ["*"]))
                 if same_listener and overlaps:
                     raise AnsibleFilterError("Public hostname or listener is already in use")
     return True
@@ -225,7 +259,8 @@ def available(backends):
                  if p in backend.get("ports", {})}
         for protocol in ports:
             inputs = {"public_share_action": "create", "public_share_backend": name,
-                      "public_share_protocols": [protocol], "public_share_expires_at": ""}
+                      "public_share_protocols": [protocol], "public_share_expires_at": "",
+                      "public_share_subdomain": ""}
             if protocol == "TCP":
                 inputs["public_share_tcp_port"] = 27010
             elif protocol == "UDP":
@@ -251,7 +286,8 @@ def summary(objects):
             entry['endpoints'].extend('https://' + h for h in obj['spec'].get('hostnames', []))
         elif obj['kind'] in ('TCPRoute', 'UDPRoute'):
             listener = obj['spec']['parentRefs'][0].get('sectionName', '')
-            entry['endpoints'].append(f"{obj['kind'][:-5].lower()}://{share_id}.igou.io:{listener.rsplit('-', 1)[-1]}")
+            hostname = meta['annotations'].get(HOSTNAME, share_id + '.igou.io')
+            entry['endpoints'].append(f"{obj['kind'][:-5].lower()}://{hostname}:{listener.rsplit('-', 1)[-1]}")
     return list(shares.values())
 
 

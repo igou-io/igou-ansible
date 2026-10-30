@@ -26,7 +26,8 @@
     public_share_definitions: >-
       {{ public_share_backends[public_share_backend] | public_share_render(
            public_share_created_id, public_share_owner, public_share_new_expiry,
-           public_share_protocols, public_share_tcp_port, public_share_udp_port) }}
+           public_share_protocols, public_share_tcp_port, public_share_udp_port,
+           public_share_subdomain) }}
 
 - name: Read the OpenShift endpoint with the dedicated reader
   no_log: true

@@ -1,0 +1,21 @@
+---
+prerun: false
+ansible:
+  cfg:
+    defaults:
+      filter_plugins: ${MOLECULE_PROJECT_DIRECTORY}/filter_plugins
+  executor:
+    args:
+      ansible_playbook:
+        - --inventory=inventory/
+  playbooks:
+    converge: verify.yml
+    verify: verify.yml
+scenario:
+  name: logic-public_share
+  test_sequence:
+    - syntax
+    - converge
+    - verify
+verifier:
+  name: ansible

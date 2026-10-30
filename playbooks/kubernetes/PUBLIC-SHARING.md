@@ -29,6 +29,14 @@ public_share_tcp_port: 27010
 public_share_expires_at: ''
 ```
 
+Optional `public_share_subdomain: demo` selects `demo.igou.io` for all of the
+share's HTTPS/TCP/UDP endpoints. Blank input preserves the generated hostname.
+Use 1–63 lowercase letters, digits, or internal hyphens. `www`, `gotify`, and
+the `ps-` prefix are reserved; names held by existing shares are rejected even
+when the share is expired but not yet removed. Extend and Remove still use
+the generated share ID; they cannot change the hostname. Apply the matching
+VPS admission policy and managed AAP survey before enabling custom names.
+
 Create uses the approved `public_share_backends` inventory catalog and an AAP
 job ID (`ps-<job-id>`). Select HTTP, TCP, and/or UDP. HTTP gets
 `https://ps-<job-id>.igou.io`; TCP uses a chosen port from 27010–27017 and UDP
