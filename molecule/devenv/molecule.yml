@@ -1,6 +1,17 @@
 ---
 scenario:
   name: devenv
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - destroy
 ansible:
   playbooks:
     prepare: prepare.yml
+    side_effect: side_effect.yml

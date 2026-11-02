@@ -34,8 +34,16 @@
     # --- Interface contract (see issue #343 phase 1, part A) ---------------
     # REQUIRED. Namespace used for BOTH the build VM and the published DataSource.
     windows_golden_namespace: ""
-    # Optional soft placement; the required nested-worker exclusion stays fixed.
+    # Optional placement. The default excludes the TrueNAS VM worker, which
+    # cannot host this nested-virtualization workload.
     windows_golden_preferred_node_affinity: []
+    windows_golden_required_node_affinity:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: NotIn
+              values:
+                - truenas-w1
     windows_golden_tolerations: []
     # Local Administrator / auto-logon password for the throwaway build VM.
     # Empty -> a random throwaway is generated at runtime (see the "Generate a
@@ -311,19 +319,7 @@
                     affinity:
                       nodeAffinity:
                         preferredDuringSchedulingIgnoredDuringExecution: "{{ windows_golden_preferred_node_affinity }}"
-                        requiredDuringSchedulingIgnoredDuringExecution:
-                          nodeSelectorTerms:
-                            - matchExpressions:
-                                - key: kubernetes.io/hostname
-                                  operator: NotIn
-                                  values:
-                                    # SHORT hostname — the node's
-                                    # kubernetes.io/hostname label is
-                                    # "truenas-w1", not the FQDN (verified on the
-                                    # live cluster; every other node uses its
-                                    # FQDN). FQDN here silently never matches, so
-                                    # the exclusion is a no-op. See README / #420.
-                                    - truenas-w1
+                        requiredDuringSchedulingIgnoredDuringExecution: "{{ windows_golden_required_node_affinity }}"
                     domain:
                       cpu:
                         cores: 1

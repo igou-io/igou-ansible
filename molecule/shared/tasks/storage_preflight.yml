@@ -13,11 +13,12 @@
     - molecule_guest_boot_source.type == 'data_volume_source_ref'
     - molecule_guest_boot_source.source_ref.namespace == molecule_image_namespace
   block:
-    - name: Require the cache to belong to the current Casval installation
+    - name: Require the local cache to belong to the current Casval installation
       ansible.builtin.assert:
         that:
           - (molecule_casval.resources[0].metadata.annotations | default({})).get('molecule.igou.systems/cache-node-uid', '') == molecule_casval.resources[0].metadata.uid
         fail_msg: Acquire or renew a Casval lease to recover and warm this installation's image cache before cloning.
+      when: molecule_storage_profile == 'casval'
 
     - name: Read the local image DataSource
       kubernetes.core.k8s_info:
@@ -42,13 +43,12 @@
         namespace: "{{ molecule_seed.resources[0].spec.source.pvc.namespace }}"
       register: molecule_seed_claim
       no_log: true
-    - name: Require matching local storage for snapshot cloning
+    - name: Require a matching source and destination storage profile
       ansible.builtin.assert:
         that:
           - molecule_seed_claim.resources | length == 1
           - molecule_seed_claim.resources[0].status.phase == 'Bound'
-          - molecule_seed_claim.resources[0].spec.storageClassName == 'lvms-casval'
           - molecule_seed_claim.resources[0].spec.storageClassName == molecule_guest_boot_source.storage_class
           - molecule_seed_claim.resources[0].spec.volumeMode == molecule_guest_boot_source.volume_mode
           - molecule_seed_claim.resources[0].spec.accessModes == molecule_guest_boot_source.access_modes
-        fail_msg: Local seed and destination must use lvms-casval, Block and ReadWriteOnce; a cross-class copy is not the fast test path.
+        fail_msg: Image seed and destination must use the same StorageClass, volume mode, and access modes.

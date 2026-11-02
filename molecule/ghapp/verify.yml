@@ -1,6 +1,6 @@
 ---
-- name: Verify the devenv-style host (client / local mint)
-  hosts: ghapp-devenv
+- name: Verify the GitHub App client
+  hosts: ghapp-client
   gather_facts: false
   vars:
     __ghapp_env:
@@ -79,11 +79,11 @@
         that:
           - __ls_remote.stdout | length > 0
         fail_msg: git ls-remote via the credential helper failed
-    - name: Summarize devenv verification
+    - name: Summarize client verification
       ansible.builtin.debug:
         msg: 'Verified live: single-repo scoped mints for both installations, out-of-installation mint rejected by GitHub, credential helper protocol + authenticated git ls-remote.'
-- name: Verify the hermes-style host (broker)
-  hosts: ghapp-hermes
+- name: Verify the GitHub App broker
+  hosts: ghapp-broker
   gather_facts: false
   become: true
   vars:
@@ -112,9 +112,9 @@
           - __key.stat.pw_name == "ghbroker"
           - __key.stat.mode == "0600"
         fail_msg: broker key has wrong owner/mode
-    - name: Assert the hermes user cannot read the broker key
+    - name: Assert the broker client cannot read the broker key
       ansible.builtin.command:
-        cmd: runuser -u hermes -- cat /etc/ghbroker/key.pem
+        cmd: runuser -u ghapp_test -- cat /etc/ghbroker/key.pem
       register: __key_probe
       changed_when: false
       failed_when: __key_probe.rc == 0
@@ -125,7 +125,7 @@
     - name: Assert socket group and mode
       ansible.builtin.assert:
         that:
-          - __sock.stat.gr_name == "hermes"
+          - __sock.stat.gr_name == "ghapp_test"
           - __sock.stat.mode == "0660"
         fail_msg: broker socket has wrong group/mode
     - name: Read broker status over the socket
@@ -137,7 +137,7 @@
     - name: Assert broker identity and policy
       ansible.builtin.assert:
         that:
-          - __status.json.app_slug == "igou-hermes"
+          - __status.json.app_slug == "igou-dev"
           - '''igou-io/igou-infrastructure'' in __status.json.policy.allowed_repos'
         fail_msg: broker /status does not reflect the converged config
     - name: Mint a real token through the broker
@@ -189,9 +189,9 @@
       register: __audit
       changed_when: false
       failed_when: __audit.stdout | int < 2
-    - name: Mint from inside a rootless container as the hermes user
+    - name: Mint from inside a rootless container as the broker client
       ansible.builtin.shell:
-        cmd: 'set -o pipefail; runuser -u hermes -- env XDG_RUNTIME_DIR=/run/user/$(id -u hermes) podman run --rm -v /run/ghbroker:/run/ghbroker -e GHAPP_BROKER_SOCKET={{ __socket }} quay.io/centos/centos:stream10 curl -sf --unix-socket {{ __socket }} -X POST http://ghapp-broker/token -H ''Content-Type: application/json'' -d ''{"repo": "igou-io/igou-infrastructure", "permissions": {"contents": "read"}}'''
+        cmd: 'set -o pipefail; runuser -u ghapp_test -- env XDG_RUNTIME_DIR=/run/user/$(id -u ghapp_test) podman run --rm -v /run/ghbroker:/run/ghbroker -e GHAPP_BROKER_SOCKET={{ __socket }} quay.io/centos/centos:stream10 curl -sf --unix-socket {{ __socket }} -X POST http://ghapp-broker/token -H ''Content-Type: application/json'' -d ''{"repo": "igou-io/igou-infrastructure", "permissions": {"contents": "read"}}'''
       args:
         executable: /bin/bash
         chdir: /
@@ -203,6 +203,6 @@
         that:
           - (__container_mint.stdout | from_json).token is match('^gh[a-z]_')
         fail_msg: Mint from inside the rootless container failed — check SELinux (getenforce reported above) and the socket group mapping.
-    - name: Summarize hermes verification
+    - name: Summarize broker verification
       ansible.builtin.debug:
-        msg: 'Verified live: broker unit active; key 0600 ghbroker and unreadable to hermes; socket 0660 group hermes; real broker mint scoped to one repo; out-of-policy repo and permission denied (403) and audited in journald; real mint from inside a rootless podman container via the production-style /run/ghbroker mount (SELinux={{ __selinux.stdout | default(''unknown'') }}).'
+        msg: 'Verified live: broker unit active; key 0600 ghbroker and unreadable to ghapp_test; socket 0660 group ghapp_test; real broker mint scoped to one repo; out-of-policy repo and permission denied (403) and audited in journald; real mint from inside a rootless podman container via the production-style /run/ghbroker mount (SELinux={{ __selinux.stdout | default(''unknown'') }}).'

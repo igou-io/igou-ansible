@@ -1,3 +1,5 @@
 ---
-devenv_ghapp_enabled: false
-devenv_full_toolset: false
+ansible_limit: devenv  # noqa: var-naming[read-only] -- target the disposable host in each imported play
+devenv_restore_confirm: true
+devenv_backup_min_bytes: 100
+devenv_restore_min_bytes: 100

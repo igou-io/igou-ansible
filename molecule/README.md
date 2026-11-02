@@ -1,291 +1,82 @@
-# Molecule scenarios
+# Molecule workflows
 
-Molecule discovers all 15 scenarios through the shared configuration. Three fresh
-mixed-OS batches passed Linux smoke, node-exporter and Windows general lifecycles
-on Casval, including idempotence, functional verification and cleanup. A separate
-Linux maintenance lifecycle also passed. Cold reinstall/cache recovery passed
-with one BMC warm restart needed to boot the cleaning agent. These results do not
-verify every scenario in the table below.
+These scenarios run production Ansible entry points against disposable KubeVirt
+guests. `david_igou.molecule_provisioners` owns their VM, disk, Service, and
+connection inventory lifecycle. Shared setup lives in `.config/molecule/config.yml`
+and `molecule/shared/`; each workflow keeps its own guests, inputs, and outcome
+checks. Root `requirements.yml` pins the Galaxy dependencies.
 
-All disposable guests use `david_igou.molecule_provisioners` **0.0.6-alpha** with
-KubeVirt on `https://api.ocp.igou.systems:6443`. Scenario names describe use cases;
-Linux and logging domains use flat names so discovery and `-s` remain simple.
+## Run a scenario
 
-## Layout
+Acquire a Casval lease and wait for the node and cached images to become Ready.
+Use the `ocp-ansible-molecule` credential profile, then check the selected
+cluster and identity before running tests:
 
-```text
-.config/molecule/config.yml       common Molecule configuration
-requirements.yml                  shared Galaxy dependencies for playbooks, tests and AWX EE
-molecule/
-  shared/
-    inventory/                   defaults only; introduces no guests
-    create.yml                   preflight, sysprep, provisioner create
-    prepare.yml                  provisioner prepare
-    destroy.yml                  provisioner destroy, sysprep cleanup
-    preflight.yml                cluster identity and run ownership
-    windows_sysprep.yml           one Windows specialization implementation
-    templates/                   shared Windows answer file
-    tasks/                       reused functional metrics probes
-    reboot_linux.yml             shared boot persistence stimulus
-  <use-case>/
-    molecule.yml                 name and genuine lifecycle differences
-    overrides.yml                extra vars for production playbook defaults
-    inventory/                   only this scenario's guests and inputs
-    converge.yml                 real playbooks or public roles
-    verify.yml                   independent outcome checks
-    prepare.yml                  optional contextual fixture setup
-    side_effect.yml              optional reboot or update stimulus
-    checks/                      optional topic-specific assertions
+```bash
+use ocp-ansible-molecule
+oc whoami --show-server
+oc whoami
+molecule test -s default
 ```
 
-The project base is discovered automatically by Molecule 26.9.0. Static shared
-inventory loads first, scenario inventory second, and provisioner-written
-connection inventory last. Group vars named `molecule` live in directories so
-bare recursive discovery cannot mistake them for scenario configs. Make targets
-also set `MOLECULE_GLOB=molecule/*/molecule.yml`.
+Casval is the default placement and storage profile. Its Stream 10 and Windows
+guests clone from `*-casval` DataSources onto `lvms-casval`. Preflight requires a
+Ready, schedulable Casval and current local image cache; verification requires
+the guest to land on Casval and use snapshot cloning.
 
-Use `molecule_profile_overrides` for scenario-wide VM differences and `mp.kubevirt`
-for host differences. KubeVirt merges specifications shallowly: a host mapping
-replaces the matching default mapping. Shared placement lives outside guest
-profiles and is combined into `mp_defaults.kubevirt`; a partial scenario
-`mp_defaults` mapping can erase it and must be avoided.
+For a regular worker backed by shared TrueNAS storage, set one override:
 
-Every guest tolerates `workload=burst:NoSchedule` and prefers hostname
-`casval.igou.systems` (weight 100). `lvms-casval` disks require Casval through
-storage topology; preflight fails if it is unavailable or cordoned. Container-disk
-guests can use other eligible workers. Avoiding control-plane nodes remains a
-second preference. Scheduling also depends on resources, architecture and taints.
+```bash
+MOLECULE_STORAGE_PROFILE=truenas molecule test -s default
+```
 
-The provisioner owns isolated VM, disk, Service and runtime-inventory lifecycle.
-Consumer-owned sysprep Secrets and golden-build artifacts include a persisted
-run ID. Cleanup uses exact owned names and never deletes the namespace. Keep
-Molecule's ephemeral directory until cleanup succeeds; changing a scenario's host
-set during an isolated lifecycle requires destroying that run first.
+This selects `freenas-nvmeof-ssd-csi` and the matching shared image sources.
+Preflight validates the shared source claim, and verification checks the guest's
+disk class and placement away from Casval and the TrueNAS VM worker, which
+cannot host nested virtualization. The profile does not contact or simulate
+the TrueNAS API. Container-disk guests have no clone source; they
+still run on Casval by default and on regular workers with the shared-storage
+profile.
 
-## Coverage
+`molecule test -s <name>` runs an isolated lifecycle and destroys only its own
+resources. If a run fails, inspect its saved Molecule state and run
+`molecule destroy -s <name>` after fixing the cause. Keep the ephemeral state
+until cleanup succeeds. The default scenario is only an SSH, Python, and sudo
+provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 
-| Scenario | Guests and intended outcomes |
+## Scenario roster
+
+| Scenario | Guest workflow and outcome |
 | --- | --- |
-| `default` | Stream 10 SSH/Python/sudo smoke; retained snapshot input and retention regressions. |
-| `codex-desktop` | Upstream Fedora desktop, latest Codex CLI/T3/desktop app, state disk, desktop behavior; retained image resolver regressions. |
-| `devenv` | Stream 10 devcontainer bootstrap, tools, authenticated external code-server, Docker storage and reboot persistence. |
-| `devenv-restore` | Stream 10, disposable versioned S3 store, real backup/restore, rollback archive and live container bind-mount refresh. |
-| `grafana-kiosk` | Debian x64 Cog and Chromium guests; dashboard navigation and kiosk behavior against the existing HTTP fixture. |
-| `linux-node-exporter` | Stream 10, external CPU/memory/identity metrics after reboot. |
-| `kubernetes-vps` | Debian 13, 2 vCPUs/2 GiB: real standalone k3s bootstrap, public API firewall denial, local API/encryption checks, namespace/access-only AAP seed, authenticated cluster-admin Argo identity, real node-exporter pod/host metrics, local ESO/ClusterSecretStore mapping and rotation (including the TLS bundle), mirror-reader RBAC, public metrics denial, idempotence and cleanup. Host Tailscale enrollment and OpenShift PushSecret delivery are excluded from the disposable fixture. |
-| `linux-maintenance` | Stream 10 baseline, packages, exclusive SSH keys, update and reboot; fresh admin SSH and passwordless sudo. |
-| `alloy-logging` | Stream 10 journal sender and real Loki receiver; a unique post-reboot message must arrive at Loki. |
-| `upsmonitor` | Debian x64, two NUT dummy UPS drivers, real NUT/exporter stack and per-UPS external metrics after reboot. |
-| `windows-general` | Windows 11 and Server 2025; accounts, apps, services, firewall, scheduled tasks, bounded Defender updates, facts, RDP, server IIS, client debloat/readiness/power/visual effects. |
-| `windows-domain` | Independent disposable AD controller and member; retained domain-join and authenticated domain behavior. |
-| `windows-image-build` | Real Server 2025 unattended installation and generalization; collection-provisioned clone must accept PSRP and run its guest agent. |
-| `ghapp` | Retained live GitHub App client/broker integration on independent Stream 10 guests. Requires the existing integration credential profile. |
-| `truenas-apps` | Retained middleware simulation on Stream 10; config/environment drift, app recreation and payload behavior. No live TrueNAS changes. |
+| `default` | One Stream 10 guest; SSH, Python, and sudo work. |
+| `devenv` | Production bootstrap, editor/service smoke, local-file backup and restore of synthetic agent state, and restored bind-mount visibility. |
+| `codex-desktop` | Production Fedora guest configuration with controller/guest inventory groups, desktop session, app/CLIs, T3, metrics, and retained home after reboot. |
+| `linux-maintenance` | Baseline hardening, packages, SSH keys, node exporter, update, reboot, admin access, and metrics. |
+| `kubernetes-k3s` | Disposable control plane and worker, production k3s install, local API readiness, and Ready nodes. |
+| `kubernetes-kubeadm` | Independent control plane and worker, production kubeadm install, local API readiness, and Ready nodes. |
+| `kubernetes-vps` | Single Debian VPS install, local kubeconfig/API health, and Ready node. |
+| `windows-general` | Windows client/server configuration and functional behavior after reboot. |
+| `windows-domain` | Disposable controller/member join and authenticated domain behavior. |
+| `windows-image-build` | Build, generalize, clone, boot, and guest management connection. |
+| `grafana-kiosk` | Browser/kiosk deployment and dashboard navigation against a small HTTP fixture. |
+| `upsmonitor` | NUT packages and configuration, running exporters, and host metrics without attached UPSes. |
+| `ghapp` | Separate credentialed GitHub App client/broker integration. |
 
-`windows-general` excludes OHMGraphite and domain membership; AD remains a separate
-lifecycle. IIS runs only on Server; desktop roles run only on the client.
-The computer-use visual effects remain on the client; the standalone visual-effects
-playbook runs on Server so their different presets do not overwrite each other.
-Verification checks both policies after reboot.
-Windows specialization uses the same helper for built-in Administrator and client local
-administrator modes. A disposable password is persisted in Molecule state unless
-`MOLECULE_WINDOWS_ADMIN_PASSWORD` supplies one.
+No Molecule scenario enrolls Tailscale. The three Kubernetes scenarios stop at
+installation and API/node health; they do not install GitOps or applications.
+The devenv file round trip does not verify S3 transport. `upsmonitor` does not
+claim live USB UPS or device telemetry coverage. `ghapp` requires its existing
+integration credential profile.
+`linux-maintenance` verifies the post-reboot result; its repeat-run check is
+omitted because the upstream hardening role changes system-account shells on
+a second pass.
 
-General x86 Linux guests use **CentOS Stream 10**. `codex-desktop` retains
-Fedora because the production desktop role and image resolver require it;
-porting that role is separate work. Pi appliance software uses **x64 Debian 13**. The kiosk and UPS
-scenarios do not claim USB hardware, Pi graphics/firmware, EEPROM or ARM boot
-coverage. `rpi-image` is omitted: native ARM image/chroot/flashing behavior cannot
-be represented faithfully by these x64 guests.
-
-The VPS scenario uses generated self-signed TLS and a per-run fixture password
-persisted only in Molecule ephemeral state.
-It never imports ACME/certificate issuance or joins the production tailnet. Its
-update call covers the entry point; a controlled registry image replacement and
-rollback are deferred. Migration coverage removes a populated user's unit set
-at cleanup; moving persistent production data between users is outside this
-fixture. Published private VPS applications are represented by public backends.
-
-The restore scenario overrides production endpoint/credential defaults through
-`overrides.yml`, uses only synthetic agent state and lowers the archive-size gate
-for that small fixture. Version-pinned restore, guard failure injection, UID drift
-and extraction-failure recovery remain later extensions. It omits idempotence
-because backup and restore deliberately write archives and state.
-
-Image construction is the content under test, so its installer VM is created by
-the real golden-image playbook during `create`; the collection owns the resulting
-image's test clone. The production playbook accepts optional scheduling preferences and tolerations,
-while retaining its required nested-worker exclusion. Build resources are named
-per run in `molecule`; the pre-existing no-prompt ISO comes from `windows-images`.
-Allow roughly 45–90 minutes. No idempotence action rebuilds an image.
-
-TrueNAS simulation skips `datasets`: its host cannot provide the ZFS API. This
-scenario intentionally replaces the executor argument list to add that CLI flag,
-while retaining the shared inventory chain. Other scenarios inherit it unchanged.
-
-## Execution after review
-
-Use the local managed toolchain with Molecule 26.9.0, compatible ansible-core,
-`oc`, Kubernetes Python dependencies, PSRP dependencies and boto3/botocore for
-restore. Activate the scoped `ocp-ansible-molecule` profile and verify identity.
-Install local controller dependencies in a project virtual environment so the
-Ansible process can import them. `requirements-molecule.txt` pins the same Core
-version as the AWX EE for the checked-out branch. On `prerelease`, this virtual
-environment uses the preview Core independently of stable Ansible in devenv:
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-molecule.txt
-source .venv/bin/activate
-```
-
-Windows preflight checks PSRP before creating guests; a missing controller
-dependency must not consume the full guest connection timeout.
-Shared prepare clamps Windows Ethernet MTU to `molecule_windows_guest_mtu`
-(1400 for this cluster) before package downloads. Windows ignores the
-DHCP-advertised pod MTU; leaving it at 1500 can stall external CDN requests.
-Windows test guests use `u1.xlarge` (four vCPUs, 16 GiB) on Casval to give
-specialization and feature installation more CPU than the former two-core preset.
-`windows-general` runs its existing client/server reboot after converge and
-before idempotence. This settles pending Windows changes before testing a no-op
-second pass; `win_feature.reboot_required` can reflect server state even when
-the feature itself is unchanged. Final verification still runs after the reboot.
-The `molecule` namespace must exist and grant the provisioner's documented
-VM/CDI/Service permissions. CentOS and Windows scenarios need Ready local
-`centos-stream10-casval`, `win11-casval` and `win2k25-casval` DataSources in
-`openshift-virtualization-os-images`, plus read access to those DataSources/PVCs
-and source clone authorization. Image builds additionally need the source ISO clone permission.
-The controller must reach node InternalIPs/NodePorts and guests need package,
-image and release download access.
-
-```bash
-make molecule-matrix MOLECULE_SCENARIO=linux-node-exporter
-make molecule-test MOLECULE_SCENARIO=linux-node-exporter
-make molecule-verify MOLECULE_SCENARIO=linux-node-exporter
-make molecule-destroy MOLECULE_SCENARIO=linux-node-exporter
-```
-
-Bare `molecule test -s <use-case>` uses the same base. `default` remains usable for
-bare commands. `make molecule-test-all` includes costly image builds and
-credentialed integration tests; individual scenarios are the intended starting
-point. The `kubernetes-vps` fixture reads the real seed, exporter, ESO chart, local
-store and consuming ExternalSecrets from the sibling `igou-kubernetes` checkout;
-both repositories must be present. Seed objects and dummy mirrored Secrets go
-directly to the Kubernetes API, without staging manifests or client kubeconfigs.
-Dummy mirrors replace OpenShift delivery,
-including a JSON certificate/key bundle. Placeholder TLS strings exercise
-distribution and pair rotation; they do not prove certificate validity or HTTPS.
-The private Tailscale API path and central PushSecrets require rollout acceptance.
-Functional execution stays outside GitHub Actions. Actions install the
-same root `requirements.yml` for static checks. Playbooks, Molecule and the AWX
-EE share these Galaxy versions, including the pinned provisioner; the RHEL EE
-keeps its own inline Galaxy list. Python controller packages remain in
-`requirements-molecule.txt`.
-
-## Fast batches on Casval
-
-Deploy the companion GitOps `components/molecule` image cache and service-account
-read grants before running this branch. The same GitOps change enables Casval's
-Metal3 metadata cleaning between installations; leaving it disabled lets the
-provisioning ramdisk activate the old LVMS pool and block CoreOS installation.
-Cleaning affects every recognized local disk, so keep durable images off Casval
-and recheck its hardware inventory before adding disks.
-The cache keeps one seed for each of
-CentOS Stream 10, Windows 11 and Server 2025 on `lvms-casval`; tests snapshot-clone
-the same class using RWO Block volumes. Windows requires a first TrueNAS-to-local
-copy per golden PVC generation. CentOS copies the shared `centos-stream10`
-DataSource. Acquisition checks all three shared backing PVC UIDs and updates
-stable local DataSources only after their new copies succeed. There is no
-hourly Casval polling and no pending import while the node is offline. Replace
-authoritative PVCs to publish new revisions; edits to disk bytes in place do
-not trigger a refresh.
-
-Use `molecule_boot_sources` for complete host boot mappings: the provisioner
-replaces nested mappings rather than recursively merging them. Shared preflight
-checks seed readiness, binding and matching class/modes. Shared prepare verifies
-Casval placement, normal consumer binding and CDI's actual `cloneType: snapshot`;
-a copy fallback fails the run. It prints selected disk information without clone
-tokens. No test lifecycle mounts or deletes shared seeds.
-
-Acquire or renew through `casval_scale` after deploying the cache definition. Acquisition
-warms all three seeds and marks the current node UID cache-ready. A fresh
-installation resets only cache claims that predate the node; retries preserve
-completed imports already created on that installation. Release and failed
-acquisition remove unfinished copies. Molecule rejects a missing or
-stale cache marker. Reboots reuse seeds without copying them again.
-
-Hold one Casval lease for the batch and cleanup; extend it before expiry if
-needed. A reboot preserves local seeds. Destructive reprovisioning loses them
-and requires reseeding; a stale Bound PVC alone does not prove its data survived.
-Operational recovery is documented in the companion `igou-docs` runbook.
-
-The cache lifecycle has a credential-free local API regression under
-`molecule/casval-cache/logic/`. Run it in the repository's execution environment:
-
-```bash
-ansible-navigator run molecule/casval-cache/logic/verify.yml --mode stdout
-```
-
-It exercises production tasks with real `kubernetes.core` modules against a
-local Kubernetes/CDI simulator: legacy cleanup labels, reuse, source refresh,
-failed-copy cleanup, reprovisioning, release and storage-boundary rejection.
-It does not validate real CSI copies or snapshot cloning; those remain the
-managed acquisition and existing Molecule storage checks' responsibility.
-
-```bash
-make molecule-test-batch \
-  MOLECULE_SCENARIOS="default linux-node-exporter windows-general" \
-  MOLECULE_WORKERS=3
-```
-
-This installs the shared pinned dependencies once, then uses `xargs -P` to run
-independent Molecule processes with dependency installation disabled. Molecule
-26.9's native `--workers` requires collection mode and cannot run this repository.
-`molecule/dependency.sh` installs roles and collections from the one requirements
-file into the same project-local paths used by test execution. This prevents
-Galaxy from skipping globally installed collections that tests cannot see.
-The default batch
-contains `default`, `linux-node-exporter` and `linux-maintenance`. A worker limit
-bounds **scenarios**, not VMs: `windows-general` creates two guests. Start at
-three workers and increase only after measuring CPU/RAM, thin-pool data/metadata
-and total wall time. Keep independent scenario lifecycles and ephemeral directories;
-do not run another process against the same scenario's state concurrently.
-If cleanup fails, retain its state and run the matching `molecule-destroy` target.
-
-The common generated Ansible configuration enables SSH pipelining, 16 forks and
-task timing. Forks parallelize guest tasks; they do not cap VM or scenario count.
-For repeated development on an already-created guest, use `molecule-converge`
-and `molecule-verify`, then destroy when done. Full lifecycle testing still uses
-`molecule-test` with a fresh clone, idempotence and teardown.
-
-Debian container-disk guests keep their existing node image-cache path. Fedora
-desktop still resolves/downloads the current upstream cloud image on each fresh
-run, now onto LVMS; its resolver behavior remains covered. Windows image-build
-still runs a real installer (45–90 minutes), with its root disk and resulting
-test clone on LVMS. Its standalone blank build disk uses the builder's existing
-immediate-binding annotation; test VM clone templates do not. Neither expensive
-scenario is included in the default batch.
-
-The 2026-10-10 mixed-OS validation used three concurrent scenario processes and
-four fresh guests per round. Every root disk used a snapshot clone on Casval;
-each complete batch exited successfully and left no VM, VMI, DataVolume, PVC or
-Service in the test namespace.
-
-| Round | Full batch | CentOS smoke disk | Exporter disk | Windows 11 disk | Server 2025 disk |
-| --- | --- | --- | --- | --- | --- |
-| 1 | 32m 01s | 19s | 17s | 58s | 58s |
-| 2 | 33m 28s | 21s | 28s | 59s | 49s |
-| 3 | 29m 21s | 17s | 19s | 58s | 70s |
-
-Disk times measure DataVolume creation to Ready, including controller preparation.
-Full batch times include dependency checks, guest specialization, application and
-feature installation, reboot, idempotence, verification and teardown.
-
-Earlier storage validation measured nine local clones at 6–32 seconds per disk.
-That excludes guest boot, Windows specialization and Ansible phases; it is not
-a runtime certification or timing guarantee for this Molecule refactor.
-
-The local storage checks cover boot disks. Windows preferences also persist EFI
-and vTPM state in small KubeVirt-managed claims using the cluster's RWX state
-storage (`freenas-nfs-ssd-csi` in current validation). Those claims are owned by
-the disposable VM and must disappear during teardown alongside its boot disk.
+The `windows-image-build` lifecycle can take 45–90 minutes. Windows and desktop
+guests need their current external package/image sources. `kubernetes-kubeadm`
+imports a 20 GiB Debian cloud disk per guest because the small container disk
+cannot hold the kubeadm runtime and images. The `molecule`
+namespace and image DataSources are shared prerequisites, not scenario-owned
+resources.
+`windows-general` excludes the Windows Update install from its repeat-run check
+because definition updates can arrive during a test; its post-reboot check
+still verifies that an update search succeeds.

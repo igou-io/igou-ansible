@@ -1,11 +1,9 @@
 ---
-# Restore counterpart of backup.yml - devenv agent state from rustfs-cold.
+# Restore counterpart of backup.yml - devenv agent state from S3 or a file.
 #
-# Downloads the MOST RECENT backup (the current version of the fixed key
-# s3://devenv-backups/devenv/agent-state.tar.gz) - or a pinned VersionId via
-# devenv_restore_version_id - to a target host's /home/igou, then extracts it
-# over the target's existing agent/tooling state. This productizes the manual
-# restore recipe documented at the foot of backup.yml.
+# Reads the selected controller file or the current S3 object (optionally a
+# pinned VersionId via devenv_restore_version_id), then extracts it over the
+# target host's existing agent/tooling state.
 #
 # DESTRUCTIVE + DOUBLE-GUARDED: like the hermes snapshot restore, this play
 # overwrites live agent state on the target, so it refuses to run unless
@@ -36,11 +34,10 @@
 # else runs as the igou login user, exactly like backup.yml (no become anywhere
 # else, no become at play level).
 #
-# Credentials: 1Password item devenv-backups-rustfs-cold (lab_s3 vault),
-# resolved at runtime - the job template must carry the
-# onepassword-connect-token credential. Endpoint comes from the same inventory
-# host_vars the rustfs_state role reconciles against.
-- name: Restore devenv agent state from rustfs-cold
+# S3 settings and complete 1Password credential lookups come from inventory.
+# Set devenv_restore_source=file and an absolute devenv_archive_file path
+# to read a controller archive without an object store or 1Password credential.
+- name: Restore devenv agent state
   hosts: "{{ (ansible_limit | default('', true) | trim) or undef(hint='Set ansible_limit explicitly to the intended restore host.') }}"
   gather_facts: false
   vars:
@@ -62,13 +59,6 @@
       - .config/opencode
       - .local/share/opencode
       - workspace/scratch
-    # Single source of truth: the rustfs-cold stub host's spec vars.
-    devenv_s3_endpoint: "{{ hostvars['rustfs-cold'].rustfs_state_endpoint }}"
-    devenv_s3_bucket: devenv-backups
-    devenv_s3_object: devenv/agent-state.tar.gz
-    devenv_s3_region: us-east-1
-    devenv_s3_access_key: "{{ lookup('community.general.onepassword', 'devenv-backups-rustfs-cold', field='username', vault='lab_s3') }}"
-    devenv_s3_secret_key: "{{ lookup('community.general.onepassword', 'devenv-backups-rustfs-cold', field='password', vault='lab_s3') }}"
     # An implausibly small download means the object was empty or wrong - fail
     # rather than clobber live state with garbage.
     devenv_restore_min_bytes: 10485760
@@ -84,6 +74,42 @@
           selected by ansible_limit. Re-run with -e devenv_restore_confirm=true
           only after checking -e ansible_limit=<host> names the intended target.
 
+    - name: Validate the selected restore source
+      ansible.builtin.assert:
+        that:
+          - devenv_restore_source | default('s3') in ['file', 's3']
+          - devenv_restore_source | default('s3') != 'file' or (devenv_archive_file | default('')) is match('^/')
+          - devenv_restore_source | default('s3') != 'file' or (devenv_restore_version_id | length) == 0
+        fail_msg: Select file or s3; file mode requires an absolute controller-side devenv_archive_file and no S3 version pin.
+
+    - name: Require inventory S3 settings for an object-store restore
+      ansible.builtin.assert:
+        that:
+          - devenv_s3_endpoint is defined
+          - devenv_s3_bucket is defined
+          - devenv_s3_object is defined
+          - devenv_s3_region is defined
+          - devenv_s3_access_key_lookup is defined
+          - devenv_s3_secret_key_lookup is defined
+        fail_msg: Define the S3 endpoint, bucket, object, region, and complete credential lookups in inventory.
+      when: devenv_restore_source | default('s3') == 's3'
+      no_log: true
+
+    - name: Require the requested file archive before changing guest state
+      ansible.builtin.stat:
+        path: "{{ devenv_archive_file }}"
+      register: _file_archive
+      delegate_to: localhost
+      connection: local
+      when: devenv_restore_source | default('s3') == 'file'
+
+    - name: Reject a missing or nonregular file archive
+      ansible.builtin.assert:
+        that:
+          - _file_archive.stat.isreg | default(false)
+        fail_msg: The requested controller-side backup archive is missing or is not a regular file.
+      when: devenv_restore_source | default('s3') == 'file'
+
     - name: Stage a control-node scratch path for the archive to restore
       ansible.builtin.tempfile:
         state: file
@@ -96,14 +122,16 @@
     - name: Read back the object metadata (current version + size)
       amazon.aws.s3_object_info:
         endpoint_url: "{{ devenv_s3_endpoint }}"
-        access_key: "{{ devenv_s3_access_key }}"
-        secret_key: "{{ devenv_s3_secret_key }}"
+        access_key: "{{ devenv_s3_access_key_lookup }}"
+        secret_key: "{{ devenv_s3_secret_key_lookup }}"
         region: "{{ devenv_s3_region }}"
         bucket_name: "{{ devenv_s3_bucket }}"
         object_name: "{{ devenv_s3_object }}"
       register: _object_info
       delegate_to: localhost
       connection: local
+      no_log: true
+      when: devenv_restore_source | default('s3') == 's3'
 
     - name: Report the object that will be restored
       ansible.builtin.debug:
@@ -113,12 +141,13 @@
           {{ _object_info.object_info[0].object_data.content_length | default('?') }} bytes.
           {{ (devenv_restore_version_id | length > 0)
              | ternary('Pinned to version ' ~ devenv_restore_version_id, 'Restoring the current version.') }}
+      when: devenv_restore_source | default('s3') == 's3'
 
     - name: Download the archive to the control node
       amazon.aws.s3_object:
         endpoint_url: "{{ devenv_s3_endpoint }}"
-        access_key: "{{ devenv_s3_access_key }}"
-        secret_key: "{{ devenv_s3_secret_key }}"
+        access_key: "{{ devenv_s3_access_key_lookup }}"
+        secret_key: "{{ devenv_s3_secret_key_lookup }}"
         region: "{{ devenv_s3_region }}"
         bucket: "{{ devenv_s3_bucket }}"
         object: "{{ devenv_s3_object }}"
@@ -138,6 +167,19 @@
         AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
       delegate_to: localhost
       connection: local
+      no_log: true
+      when: devenv_restore_source | default('s3') == 's3'
+
+    - name: Stage the file archive on the controller
+      ansible.builtin.copy:
+        src: "{{ devenv_archive_file }}"
+        dest: "{{ _local_archive.path }}"
+        remote_src: true
+        mode: '0600'
+      delegate_to: localhost
+      connection: local
+      no_log: true
+      when: devenv_restore_source | default('s3') == 'file'
 
     - name: Record which version was actually restored
       ansible.builtin.set_fact:
@@ -145,6 +187,12 @@
           {{ (devenv_restore_version_id | length > 0)
              | ternary(devenv_restore_version_id,
                        _object_info.object_info[0].object_data.version_id | default('n/a')) }}
+      when: devenv_restore_source | default('s3') == 's3'
+
+    - name: Identify the local archive source
+      ansible.builtin.set_fact:
+        _restored_version: local-file
+      when: devenv_restore_source | default('s3') == 'file'
 
     - name: Stat the downloaded archive
       ansible.builtin.stat:
@@ -296,10 +344,11 @@
     - name: Assert the primary agent state was restored
       ansible.builtin.assert:
         that:
-          - _verify_stat.stat.exists
+          - _verify_stat.stat.isdir | default(false)
+          - _verify_stat.stat.pw_name == 'igou'
         fail_msg: >-
-          {{ devenv_restore_home }}/.claude-container is absent after extract -
-          the archive did not contain the primary agent state?
+          {{ devenv_restore_home }}/.claude-container is missing or is not
+          owned by igou after extraction.
 
     - name: Record the restore outcome
       ansible.builtin.debug:

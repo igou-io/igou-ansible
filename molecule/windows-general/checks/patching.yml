@@ -1,0 +1,22 @@
+---
+- name: Verify Windows Update remains usable after patching
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Search for applicable definition updates
+      ansible.windows.win_updates:
+        category_names:
+          - Definition Updates
+        reject_list:
+          - KB4052623
+        state: searched
+      register: _searched
+      until: _searched is succeeded
+      retries: 3
+      delay: 60
+    - name: Assert the update search completed without failures
+      ansible.builtin.assert:
+        that:
+          - _searched.found_update_count is defined
+          - (_searched.failed_update_count | default(0) | int) == 0
+        fail_msg: Windows Update did not complete a clean search after patching.

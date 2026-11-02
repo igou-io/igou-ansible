@@ -23,7 +23,10 @@
     # Effective values; inventory overrides the un-prefixed names. Play vars
     # outrank inventory, so defaults are merged here via default() instead
     # of defining the public names as play vars.
-    _nut_listen: "{{ nut_listen | default([{'address': '0.0.0.0', 'port': 3493}]) }}"
+    _nut_default_listen:
+      - address: 0.0.0.0
+        port: 3493
+    _nut_listen: "{{ nut_listen | default(_nut_default_listen) }}"
     _nut_pollinterval: "{{ nut_pollinterval | default(5) }}"
     # upsd account passwords; inventory carries the lookup expressions.
     _nut_upsmon_password: "{{ nut_upsmon_password_lookup }}"
@@ -34,7 +37,7 @@
       ansible.builtin.assert:
         that:
           - nut_upses is defined
-          - nut_upses | length > 0
+          - nut_upses | length > 0 or nut_software_only | default(false) | bool
           - nut_upsmon_password_lookup is defined
           - nut_monitor_password_lookup is defined
         fail_msg: >-
@@ -59,6 +62,7 @@
     - name: Re-apply udev rules to pre-existing USB devices
       ansible.builtin.command: udevadm trigger --subsystem-match=usb --action=change
       changed_when: false
+      when: not nut_software_only | default(false) | bool
 
     - name: Set NUT mode to netserver
       ansible.builtin.template:
@@ -84,6 +88,7 @@
         - Resync NUT driver instances
         - Restart NUT drivers
         - Restart upsd
+      when: not nut_software_only | default(false) | bool
 
     - name: Configure upsd listeners (upsd.conf)
       ansible.builtin.template:
@@ -117,6 +122,7 @@
       no_log: true  # MONITOR lines carry the upsmon password
       notify:
         - Restart upsmon
+      when: not nut_software_only | default(false) | bool
 
     # The enumerator path unit re-runs nut-driver-enumerator.service whenever
     # ups.conf changes, keeping nut-driver@<ups> instances in sync outside
@@ -126,6 +132,7 @@
         name: nut-driver-enumerator.path
         enabled: true
         state: started
+      when: not nut_software_only | default(false) | bool
 
     - name: Enable NUT services at boot
       ansible.builtin.systemd_service:
@@ -134,6 +141,17 @@
       loop:
         - nut-server.service
         - nut-monitor.service
+      when: not nut_software_only | default(false) | bool
+
+    - name: Keep hardware-dependent daemons stopped in software-only mode
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop:
+        - nut-server.service
+        - nut-monitor.service
+      when: nut_software_only | default(false) | bool
 
     - name: Apply any pending NUT restarts before verifying
       ansible.builtin.meta: flush_handlers
@@ -145,12 +163,14 @@
       loop:
         - nut-server.service
         - nut-monitor.service
+      when: not nut_software_only | default(false) | bool
 
     - name: Wait for upsd to accept connections
       ansible.builtin.wait_for:
         host: 127.0.0.1
         port: 3493
         timeout: 30
+      when: not nut_software_only | default(false) | bool
 
     - name: Query each UPS through upsd
       ansible.builtin.command: "upsc {{ item.name }}@localhost ups.status"
@@ -179,18 +199,22 @@
       ansible.builtin.systemd_service:
         name: nut-driver-enumerator.service
         state: restarted
+      when: not nut_software_only | default(false) | bool
 
     - name: Restart NUT drivers
       ansible.builtin.systemd_service:
         name: nut-driver.target
         state: restarted
+      when: not nut_software_only | default(false) | bool
 
     - name: Restart upsd
       ansible.builtin.systemd_service:
         name: nut-server.service
         state: restarted
+      when: not nut_software_only | default(false) | bool
 
     - name: Restart upsmon
       ansible.builtin.systemd_service:
         name: nut-monitor.service
         state: restarted
+      when: not nut_software_only | default(false) | bool

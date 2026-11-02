@@ -28,7 +28,7 @@
       community.windows.win_scheduled_task:
         name: molecule-fwprobe-listener
         path: \Ansible
-        description: Molecule firewall-probe listener — a PowerShell TcpListener accept-loop on 0.0.0.0:7778 so verify's negative external probe tests the firewall, not a missing listener. Torn down in verify's always block.
+        description: Molecule firewall-probe listener — a PowerShell TcpListener accept-loop on 0.0.0.0:7778 so the external probe tests the firewall, not a missing listener.
         actions:
           - path: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
             arguments: -ExecutionPolicy Bypass -WindowStyle Hidden -NonInteractive -Command "$l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, 7778); $l.Start(); while ($true) { $c = $l.AcceptTcpClient(); $c.Close() }"

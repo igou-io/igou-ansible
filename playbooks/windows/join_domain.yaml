@@ -21,8 +21,9 @@
 #                                   microsoft.ad.membership enforces domain
 #                                   creds for state=workgroup too (it uses
 #                                   them to remove the computer account).
-#                                   Pass via extra_vars from a 1Password
-#                                   lookup — never from a file in git.
+#                                   Define the complete 1Password lookup in
+#                                   inventory group_vars or host_vars, not in
+#                                   this playbook or a command-line extra var.
 #   windows_domain_ou_path        - OU for the computer object, e.g.
 #                                   OU=TestVMs,DC=ad,DC=igou,DC=systems
 #                                   (optional)
@@ -53,18 +54,11 @@
 #
 # Run:
 #   ansible-navigator run playbooks/windows/join_domain.yaml \
-#     -i igou-inventory/inventory.yaml -e ansible_limit=<host> \
-#     -e windows_domain_name=ad.example.com \
-#     -e windows_domain_admin_user=join-svc@ad.example.com \
-#     -e windows_domain_admin_password=<secret>
+#     -i igou-inventory/inventory.yaml -e ansible_limit=<host>
+# Inventory supplies the domain name, join account, and password lookup.
 - name: Manage Active Directory domain membership
   hosts: "{{ ansible_limit | default('windows') }}"
   gather_facts: false
-
-  vars:
-    windows_domain_state: domain
-    windows_workgroup_name: WORKGROUP
-    windows_domain_dns_servers: []
 
   tasks:
     - name: Make sure join credentials were provided
@@ -78,7 +72,7 @@
           Joining a domain needs windows_domain_name,
           windows_domain_admin_user and windows_domain_admin_password —
           see the header of this playbook.
-      when: windows_domain_state == 'domain'
+      when: windows_domain_state | default('domain') == 'domain'
 
     # DNS is the classic first-join blocker: the host can't find the domain
     # controller unless it resolves the AD DNS records. Point every adapter
@@ -88,8 +82,8 @@
         adapter_names: '*'
         dns_servers: "{{ windows_domain_dns_servers }}"
       when:
-        - windows_domain_state == 'domain'
-        - windows_domain_dns_servers | length > 0
+        - windows_domain_state | default('domain') == 'domain'
+        - windows_domain_dns_servers | default([]) | length > 0
 
     # reboot: true lets the module handle the restart a join/leave always
     # requires, and the play continues once the host is back.
@@ -102,15 +96,15 @@
         hostname: "{{ windows_domain_hostname | default(omit) }}"
         state: domain
         reboot: true
-      when: windows_domain_state == 'domain'
+      when: windows_domain_state | default('domain') == 'domain'
       no_log: true
 
     - name: Leave the domain for a workgroup
       microsoft.ad.membership:
-        workgroup_name: "{{ windows_workgroup_name }}"
+        workgroup_name: "{{ windows_workgroup_name | default('WORKGROUP') }}"
         domain_admin_user: "{{ windows_domain_admin_user | default(omit) }}"
         domain_admin_password: "{{ windows_domain_admin_password | default(omit) }}"
         state: workgroup
         reboot: true
-      when: windows_domain_state == 'workgroup'
+      when: windows_domain_state | default('domain') == 'workgroup'
       no_log: true

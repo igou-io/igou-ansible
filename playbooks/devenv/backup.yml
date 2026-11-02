@@ -1,14 +1,11 @@
 ---
-# Weekly devenv agent-state backup -> rustfs-cold.
+# Devenv agent-state backup to S3 (default) or a controller file.
 #
-# Tars the agent/tooling state (Claude/Codex/opencode config + sessions,
-# tmux, the scratch workspace) out of the vscode.igou.systems devhost's
-# host home with numeric ownership, then uploads the archive from the EE
-# to ONE fixed key in the versioned devenv-backups bucket on rustfs-cold.
-# Each weekly run becomes the new current version; the bucket's ILM rule
-# (NoncurrentDays: 30, declared in igou-inventory host_vars/rustfs-cold.yml)
-# expires superseded versions after a month, so at a weekly cadence the
-# bucket retains roughly the current copy plus the last four.
+# Tars agent/tooling state (Claude/Codex/opencode config + sessions, tmux,
+# scratch workspace) from the target host with numeric ownership, then saves
+# the archive to a private controller file or the inventory-selected S3 key.
+# Production defaults to the versioned devenv-backups bucket on rustfs-cold;
+# its ILM policy expires superseded versions after 30 days.
 #
 # Target is the vscode.igou.systems devhost - the physical machine that runs
 # the devcontainer. (A deliberately selected test rebuild host can be
@@ -29,17 +26,14 @@
 # Everything here is igou-owned - there is no become anywhere in this play,
 # and the fetch reads the archive as the ssh login user directly.
 #
-# Credentials: 1Password item devenv-backups-rustfs-cold (lab_s3 vault),
-# resolved at runtime - the job template must carry the
-# onepassword-connect-token credential. The endpoint comes from the same
-# inventory host_vars the rustfs_state role reconciles against.
+# S3 settings and the complete 1Password credential lookups come from
+# inventory. Set devenv_backup_destination=file and an absolute
+# devenv_archive_file path to write a private archive on the controller
+# without an object store or 1Password credential.
 #
-# Restore (paths in the archive are host-side, relative to /home/igou):
-#   1. aws s3api list-object-versions --bucket devenv-backups \
-#        --prefix devenv/agent-state.tar.gz   (pick a VersionId)
-#   2. aws s3api get-object --version-id <id> ... agent-state.tar.gz
-#   3. tar xzf agent-state.tar.gz --numeric-owner -C /home/igou
-- name: Back up devenv agent state to rustfs-cold
+# Restore through playbooks/devenv/restore.yml with an explicit target and
+# confirmation; select file or s3 as the restore source.
+- name: Back up devenv agent state
   hosts: "{{ ansible_limit | default('vscode.igou.systems') }}"
   gather_facts: false
   vars:
@@ -56,18 +50,31 @@
       - workspace/scratch # host-side bind source of the devcontainer's /workspace/scratch
     devenv_backup_required_paths: # absent => wrong host/unprovisioned home => fail
       - .claude-container
-    # Single source of truth: the rustfs-cold stub host's spec vars.
-    devenv_s3_endpoint: "{{ hostvars['rustfs-cold'].rustfs_state_endpoint }}"
-    devenv_s3_bucket: devenv-backups
-    devenv_s3_object: devenv/agent-state.tar.gz
-    devenv_s3_region: us-east-1
-    devenv_s3_access_key: "{{ lookup('community.general.onepassword', 'devenv-backups-rustfs-cold', field='username', vault='lab_s3') }}"
-    devenv_s3_secret_key: "{{ lookup('community.general.onepassword', 'devenv-backups-rustfs-cold', field='password', vault='lab_s3') }}"
     # Real agent state is tens of MB; an implausibly small tarball means the
     # home was empty or wrong - fail rather than upload garbage.
     devenv_backup_min_bytes: 10485760
 
   pre_tasks:
+    - name: Validate the selected backup destination
+      ansible.builtin.assert:
+        that:
+          - devenv_backup_destination | default('s3') in ['file', 's3']
+          - devenv_backup_destination | default('s3') != 'file' or (devenv_archive_file | default('')) is match('^/')
+        fail_msg: Select file or s3; file mode requires an absolute controller-side devenv_archive_file path.
+
+    - name: Require inventory S3 settings for an object-store backup
+      ansible.builtin.assert:
+        that:
+          - devenv_s3_endpoint is defined
+          - devenv_s3_bucket is defined
+          - devenv_s3_object is defined
+          - devenv_s3_region is defined
+          - devenv_s3_access_key_lookup is defined
+          - devenv_s3_secret_key_lookup is defined
+        fail_msg: Define the S3 endpoint, bucket, object, region, and complete credential lookups in inventory.
+      when: devenv_backup_destination | default('s3') == 's3'
+      no_log: true
+
     - name: Stage a control-node scratch path for the fetched archive
       ansible.builtin.tempfile:
         state: file
@@ -171,8 +178,8 @@
     - name: Upload the archive as the new current version
       amazon.aws.s3_object:
         endpoint_url: "{{ devenv_s3_endpoint }}"
-        access_key: "{{ devenv_s3_access_key }}"
-        secret_key: "{{ devenv_s3_secret_key }}"
+        access_key: "{{ devenv_s3_access_key_lookup }}"
+        secret_key: "{{ devenv_s3_secret_key_lookup }}"
         region: "{{ devenv_s3_region }}"
         bucket: "{{ devenv_s3_bucket }}"
         object: "{{ devenv_s3_object }}"
@@ -192,18 +199,33 @@
         AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
       delegate_to: localhost
       connection: local
+      no_log: true
+      when: devenv_backup_destination | default('s3') == 's3'
+
+    - name: Save the archive to the controller file
+      ansible.builtin.copy:
+        src: "{{ _local_archive.path }}"
+        dest: "{{ devenv_archive_file }}"
+        remote_src: true
+        mode: '0600'
+      delegate_to: localhost
+      connection: local
+      no_log: true
+      when: devenv_backup_destination | default('s3') == 'file'
 
     - name: Read back the uploaded object's metadata
       amazon.aws.s3_object_info:
         endpoint_url: "{{ devenv_s3_endpoint }}"
-        access_key: "{{ devenv_s3_access_key }}"
-        secret_key: "{{ devenv_s3_secret_key }}"
+        access_key: "{{ devenv_s3_access_key_lookup }}"
+        secret_key: "{{ devenv_s3_secret_key_lookup }}"
         region: "{{ devenv_s3_region }}"
         bucket_name: "{{ devenv_s3_bucket }}"
         object_name: "{{ devenv_s3_object }}"
       register: _uploaded
       delegate_to: localhost
       connection: local
+      no_log: true
+      when: devenv_backup_destination | default('s3') == 's3'
 
     - name: Record the backup outcome
       ansible.builtin.debug:
@@ -212,6 +234,12 @@
           s3://{{ devenv_s3_bucket }}/{{ devenv_s3_object }}
           (version {{ _uploaded.object_info[0].object_data.version_id
                       | default('n/a') }})
+      when: devenv_backup_destination | default('s3') == 's3'
+
+    - name: Report the file backup outcome
+      ansible.builtin.debug:
+        msg: "Saved {{ _archive_stat.stat.size }} bytes to {{ devenv_archive_file }}"
+      when: devenv_backup_destination | default('s3') == 'file'
 
   post_tasks:
     - name: Publish the successful backup outcome for the orchestrator

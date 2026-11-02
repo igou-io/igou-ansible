@@ -1,0 +1,5 @@
+---
+- name: Install the two-node k3s cluster
+  ansible.builtin.import_playbook: ../../playbooks/kubernetes/install-k3s-cluster.yml
+  vars:
+    k3s_registration_address: "{{ hostvars[groups['rk8s_control_plane'][0]].ansible_default_ipv4.address }}"

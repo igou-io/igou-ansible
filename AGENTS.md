@@ -142,15 +142,15 @@ shared dependencies in root `requirements.yml`, and inventory defaults,
 Windows specialization, preflight and dispatcher imports in `molecule/shared/`.
 Keep each scenario's host set, production imports, fixtures and outcome checks
 local. Override `molecule_profile_overrides`, not `mp_defaults`, to preserve
-the common soft Casval preference and burst toleration. CentOS and Windows use
-the shared `molecule_boot_sources` and lease-managed `*-casval` DataSources on
-`lvms-casval`. Storage topology requires Casval for these disks; preflight must
-fail when Casval or a seed is unavailable rather than silently copy from TrueNAS.
-Keep affinity soft for container-disk guests, which can use other eligible workers.
+shared placement. `MOLECULE_STORAGE_PROFILE` selects `casval` (default,
+`lvms-casval` and `*-casval` image sources) or `truenas`
+(`freenas-nvmeof-ssd-csi` and matching shared image sources on a regular
+worker). Preflight and verification must agree with the selected class and
+placement. Require Casval affinity for every guest in the default profile.
 Molecule never creates or deletes shared seeds. Concurrent batches use the
 bounded `molecule-test-batch` target; install dependencies once before workers.
-Keep logic regressions with their owning use-case scenarios. See
-`molecule/README.md` for inheritance, lifecycle exceptions and deferred coverage.
+Keep workflow assertions focused on outcomes. See `molecule/README.md` for
+the 13-scenario roster, profile commands, and lifecycle limits.
 Do not run Molecule in GitHub Actions. Functional testing uses the local
 `ocp-ansible-molecule` profile, and must prove cleanup in `molecule`.
 

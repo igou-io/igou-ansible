@@ -1,0 +1,63 @@
+---
+- name: Verify the Windows client is usable after reboot
+  hosts: windows_client
+  gather_facts: false
+  tasks:
+    - name: Launch and close the installed browser
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $p = Start-Process 'C:\Program Files\Mozilla Firefox\firefox.exe' -ArgumentList '--headless','--no-remote','about:blank' -PassThru
+          try {
+            Start-Sleep -Seconds 5
+            if ($p.HasExited) { throw 'Firefox exited before it was usable.' }
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }
+
+    - name: Run the installed archive tool
+      ansible.windows.win_command:
+        argv:
+          - C:\Program Files\7-Zip\7z.exe
+          - i
+      changed_when: false
+
+    - name: Clear the scheduled job's previous result
+      ansible.windows.win_file:
+        path: C:\molecule-task-fired.txt
+        state: absent
+
+    - name: Trigger the configured scheduled job
+      ansible.windows.win_shell: Start-ScheduledTask -TaskPath \Ansible\ -TaskName molecule-marker-task
+      changed_when: false
+
+    - name: Wait for the scheduled job's result
+      ansible.windows.win_stat:
+        path: C:\molecule-task-fired.txt
+      register: _scheduled_job_result
+      until: _scheduled_job_result.stat.exists | default(false)
+      retries: 12
+      delay: 5
+
+    - name: Require the scheduled job to write data
+      ansible.builtin.assert:
+        that:
+          - _scheduled_job_result.stat.size | int > 0
+
+- name: Verify the newly configured local account can log in
+  hosts: windows_client
+  gather_facts: false
+  vars:
+    ansible_user: moluser
+    ansible_password: "{{ molecule_windows_password_lookup }}"
+  tasks:
+    - name: Authenticate over PSRP as the configured user
+      ansible.windows.win_whoami: null
+      register: _client_identity
+      no_log: true
+
+    - name: Require the configured account identity
+      ansible.builtin.assert:
+        that:
+          - _client_identity.account.account_name | lower == 'moluser'
+      no_log: true

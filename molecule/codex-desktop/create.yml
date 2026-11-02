@@ -22,6 +22,7 @@
         name: fedora-desktop-test
         groups:
           - molecule
+          - codex_desktop_guest
         mp:
           kubevirt:
             boot_source:
