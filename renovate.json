@@ -100,14 +100,6 @@
       "automerge": false
     },
     {
-      "description": "The bootstrap git release and runtime image must advance together",
-      "matchManagers": ["custom.regex"],
-      "matchFileNames": ["playbooks/devenv/bootstrap.yml"],
-      "groupName": "devenv bootstrap release",
-      "versioning": "regex:^v?(?<major>\\d{4})\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?<build>\\d+))?$",
-      "automerge": false
-    },
-    {
       "description": "Keep main on stable Ansible Core releases",
       "enabled": true,
       "matchDatasources": [
@@ -255,20 +247,10 @@
       "versioningTemplate": "semver"
     },
     {
-      "description": "Track the devenv bootstrap git release alongside its container image",
-      "customType": "regex",
-      "managerFilePatterns": ["/^playbooks/devenv/bootstrap\\.yml$/"],
-      "matchStrings": ["devenv_repo_version:\\s*[\"']?(?<currentValue>v\\d{4}\\.\\d+\\.\\d+(?:-\\d+)?)"],
-      "depNameTemplate": "igou-io/igou-devenv",
-      "datasourceTemplate": "github-tags",
-      "versioningTemplate": "regex:^v?(?<major>\\d{4})\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?<build>\\d+))?$"
-    },
-    {
-      "description": "Track qualified bootstrap, navigator and Molecule image references, including embedded Kubernetes YAML",
+      "description": "Track qualified navigator and Molecule image references, including embedded Kubernetes YAML",
       "customType": "regex",
       "managerFilePatterns": [
         "/^(?:ansible-navigator|playbooks/aap/ansible-navigator)\\.yml$/",
-        "/^playbooks/devenv/bootstrap\\.yml$/",
         "/^playbooks/openshift/bootstrap_gitops\\.yaml$/",
         "/^playbooks/openshift_virtualization/build_windows_golden\\.yml$/",
         "/^molecule/.+/inventory/.+\\.ya?ml$/"
