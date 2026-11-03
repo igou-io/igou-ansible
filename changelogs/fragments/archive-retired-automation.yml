@@ -1,0 +1,6 @@
+---
+removed_features:
+  - Archived the nine retired Hermes VM playbooks and their exclusive assets outside the active playbook tree.
+  - Archived the superseded rpi-image-gen build/setup pipeline and config template; retained the release-image builder, flash, and Pi netboot entry points.
+minor_changes:
+  - Excluded historical archive snapshots from linting and automated dependency updates.

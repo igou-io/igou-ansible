@@ -44,7 +44,7 @@
 #
 # Stages: fetch release -> unpack -> customize (native chroot on the
 # builder) -> verify (content + boot-plausibility) -> publish.
-# Publish layout is identical to build.yml
+# Publish layout is compatible with the archived rpi-image-gen pipeline
 # (<publish_dir>/<config>/<build_id>/<config>.img.xz + SHA256SUMS +
 # latest symlink + retention), so flash.yml and
 # playbooks/rpi_netboot/publish_to_netboot.yml consume either pipeline

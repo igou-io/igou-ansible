@@ -37,7 +37,7 @@ inventory scope (fleet group_vars down to per-host).
 | playbook | what it does |
 |---|---|
 | `enroll.yml` | ON the SD-booted Pi: converge EEPROM (BOOT_ORDER, TFTP prefix mode, UART), capture serial/MAC, print the inventory stanza. The one imperative step netboot can't avoid. |
-| `publish_to_netboot.yml` | Copy the newest rpi-image-gen build from the builder's `/srv/images/rpi` tree to the netboot server's HTTP assets export + write `manifest.json`. |
+| `publish_to_netboot.yml` | Copy the newest published release-image build from the builder's `/srv/images/rpi` tree to the netboot server's HTTP assets export + write `manifest.json`. |
 | `stage_netboot_assets.yml` | Per-Pi NFS rootfs + boot-partition split on the netboot server; upload the shared `<model>/<build_id>` firmware/kernel/dtb set to rb5009 flash and register per-Pi rows. Scope with `-e rpi_group=<group>`, **not `--limit`**. |
 | `converge_boot_mode.yml` | Render + upload only the per-Pi pins (`config.txt`/`cmdline.txt`). Router state only. |
 | `cycle_pi.yml` | PoE cold-cycle + verify the booted rootfs matches `rpi_boot_mode`. |

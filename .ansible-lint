@@ -12,6 +12,7 @@ extra_vars:
 
 # Exclude files that reference roles/collections not installable in this environment
 exclude_paths:
+  - archive/  # Historical snapshots; not supported Ansible entry points.
   - .venv/
   - playbooks/openshift/casval-orchestrator-workflow.yml
   - playbooks/devenv/restore-orchestrator-workflow.yml

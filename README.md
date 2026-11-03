@@ -2,6 +2,9 @@
 
 Infrastructure playbooks, roles, and execution environments for AAP and local Ansible Navigator runs.
 
+Retired automation and its supporting assets are preserved under
+[`archive/`](archive/README.md), outside the maintained playbook tree.
+
 ## Operational documentation
 
 Runbooks and architecture notes live in the [igou-docs vault](https://github.com/igou-io/igou-docs), starting with [Home](https://github.com/igou-io/igou-docs/blob/main/Home.md). This repository keeps implementation and adjacent role/playbook READMEs; it has no separate `docs/` tree.
