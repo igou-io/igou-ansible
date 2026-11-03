@@ -70,7 +70,9 @@ class SessionRecoveryTests(unittest.TestCase):
         self.assertEqual(len(self.pools), 3)
         self.assertIs(self.connection.runspace, self.pools[-1])
         for pool in self.pools[:-1]:
+            pool.close.assert_called_once()
             pool.connection.close.assert_called_once()
+        self.pools[-1].close.assert_not_called()
         self.pools[-1].connection.close.assert_not_called()
         self.assertGreater(self.now, 0)
         self.assertLess(self.now, 30)
@@ -97,6 +99,22 @@ class SessionRecoveryTests(unittest.TestCase):
         self.assertEqual(len(self.pools), 1)
         self.sleep.assert_not_called()
         self.pools[0].connection.close.assert_called_once()
+
+    def test_cleanup_failure_closes_http_client_and_stops_retrying(self):
+        original_factory = self.new_pool
+
+        def failing_cleanup(client, **kwargs):
+            pool = original_factory(client, **kwargs)
+            pool.close.side_effect = RuntimeError("test cleanup failure")
+            return pool
+
+        self.pool_factory.side_effect = failing_cleanup
+        self.outcomes = [fault()]
+        with self.assertRaisesRegex(RuntimeError, "test cleanup failure"):
+            self.connection._connect()
+        self.pools[0].connection.close.assert_called_once()
+        self.assertIsNone(self.connection.runspace)
+        self.sleep.assert_not_called()
 
     def test_authentication_and_other_faults_are_not_retried(self):
         for error in (AuthenticationError("test authentication failure"), fault(5),

@@ -44,13 +44,16 @@ class Connection(BuiltinPSRPConnection):
                 if not isinstance(fault, WSManFaultError) or fault.code != 1018:
                     raise
 
-                # The failed Create has no usable shell. Close its HTTP client
-                # and clear the pool so the next attempt creates a new session.
+                # Release any partially created shell and its HTTP client,
+                # then create a fresh session on the next attempt.
                 failed_pool = self.runspace
                 self.runspace = None
                 self._connected = False
                 if failed_pool is not None:
-                    failed_pool.connection.close()
+                    try:
+                        failed_pool.close()
+                    finally:
+                        failed_pool.connection.close()
 
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
