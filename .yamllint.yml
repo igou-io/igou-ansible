@@ -2,6 +2,7 @@
 extends: default
 
 ignore: |
+  archive/
   .venv/
   changelogs
   vault.yml

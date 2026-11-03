@@ -7,6 +7,9 @@
     "main",
     "prerelease"
   ],
+  "ignorePaths": [
+    "archive/**"
+  ],
   "packageRules": [
     {
       "description": "Keep normal dependency updates on main; prerelease tracks Core and Fedora only",
