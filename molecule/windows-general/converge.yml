@@ -133,3 +133,5 @@
   ansible.builtin.import_playbook: ../../playbooks/windows/configure_visual_effects.yaml
   vars:
     ansible_limit: windows_server  # noqa: var-naming[read-only] -- target this imported play only
+    # This play configures user hives, so it needs a loaded profile.
+    ansible_psrp_no_profile: false
