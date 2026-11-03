@@ -1,3 +1,0 @@
----
-- name: Apply converge
-  ansible.builtin.import_playbook: ../../playbooks/logging/converge.yaml

@@ -1,7 +1,18 @@
 ---
 scenario:
   name: codex-desktop
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - destroy
 ansible:
   playbooks:
     create: create.yml
     prepare: prepare.yml
+    side_effect: side_effect.yml

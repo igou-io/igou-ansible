@@ -28,6 +28,15 @@
           - _nltest.rc == 0
         fail_msg: 'nltest /dsgetdc:molecule.test failed (rc={{ _nltest.rc }}): {{ _nltest.stdout }} {{ _nltest.stderr }}. No DC located for the domain — the member is not truly participating in the directory.'
         success_msg: nltest located a DC for molecule.test.
+    - name: Verify the member's authenticated machine secure channel
+      ansible.windows.win_shell: Test-ComputerSecureChannel -ErrorAction Stop
+      register: _secure_channel
+      changed_when: false
+    - name: Require a healthy authenticated domain channel
+      ansible.builtin.assert:
+        that:
+          - _secure_channel.stdout | trim == 'True'
+        fail_msg: The joined member cannot authenticate its machine account with the domain controller.
 - name: 'Verify — leave leg: return winmem01 to a workgroup (real playbook)'
   ansible.builtin.import_playbook: ../../playbooks/windows/join_domain.yaml
   vars:

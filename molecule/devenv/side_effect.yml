@@ -1,0 +1,103 @@
+---
+- name: Seed disposable devenv state for the backup and restore drill
+  hosts: devenv
+  gather_facts: false
+  tasks:
+    - name: Ensure the synthetic agent state directory exists
+      ansible.builtin.file:
+        path: /home/igou/.claude-container
+        state: directory
+        mode: '0700'
+    - name: Write the state to be backed up
+      ansible.builtin.copy:
+        dest: /home/igou/.claude-container/molecule-state.json
+        content: '{"marker":"before-backup"}'
+        mode: '0600'
+
+- name: Back up the disposable state through the production playbook
+  ansible.builtin.import_playbook: ../../playbooks/devenv/backup.yml
+
+- name: Require a private controller archive before changing guest state
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Inspect the file-mode backup
+      ansible.builtin.stat:
+        path: "{{ hostvars[groups['devenv'][0]].devenv_archive_file }}"
+      register: devenv_molecule_archive
+    - name: Require a regular archive readable only by the controller owner
+      ansible.builtin.assert:
+        that:
+          - devenv_molecule_archive.stat.isreg | default(false)
+          - devenv_molecule_archive.stat.mode == '0600'
+
+- name: Replace the state before restore
+  hosts: devenv
+  gather_facts: false
+  tasks:
+    - name: Write the different pre-restore state
+      ansible.builtin.copy:
+        dest: /home/igou/.claude-container/molecule-state.json
+        content: '{"marker":"before-restore"}'
+        mode: '0600'
+
+- name: Restore the disposable state through the production playbook
+  ansible.builtin.import_playbook: ../../playbooks/devenv/restore.yml
+
+- name: Verify the backup and restore round trip
+  hosts: devenv
+  gather_facts: false
+  tasks:
+    - name: Inspect the restored agent state ownership
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /home/igou/.claude-container
+        - /home/igou/.claude-container/molecule-state.json
+      register: devenv_molecule_state_stat
+    - name: Require the restored directory and marker to remain private
+      ansible.builtin.assert:
+        that:
+          - devenv_molecule_state_stat.results[0].stat.pw_name == 'igou'
+          - devenv_molecule_state_stat.results[0].stat.mode == '0700'
+          - devenv_molecule_state_stat.results[1].stat.pw_name == 'igou'
+          - devenv_molecule_state_stat.results[1].stat.mode == '0600'
+    - name: Read the restored state from the host
+      ansible.builtin.slurp:
+        src: /home/igou/.claude-container/molecule-state.json
+      register: devenv_molecule_restored_state
+    - name: Require the archived state to be restored
+      ansible.builtin.assert:
+        that:
+          - (devenv_molecule_restored_state.content | b64decode | from_json).marker == 'before-backup'
+    - name: Read the restored state through the restarted devcontainer
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - igou-devenv
+          - cat
+          - /home/igou/.claude/molecule-state.json
+      register: devenv_molecule_container_state
+      changed_when: false
+      retries: 24
+      delay: 5
+      until: devenv_molecule_container_state.rc == 0
+    - name: Require the devcontainer to see the restored bind mount
+      ansible.builtin.assert:
+        that:
+          - (devenv_molecule_container_state.stdout | from_json).marker == 'before-backup'
+    - name: Read the displaced state from the rollback archive
+      ansible.builtin.command:
+        argv:
+          - tar
+          - xOzf
+          - /home/igou/.devenv-pre-restore.tar.gz
+          - .claude-container/molecule-state.json
+      register: devenv_molecule_rollback_state
+      changed_when: false
+    - name: Require the rollback archive to contain the displaced state
+      ansible.builtin.assert:
+        that:
+          - (devenv_molecule_rollback_state.stdout | from_json).marker == 'before-restore'

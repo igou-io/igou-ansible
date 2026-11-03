@@ -1,5 +1,0 @@
----
-- name: Apply a config-only update
-  ansible.builtin.import_playbook: ../../playbooks/truenas/configure_docker_containers.yml
-  vars:
-    molecule_config_marker: updated

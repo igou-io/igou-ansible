@@ -34,7 +34,6 @@
     # stock dnf 4.20 — the earlier "dnf5-fragile" caveat does not manifest on this
     # image. mise install needs a GITHUB_TOKEN in the environment (packages role
     # default reads it from env) to avoid the 60/hr anonymous GitHub API limit.
-    devenv_full_toolset: true
     packages_install_cli_tools: "{{ devenv_full_toolset }}"
     packages_install_extra_packages: "{{ devenv_full_toolset }}"
     packages_install_pip_packages: "{{ devenv_full_toolset }}"
@@ -51,37 +50,13 @@
     # pre_task below migrates an existing /var/lib/docker once; the role
     # renders data-root into daemon.json. The weekly prune timer keeps the
     # new location from growing unbounded.
-    docker_data_root: /home/docker-data
     docker_daemon_options:
       data-root: "{{ docker_data_root }}"
-    docker_prune_on_calendar: "Sun *-*-* 05:00:00"
-
     # devenv extras
     devenv_repo: https://github.com/igou-io/igou-devenv.git
-    # Pinned to the igou-devenv release cut for this rebuild (git tag +
-    # container image promoted by digest from the tested :latest). Bump both
-    # together when adopting a newer release.
-    # v2026.08.02-2 carries the always-on T3 Code service (t3 serve on
-    # 0.0.0.0:3773 with persistent ~/.t3 pairing state, fronted on the
-    # tailnet by the tailscale_serve role below), with post-start hardened
-    # against the postStart exec teardown race that reaped freshly-forked
-    # services, plus the ghapp post-create guard from v2026.07.12-2.
-    devenv_repo_version: v2026.10.19
-    devenv_image: ghcr.io/igou-io/igou-devenv:2026.10.19@sha256:d94035c19fde28d3ced1b76752475141db74910b3560c322141bba69a068e42f
     devenv_launch_devcontainer: true
 
-    # GitHub App runtime tokens (ghapp, local-mint mode). ON by default so the
-    # devhost mints repo-scoped ~1h GitHub tokens instead of carrying a static
-    # PAT; disable with -e devenv_ghapp_enabled=false.
-    #
-    # This is the ONLY ghapp var set here on purpose: it is a non-secret
-    # behavior toggle. The App identity, installation map, private-key source
-    # (op:// lookup), enabled flag, config user, and pinned plugin ref all live
-    # in the inventory as group_vars/devenv/ghapp.yml — the authoritative source
-    # per the roles-as-functions directive (op:// references belong in inventory
-    # data, not play vars or role tasks). Do NOT reintroduce ghapp_client_*
-    # here: play vars OUTRANK group_vars, so any ghapp_* left in this vars: block
-    # would silently shadow the inventory values.
+    # GitHub App policy and credential lookups come from the devenv inventory.
     #
     # Key source note (implemented in group_vars): the op lookups resolve on the
     # ANSIBLE CONTROLLER (the devcontainer or the AAP EE, both of which have op
@@ -94,7 +69,6 @@
     # long-lived secret onto the box, which is what ghapp exists to avoid.
     # In-container we DO use private_key_cmd, because the devcontainer already
     # has op auth bind-mounted (see igou-devenv).
-    devenv_ghapp_enabled: true
 
   pre_tasks:
     - name: Wait for the VM's SSH to come up
@@ -166,7 +140,11 @@
     # ------------------------------------------------------------------
     - name: Read the current Docker root dir
       ansible.builtin.command:
-        argv: [docker, info, --format, "{{ '{{' }}.DockerRootDir{{ '}}' }}"]
+        argv:
+          - docker
+          - info
+          - --format
+          - "{{ '{{' }}.DockerRootDir{{ '}}' }}"
       register: devenv_docker_root
       changed_when: false
       failed_when: false
@@ -299,7 +277,11 @@
   post_tasks:
     - name: Verify the Docker daemon runs on {{ docker_data_root }}
       ansible.builtin.command:
-        argv: [docker, info, --format, "{{ '{{' }}.DockerRootDir{{ '}}' }}"]
+        argv:
+          - docker
+          - info
+          - --format
+          - "{{ '{{' }}.DockerRootDir{{ '}}' }}"
       register: devenv_docker_root_after
       changed_when: false
       failed_when: devenv_docker_root_after.stdout | trim != docker_data_root
@@ -737,14 +719,11 @@
 # none is. Designated tags come from inventory (group_vars/devenv/tailscale.yml
 # — REQUIRED, the pettingzoo OAuth client owns the tag in the tailnet ACL).
 #
-# tailscale_authkey overrides the imported play's own vars: default (the legacy
-# awx-vault VPS item) — import_playbook vars outrank the imported play's vars
-# block. The op:// lookup resolves lazily on the controller/EE side (which has
-# 1P Connect auth), so the secret never lands on the host.
+# The complete tailscale_authkey_lookup expression lives in inventory and is
+# evaluated only when this join is enabled.
 - name: Join the devenv host to the tailnet
   ansible.builtin.import_playbook: ../tailscale/tailscale.yml
-  vars:
-    tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-oauth-pettingzoo', field='token', vault='lab_external_api_keys') }}"
+  when: devenv_tailscale_enabled | default(true) | bool
 
 # ---------------------------------------------------------------------------
 # Tailscale Serve: terminate tailnet HTTPS for T3 Code. The t3 desktop app
@@ -772,3 +751,4 @@
     - name: Configure Tailscale Serve
       ansible.builtin.include_role:
         name: tailscale_serve
+      when: devenv_tailscale_enabled | default(true) | bool

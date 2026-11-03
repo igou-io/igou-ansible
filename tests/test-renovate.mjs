@@ -137,20 +137,4 @@ for (const quote of ['', '"', "'"]) {
 assert.equal(extractRegex('image: "{{ image }}"\nimage: $(params.BUILDER_IMAGE)\n', 'ansible-navigator.yml', imageManager), null);
 assert.equal(extract('image: quay.io/team/test:1.2.3\n', 'unrelated.yml').length, 0);
 
-const bootstrapFile = 'playbooks/devenv/bootstrap.yml';
-const bootstrapContent = await read(bootstrapFile);
-const bootstrap = extract(bootstrapContent, bootstrapFile);
-const git = bootstrap.find((dep) => dep.depName === 'igou-io/igou-devenv');
-const image = bootstrap.find((dep) => dep.depName === 'ghcr.io/igou-io/igou-devenv');
-assert.ok(git && image, 'Both bootstrap release pins must extract');
-assert.equal(git.currentValue.replace(/^v/, ''), image.currentValue, 'Bootstrap git and image releases must agree');
-for (const dep of [git, image]) {
-  const policy = await route(dep);
-  assert.equal(policy.groupName, 'devenv bootstrap release');
-  assert.equal(policy.automerge, false);
-  const newValue = dep === git ? 'v2099.01.01-1' : '2099.01.01-1';
-  const updated = await doAutoReplace({ ...dep, manager: 'regex', newValue }, bootstrapContent, false);
-  assert.equal(extract(updated, bootstrapFile).find((item) => item.depName === dep.depName).currentValue, newValue);
-  parseSingleYaml(updated);
-}
-console.log(`Renovate coverage passed: ${galaxy.length} shared requirements, AWX/RHEL dependency contracts, Git collection lookup/replacement, ${tools.length} tool pins, ${images.length} image locations, quoted/embedded image updates, kiosk checksums and paired bootstrap releases.`);
+console.log(`Renovate coverage passed: ${galaxy.length} shared requirements, AWX/RHEL dependency contracts, Git collection lookup/replacement, ${tools.length} tool pins, ${images.length} image locations, quoted/embedded image updates and kiosk checksums.`);

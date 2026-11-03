@@ -1,0 +1,16 @@
+---
+- name: Exercise desktop state across a guest reboot
+  hosts: codex_desktop_guest
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Save a workspace marker in the retained desktop home
+      ansible.builtin.copy:
+        dest: /home/codex/workspaces/molecule-state.txt
+        content: "desktop state survived reboot\n"
+        owner: codex
+        group: codex
+        mode: '0600'
+    - name: Reboot the desktop guest
+      ansible.builtin.reboot:
+        reboot_timeout: 600

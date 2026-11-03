@@ -18,6 +18,7 @@
           - molecule_server.stdout == 'https://api.ocp.igou.systems:6443'
           - molecule_identity.stdout | length > 0
           - mp_backend == 'kubevirt'
+          - molecule_storage_profile in molecule_storage_profiles
           - groups['molecule'] | default([]) | length > 0
           - molecule_ephemeral_directory | length > 0
         fail_msg: Run from the repository root with the ocp-ansible-molecule profile and this scenario's inventory.
@@ -46,12 +47,24 @@
         api_version: kubevirt.io/v1
         kind: VirtualMachine
         namespace: "{{ molecule_namespace }}"
-    - name: Check Casval availability
+    - name: Check Casval availability for the local storage profile
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Node
         name: "{{ molecule_casval_node }}"
       register: molecule_casval
+      when: molecule_storage_profile == 'casval'
+    - name: Require a Ready and schedulable Casval before creating guests
+      ansible.builtin.assert:
+        that:
+          - molecule_casval.resources | length == 1
+          - not (molecule_casval.resources | first | default({})).get('spec', {}).get('unschedulable', false)
+          - >-
+            (molecule_casval.resources | first | default({})).get('status', {}).get('conditions', [])
+            | selectattr('type', 'equalto', 'Ready')
+            | selectattr('status', 'equalto', 'True') | list | length == 1
+        fail_msg: Acquire a Casval lease and wait for the node to become Ready before running the default storage profile.
+      when: molecule_storage_profile == 'casval'
     - name: Check local storage prerequisites for each guest
       ansible.builtin.include_tasks: tasks/storage_preflight.yml
       vars:

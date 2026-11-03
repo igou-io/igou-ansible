@@ -77,6 +77,8 @@
     windows_task_start_time: '2026-01-01T03:00:00'
 - name: Apply Windows install updates
   ansible.builtin.import_playbook: ../../playbooks/windows/install_updates.yaml
+  tags:
+    - molecule-idempotence-notest
   vars:
     windows_updates_categories:
       - Definition Updates

@@ -27,3 +27,20 @@
       ansible.builtin.assert:
         that:
           - molecule_sudo_identity.stdout == '0'
+    - name: Read the effective SSH access policy
+      ansible.builtin.command: sudo -n sshd -T
+      register: molecule_sshd_policy
+      changed_when: false
+    - name: Require hardened root and password access
+      ansible.builtin.assert:
+        that:
+          - "'permitrootlogin no' in molecule_sshd_policy.stdout_lines"
+          - "'passwordauthentication no' in molecule_sshd_policy.stdout_lines"
+    - name: Require node exporter host metrics after reboot
+      ansible.builtin.include_tasks: ../shared/tasks/http_metrics.yml
+      vars:
+        molecule_metrics_endpoint: metrics
+        molecule_metrics_required:
+          - node_uname_info
+          - node_cpu_seconds_total
+          - node_memory_MemTotal_bytes

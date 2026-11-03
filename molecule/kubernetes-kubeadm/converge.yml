@@ -1,0 +1,3 @@
+---
+- name: Install the two-node kubeadm cluster
+  ansible.builtin.import_playbook: ../../playbooks/kubernetes/install-kubernetes-cluster.yml

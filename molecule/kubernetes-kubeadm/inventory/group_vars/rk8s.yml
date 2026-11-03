@@ -1,0 +1,10 @@
+---
+cluster_name: molecule-kubeadm
+kubernetes_pod_network:
+  cni: calico
+  cidr: 10.72.0.0/16
+kubernetes_service_cidr: 10.73.0.0/16
+kubernetes_allow_pods_on_control_plane: true
+# The upstream role starts kubelet before joining; this disposable Debian
+# worker already owns port 10250 when kubeadm performs its preflight.
+kubernetes_join_command_extra_opts: --ignore-preflight-errors=Port-10250

@@ -1,2 +1,9 @@
 ---
 mp_kubevirt_wait_timeout: 600
+ghapp_test_client_id_lookup: "{{ lookup('ansible.builtin.pipe', 'op read op://lab_external_api_keys/igou-dev-github-app/client_id') }}"
+ghapp_test_installations_lookup:
+  david-igou: >-
+    {{ lookup('ansible.builtin.pipe', 'op read "op://lab_external_api_keys/igou-dev-github-app/installation_id_david-igou"') }}
+  igou-io: >-
+    {{ lookup('ansible.builtin.pipe', 'op read op://lab_external_api_keys/igou-dev-github-app/installation_id_igou-io') }}
+ghapp_test_private_key_lookup: "{{ lookup('ansible.builtin.pipe', 'op read op://lab_external_api_keys/igou-dev-github-app/private_key') }}"

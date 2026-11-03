@@ -1,0 +1,2 @@
+---
+ansible_limit: rk8s  # noqa: var-naming[read-only] -- repository caller target convention

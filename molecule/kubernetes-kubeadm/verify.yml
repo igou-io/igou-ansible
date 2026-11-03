@@ -1,0 +1,61 @@
+---
+- name: Verify the installed kubeadm control plane
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the control-plane service state
+      ansible.builtin.service_facts:
+    - name: Require kubelet to be active
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['kubelet.service'].state == 'running'
+    - name: Require a healthy Kubernetes API using the administrator kubeconfig
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig=/etc/kubernetes/admin.conf
+          - get
+          - --raw=/readyz
+      register: molecule_kubeadm_ready
+      changed_when: false
+      retries: 24
+      delay: 5
+      until: molecule_kubeadm_ready.rc == 0
+    - name: Require both nodes to become Ready
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig=/etc/kubernetes/admin.conf
+          - wait
+          - --for=condition=Ready
+          - node
+          - --all
+          - --timeout=180s
+      changed_when: false
+    - name: Read the installed node names
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig=/etc/kubernetes/admin.conf
+          - get
+          - nodes
+          - -o
+          - jsonpath={.items[*].metadata.name}
+      register: molecule_kubeadm_nodes
+      changed_when: false
+    - name: Require the control plane and worker
+      ansible.builtin.assert:
+        that:
+          - molecule_kubeadm_nodes.stdout.split() | length == 2
+- name: Verify the installed kubeadm worker
+  hosts: rk8s_workers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the worker service state
+      ansible.builtin.service_facts:
+    - name: Require kubelet to be active
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['kubelet.service'].state == 'running'

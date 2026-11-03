@@ -1,0 +1,22 @@
+---
+- name: Read the provisioned guest instance
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    name: "{{ molecule_guest_resources.name }}"
+    namespace: "{{ molecule_guest_resources.namespace }}"
+  register: molecule_guest_instance
+  no_log: true
+- name: Require placement on the selected worker type
+  ansible.builtin.assert:
+    that:
+      - molecule_guest_instance.resources | length == 1
+      - >-
+        (molecule_storage_profile == 'casval' and molecule_guest_instance.resources[0].status.nodeName == molecule_casval_node)
+        or (molecule_storage_profile == 'truenas' and molecule_guest_instance.resources[0].status.nodeName != molecule_casval_node)
+    fail_msg: The test VM is not on a worker compatible with the selected storage profile.
+- name: Report the selected guest worker
+  ansible.builtin.debug:
+    msg:
+      guest: "{{ molecule_guest }}"
+      node: "{{ molecule_guest_instance.resources[0].status.nodeName }}"

@@ -1,0 +1,61 @@
+---
+- name: Verify the installed k3s cluster
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the server service state
+      ansible.builtin.service_facts:
+    - name: Require the k3s server to be active
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['k3s.service'].state == 'running'
+    - name: Require a healthy Kubernetes API
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - --raw=/readyz
+      register: molecule_k3s_ready
+      changed_when: false
+      retries: 24
+      delay: 5
+      until: molecule_k3s_ready.rc == 0
+    - name: Require both nodes to become Ready
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - wait
+          - --for=condition=Ready
+          - node
+          - --all
+          - --timeout=180s
+      changed_when: false
+    - name: Read the installed node names
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - nodes
+          - -o
+          - jsonpath={.items[*].metadata.name}
+      register: molecule_k3s_nodes
+      changed_when: false
+    - name: Require the control plane and worker
+      ansible.builtin.assert:
+        that:
+          - molecule_k3s_nodes.stdout.split() | length == 2
+- name: Verify the installed k3s worker
+  hosts: rk8s_workers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the worker service state
+      ansible.builtin.service_facts:
+    - name: Require the worker's k3s service to be active
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['k3s.service'].state == 'running'
