@@ -3,17 +3,29 @@
   hosts: "{{ ansible_limit | default('none') }}"
   become: true
   tags: install
+  serial: 1
+  order: inventory
   pre_tasks:
     - name: Enable IP forwarding
       ansible.posix.sysctl:
         name: net.ipv4.ip_forward
         value: '1'
         sysctl_set: true
-    - name: Disable firewalld
+    - name: Collect service facts before changing the firewall
+      ansible.builtin.service_facts:
+    - name: Disable firewalld when installed
       ansible.builtin.systemd:
         name: firewalld
         enabled: false
         state: stopped
+      when:
+        - "'firewalld.service' in ansible_facts.services"
+        - ansible_facts.services['firewalld.service'].status != 'not-found'
+    - name: Refresh apt metadata on Debian before installing dependencies
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_facts.os_family == 'Debian'
     - name: Install dependencies
       ansible.builtin.package:
         name:

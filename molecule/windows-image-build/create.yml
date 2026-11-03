@@ -3,5 +3,14 @@
   ansible.builtin.import_playbook: ../shared/preflight.yml
 - name: Build the generalized Windows image with the real installer pipeline
   ansible.builtin.import_playbook: ../../playbooks/openshift_virtualization/build_windows_golden.yml
+- name: Require the build VM definition to use the selected worker profile
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Check the build VM's required node affinity
+      ansible.builtin.assert:
+        that:
+          - windows_golden_vm_definition.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution == molecule_placement.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution
 - name: Clone the new image with the common provisioner lifecycle
   ansible.builtin.import_playbook: ../shared/create.yml

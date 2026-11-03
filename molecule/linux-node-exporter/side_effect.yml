@@ -1,3 +1,0 @@
----
-- name: Exercise exporter startup after reboot
-  ansible.builtin.import_playbook: ../shared/reboot_linux.yml

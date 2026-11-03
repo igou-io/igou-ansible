@@ -1,7 +1,7 @@
 ---
 # Join a host to the tailnet via the artis3n.tailscale collection. The authkey
-# is read from 1Password on the EE side (vault=awx, item
-# tailscale-ansible-vps-token, field=token) so it never reaches the host. It
+# comes from the complete tailscale_authkey_lookup expression in inventory,
+# resolved on the controller/EE side. It
 # works with either a plain auth key (tskey-auth-...) or an OAuth client
 # secret (tskey-client-...). Joins advertise designated tags: set
 # tailscale_tags in the host's inventory vars (no tag: prefix - the role
@@ -11,6 +11,7 @@
 #   Inventory inputs (per host/group, see host_vars/igou.io.yml):
 #     tailscale_tags - designated tags to advertise (required; with an OAuth
 #                      secret the role itself also enforces this)
+#     tailscale_authkey_lookup - complete inventory-owned credential lookup
 #   Optional launch-time/inventory inputs:
 #     tailscale_state         - latest (default) | present | absent (leaves the
 #                               tailnet and uninstalls)
@@ -24,24 +25,24 @@
   become: true
   gather_facts: true
 
-  vars:
-    tailscale_authkey: "{{ lookup('community.general.onepassword', 'tailscale-ansible-vps-token', field='token', vault='awx') }}"
-
   tasks:
     - name: Ensure designated tags are set in inventory
       ansible.builtin.assert:
         that:
           - tailscale_tags | default([]) | length > 0
+          - tailscale_authkey_lookup is defined
         fail_msg: >-
-          Joins advertise designated tags; define tailscale_tags
-          for {{ inventory_hostname }} in inventory (no tag: prefix).
+          Define tailscale_tags and tailscale_authkey_lookup for
+          {{ inventory_hostname }} in inventory before joining.
       when: (tailscale_state | default('latest')) != 'absent'
 
     - name: Set up Tailscale
       ansible.builtin.include_role:
         name: artis3n.tailscale.machine
       vars:
+        tailscale_authkey: "{{ tailscale_authkey_lookup if (tailscale_state | default('latest')) != 'absent' else omit }}"
         verbose: true
         state: "{{ tailscale_state | default('latest') }}"
         tailscale_oauth_ephemeral: "{{ tailscale_ephemeral | default(false) }}"
         tailscale_oauth_preauthorized: "{{ tailscale_preauthorized | default(true) }}"
+      no_log: true

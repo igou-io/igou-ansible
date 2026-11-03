@@ -5,3 +5,5 @@
   ansible.builtin.import_playbook: ../../playbooks/linux/install_packages.yaml
 - name: Apply ssh authorized keys
   ansible.builtin.import_playbook: ../../playbooks/linux/ssh_authorized_keys.yaml
+- name: Apply node exporter
+  ansible.builtin.import_playbook: ../../playbooks/linux/node_exporter.yaml

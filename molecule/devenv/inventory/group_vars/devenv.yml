@@ -1,2 +1,12 @@
 ---
 devenv_code_server_password: molecule-devenv-bootstrap-throwaway
+devenv_full_toolset: false
+devenv_ghapp_enabled: false
+devenv_tailscale_enabled: false
+docker_data_root: /home/docker-data
+docker_prune_on_calendar: "Sun *-*-* 05:00:00"
+devenv_repo_version: v2026.10.19
+devenv_image: ghcr.io/igou-io/igou-devenv:2026.10.19@sha256:d94035c19fde28d3ced1b76752475141db74910b3560c322141bba69a068e42f
+devenv_backup_destination: file
+devenv_restore_source: file
+devenv_archive_file: "{{ molecule_ephemeral_directory }}/devenv-agent-state.tar.gz"

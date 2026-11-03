@@ -5,10 +5,10 @@
 # ssh_authorized_keys). Defaults to 'none' — never 'all'.
 #
 # Variables:
-#   user         - account whose authorized_keys are managed (default igou)
+#   user         - optional launch override for the account in inventory
 #   github_users - GitHub usernames whose public keys are fetched and applied
-#                  (default [david-igou]; set [] to skip)
-#   keys         - literal public keys to apply (default: current ed25519 pair)
+#                  (set [] to skip)
+#   keys         - optional launch override for literal public keys in inventory
 #   key_state    - present|absent (default present). absent removes the listed
 #                  keys — this replaces the old ssh_authorized_keys_remove.yaml.
 #   exclusive    - with key_state=present, remove every key NOT listed in this
@@ -20,15 +20,6 @@
   hosts: "{{ ansible_limit | default('none') }}"
   gather_facts: false
   become: "{{ become | default(false) }}"
-  vars:
-    user: igou
-    key_state: present
-    exclusive: false
-    github_users:
-      - david-igou
-    keys:
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B
   tasks:
 
     - name: Fetch public keys from GitHub
@@ -36,14 +27,14 @@
         github_keys: >-
           {{ (github_keys | default([]))
              + query('url', 'https://github.com/' ~ item ~ '.keys') }}
-      loop: "{{ github_users | default([]) }}"
+      loop: "{{ github_users | default(ssh_authorized_keys_github_users | default([])) }}"
 
     # A single authorized_key call with all keys joined: required for
     # exclusive=true to work (looping with exclusive would keep only the
     # last key).
-    - name: "Ensure authorized keys are {{ key_state }}"
+    - name: "Ensure authorized keys are {{ key_state | default(ssh_authorized_keys_key_state | default('present')) }}"
       ansible.posix.authorized_key:
-        user: "{{ user }}"
-        state: "{{ key_state }}"
-        exclusive: "{{ (key_state == 'present') and (exclusive | bool) }}"
-        key: "{{ ((keys | default([])) + (github_keys | default([]))) | join('\n') }}"
+        user: "{{ user | default(ssh_authorized_keys_user | default('igou')) }}"
+        state: "{{ key_state | default(ssh_authorized_keys_key_state | default('present')) }}"
+        exclusive: "{{ (key_state | default(ssh_authorized_keys_key_state | default('present')) == 'present') and (exclusive | default(ssh_authorized_keys_exclusive | default(false)) | bool) }}"
+        key: "{{ ((keys | default(ssh_authorized_keys_keys | default([]))) + (github_keys | default([]))) | join('\n') }}"

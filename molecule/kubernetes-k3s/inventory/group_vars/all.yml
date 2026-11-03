@@ -1,0 +1,9 @@
+---
+molecule_profile_overrides:
+  interfaces:
+    - name: default
+      bridge: {}
+k3s_test_control_overrides:
+  memory: 4Gi
+  cpu:
+    cores: 2

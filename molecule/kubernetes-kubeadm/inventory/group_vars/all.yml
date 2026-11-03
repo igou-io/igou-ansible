@@ -1,0 +1,17 @@
+---
+molecule_profile_overrides:
+  interfaces:
+    - name: default
+      bridge: {}
+kubeadm_test_boot_source:
+  type: data_volume_url
+  url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2
+  size: 20Gi
+  storage_class: "{{ molecule_storage_class }}"
+  volume_mode: Block
+  access_modes:
+    - ReadWriteOnce
+kubeadm_test_control_overrides:
+  memory: 4Gi
+  cpu:
+    cores: 2

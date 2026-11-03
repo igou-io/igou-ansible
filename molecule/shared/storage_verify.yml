@@ -1,10 +1,17 @@
 ---
-- name: Verify the test run used Casval local storage
+- name: Verify the test run used the selected storage profile
   hosts: localhost
   connection: local
   gather_facts: false
   tasks:
-    - name: Verify each local guest's disk and placement
+    - name: Verify every guest's worker placement
+      ansible.builtin.include_tasks: tasks/placement_verify.yml
+      vars:
+        molecule_guest_resources: "{{ molecule_kubevirt_run.hosts[molecule_guest] }}"
+      loop: "{{ groups['molecule'] }}"
+      loop_control:
+        loop_var: molecule_guest
+    - name: Verify each persistent boot disk
       ansible.builtin.include_tasks: tasks/storage_verify.yml
       vars:
         molecule_guest_spec: "{{ hostvars[groups['molecule'][0]].mp_defaults.kubevirt | combine(hostvars[molecule_guest].mp.kubevirt) }}"
@@ -13,4 +20,4 @@
       loop: "{{ groups['molecule'] }}"
       loop_control:
         loop_var: molecule_guest
-      when: molecule_guest_boot_source.storage_class | default('') == 'lvms-casval'
+      when: molecule_guest_boot_source.storage_class | default('') != ''

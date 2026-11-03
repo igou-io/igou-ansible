@@ -74,82 +74,49 @@ ansible-playbook playbooks/grafana-kiosk/converge.yaml \
 
 ## Testing
 
-`molecule test -s playbook-grafana-kiosk` converges **both stacks** in guests capped
-at the Pi Zero 2 W's 512MB envelope, against a mock Grafana that echoes the
-Authorization header. Verify proves end-to-end token injection, unit
-enablement, config permissions, active zram swap, and runs real headless browser renders
-(Chromium screenshot and cog 20s survival) inside the memory cap. Provisioning uses
-the KubeVirt backend of `david_igou.molecule_provisioners` (see
-`molecule/playbook-grafana-kiosk/inventory/`). The guests are real 512MiB VMs:
-Debian 12 for Chromium and Debian 13 with a virtio display for cog. Run locally
-with `use ocp-ansible-molecule`; the profile provides scoped access to the
-`molecule` namespace. The zram/sysctl paths run in the guests, and the VMs have
-virtual displays. GitHub Actions does not run this scenario.
+`molecule test -s grafana-kiosk` converges both browser stacks in disposable
+Debian 13 KubeVirt guests with 2 GiB of memory each. A small local HTTP server
+stands in for Grafana so the test can verify the proxy's authorization header.
+Verification checks active zram, the protected proxy config, enabled browser
+units, a Chromium screenshot, and a short headless cog run. These guests do
+not measure behavior within a Pi Zero 2 W's 512 MiB memory limit or against
+a live Grafana dashboard. Run with `use ocp-ansible-molecule`; see
+`molecule/README.md` for the Casval default and shared-storage override.
 
 ### Render testing (run without destroy)
 
-Only `molecule test` destroys instances; the step commands leave everything
-up so you can iterate on the play and eyeball what the kiosk actually
-renders:
+The step commands leave the guests running for another render check:
 
 ```bash
 use ocp-ansible-molecule
 
-molecule converge -s playbook-grafana-kiosk   # create + prepare + converge; instances stay up
-KIOSK_FETCH_SCREENSHOT=1 molecule verify -s playbook-grafana-kiosk   # re-runnable
+molecule converge -s grafana-kiosk
+KIOSK_FETCH_SCREENSHOT=1 molecule verify -s grafana-kiosk
 ```
 
-With `KIOSK_FETCH_SCREENSHOT=1` (off by default — plain test runs leave the
-render in the guest), `verify` fetches the headless Chromium render to
-`$MOLECULE_EPHEMERAL_DIRECTORY/screenshots/kiosk-chromium.png` — verify
-prints the exact path; it lives under
-`~/.ansible/tmp/molecule.*.playbook-grafana-kiosk/`. Open it locally, tweak the play
-or dashboard vars, re-run `converge`/`verify`, repeat.
+`KIOSK_FETCH_SCREENSHOT=1` fetches the Chromium render into the scenario's
+ephemeral `screenshots/` directory; verify prints the path. Plain test runs
+leave the screenshot in the guest.
 
-On the kubevirt backend you can also watch the **live** kiosk on the VM's
-virtual display. Molecule defaults to `kiosk_start_browser: false` (units
-enabled but stopped); override it and attach VNC:
+To inspect a live virtual display, set `kiosk_start_browser: true` and find
+the run-suffixed VM name before attaching VNC:
 
 ```bash
-molecule converge -s playbook-grafana-kiosk -- -e kiosk_start_browser=true
-virtctl vnc -n molecule kiosk-cog        # or kiosk-chromium
+molecule converge -s grafana-kiosk -- -e kiosk_start_browser=true
+oc get vm -n molecule
+virtctl vnc -n molecule RUN_SUFFIXED_KIOSK_COG_NAME
 ```
 
-> **Cloud-kernel caveat:** the containerdisk ships Debian's `cloud` kernel,
-> which has no DRM drivers — `/dev/dri` is missing and the browser units
-> can't render to the display. `apt install linux-image-amd64 && apt purge
-> "linux-image-*cloud*"` + `sudo reboot` in the guest first, or stick to
-> the headless screenshot loop.
->
-> **cog specifics:** `kiosk-cog` boots `debian:13` with a virtio display
-> (per-host override in `inventory/hosts.yml`): Bookworm's cog 0.16
-> segfaults on virtio-gpu, and Mesa can't drive the default bochs VGA at
-> all. The molecule inventory also presets `kiosk_cog_env` with
-> `WEBKIT_DISABLE_DMABUF_RENDERER=1` + `WEBKIT_DISABLE_COMPOSITING_MODE=1`
-> — WebKit's dmabuf renderer and accelerated compositing both crash on
-> virtual GPUs. Don't set either on real hardware.
->
-> **cog + real Grafana verdict (2026-07-10 VM bench):** cog renders simple
-> pages (the mock) fine on the virtio display, but crash-loops 10–60s into
-> the real Grafana app in `libcogplatform-drm` buffer handling, under every
-> renderer combination (dmabuf off, compositing off, llvmpipe). Use the
-> **chromium** guest for live-Grafana render testing — playlist rotation
-> verified working there. The cog-on-real-hardware bench gate (Pi vc4)
-> remains open; this VM result raises its risk.
->
-> **Ephemeral-disk caveat:** containerdisk roots survive a guest-initiated
-> `sudo reboot`, but anything that recreates the virt-launcher pod
-> (`virtctl restart`, node drain) resets the VM to a fresh image — re-run
-> `molecule prepare --force` and `molecule converge` afterwards.
+The Debian cloud kernel has no DRM device, so the browser units are normally
+left enabled but stopped in this test. The headless render checks are the
+repeatable smoke test. Container-disk roots are disposable if the launcher
+pod is recreated.
 
-To get a shell, use `virtctl ssh debian@vmi/kiosk-cog -n molecule`, or plain
-`ssh` with the host/NodePort/key the provisioner wrote to
-`$MOLECULE_EPHEMERAL_DIRECTORY/inventory/` + `identity_file`. When you're
-done:
+Use the run-suffixed VMI name for `virtctl ssh`, or use the connection details
+in the scenario's ephemeral inventory. When finished:
 
 ```bash
-molecule destroy -s playbook-grafana-kiosk
+molecule destroy -s grafana-kiosk
 ```
 
-(`molecule test -s playbook-grafana-kiosk --destroy=never` gives the same
-keep-alive behavior for a full one-shot run.)
+`molecule test -s grafana-kiosk` destroys its guests automatically.
