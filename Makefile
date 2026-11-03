@@ -62,7 +62,9 @@ export MOLECULE_GLOB := molecule/*/molecule.yml
 MOLECULE_SCENARIO ?= default
 MOLECULE_SCENARIOS ?= default linux-node-exporter linux-maintenance
 MOLECULE_WORKERS ?= 3
-.PHONY: molecule-test molecule-test-all molecule-test-batch molecule-converge molecule-verify molecule-destroy molecule-matrix
+.PHONY: molecule-test molecule-test-all molecule-test-batch molecule-test-plugins molecule-converge molecule-verify molecule-destroy molecule-matrix
+molecule-test-plugins:
+	python -m unittest discover -s molecule/shared/tests -p 'test_*.py' -v
 molecule-test:
 	molecule test -s $(MOLECULE_SCENARIO)
 molecule-test-all:

@@ -9,6 +9,7 @@ ansible:
     defaults:
       roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_PROJECT_DIRECTORY}/.ansible/roles
       collections_path: ${MOLECULE_PROJECT_DIRECTORY}/.ansible/collections
+      connection_plugins: ${MOLECULE_PROJECT_DIRECTORY}/molecule/shared/connection_plugins
       host_key_checking: false
       forks: 16
       callbacks_enabled: ansible.posix.profile_tasks
