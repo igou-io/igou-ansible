@@ -81,18 +81,15 @@ resources.
 because definition updates can arrive during a test; its post-reboot check
 still verifies that an update search succeeds.
 
-## Windows session recovery
+## Windows user profiles
 
-Molecule loads a shared wrapper around the builtin PSRP connection plugin.
-It retries only WSMan fault 1018 while opening a new session, discarding the
-failed HTTP client and runspace between attempts. Backoff starts at two seconds
-and grows to eight seconds within a 30-second retry window. An in-flight
-connection attempt remains subject to the normal PSRP network timeouts.
-Authentication errors, other faults, and errors after session creation fail
-normally. Application tasks are never replayed by this wrapper.
+Windows connections use the builtin PSRP plugin. Shared `windows_server`
+inventory sets `ansible_psrp_no_profile: true` for machine-level server and
+domain-controller workflows. Desktop sessions retain normal profile loading.
+The server visual-effects import explicitly loads its profile because it
+configures user registry hives. Keep profile loading enabled for other
+profile-dependent automation as well.
 
-This handles the intermittent session-launch fault observed on Server 2025;
-it does not establish or change the underlying Windows registry behavior.
-The wrapper's plugin path is configured only in Molecule. Production execution
-uses the standard plugin. Run its focused tests with `make molecule-test-plugins`
-using the project-local Python environment and pinned Molecule requirements.
+This uses the pinned Ansible/pypsrp option rather than a custom connection
+plugin or task retry. Validate profile-dependent behavior when changing its
+scope; skipping a user profile must not turn a configuration test into a no-op.

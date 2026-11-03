@@ -12,24 +12,6 @@ name: Lint
       - prerelease
 
 jobs:
-  molecule-plugins:
-    name: Molecule connection plugin tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        with:
-          python-version: "3.14"
-
-      - name: Install pinned connection dependencies
-        run: pip install $(awk '/^(ansible-core|pypsrp)==/ { print }' requirements-molecule.txt)
-
-      - name: Verify session recovery without provisioning infrastructure
-        run: make molecule-test-plugins
-
   ansible-lint:
     name: ansible-lint
     runs-on: ubuntu-latest

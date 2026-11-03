@@ -1,0 +1,3 @@
+---
+# Machine-level server automation does not need a Windows user profile.
+ansible_psrp_no_profile: true
