@@ -80,3 +80,16 @@ resources.
 `windows-general` excludes the Windows Update install from its repeat-run check
 because definition updates can arrive during a test; its post-reboot check
 still verifies that an update search succeeds.
+
+## Windows user profiles
+
+Windows connections use the builtin PSRP plugin. Shared `windows_server`
+inventory sets `ansible_psrp_no_profile: true` for machine-level server and
+domain-controller workflows. Desktop sessions retain normal profile loading.
+The server visual-effects import explicitly loads its profile because it
+configures user registry hives. Keep profile loading enabled for other
+profile-dependent automation as well.
+
+This uses the pinned Ansible/pypsrp option rather than a custom connection
+plugin or task retry. Validate profile-dependent behavior when changing its
+scope; skipping a user profile must not turn a configuration test into a no-op.
