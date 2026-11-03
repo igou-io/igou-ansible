@@ -1,5 +1,5 @@
 ---
-# Publish the newest rpi-image-gen build from the builder's local
+# Publish the newest release-image build from the builder's local
 # publish tree to the netboot server's HTTP-served assets export, plus
 # a manifest.json that _resolve_rootfs_src.yml derives image URLs from.
 # The transfer is controller-mediated (fetch → copy) — the builder and

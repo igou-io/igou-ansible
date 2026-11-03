@@ -3,24 +3,21 @@
 Automated Raspberry Pi OS image builds. Images come out with the `igou`
 user (fleet SSH key, passwordless sudo, key-only sshd) baked in.
 
-**Two build pipelines exist; `build_from_release.yml` is the one that
-produces boot-proven images.** `build.yml` (rpi-image-gen) is retained
-for when igou-ansible#305 is root-caused — its images have never booted
-on a real Pi 4 (ACT LED dark, zero frames; rootfs content verified
-fine, boot partition suspect).
+`build_from_release.yml` produces boot-proven images from the official
+RasPiOS Lite release. The superseded rpi-image-gen build/setup playbooks
+and their config template are preserved in [`archive/`](../../archive/README.md).
+Their Pi 4 boot defect was never root-caused; issue #305 closed as superseded.
 
 State lives in `igou-inventory`: the `rpi_image_builders` group
 (rpi-builder.igou.systems — bare-metal Pi 4 8GB, RPi OS Lite Trixie
 arm64 on USB SSD) and `group_vars/rpi_image_builders.yml` (pinned
-release/rpi-image-gen versions, image definition, publish layout).
+release versions, image settings, publish layout).
 
 ## Playbooks
 
 | Playbook | Purpose |
 |---|---|
 | `build_from_release.yml` | **Recommended.** Fetch the pinned official RasPiOS Lite arm64 release → inject the fleet primitives directly (native arm64 chroot on the builder: user, key, key-only sshd, NOPASSWD sudo, hostname, ssh enabled, firstboot user-wizard disabled, optional extra packages) → verify (content **and** boot plausibility) → publish. Starts from an image that provably boots. |
-| `converge.yml` | Owns the build host: prerequisites, pinned rpi-image-gen checkout + `install_deps.sh`, workspace/publish dirs. Idempotent; run after changing the pin. |
-| `build.yml` | rpi-image-gen pipeline: render config → build (async, flock-serialised, logged) → verify → publish. ⚠ Produces images that do not boot on Pi 4 — igou-ansible#305. |
 | `flash.yml` | Write a published image to a USB device plugged into the builder. Dry-run unless `-e flash_confirm=true`; structurally cannot target the builder's boot SSD or backup micro SD (device-name contract + live boot-disk / mount / transport guards). |
 
 ```sh
@@ -78,7 +75,7 @@ of these hold:
 - sshd drop-in disables password authentication
 - ssh.service is enabled
 
-`build_from_release.yml` additionally asserts **boot plausibility** —
+`build_from_release.yml` also asserts **boot plausibility** —
 the gap that let #305 ship: `start4.elf`/`fixup4.dat`/`kernel8.img`/
 `config.txt`/`cmdline.txt`/Pi 4 DTB present in the boot partition, and
 the `cmdline.txt` `root=PARTUUID` matches the image's actual disk
@@ -125,9 +122,8 @@ Captured here because it previously lived only in session notes:
   (e.g. from 1Password, `openssl passwd -6`) to also bake a password —
   needed if you want console login on a device with no network.
 - Disaster recovery for the builder itself: reflash the stock Lite image
-  (or a pipeline-built one), re-pin via DHCP happens automatically, then
-  run `converge.yml` (only needed for the rpi-image-gen pipeline;
-  `build_from_release.yml` needs just xz/losetup/fdisk from the stock
-  install).
+  (or a pipeline-built one); re-pinning via DHCP happens automatically.
+  `build_from_release.yml` needs xz/losetup/fdisk from the stock install;
+  the archived rpi-image-gen setup is not required.
 - AAP wiring (build workflow + monthly schedule) is a follow-up; the
   playbooks are AAP-shaped (group-targeted, no interactive input).
