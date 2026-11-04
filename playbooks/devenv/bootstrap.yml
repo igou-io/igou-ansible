@@ -101,8 +101,10 @@
       block:
         - name: Install kernel-modules-extra matching the running kernel
           ansible.builtin.dnf:
-            name: "kernel-modules-extra-{{ ansible_kernel }}"
+            name: "kernel-modules-extra-{{ ansible_facts['kernel'] }}"
             state: present
+            # A newer install-only kernel package cannot supply the running kernel's modules.
+            allow_downgrade: true
 
         - name: Persist the netfilter modules for load at boot
           ansible.builtin.copy:

@@ -30,7 +30,7 @@
             - codex_desktop_existing_root.resources | length > 0
             - not (codex_desktop_rebuild | default(false) | bool)
 
-        - name: Authenticate the latest upstream image before changing disks
+        - name: Authenticate the pinned upstream image before changing disks
           ansible.builtin.include_tasks: tasks/verify_image.yml
           when: codex_desktop_existing_root.resources | length == 0 or (codex_desktop_rebuild | default(false) | bool)
 

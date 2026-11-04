@@ -3,7 +3,20 @@
   hosts: codex_desktop_guest
   become: true
   gather_facts: false
+  vars_files:
+    - ../../playbooks/codex_desktop/vars/image.yml
   tasks:
+    - name: Read the running guest's distribution
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - '!min'
+          - distribution
+    - name: Require the reviewed Fedora release after reboot
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Fedora'
+          - ansible_facts['distribution_major_version'] == codex_desktop_fedora_version | string
     - name: Require the desktop and guest agent services
       ansible.builtin.command:
         argv:

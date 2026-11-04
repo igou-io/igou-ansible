@@ -81,6 +81,16 @@ resources.
 because definition updates can arrive during a test; its post-reboot check
 still verifies that an update search succeeds.
 
+## Fedora image selection
+
+`codex-desktop` and production provisioning use the same reviewed Fedora Cloud
+release pin in `playbooks/codex_desktop/vars/image.yml`. The resolver requires
+an official image for that release instead of falling back to a newer one.
+Renovate tracks released Fedora versions and proposes reviewed updates on main;
+prerelease retains its existing Fedora update policy. Validate the guest Python
+against the pinned Ansible Core before accepting a release bump. Verification
+checks the running release after reboot along with the desktop and CLI behavior.
+
 ## Windows user profiles
 
 Windows connections use the builtin PSRP plugin. Shared `windows_server`
