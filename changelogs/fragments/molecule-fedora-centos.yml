@@ -1,6 +1,6 @@
 ---
 bugfixes:
-  - devenv - Installed the extra modules for the running kernel even when a newer kernel-modules-extra package was already installed.
-  - codex_desktop - Pinned the reviewed Fedora 44 Cloud image instead of automatically advancing to a release with an incompatible guest Python.
+  - devenv - Installed the extra modules for the running kernel even when a newer kernel-modules-extra package was already installed (https://github.com/igou-io/igou-ansible/pull/641).
+  - codex_desktop - Pinned the reviewed Fedora 44 Cloud image instead of automatically advancing to a release with an incompatible guest Python (https://github.com/igou-io/igou-ansible/pull/641).
 minor_changes:
-  - Renovate - Added tracking for the shared Codex Desktop Fedora release pin and verified extraction, replacement and branch review policies.
+  - Renovate - Added tracking for the shared Codex Desktop Fedora release pin and verified extraction, replacement and branch review policies (https://github.com/igou-io/igou-ansible/pull/641).
