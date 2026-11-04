@@ -1,3 +1,3 @@
 ---
 # Renovate proposes release changes; validate the guest Python against the pinned Core before merging.
-codex_desktop_fedora_version: '44'
+codex_desktop_fedora_version: '45'
