@@ -3,6 +3,40 @@
   hosts: devenv
   gather_facts: false
   tasks:
+    - name: Read the running kernel
+      ansible.builtin.command:
+        cmd: uname -r
+      register: molecule_devenv_kernel
+      changed_when: false
+    - name: Read the kernel selected for boot
+      ansible.builtin.command:
+        cmd: grubby --default-kernel
+      become: true
+      register: molecule_devenv_default_kernel
+      changed_when: false
+    - name: Require the selected kernel to be running
+      ansible.builtin.assert:
+        that:
+          - "molecule_devenv_default_kernel.stdout | basename == 'vmlinuz-' ~ molecule_devenv_kernel.stdout"
+    - name: Resolve Docker's modules for the running kernel
+      ansible.builtin.command:
+        argv:
+          - modinfo
+          - --filename
+          - "{{ item }}"
+      loop:
+        - xt_addrtype
+        - iptable_nat
+        - br_netfilter
+      register: molecule_devenv_module_paths
+      changed_when: false
+    - name: Require modules built for the running kernel
+      ansible.builtin.assert:
+        that:
+          - "'/modules/' ~ molecule_devenv_kernel.stdout ~ '/' in item.stdout"
+      loop: "{{ molecule_devenv_module_paths.results }}"
+      loop_control:
+        label: "{{ item.item }}"
     - name: Require Docker and the devcontainer unit to be active
       ansible.builtin.command:
         argv:

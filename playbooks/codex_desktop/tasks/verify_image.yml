@@ -10,7 +10,7 @@
   ansible.builtin.set_fact:
     codex_desktop_release_metadata: "{{ codex_desktop_releases_response.json }}"
 
-- name: Select the latest stable cloud image
+- name: Select the reviewed cloud image release
   ansible.builtin.include_tasks: select_image.yml
 
 - name: Allocate temporary artifact storage

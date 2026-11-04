@@ -49,7 +49,7 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | Scenario | Guest workflow and outcome |
 | --- | --- |
 | `default` | One Stream 10 guest; SSH, Python, and sudo work. |
-| `devenv` | Production bootstrap, editor/service smoke, local-file backup and restore of synthetic agent state, and restored bind-mount visibility. |
+| `devenv` | First-boot OS update and conditional reboot, running-kernel modules, repeat convergence without another reboot, editor/service smoke, local-file backup and restore of synthetic agent state, and restored bind-mount visibility. |
 | `codex-desktop` | Production Fedora guest configuration with controller/guest inventory groups, desktop session, app/CLIs, T3, metrics, and retained home after reboot. |
 | `linux-maintenance` | Baseline hardening, packages, SSH keys, node exporter, update, reboot, admin access, and metrics. |
 | `kubernetes-k3s` | Disposable control plane and worker, production k3s install, local API readiness, and Ready nodes. |
@@ -80,6 +80,16 @@ resources.
 `windows-general` excludes the Windows Update install from its repeat-run check
 because definition updates can arrive during a test; its post-reboot check
 still verifies that an update search succeeds.
+
+## Fedora image selection
+
+`codex-desktop` and production provisioning use the same reviewed Fedora Cloud
+release pin in `playbooks/codex_desktop/vars/image.yml`. The resolver requires
+an official image for that release instead of falling back to a newer one.
+Renovate tracks released Fedora versions and proposes reviewed updates on main;
+prerelease retains its existing Fedora update policy. Validate the guest Python
+against the pinned Ansible Core before accepting a release bump. Verification
+checks the running release after reboot along with the desktop and CLI behavior.
 
 ## Windows user profiles
 

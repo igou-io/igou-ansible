@@ -43,12 +43,12 @@ jobs:
             playbooks/rhel/rhsm-system-register.yml
         run: |
           # Exclude non-playbook YAML: task-include sidecars (_*.yml), any
-          # tasks/ subdirectory (Ansible convention), transport/ task-include
+          # tasks/ and vars/ subdirectories, transport/ task-include
           # sidecars (e.g. playbooks/armbian/transport/*), and files/ data dirs
           # (e.g. cloud-init user-data shipped via ansible.builtin.copy).
           failed=0
           for playbook in $(find playbooks \
-              \( -path '*/tasks/*' -o -path '*/transport/*' -o -path '*/files/*' -o -name '_*' \) -prune \
+              \( -path '*/tasks/*' -o -path '*/vars/*' -o -path '*/transport/*' -o -path '*/files/*' -o -name '_*' \) -prune \
               -o \( -name '*.yml' -o -name '*.yaml' \) -print | sort); do
             if echo "${SKIP_PLAYBOOKS}" | grep -qx "${playbook}" ||
                 [[ "${playbook}" == */orchestrator-workflow.yml ||
