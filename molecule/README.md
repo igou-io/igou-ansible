@@ -49,7 +49,7 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | Scenario | Guest workflow and outcome |
 | --- | --- |
 | `default` | One Stream 10 guest; SSH, Python, and sudo work. |
-| `devenv` | Production bootstrap, editor/service smoke, local-file backup and restore of synthetic agent state, and restored bind-mount visibility. |
+| `devenv` | First-boot OS update and conditional reboot, running-kernel modules, repeat convergence without another reboot, editor/service smoke, local-file backup and restore of synthetic agent state, and restored bind-mount visibility. |
 | `codex-desktop` | Production Fedora guest configuration with controller/guest inventory groups, desktop session, app/CLIs, T3, metrics, and retained home after reboot. |
 | `linux-maintenance` | Baseline hardening, packages, SSH keys, node exporter, update, reboot, admin access, and metrics. |
 | `kubernetes-k3s` | Disposable control plane and worker, production k3s install, local API readiness, and Ready nodes. |

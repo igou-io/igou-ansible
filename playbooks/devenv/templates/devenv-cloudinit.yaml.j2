@@ -19,5 +19,14 @@ users:
 {% for key in devenv_authorized_keys %}
       - {{ key }}
 {% endfor %}
+write_files:
+  - path: /var/lib/igou-devenv/os-bootstrap-required
+    owner: root:root
+    permissions: '0600'
+    content: |
+      Update OS packages and boot the selected kernel before configuring services.
 runcmd:
-  - ["systemctl", "enable", "--now", "qemu-guest-agent"]
+  - - systemctl
+    - enable
+    - --now
+    - qemu-guest-agent
