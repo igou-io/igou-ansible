@@ -8,6 +8,21 @@
   vars:
     __docker_disk: /dev/disk/by-id/virtio-docker
   tasks:
+    - name: Request the production first-boot OS preparation
+      ansible.builtin.file:
+        path: /var/lib/igou-devenv
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+    - name: Seed the same OS preparation request as production cloud-init
+      ansible.builtin.copy:
+        dest: /var/lib/igou-devenv/os-bootstrap-required
+        content: |
+          Update OS packages and boot the selected kernel before configuring services.
+        owner: root
+        group: root
+        mode: '0600'
     - name: Wait for the scratch disk device to appear
       ansible.builtin.wait_for:
         path: "{{ __docker_disk }}"

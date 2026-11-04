@@ -1,12 +1,16 @@
 ---
-- name: Select stable Fedora Cloud Base qcow2 candidates
+- name: Load the reviewed Fedora release pin
+  ansible.builtin.include_vars:
+    file: ../vars/image.yml
+
+- name: Select pinned Fedora Cloud Base qcow2 candidates
   ansible.builtin.set_fact:
     codex_desktop_image_candidates: >-
       {{ codex_desktop_release_metadata
          | selectattr('variant', 'equalto', 'Cloud')
          | selectattr('subvariant', 'equalto', 'Cloud_Base')
          | selectattr('arch', 'equalto', codex_desktop_image_arch)
-         | selectattr('version', 'match', '^[0-9]+$')
+         | selectattr('version', 'equalto', codex_desktop_fedora_version | string)
          | selectattr('link', 'match', '^https://download[.]fedoraproject[.]org/pub/fedora/linux/releases/[0-9]+/Cloud/[^/]+/images/Fedora-Cloud-Base-Generic-.*[.]qcow2$')
          | list }}
 
@@ -14,11 +18,11 @@
   ansible.builtin.assert:
     that:
       - codex_desktop_image_candidates | length > 0
-    fail_msg: No stable official Fedora Cloud Base qcow2 image was found; no disk will be replaced.
+    fail_msg: "No official Fedora {{ codex_desktop_fedora_version }} Cloud Base qcow2 image was found; no disk will be replaced."
 
-- name: Resolve the newest numeric release
+- name: Resolve the pinned release
   ansible.builtin.set_fact:
-    codex_desktop_image_release: "{{ codex_desktop_image_candidates | map(attribute='version') | map('int') | max | string }}"
+    codex_desktop_image_release: "{{ codex_desktop_fedora_version | string }}"
 
 - name: Resolve one artifact for this invocation
   ansible.builtin.set_fact:

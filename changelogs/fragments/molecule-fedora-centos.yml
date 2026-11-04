@@ -1,0 +1,8 @@
+---
+bugfixes:
+  - Syntax checks - Excluded variable files from CI playbook discovery and aligned the local syntax-check target with CI's exclusions for non-playbook YAML (https://github.com/igou-io/igou-ansible/pull/641).
+  - devenv - Installed the extra modules for the running kernel even when a newer kernel-modules-extra package was already installed (https://github.com/igou-io/igou-ansible/pull/641).
+  - codex_desktop - Pinned the reviewed Fedora 44 Cloud image instead of automatically advancing to a release with an incompatible guest Python (https://github.com/igou-io/igou-ansible/pull/641).
+minor_changes:
+  - devenv - Updated OS packages and installed the current kernel and extra modules on newly provisioned VMs, rebooted when needed, and verified the running kernel before configuring Docker; completed preparation was skipped on subsequent bootstrap runs (https://github.com/igou-io/igou-ansible/pull/641).
+  - Renovate - Added tracking for the shared Codex Desktop Fedora release pin and verified extraction, replacement and branch review policies (https://github.com/igou-io/igou-ansible/pull/641).

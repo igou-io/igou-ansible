@@ -93,6 +93,26 @@ for (const [file, name, datasource] of tools) {
   parseSingleYaml(updated);
 }
 
+const desktopPinFile = 'playbooks/codex_desktop/vars/image.yml';
+const desktopPinContent = await read(desktopPinFile);
+const desktopPins = extract(desktopPinContent, desktopPinFile);
+assert.equal(desktopPins.length, 1, 'The desktop release has one shared Renovate dependency');
+const desktopPin = desktopPins[0];
+assert.equal(desktopPin.depName, 'fedora');
+assert.equal(desktopPin.datasource, 'endoflife-date');
+assert.equal(desktopPin.currentValue, String(parseSingleYaml(desktopPinContent).codex_desktop_fedora_version));
+const desktopMainPolicy = await route({ ...desktopPin, baseBranch: 'main' }, 'custom.regex', 'major');
+assert.equal(desktopMainPolicy.enabled, true);
+assert.equal(desktopMainPolicy.automerge, false, 'Desktop releases require compatibility review on main');
+assert.equal(desktopMainPolicy.groupName, 'fedora desktop image');
+const desktopPreviewPolicy = await route({ ...desktopPin, baseBranch: 'prerelease' }, 'custom.regex', 'major');
+assert.equal(desktopPreviewPolicy.enabled, true, 'The desktop pin participates in Fedora preview updates');
+assert.equal(desktopPreviewPolicy.automerge, true, 'Preserve the existing prerelease Fedora policy');
+const nextDesktopRelease = String(Number(desktopPin.currentValue) + 1);
+const updatedDesktopPin = await doAutoReplace({ ...desktopPin, manager: 'regex', newValue: nextDesktopRelease }, desktopPinContent, false);
+assert.equal(parseSingleYaml(updatedDesktopPin).codex_desktop_fedora_version, nextDesktopRelease);
+assert.equal(extract(updatedDesktopPin, desktopPinFile)[0].currentValue, nextDesktopRelease);
+
 const kioskFile = 'playbooks/grafana-kiosk/setup-kiosk.yaml';
 const kioskContent = await read(kioskFile);
 const kiosk = extract(kioskContent, kioskFile).find((dep) => dep.depName === 'grafana/grafana-kiosk');
@@ -137,4 +157,4 @@ for (const quote of ['', '"', "'"]) {
 assert.equal(extractRegex('image: "{{ image }}"\nimage: $(params.BUILDER_IMAGE)\n', 'ansible-navigator.yml', imageManager), null);
 assert.equal(extract('image: quay.io/team/test:1.2.3\n', 'unrelated.yml').length, 0);
 
-console.log(`Renovate coverage passed: ${galaxy.length} shared requirements, AWX/RHEL dependency contracts, Git collection lookup/replacement, ${tools.length} tool pins, ${images.length} image locations, quoted/embedded image updates and kiosk checksums.`);
+console.log(`Renovate coverage passed: ${galaxy.length} shared requirements, AWX/RHEL dependency contracts, Git collection lookup/replacement, ${tools.length} tool pins, ${images.length} image locations, Fedora Cloud release updates, quoted/embedded image updates and kiosk checksums.`);

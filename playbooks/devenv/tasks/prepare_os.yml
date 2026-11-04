@@ -1,0 +1,55 @@
+---
+- name: Prepare the new VM's operating system
+  become: true
+  block:
+    - name: Update installed OS packages before configuring services # noqa: package-latest -- First-boot updates intentionally follow the current repositories.
+      ansible.builtin.dnf:
+        name: '*'
+        state: latest
+        update_cache: true
+      register: devenv_os_update
+
+    - name: Install the current kernel and its extra modules # noqa: package-latest -- Boot the current kernel with its matching extra modules.
+      ansible.builtin.dnf:
+        name:
+          - kernel
+          - kernel-modules-extra
+        state: latest
+      register: devenv_os_kernel_packages
+
+    - name: Read the kernel selected for the next boot
+      ansible.builtin.command:
+        argv:
+          - grubby
+          - --default-kernel
+      register: devenv_os_default_kernel
+      changed_when: false
+      check_mode: false
+
+    - name: Require a valid default kernel path
+      ansible.builtin.assert:
+        that:
+          - devenv_os_default_kernel.stdout is match('^/boot/vmlinuz-\S+$')
+
+    # A prior interrupted run may already have installed the new kernel.
+    # Compare the boot target as well as this run's package changes.
+    - name: Reboot into the updated operating system when needed
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+      when:
+        - >-
+          devenv_os_update.changed
+          or devenv_os_kernel_packages.changed
+          or devenv_os_default_kernel.stdout | basename != 'vmlinuz-' ~ ansible_facts['kernel']
+      register: devenv_os_reboot
+
+    - name: Refresh facts after initial OS preparation
+      ansible.builtin.setup:
+      # Later user-level package tasks consume HOME and ansible_user_dir.
+      become: false
+
+    - name: Require the selected kernel to be running
+      ansible.builtin.assert:
+        that:
+          - "devenv_os_default_kernel.stdout | basename == 'vmlinuz-' ~ ansible_facts['kernel']"
+        fail_msg: The VM did not boot the selected kernel; stop before configuring Docker.

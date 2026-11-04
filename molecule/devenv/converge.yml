@@ -3,6 +3,11 @@
   hosts: devenv
   gather_facts: false
   tasks:
+    - name: Record the boot ID before bootstrap
+      ansible.builtin.command:
+        cmd: cat /proc/sys/kernel/random/boot_id
+      register: molecule_devenv_boot_before
+      changed_when: false
     - name: Open a fresh login session
       ansible.builtin.meta: reset_connection
     - name: Provide the checkout path required by the devcontainer's skill linker
@@ -16,6 +21,17 @@
   hosts: devenv
   gather_facts: false
   tasks:
+    - name: Read the boot ID after bootstrap
+      ansible.builtin.command:
+        cmd: cat /proc/sys/kernel/random/boot_id
+      register: molecule_devenv_boot_after
+      changed_when: false
+    - name: Require a reboot only when OS preparation requested one
+      ansible.builtin.assert:
+        that:
+          - >-
+            (molecule_devenv_boot_before.stdout != molecule_devenv_boot_after.stdout)
+            == (devenv_os_reboot.changed | default(false))
     - name: Require code-server to answer locally
       ansible.builtin.uri:
         url: https://localhost:8080/
