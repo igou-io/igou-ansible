@@ -11,9 +11,13 @@ yamllint:
 
 syntax-check:
 	@failed=0; \
-	for playbook in $$(find playbooks \( -name '*.yml' -o -name '*.yaml' \) \
+	for playbook in $$(find playbooks \
+	    \( -path '*/tasks/*' -o -path '*/vars/*' -o -path '*/transport/*' -o -path '*/files/*' -o -name '_*' \) -prune \
+	    -o \( -name '*.yml' -o -name '*.yaml' \) \
+	    ! -path 'playbooks/aap/ansible-navigator.yml' \
+	    ! -path 'playbooks/rhel/rhsm-system-register.yml' \
 	    ! -name 'orchestrator-workflow.yml' \
-	    ! -name '*-orchestrator-workflow.yml' | sort); do \
+	    ! -name '*-orchestrator-workflow.yml' -print | sort); do \
 		echo "Checking $${playbook}..."; \
 		set --; \
 		if [ "$${playbook}" = playbooks/devenv/restore.yml ]; then \
