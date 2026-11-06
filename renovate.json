@@ -103,6 +103,16 @@
       "automerge": false
     },
     {
+      "description": "Review editor policy source releases before applying their extension allowlists",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": ["playbooks/devenv/bootstrap.yml"],
+      "matchPackageNames": ["igou-io/igou-devenv"],
+      "groupName": "devenv editor policy",
+      "minimumReleaseAge": "10 days",
+      "minimumReleaseAgeBehaviour": "timestamp-required",
+      "automerge": false
+    },
+    {
       "description": "Keep main on stable Ansible Core releases",
       "enabled": true,
       "matchDatasources": [
@@ -230,6 +240,15 @@
       "matchStrings": ["pip install (?<depName>ansible-builder)==(?<currentValue>[0-9][^\\s]+)"],
       "datasourceTemplate": "pypi",
       "versioningTemplate": "pep440"
+    },
+    {
+      "description": "Track the independent pinned host editor policy source",
+      "customType": "regex",
+      "managerFilePatterns": ["/^playbooks/devenv/bootstrap\\.yml$/"],
+      "matchStrings": ["devenv_editor_policy_source_version: \"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "igou-io/igou-devenv",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "loose"
     },
     {
       "description": "Track Node used by the Fedora desktop role",

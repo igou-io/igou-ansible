@@ -1,0 +1,4 @@
+---
+minor_changes:
+  - "Added host editor extension policy reconciliation to devenv bootstrap, with age-validated version allowlists, signature verification, and Claude Code removal and auto-install prevention."
+  - "Added a separately pinned, Renovate-managed editor policy source and functional checks for rejection, safe settings merging, removal and idempotence."

@@ -2,7 +2,24 @@
 - name: Smoke-test the restored devenv deployment
   hosts: devenv
   gather_facts: false
+  vars:
+    molecule_devenv_editor_policy_directory: /home/igou/.local/share/igou-devenv/editor-policy
   tasks:
+    - name: Install the editor policy behavioral checks
+      ansible.builtin.copy:
+        src: files/test_editor_policy.mjs
+        dest: "{{ molecule_devenv_editor_policy_directory }}/test_editor_policy.mjs"
+        mode: "0600"
+    - name: Verify release rejection, safe merging and Claude removal
+      ansible.builtin.command:
+        argv:
+          - node
+          - --test
+          - "{{ molecule_devenv_editor_policy_directory }}/test_editor_policy.mjs"
+      environment:
+        EDITOR_POLICY_PROGRAM: "{{ molecule_devenv_editor_policy_directory }}/editor_policy.mjs"
+        EDITOR_POLICY_VALIDATOR: "{{ molecule_devenv_editor_policy_directory }}/source/.github/scripts/vscode-extension-releases.mjs"
+      changed_when: false
     - name: Read the running kernel
       ansible.builtin.command:
         cmd: uname -r
