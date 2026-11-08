@@ -57,7 +57,7 @@ dependencies:
     # and kubernetes.core, which land as transitive dependencies.
     collections:
       - name: ansible.windows
-        version: "3.8.0"
+        version: "3.9.2"
       - name: community.windows
         version: "3.3.0"
       - name: ansible.posix
@@ -67,9 +67,9 @@ dependencies:
       - name: ansible.utils
         version: "6.1.1"
       - name: community.routeros
-        version: "3.22.0"
+        version: "3.23.0"
       - name: community.crypto
-        version: "3.5.0"
+        version: "3.5.1"
       - name: community.general
         version: "13.5.0"
       - name: redhat.satellite
@@ -77,9 +77,9 @@ dependencies:
       - name: redhat.insights
         version: "1.3.1"
       - name: containers.podman
-        version: "1.21.1"
+        version: "1.21.2"
       - name: community.postgresql
-        version: "5.0.0"
+        version: "5.1.0"
       - name: infra.ah_configuration
         version: "2.1.0"
       - name: redhat.rhel_system_roles
