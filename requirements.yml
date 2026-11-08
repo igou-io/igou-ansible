@@ -29,7 +29,7 @@ collections:
   - name: kubernetes.core
     version: 6.6.0
   - name: containers.podman
-    version: 1.21.1
+    version: 1.21.2
   - name: devsec.hardening
     version: 11.0.0
   - name: kubevirt.core
@@ -37,7 +37,7 @@ collections:
   - name: ansible.utils
     version: 6.1.1
   - name: community.crypto
-    version: 3.5.0
+    version: 3.5.1
   - name: artis3n.tailscale
     version: 1.2.1
   - name: https://github.com/david-igou/ansible-truenas.git
