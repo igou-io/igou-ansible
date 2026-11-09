@@ -55,8 +55,9 @@
     # devenv extras
     devenv_repo: https://github.com/igou-io/igou-devenv.git
     devenv_launch_devcontainer: true
-    # Keep editor policy independent of older devcontainer runtime releases.
-    devenv_editor_policy_source_version: "v2026.11.02-2"
+    # Native VS Code policy: wait ten days before automatic extension updates.
+    devenv_editor_extension_delay_hours: 240
+    devenv_editor_policy_file: /etc/vscode/policy.json
 
     # GitHub App policy and credential lookups come from the devenv inventory.
     #

@@ -1,56 +1,39 @@
 ---
-- name: Gather the host home directory for editor policy
-  ansible.builtin.setup:
-    gather_subset:
-      - "!all"
-      - user
-  when: ansible_facts['user_dir'] is not defined
+- name: Configure the node's extension update age policy
+  become: true
+  block:
+    - name: Inspect the existing VS Code policy
+      ansible.builtin.stat:
+        path: "{{ devenv_editor_policy_file }}"
+      register: devenv_editor_policy_stat
 
-- name: Set the editor policy installation paths
-  ansible.builtin.set_fact:
-    devenv_editor_policy_home: "{{ devenv_editor_policy_home | default(ansible_facts['user_dir']) }}"
-    devenv_editor_policy_directory: >-
-      {{ devenv_editor_policy_home | default(ansible_facts['user_dir']) }}/.local/share/igou-devenv/editor-policy
+    - name: Read the existing VS Code policy
+      ansible.builtin.slurp:
+        src: "{{ devenv_editor_policy_file }}"
+      register: devenv_editor_policy_existing
+      when: devenv_editor_policy_stat.stat.exists
+      no_log: true
 
-- name: Create the private host editor policy directory
-  ansible.builtin.file:
-    path: "{{ devenv_editor_policy_directory }}"
-    state: directory
-    mode: "0700"
+    - name: Ensure the VS Code policy directory exists
+      ansible.builtin.file:
+        path: "{{ devenv_editor_policy_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
 
-- name: Fetch the pinned extension policy source without touching the operator checkout
-  ansible.builtin.git:
-    repo: "{{ devenv_repo }}"
-    dest: "{{ devenv_editor_policy_directory }}/source"
-    version: "{{ devenv_editor_policy_source_version }}"
-  environment:
-    GIT_TERMINAL_PROMPT: "0"
+    - name: Set the minimum age for automatic extension updates
+      ansible.builtin.copy:
+        dest: "{{ devenv_editor_policy_file }}"
+        content: >-
+          {{ (devenv_editor_policy_existing.content | default('e30=') | b64decode | from_json)
+             | combine(devenv_editor_age_policy) | to_nice_json }}
 
-- name: Install the host editor policy reconciler
-  ansible.builtin.copy:
-    src: "{{ playbook_dir }}/files/editor_policy.mjs"
-    dest: "{{ devenv_editor_policy_directory }}/editor_policy.mjs"
-    mode: "0700"
-
-- name: Inspect whether editor policy can run in check mode
-  ansible.builtin.stat:
-    path: "{{ devenv_editor_policy_directory }}/editor_policy.mjs"
-  register: devenv_editor_policy_script
-
-- name: Validate release ages and reconcile the host editor settings
-  # The existing validator checks Marketplace timestamps, platforms and pack
-  # dependencies; no Ansible module provides that validation or a JSON merge
-  # that preserves the operator's unrelated editor and Claude configuration.
-  ansible.builtin.command:
-    argv: >-
-      {{ ['node', devenv_editor_policy_directory ~ '/editor_policy.mjs',
-          '--home', devenv_editor_policy_home,
-          '--config', devenv_editor_policy_directory ~ '/source/.devcontainer/devcontainer.json',
-          '--validator', devenv_editor_policy_directory ~ '/source/.github/scripts/vscode-extension-releases.mjs']
-         + ([] if ansible_check_mode else ['--apply']) }}
-  register: devenv_editor_policy_result
-  changed_when: >-
-    devenv_editor_policy_result.rc == 0
-    and 'Changed files: 0' not in devenv_editor_policy_result.stdout
-  check_mode: false
-  when: not ansible_check_mode or devenv_editor_policy_script.stat.exists
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        devenv_editor_age_policy:
+          ExtensionsAutoUpdateDelay: "{{ devenv_editor_extension_delay_hours | int }}"
+      diff: false
+      no_log: true
