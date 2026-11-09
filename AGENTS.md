@@ -6,6 +6,18 @@ This file provides guidance to AI Agents when working with code in this reposito
 
 Ansible automation framework for homelab and production infrastructure. Playbooks are primarily executed via AAP or ansible-navigator with containerized execution environments (EEs). Inventory lives in a separate repo (`igou-inventory`, symlinked).
 
+## OpenShift node management and recovery
+
+Before node maintenance, upgrades, reboots, reimaging, or BIOS work, read
+[OpenShift Node and Cluster Maintenance](https://github.com/igou-io/igou-docs/blob/main/openshift/OpenShift%20Node%20and%20Cluster%20Maintenance.md#remote-management-routes---verified-2026-11-08)
+in `/workspace/igou-docs`. It records the AMT endpoints, JetKVM, PDU outlets,
+credential references, and verification evidence. Consult it before concluding
+that a physical console is required. MS-01 has unattended AMT Linux/BIOS console
+access; HP needs local consent; P330 has broken AMT power services and a BIOS
+video/GPU tradeoff. Establish console and credential access before the sole
+control plane reboots; primary Connect is hosted there too. Follow current-request
+authorization, workload evacuation, local-disk PXE defaults, and recovery checks.
+
 ## Common Commands
 
 ### Running playbooks
