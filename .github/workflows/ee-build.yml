@@ -57,7 +57,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install python requirements (ansible-builder)
-        run: pip install ansible-builder==3.1.1
+        run: pip install ansible-builder==3.2.0
 
       - name: Log in to quay.io
         if: inputs.PUBLISH
