@@ -48,7 +48,7 @@ collections:
   - name: ansible.netcommon
     version: 8.7.1
   - name: community.routeros
-    version: 3.22.0
+    version: 3.23.0
   - name: david_igou.routeros_configuration
     version: 0.0.9-alpha
   - name: amazon.aws
@@ -65,7 +65,7 @@ collections:
     version: 28.0.0
   # Windows automation (playbooks/windows/)
   - name: ansible.windows
-    version: 3.8.0
+    version: 3.9.2
   - name: community.windows
     version: 3.3.0
   - name: microsoft.ad
