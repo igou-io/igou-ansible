@@ -22,13 +22,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install ansible-core
         run: |
           pip install "$(awk '/package_pip: ansible-core==/ {print $2}' execution-environments/igou-awx-ee/execution-environment.yml)"
 
       - name: Install dependencies
+        env:
+          # Install-only exception for prometheus.prometheus's Core 2.21 cap.
+          ANSIBLE_COLLECTIONS_ON_ANSIBLE_VERSION_MISMATCH: ignore
         run: |
           ansible-galaxy collection install -r requirements.yml
           ansible-galaxy role install -r requirements.yml
