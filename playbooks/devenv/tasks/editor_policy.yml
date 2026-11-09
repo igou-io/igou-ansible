@@ -1,0 +1,39 @@
+---
+- name: Configure the node's extension update age policy
+  become: true
+  block:
+    - name: Inspect the existing VS Code policy
+      ansible.builtin.stat:
+        path: "{{ devenv_editor_policy_file }}"
+      register: devenv_editor_policy_stat
+
+    - name: Read the existing VS Code policy
+      ansible.builtin.slurp:
+        src: "{{ devenv_editor_policy_file }}"
+      register: devenv_editor_policy_existing
+      when: devenv_editor_policy_stat.stat.exists
+      no_log: true
+
+    - name: Ensure the VS Code policy directory exists
+      ansible.builtin.file:
+        path: "{{ devenv_editor_policy_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Set the minimum age for automatic extension updates
+      ansible.builtin.copy:
+        dest: "{{ devenv_editor_policy_file }}"
+        content: >-
+          {{ (devenv_editor_policy_existing.content | default('e30=') | b64decode | from_json)
+             | combine(devenv_editor_age_policy) | to_nice_json }}
+
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        devenv_editor_age_policy:
+          ExtensionsAutoUpdateDelay: "{{ devenv_editor_extension_delay_hours | int }}"
+      diff: false
+      no_log: true
