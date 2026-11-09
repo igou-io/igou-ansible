@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - "Configured the node's native VS Code extension automatic-update age policy during devenv bootstrap, defaulting to ten days and preserving unrelated policies (https://github.com/igou-io/igou-ansible/pull/643)."

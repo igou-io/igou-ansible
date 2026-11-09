@@ -55,6 +55,9 @@
     # devenv extras
     devenv_repo: https://github.com/igou-io/igou-devenv.git
     devenv_launch_devcontainer: true
+    # Native VS Code policy: wait ten days before automatic extension updates.
+    devenv_editor_extension_delay_hours: 240
+    devenv_editor_policy_file: /etc/vscode/policy.json
 
     # GitHub App policy and credential lookups come from the devenv inventory.
     #
@@ -431,6 +434,15 @@
         repo: "{{ devenv_repo }}"
         dest: "{{ ansible_user_dir }}/igou-devenv"
         version: "{{ devenv_repo_version }}"
+
+    - name: Manage the host editor extension policy
+      ansible.builtin.include_tasks:
+        file: tasks/editor_policy.yml
+        apply:
+          tags:
+            - devenv_editor_policy
+      tags:
+        - devenv_editor_policy
 
     - name: Pre-seed the operator's workspace repos (clone if absent; never touch WIP)  # noqa: latest[git]
       # noqa latest[git]: these repos deliberately track their default branch and
