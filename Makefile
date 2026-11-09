@@ -1,15 +1,20 @@
 AAP_NAV_CFG := playbooks/aap/ansible-navigator.yml
 EE_IMAGE_TAG ?= latest
 
-.PHONY: lint yamllint syntax-check ee _check-inv aap-configure aap-sync-credentials aap-sync-templates aap-bootstrap-connect ao-export
+.PHONY: install-deps lint yamllint syntax-check ee _check-inv aap-configure aap-sync-credentials aap-sync-templates aap-bootstrap-connect ao-export
 
-lint:
-	ansible-lint --profile=production
+lint: install-deps
+	ansible-lint --offline --profile=production
 
 yamllint:
 	yamllint .
 
-syntax-check:
+install-deps:
+	# Install-only exception for prometheus.prometheus's Core 2.21 cap.
+	ANSIBLE_COLLECTIONS_ON_ANSIBLE_VERSION_MISMATCH=ignore ansible-galaxy collection install -r requirements.yml
+	ansible-galaxy role install -r requirements.yml
+
+syntax-check: install-deps
 	@failed=0; \
 	for playbook in $$(find playbooks \
 	    \( -path '*/tasks/*' -o -path '*/vars/*' -o -path '*/transport/*' -o -path '*/files/*' -o -name '_*' \) -prune \
