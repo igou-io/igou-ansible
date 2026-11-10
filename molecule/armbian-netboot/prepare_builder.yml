@@ -63,7 +63,7 @@
         - "{{ armbian_build_output_dir }}"
     - name: Seed cached builds with the actual bootable fixture image
       ansible.builtin.get_url:
-        url: "{{ armbian_rootfs_src }}"
+        url: "{{ lab_fixture_url }}"
         dest: "{{ armbian_build_output_dir }}/{{ item }}/Armbian_CACHED_FIXTURE.img.xz"
         owner: debian
         group: debian

@@ -96,7 +96,15 @@ armbian_board_config_model:
   dtb: fixture.dtb
   local_kernel:
     verify_match: ^/dev/vdd
-armbian_rootfs_src: "http://{{ lab_server_address }}:8080/fixture.img.xz"
+lab_fixture_url: "http://{{ lab_server_address }}:8080/fixture.img.xz"
+lab_published_fixture_url: "{{ armbian_assets_base_url }}/images/netboot-board-a/Armbian_CACHED_FIXTURE.img.xz"
+lab_stage_image_url: "{{ lab_fixture_url if lab_real_build else lab_published_fixture_url }}"
+# Empty lets board-a resolve its published manifest in cached acceptance.
+# Uncached compilation validates its artifact separately from the boot fixture.
+armbian_rootfs_src: "{{ lab_fixture_url if lab_real_build else '' }}"
+lab_image_request_pattern: >-
+  {{ '(?m)^' ~ (lab_server_address | regex_escape) ~ ' .*"GET ' ~
+     (lab_stage_image_url | urlsplit('path') | regex_escape) ~ ' ' }}
 lab_disk_binding:
   device: /dev/vdd
   fast_wipe: true

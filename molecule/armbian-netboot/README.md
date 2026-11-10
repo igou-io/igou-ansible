@@ -58,7 +58,7 @@ shellcheck molecule/armbian-netboot/dependency.sh molecule/armbian-netboot/files
 
 | Lab entry point | Functional coverage |
 | --- | --- |
-| `build_and_publish.yaml` | Repeat cached builds, publish over builder/controller/server SSH, fetch the actual manifest and verify the compressed image checksum. |
+| `build_and_publish.yaml` | Repeat cached builds, publish over builder/controller/server SSH, resolve board-a's published manifest through the production resolver, and stage/boot that image on both boards. Fetch the actual manifest and verify the compressed image checksum. |
 | `stage_netboot_assets.yaml` | Stage one source for two boards, reuse one download, retain modified content on cached staging, restore it on forced refresh, and retain separate host identities. Repair a same-size stale per-MAC pin through boot-mode convergence. Fetch actual kernel bytes and per-MAC boot configurations over RouterOS TFTP. |
 | `tasks/image_sd.yml`, used by `tests/fleet_e2e.yaml` | Write the configured image to the disposable SD disk, compare its bytes with the source, then boot that disk through the lab's boot-mode operation. |
 | `bootstrap.yaml` | Bootstrap the running NFS system, copy it to local storage and require automation-key access, passwordless sudo, disabled password/root SSH login and a locked root account on the running local system. |
@@ -85,6 +85,8 @@ uncached compilation through the same lab playbook. The builder has four CPUs,
 8 GiB RAM and a 100 GiB boot disk. The optional `uefi-x86/current` build at
 `v26.8.0-trunk.180` failed on upstream Apple-driver patch conflicts on 2026-11-10;
 full compilation has not passed acceptance.
+Uncached mode validates its published artifact separately; its boot operations
+still use the frozen Debian fixture.
 The cached path checks GitHub egress for resolving the build ref; only uncached
 compilation requires the Armbian package and build-container mirrors.
 

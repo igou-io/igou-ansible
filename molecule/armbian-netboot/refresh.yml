@@ -4,6 +4,11 @@
   become: true
   gather_facts: false
   tasks:
+    - name: Require both staged hosts to consume the intended published image
+      ansible.builtin.assert:
+        that: >-
+          groups['boards'] | map('extract', hostvars, 'armbian_rootfs_src') | unique | list
+          == [lab_stage_image_url]
     - name: Read the source server's request log before forced refresh
       ansible.builtin.command: cat /var/log/nginx/armbian-access.log
       register: lab_initial_downloads
@@ -12,7 +17,7 @@
       ansible.builtin.assert:
         that: >-
           lab_initial_downloads.stdout
-          | regex_findall('(?m)^192\.0\.2\.10 .*"GET /fixture\.img\.xz ') | length == 1
+          | regex_findall(lab_image_request_pattern) | length == 1
     - name: Change the staged payload without changing its source
       ansible.builtin.copy:
         dest: "{{ armbian_nfs_rootfs_path }}/{{ item }}/root/payload"

@@ -185,7 +185,7 @@
     - name: Require the shared staging download to have happened
       ansible.builtin.assert:
         that: >-
-          lab_http_log.stdout | regex_findall('(?m)^192\.0\.2\.10 .*"GET /fixture\.img\.xz ')
+          lab_http_log.stdout | regex_findall(lab_image_request_pattern)
           | length > 0
 - name: Verify the installed guest k3s cluster and its workloads
   ansible.builtin.import_playbook: k3s_verify.yml
