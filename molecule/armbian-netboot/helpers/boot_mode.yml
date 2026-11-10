@@ -5,6 +5,17 @@
   ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
   register: lab_previous_boot
   changed_when: false
+- name: Read the current VM instance identity
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    name: "{{ lab_state.hosts[inventory_hostname].name }}"
+    namespace: "{{ lab_namespace }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_connection: local
+  register: lab_previous_vmi
 - name: Prepare the BIOS local-kernel handoff
   when: armbian_boot_mode == 'local_kernel'
   become: true
@@ -61,6 +72,23 @@
   vars:
     ansible_connection: local
   changed_when: true
+- name: Wait for a replacement VM instance before accepting SSH
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    name: "{{ lab_state.hosts[inventory_hostname].name }}"
+    namespace: "{{ lab_namespace }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_connection: local
+  register: lab_replacement_vmi
+  until: >-
+    lab_replacement_vmi.resources | length == 1 and
+    lab_replacement_vmi.resources[0].metadata.uid != lab_previous_vmi.resources[0].metadata.uid and
+    lab_replacement_vmi.resources[0].status.phase == 'Running'
+  retries: 60
+  delay: 3
 - name: Discard the old management connection
   ansible.builtin.meta: reset_connection
 - name: Wait for firmware PXE and the new root's SSH service
