@@ -75,7 +75,7 @@
       loop: "{{ lab_service_requests.results }}"
       loop_control:
         label: "{{ item.item.spec.nodeName }}"
-    - name: Verify HTTP delivery to the pod on the other node
+    - name: Verify a large HTTP payload from the pod on the other node
       ansible.builtin.command:
         argv:
           - k3s
@@ -86,13 +86,9 @@
           - netboot-check
           - "{{ item.metadata.name }}"
           - --
-          - wget
-          - -q
-          - -O
-          - '-'
-          - -T
-          - "10"
-          - "http://{{ lab_peer.status.podIP }}:8080"
+          - sh
+          - -ec
+          - "wget -q -O - -T 30 {{ ('http://' ~ lab_peer.status.podIP ~ ':8080/payload') | quote }} | sha256sum"
       vars:
         lab_peer: "{{ (lab_k3s_pods.stdout | from_json)['items'] | rejectattr('spec.nodeName', 'equalto', item.spec.nodeName) | first }}"
       loop: "{{ (lab_k3s_pods.stdout | from_json)['items'] }}"
@@ -100,12 +96,10 @@
         label: "{{ item.spec.nodeName }}"
       register: lab_peer_requests
       changed_when: false
-    - name: Require cross-node responses from the expected peer
+    - name: Require intact delivery of the entire cross-node payload
       ansible.builtin.assert:
-        that: item.stdout == lab_peer.metadata.name
-        fail_msg: "Cross-node networking failed from {{ item.item.spec.nodeName }}."
-      vars:
-        lab_peer: "{{ (lab_k3s_pods.stdout | from_json)['items'] | rejectattr('spec.nodeName', 'equalto', item.item.spec.nodeName) | first }}"
+        that: item.stdout.split()[0] == (('x' * 262144) | hash('sha256'))
+        fail_msg: "Cross-node payload delivery failed from {{ item.item.spec.nodeName }}."
       loop: "{{ lab_peer_requests.results }}"
       loop_control:
         label: "{{ item.item.spec.nodeName }}"
