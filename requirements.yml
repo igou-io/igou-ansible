@@ -57,9 +57,9 @@ collections:
     version: 0.30.2
   - name: onepassword.connect
     version: 2.4.0
+  # Portable fixes in ansible-collection-armbian#137; replace with its release tag.
   - name: https://github.com/david-igou/ansible-collection-armbian.git
     type: git
-    # Portable fixes in ansible-collection-armbian#137; replace with its release tag.
     version: e7862dfe83302d6c084ff8ebb98b3cdbddc69b66
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
