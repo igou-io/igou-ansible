@@ -22,7 +22,7 @@
       community.routeros.command:
         commands:
           - >-
-            :if ([:len [/ip dhcp-server lease find mac-address="{{ hostvars[item].armbian_board_mac }}"]] = 0)
+            :if ([:len [/ip dhcp-server lease find mac-address="{{ hostvars[item].armbian_board_mac | upper }}"]] = 0)
             do={/ip dhcp-server lease add server=lab-pxe address={{ hostvars[item].lab_address }}
             mac-address={{ hostvars[item].armbian_board_mac }} comment="{{ item }}"}
       loop: "{{ groups['boards'] }}"

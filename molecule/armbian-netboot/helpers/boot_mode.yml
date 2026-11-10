@@ -138,7 +138,7 @@
   community.routeros.command:
     commands:
       - >-
-        :local lease [/ip dhcp-server lease find mac-address="{{ armbian_board_mac }}"];
+        :local lease [/ip dhcp-server lease find mac-address="{{ armbian_board_mac | upper }}"];
         :put ([/ip dhcp-server lease get $lease status] . "|" . [/ip dhcp-server lease get $lease active-address])
   delegate_to: "{{ armbian_router }}"
   become: false
