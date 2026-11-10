@@ -60,7 +60,7 @@ collections:
   # Portable fixes in ansible-collection-armbian#137; replace with its release tag.
   - name: https://github.com/david-igou/ansible-collection-armbian.git
     type: git
-    version: e7862dfe83302d6c084ff8ebb98b3cdbddc69b66
+    version: ee79b05166a89ad9197659afdf49ef910bc6c0e4
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
     version: 28.0.0

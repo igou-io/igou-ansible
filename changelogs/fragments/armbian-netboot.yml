@@ -11,6 +11,7 @@ minor_changes:
     in the same disposable operations scenario.
   - Recorded fixture OS releases, image sources and k3s versions in the scenario inventory.
 bugfixes:
+  - k3s prerequisite installation refreshed package indexes on fresh images with an empty apt-list directory.
   - Armbian boot waits honored inventory SSH ports, including the full-reimage path.
   - Full reimage honored the existing configurable power-cycle transport hook.
   - Full reimage safely skipped Kubernetes cleanup when disabled or when the target was outside rk8s.

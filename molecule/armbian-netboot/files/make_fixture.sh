@@ -24,7 +24,7 @@ chroot "$mountpoint" apt-get update
 DEBIAN_FRONTEND=noninteractive chroot "$mountpoint" apt-get install -y --no-install-recommends \
   systemd-sysv dbus openssh-server python3 python3-apt sudo nfs-common rsync \
   linux-image-amd64 grub-pc-bin grub2-common initramfs-tools busybox iproute2 \
-  systemd-repart parted e2fsprogs xz-utils tftp-hpa curl ca-certificates
+  parted e2fsprogs xz-utils tftp-hpa curl ca-certificates
 mkdir -p "$mountpoint"/{etc/ssh,var/lib/dbus,root,boot/dtb}
 printf 'fixture\n' > "$mountpoint/etc/hostname"
 printf '127.0.0.1 localhost\n127.0.1.1 fixture\n' > "$mountpoint/etc/hosts"
