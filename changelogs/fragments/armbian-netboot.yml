@@ -5,8 +5,14 @@ minor_changes:
     staging and refresh, SD imaging, bootstrap, provisioning, boot-mode, reprovision and full-reimage operations
     (https://github.com/igou-io/igou-ansible/pull/658).
   - Shared the lab fleet test's SD imaging task with the operations scenario.
+  - >-
+    Exercised firmware DHCP/PXE for NFS, SD, local-root and local-kernel modes,
+    k3s installation and worker re-registration, and rolling OS/kernel updates
+    in the same disposable operations scenario.
+  - Recorded fixture OS releases, image sources and k3s versions in the scenario inventory.
 bugfixes:
   - Armbian boot waits honored inventory SSH ports, including the full-reimage path.
   - Full reimage honored the existing configurable power-cycle transport hook.
   - Full reimage safely skipped Kubernetes cleanup when disabled or when the target was outside rk8s.
   - Armbian publication honored inventory SSH private keys and allowed an isolated controller staging directory.
+  - RouterOS uploads retried with a fresh persistent connection after exhausted SCP retries.
