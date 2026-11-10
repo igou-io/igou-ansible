@@ -161,6 +161,10 @@
       ansible.builtin.command: xz -t /var/tmp/published.img.xz
       changed_when: false
       when: inventory_hostname in groups['build_targets']
+    - name: Release the verification mount before later forced reprovisioning
+      ansible.posix.mount:
+        path: /mnt/netboot-source
+        state: unmounted
 - name: Verify per-host identities and shared-download behavior
   hosts: netboot_server
   become: true
