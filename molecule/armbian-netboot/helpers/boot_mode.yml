@@ -152,7 +152,7 @@
   ansible.builtin.command: networkctl status --no-pager enp2s0
   register: lab_guest_dhcp
   changed_when: false
-  until: "('DHCP4 via ' ~ lab_router_address) in lab_guest_dhcp.stdout and lab_address in lab_guest_dhcp.stdout"
+  until: "('DHCPv4 via ' ~ lab_router_address) in lab_guest_dhcp.stdout and lab_address in lab_guest_dhcp.stdout"
   retries: 20
   delay: 2
 - name: Verify loaded-kernel modules work on the booted root
