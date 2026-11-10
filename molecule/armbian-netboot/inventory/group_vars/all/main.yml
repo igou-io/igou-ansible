@@ -29,6 +29,8 @@ lab_board_disks:
   - name: local
     size: 8Gi
     storage_class: lvms-casval
+    # SeaBIOS must initialize this disk so the carrier's GRUB can read it.
+    boot_order: 3
   - name: untouched
     size: 1Gi
     storage_class: lvms-casval
