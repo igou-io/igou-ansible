@@ -63,8 +63,9 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | `ghapp` | Separate credentialed GitHub App client/broker integration. |
 
 No Molecule scenario enrolls Tailscale. The Kubernetes scenarios do not install GitOps or applications. The k3s and VPS
-scenarios also exercise the focused upgrade path; kubeadm stops at installation
-and API/node health.
+scenarios also exercise the focused upgrade path, with upgrade and recovery checks
+in each scenario's own `side_effect.yml`; kubeadm stops at installation and
+API/node health.
 The devenv file round trip does not verify S3 transport. `upsmonitor` does not
 claim live USB UPS or device telemetry coverage. `ghapp` requires its existing
 integration credential profile.
