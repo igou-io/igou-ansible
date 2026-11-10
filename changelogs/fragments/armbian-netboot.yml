@@ -1,0 +1,8 @@
+---
+minor_changes:
+  - Added a Casval KubeVirt companion scenario importing the Armbian lab build/publication, staging, boot-mode, reprovision and full-reimage workflows.
+bugfixes:
+  - Armbian boot waits honored inventory SSH ports, including the full-reimage path.
+  - Full reimage honored the existing configurable power-cycle transport hook.
+  - Full reimage safely skipped Kubernetes cleanup when disabled or when the target was outside rk8s.
+  - Armbian publication honored inventory SSH private keys and allowed an isolated controller staging directory.

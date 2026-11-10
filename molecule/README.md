@@ -61,6 +61,14 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | `grafana-kiosk` | Browser/kiosk deployment and dashboard navigation against a small HTTP fixture. |
 | `upsmonitor` | NUT packages and configuration, running exporters, and host metrics without attached UPSes. |
 | `ghapp` | Separate credentialed GitHub App client/broker integration. |
+| `armbian-netboot` | Cached build/publication, staging, RouterOS delivery, disk operations, NFS-to-local and full reimage using shared KubeVirt fixtures. |
+
+`armbian-netboot` is an explicit live-cluster integration: set
+`ARMBIAN_COLLECTION_SOURCE` to the checkout containing its shared fixtures and
+use credentials that can manage a private UserDefinedNetwork in
+`molecule`. It requires Casval and uses a virtual power transport; see
+[`armbian-netboot/README.md`](armbian-netboot/README.md) for the physical firmware
+coverage boundary and cleanup instructions.
 
 No Molecule scenario enrolls Tailscale. The Kubernetes scenarios do not install GitOps or applications. The k3s and VPS
 scenarios also exercise the focused upgrade path, with upgrade and recovery checks

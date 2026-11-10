@@ -12,6 +12,11 @@ extra_vars:
 
 # Exclude files that reference roles/collections not installable in this environment
 exclude_paths:
+  # Optional cross-repo fixtures: lint these explicit files with
+  # ARMBIAN_COLLECTION_SOURCE set, as documented in the scenario README.
+  - molecule/armbian-netboot/converge.yml
+  - molecule/armbian-netboot/side_effect.yml
+  - molecule/armbian-netboot/verify.yml
   - archive/  # Historical snapshots; not supported Ansible entry points.
   - .venv/
   - playbooks/openshift/casval-orchestrator-workflow.yml

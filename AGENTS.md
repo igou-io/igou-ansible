@@ -162,7 +162,7 @@ placement. Require Casval affinity for every guest in the default profile.
 Molecule never creates or deletes shared seeds. Concurrent batches use the
 bounded `molecule-test-batch` target; install dependencies once before workers.
 Keep workflow assertions focused on outcomes. See `molecule/README.md` for
-the 13-scenario roster, profile commands, and lifecycle limits.
+the scenario roster, profile commands, and lifecycle limits.
 Do not run Molecule in GitHub Actions. Functional testing uses the local
 `ocp-ansible-molecule` profile, and must prove cleanup in `molecule`.
 

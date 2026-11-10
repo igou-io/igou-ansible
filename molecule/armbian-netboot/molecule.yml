@@ -1,0 +1,27 @@
+---
+dependency:
+  command: bash ${MOLECULE_PROJECT_DIRECTORY}/molecule/armbian-netboot/dependency.sh
+ansible:
+  executor:
+    args:
+      ansible_playbook:
+        - --inventory=${MOLECULE_PROJECT_DIRECTORY}/molecule/shared/inventory/
+        - --inventory=${ARMBIAN_COLLECTION_SOURCE}/extensions/molecule/lab_netboot/inventory/
+        - --inventory=inventory/
+        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
+        - --extra-vars=@${MOLECULE_SCENARIO_DIRECTORY}/overrides.yml
+  playbooks:
+    create: ${ARMBIAN_COLLECTION_SOURCE}/extensions/molecule/lab_netboot/create.yml
+    prepare: ${ARMBIAN_COLLECTION_SOURCE}/extensions/molecule/lab_netboot/prepare.yml
+    destroy: ${ARMBIAN_COLLECTION_SOURCE}/extensions/molecule/lab_netboot/destroy.yml
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - verify
+    - side_effect
+    - verify
+    - destroy

@@ -1,0 +1,3 @@
+---
+- name: Verify the shared functional contracts
+  ansible.builtin.import_playbook: "{{ lookup('ansible.builtin.env', 'ARMBIAN_COLLECTION_SOURCE') }}/extensions/molecule/lab_netboot/verify.yml"

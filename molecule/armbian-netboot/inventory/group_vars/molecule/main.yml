@@ -1,0 +1,3 @@
+---
+mp_defaults:
+  kubevirt: "{{ lab_kubevirt_defaults | combine(molecule_placement) }}"
