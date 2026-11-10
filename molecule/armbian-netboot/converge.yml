@@ -36,6 +36,8 @@
   ansible.builtin.import_playbook: boot_transition.yml
   vars:
     armbian_boot_mode: local_kernel
+- name: Prepare and reimport the control-plane datastore through the production workflow
+  ansible.builtin.import_playbook: datastore.yml
 - name: Install the two-node cluster through the production k3s playbook
   ansible.builtin.import_playbook: ../../playbooks/kubernetes/install-k3s-cluster.yml
   vars:

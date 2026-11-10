@@ -87,6 +87,7 @@
         - pxe
         - boot-evidence
         - fixture-kernel-release
+        - datastore-guid
         - router-password
         - bootstrap-password
         - network.yml

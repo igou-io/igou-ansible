@@ -66,7 +66,8 @@ shellcheck molecule/armbian-netboot/dependency.sh molecule/armbian-netboot/files
 | `reprovision_to_local.yaml` | Repeat the NFS-to-local workflow on the worker canary; require a reset root, the exact data/root layout, and the same data filesystem UUID and application marker after the second boot. |
 | `set_boot_mode.yaml`, `converge_boot_mode.yaml`, `cycle_board.yaml` | Firmware boots in all four modes: `nfs`, `sd`, `local`, `local_kernel`. Require CHR DHCP leases, per-MAC pin TFTP hits, new boot IDs, the selected root and expected kernel release. Network-kernel modes must fetch kernel and initrd; local-kernel mode must leave those counters unchanged. |
 | `full_reimage.yaml` | Reimage the installed k3s worker through staging, bootstrap, provisioning and steady-state boot. Require old root/application state and the data partition to disappear, the sole root partition to boot, stale node/password registration to disappear, a new node UID after k3s reinstall and recovery of the existing workload. |
-| `kubernetes/install-k3s-cluster.yml` | Install the pinned k3s release on both booted local systems; require exactly the intended Ready nodes, containerd and a running pod on each. Test cluster DNS, Service HTTP and a checksum-verified 256 KiB HTTP response between pods on different nodes. |
+| `kubernetes/prepare-k3s-datastore.yml` | Create two ZFS mirrors on four dedicated control-plane disks, export the pool and remove its import cache, then import without creation permission. Require the same pool GUID, retained content, dataset mounts and k3s mount dependency after reboot and kernel updates. |
+| `kubernetes/install-k3s-cluster.yml` | Install the pinned k3s release with the lab's hard links and user-namespace feature settings; require exactly the intended Ready nodes, containerd and a running pod on each. Verify unprivileged host UID mappings, cluster DNS, Service HTTP and a checksum-verified 256 KiB response between pods on different nodes. |
 | `system-update.yaml` | Update the control plane and then the worker from the Debian snapshot to current trixie packages. Reboot through the normal boot-mode/cycle operation. Require a newer apt-owned running kernel, loadable modules and the existing k3s workload to recover after each node. |
 
 The excluded disk must remain byte-identical throughout. Its baseline is kept
@@ -107,6 +108,13 @@ switches apt sources to current trixie only after creation. Preserved-data
 reprovisioning runs before k3s installation. Full reimage then exercises the
 installed worker's stale-node cleanup and rejoin while preserving the control
 plane, before both nodes receive rolling OS updates.
+
+The control plane models the CM3588 datastore with four separate 2 GiB SCSI
+disks in two ZFS mirrors and a 512 MiB ARC cap. It uses the production datastore
+playbook and k3s mount dependencies. The image includes matching kernel headers
+so DKMS must build ZFS for both the snapshot kernel and its replacement.
+SCSI disks simulate pool membership; NVMe identity and replacement remain
+hardware acceptance.
 
 The fixture keeps a `debian` maintenance account for the boot harness;
 verification uses `lab-automation` to check the production bootstrap separately.

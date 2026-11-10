@@ -34,6 +34,23 @@ lab_board_disks:
   - name: untouched
     size: 1Gi
     storage_class: lvms-casval
+lab_datastore_disks:
+  - name: datastore-a
+    size: 2Gi
+    storage_class: lvms-casval
+    bus: scsi
+  - name: datastore-b
+    size: 2Gi
+    storage_class: lvms-casval
+    bus: scsi
+  - name: datastore-c
+    size: 2Gi
+    storage_class: lvms-casval
+    bus: scsi
+  - name: datastore-d
+    size: 2Gi
+    storage_class: lvms-casval
+    bus: scsi
 lab_kubevirt_defaults:
   namespace: "{{ lab_namespace }}"
   ssh_user: debian

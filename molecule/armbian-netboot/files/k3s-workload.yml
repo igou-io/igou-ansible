@@ -18,6 +18,7 @@ spec:
       labels:
         app: netboot-check
     spec:
+      hostUsers: false
       containers:
         - name: http
           image: docker.io/library/busybox:1.37.0
