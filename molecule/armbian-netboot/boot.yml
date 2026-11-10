@@ -19,11 +19,3 @@
   ansible.builtin.import_playbook: boot_transition.yml
   vars:
     armbian_boot_mode: local_kernel
-- name: Return guests to their original management image
-  hosts: boards
-  gather_facts: false
-  tasks:
-    - name: Return to the original management image after rootfs tests
-      ansible.builtin.reboot:
-        reboot_timeout: 300
-      become: true

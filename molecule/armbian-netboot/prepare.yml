@@ -260,8 +260,12 @@
       ansible.builtin.command: sha256sum /dev/vde
       register: lab_untouched_checksum
       changed_when: false
-    - name: Persist the baseline checksum inside the guest
+    - name: Retain the excluded-disk baseline across root filesystem changes
       ansible.builtin.copy:
-        dest: /var/tmp/armbian-untouched.sha256
+        dest: "{{ lab_ephemeral_directory }}/{{ inventory_hostname }}-untouched.sha256"
         content: "{{ lab_untouched_checksum.stdout }}\n"
         mode: "0644"
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_connection: local

@@ -2,13 +2,11 @@
 - name: Resolve the cached-build fixture inputs through the production resolvers
   hosts: build_targets
   gather_facts: false
-  vars:
-    lab_collection_playbooks: "{{ playbook_dir }}/../../../.ansible/collections/ansible_collections/david_igou/armbian/playbooks"
   tasks:
     - name: Resolve board metadata
-      ansible.builtin.include_tasks: "{{ lab_collection_playbooks }}/tasks/_resolve_board_config.yml"
+      ansible.builtin.include_tasks: ../../playbooks/armbian/tasks/_resolve_board_config.yml
     - name: Resolve build metadata
-      ansible.builtin.include_tasks: "{{ lab_collection_playbooks }}/tasks/_resolve_build_profile.yml"
+      ansible.builtin.include_tasks: ../../playbooks/armbian/tasks/_resolve_build_profile.yml
 - name: Prepare the cached or real image builder
   hosts: armbian_builders
   become: true

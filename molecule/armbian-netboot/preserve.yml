@@ -1,0 +1,40 @@
+---
+- name: Reprovision through the lab workflow with a preserved application filesystem
+  ansible.builtin.import_playbook: ../../playbooks/armbian/reprovision_to_local.yaml
+  vars:
+    armbian_local_disks:
+      - "{{ lab_preserved_binding }}"
+- name: Write application state on the booted local system
+  hosts: boards
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require the application filesystem to be mounted separately
+      ansible.builtin.command: findmnt -n -o SOURCE --mountpoint /var/lib/lab-data
+      register: lab_data_mount
+      changed_when: false
+    - name: Require the preserved partition on the disposable local disk
+      ansible.builtin.assert:
+        that: lab_data_mount.stdout is match('^/dev/vdd[0-9]+$')
+    - name: Store state that must survive another reprovision
+      ansible.builtin.copy:
+        dest: /var/lib/lab-data/application-state
+        content: "{{ inventory_hostname }}\n"
+        mode: "0644"
+- name: Repeat the lab reprovisioning workflow with the preserved filesystem
+  ansible.builtin.import_playbook: ../../playbooks/armbian/reprovision_to_local.yaml
+  vars:
+    armbian_local_disks:
+      - "{{ lab_preserved_binding }}"
+- name: Verify application state in the newly booted local systems
+  hosts: boards
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read retained application state from its normal mountpoint
+      ansible.builtin.command: cat /var/lib/lab-data/application-state
+      register: lab_preserved_state
+      changed_when: false
+    - name: Require each board's application data to survive the full workflow
+      ansible.builtin.assert:
+        that: lab_preserved_state.stdout == inventory_hostname

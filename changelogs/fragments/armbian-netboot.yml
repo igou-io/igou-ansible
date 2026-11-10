@@ -1,9 +1,10 @@
 ---
 minor_changes:
   - >-
-    Added Casval KubeVirt scenarios and shared fixtures covering Armbian collection
-    operations and the lab build/publication, staging, boot-mode, reprovision and full-reimage workflows
+    Added one Casval KubeVirt scenario exercising the lab's Armbian build/publication,
+    staging and refresh, SD imaging, bootstrap, provisioning, boot-mode, reprovision and full-reimage operations
     (https://github.com/igou-io/igou-ansible/pull/658).
+  - Shared the lab fleet test's SD imaging task with the operations scenario.
 bugfixes:
   - Armbian boot waits honored inventory SSH ports, including the full-reimage path.
   - Full reimage honored the existing configurable power-cycle transport hook.

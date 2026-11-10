@@ -1,20 +1,32 @@
 ---
 - name: Prepare the cached or real image builder
-  ansible.builtin.import_playbook: ../shared/armbian_netboot/prepare_builder.yml
+  ansible.builtin.import_playbook: prepare_builder.yml
 - name: Exercise the lab's image-build and publication workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/build_and_publish.yaml
   vars:
     armbian_boards_group: build_targets
-- name: Reuse the same cached build through the lab's repeated publication run
+- name: Reuse the cached build through a repeated publication run
   ansible.builtin.import_playbook: ../../playbooks/armbian/build_and_publish.yaml
   vars:
     armbian_boards_group: build_targets
   when: not lab_real_build | bool
 - name: Configure the provisioned RouterOS transport
-  ansible.builtin.import_playbook: ../shared/armbian_netboot/router_transport.yml
-- name: Stage images and router assets using the production lab workflow
+  ansible.builtin.import_playbook: router_transport.yml
+- name: Stage images and router assets through the lab workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/stage_netboot_assets.yaml
-- name: Converge router state using the production lab workflow
+- name: Exercise cached staging and forced refresh before booting the exports
+  ansible.builtin.import_playbook: refresh.yml
+- name: Exercise the SD imaging operation used by the lab fleet test
+  ansible.builtin.import_playbook: image_sd.yml
+- name: Boot the staged NFS roots through the lab's mode and cycle entry points
+  ansible.builtin.import_playbook: boot_transition.yml
+  vars:
+    armbian_boot_mode: nfs
+- name: Bootstrap and harden the running NFS systems through the lab workflow
+  ansible.builtin.import_playbook: ../../playbooks/armbian/bootstrap.yaml
+- name: Provision local disks from the running NFS roots through the lab workflow
+  ansible.builtin.import_playbook: ../../playbooks/armbian/provision_local_disk.yaml
+- name: Converge the declared steady-state mode through the lab workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/converge_boot_mode.yaml
-- name: Exercise collection imaging, bootstrap, and storage operations
-  ansible.builtin.import_playbook: ../shared/armbian_netboot/storage.yml
+- name: Boot and verify the provisioned local systems through the lab workflow
+  ansible.builtin.import_playbook: ../../playbooks/armbian/cycle_board.yaml

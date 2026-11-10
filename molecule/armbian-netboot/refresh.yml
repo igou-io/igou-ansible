@@ -20,7 +20,7 @@
         mode: "0644"
       loop: "{{ groups['boards'] }}"
 - name: Repeat staging without a forced extraction
-  ansible.builtin.import_playbook: david_igou.armbian.stage_netboot_assets
+  ansible.builtin.import_playbook: ../../playbooks/armbian/stage_netboot_assets.yaml
 - name: Verify that the matching sentinel preserved the existing rootfs
   hosts: netboot_server
   become: true
@@ -35,7 +35,7 @@
       ansible.builtin.assert:
         that: lab_cached_payloads.results | map(attribute='stdout') | unique | list == ['cache-preservation-check']
 - name: Force extraction from the original image
-  ansible.builtin.import_playbook: david_igou.armbian.stage_netboot_assets
+  ansible.builtin.import_playbook: ../../playbooks/armbian/stage_netboot_assets.yaml
   vars:
     armbian_force_refresh: true
 - name: Verify that forced refresh restored the source payload
@@ -51,19 +51,3 @@
     - name: Require the original image content after forced refresh
       ansible.builtin.assert:
         that: lab_refreshed_payloads.results | map(attribute='stdout') | unique | list == ['fixture payload']
-- name: Renew client mounts after replacing the exported directories
-  hosts: boards
-  gather_facts: false
-  become: true
-  tasks:
-    - name: Release the previous rootfs file handles
-      ansible.posix.mount:
-        path: /mnt/netboot-source
-        state: unmounted
-    - name: Mount the refreshed rootfs
-      ansible.posix.mount:
-        path: /mnt/netboot-source
-        src: "{{ lab_server_address }}:{{ armbian_nfs_rootfs_path }}/{{ inventory_hostname }}"
-        fstype: nfs
-        opts: vers=3,rw,nolock
-        state: ephemeral

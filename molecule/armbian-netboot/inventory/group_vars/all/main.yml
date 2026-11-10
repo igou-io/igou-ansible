@@ -67,8 +67,6 @@ armbian_tftp_cache_dir: "{{ lab_ephemeral_directory }}/tftp"
 armbian_router: netboot-router
 armbian_boards_group: boards
 armbian_tftp_flash_dir: sbc
-armbian_persist_uboot_env: never
-armbian_cycle_board: false
 armbian_boot_mode: local_kernel
 armbian_poe_switch: netboot-router
 armbian_poe_port: virtual-test-port
@@ -94,6 +92,25 @@ lab_disk_binding:
       mount: /
 armbian_local_disks:
   - "{{ lab_disk_binding }}"
+armbian_local_disk_device: /dev/vdd
+armbian_sd_device: /dev/vdc
+lab_preserved_binding:
+  device: /dev/vdd
+  fast_wipe: true
+  layout:
+    - id: data
+      size: 256M
+      type: linux
+      format: ext4
+      label: lab_preserved
+      mount: /var/lib/lab-data
+      preserve_on_reprovision: true
+    - id: root
+      size: grow
+      type: root
+      format: ext4
+      label: armbi_root_local
+      mount: /
 armbian_local_kernel:
   persist_via: hook
   verify_match: ^/dev/vdd

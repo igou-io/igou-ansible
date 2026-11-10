@@ -61,16 +61,15 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | `grafana-kiosk` | Browser/kiosk deployment and dashboard navigation against a small HTTP fixture. |
 | `upsmonitor` | NUT packages and configuration, running exporters, and host metrics without attached UPSes. |
 | `ghapp` | Separate credentialed GitHub App client/broker integration. |
-| `armbian-netboot` | Cached build/publication, staging, RouterOS delivery, disk operations, NFS-to-local and full reimage using shared KubeVirt fixtures. |
-| `armbian-netboot-collection` | Collection workflows, cache refresh, data preservation, all boot transitions and publication retention using the same local fixtures. |
+| `armbian-netboot` | Actual lab build/publication, staging and refresh, SD imaging, bootstrap, local provisioning, preserved-data reprovisioning, every boot mode and full reimage. |
 
-The two Armbian scenarios are explicit live-cluster integrations. All fixtures
-live in `molecule/shared/armbian_netboot/` in this repository. Use credentials
-that can manage a private UserDefinedNetwork in `molecule`. Casval placement
-and `lvms-casval` storage are required. `ARMBIAN_COLLECTION_SOURCE` optionally
-overrides the installed production collection; it supplies no test assets.
-See the [shared guide](shared/armbian_netboot/README.md) for prerequisites,
-the physical firmware coverage boundary and cleanup instructions.
+`armbian-netboot` is the single Armbian operations scenario. All fixtures live
+in its own directory and it exercises the lab's playbooks and task entry points.
+It requires credentials that can manage a private UserDefinedNetwork in
+`molecule`, Casval placement and `lvms-casval` storage.
+`ARMBIAN_COLLECTION_SOURCE` optionally overrides the production collection's
+roles; it supplies no test assets. See the [scenario guide](armbian-netboot/README.md)
+for the operation coverage, prerequisites, hardware boundary and cleanup.
 
 No Molecule scenario enrolls Tailscale. The Kubernetes scenarios do not install GitOps or applications. The k3s and VPS
 scenarios also exercise the focused upgrade path, with upgrade and recovery checks

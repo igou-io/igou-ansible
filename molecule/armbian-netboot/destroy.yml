@@ -5,7 +5,7 @@
   gather_facts: false
   tasks:
     - name: Check the cluster and identity before cleanup
-      ansible.builtin.include_tasks: tasks/cluster_identity.yml
+      ansible.builtin.include_tasks: helpers/cluster_identity.yml
     - name: Read the saved network identity
       ansible.builtin.set_fact:
         lab_saved_network: >-
@@ -87,3 +87,5 @@
         - router-password
         - bootstrap-password
         - network.yml
+        - netboot-board-a-untouched.sha256
+        - netboot-board-b-untouched.sha256

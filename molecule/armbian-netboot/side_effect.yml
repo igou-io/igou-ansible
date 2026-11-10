@@ -1,46 +1,11 @@
 ---
-- name: Configure the RouterOS transport for the production workflow
-  ansible.builtin.import_playbook: ../shared/armbian_netboot/router_transport.yml
-- name: Exercise the lab's NFS-to-local reprovision workflow
-  ansible.builtin.import_playbook: ../../playbooks/armbian/reprovision_to_local.yaml
-- name: Converge both boards back to their declared steady-state mode
-  ansible.builtin.import_playbook: ../../playbooks/armbian/converge_boot_mode.yaml
-- name: Boot and verify the declared steady-state mode
-  ansible.builtin.import_playbook: ../../playbooks/armbian/cycle_board.yaml
+- name: Configure the RouterOS transport for the repeated lab workflows
+  ansible.builtin.import_playbook: router_transport.yml
+- name: Exercise data preservation through repeated lab reprovisioning
+  ansible.builtin.import_playbook: preserve.yml
+- name: Exercise all boot modes through the lab's mode and cycle entry points
+  ansible.builtin.import_playbook: boot.yml
 - name: Exercise the complete lab reimage workflow on one virtual canary
   ansible.builtin.import_playbook: ../../playbooks/armbian/full_reimage.yaml
   vars:
     target_hosts: netboot-board-a
-- name: Verify the automation account on the freshly reimaged local root
-  hosts: netboot-board-a
-  gather_facts: false
-  vars:
-    ansible_user: "{{ armbian_bootstrap_user }}"
-  tasks:
-    - name: Authenticate and elevate through the newly bootstrapped account
-      ansible.builtin.command: sudo -n id -u
-      register: lab_reimaged_identity
-      changed_when: false
-    - name: Read sshd's effective policy on the reimaged system
-      ansible.builtin.command: sudo -n sshd -T
-      register: lab_reimaged_ssh_policy
-      changed_when: false
-    - name: Read the root account's lock status without exposing its hash
-      ansible.builtin.command: sudo -n passwd -S root
-      register: lab_reimaged_root_status
-      changed_when: false
-    - name: Require working automation access with password authentication disabled
-      ansible.builtin.assert:
-        that:
-          - lab_reimaged_identity.stdout == '0'
-          - "'passwordauthentication no' in lab_reimaged_ssh_policy.stdout_lines"
-          - "'permitrootlogin no' in lab_reimaged_ssh_policy.stdout_lines"
-          - lab_reimaged_root_status.stdout.split()[1] == 'L'
-- name: Return guests to their management disks
-  hosts: boards
-  gather_facts: false
-  become: true
-  tasks:
-    - name: Reboot into the original management image
-      ansible.builtin.reboot:
-        reboot_timeout: 300

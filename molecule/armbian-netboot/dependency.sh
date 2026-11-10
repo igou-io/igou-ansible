@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-repository_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
+repository_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 export ANSIBLE_COLLECTIONS_PATH="${repository_root}/.ansible/collections"
 bash "${repository_root}/molecule/dependency.sh"
 

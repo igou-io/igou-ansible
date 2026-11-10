@@ -1,0 +1,21 @@
+---
+- name: Image the disposable SD substitutes using the lab fleet test's operation
+  hosts: boards
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Invoke the same SD imaging tasks as fleet_e2e
+      ansible.builtin.include_tasks: ../../playbooks/armbian/tasks/image_sd.yml
+    - name: Download an independent copy of the source image for comparison
+      ansible.builtin.get_url:
+        url: "{{ armbian_rootfs_src }}"
+        dest: /var/tmp/fixture.img.xz
+        mode: "0644"
+    - name: Decompress the comparison image
+      ansible.builtin.command: xz -dkf /var/tmp/fixture.img.xz
+      changed_when: true
+    - name: Compare the SD image bytes with the original source
+      ansible.builtin.shell: cmp -n "$(stat -c %s /var/tmp/fixture.img)" /var/tmp/fixture.img {{ armbian_sd_device | quote }}
+      args:
+        executable: /bin/bash
+      changed_when: false

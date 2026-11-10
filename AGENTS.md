@@ -165,8 +165,9 @@ Keep workflow assertions focused on outcomes. See `molecule/README.md` for
 the scenario roster, profile commands, and lifecycle limits.
 Do not run Molecule in GitHub Actions. Functional testing uses the local
 `ocp-ansible-molecule` profile, and must prove cleanup in `molecule`.
-Armbian lab scenarios and their shared fixtures belong in this repository,
-under `molecule/armbian-netboot*` and `molecule/shared/armbian_netboot/`.
+Keep one Armbian operations scenario, with its fixtures local to
+`molecule/armbian-netboot/`. Exercise `playbooks/armbian/` entry points and their
+operational task components; do not add a parallel collection-playbook scenario.
 Keep lab placement, network and test inventory out of the Armbian collection.
 `ARMBIAN_COLLECTION_SOURCE` overrides only the production collection under test.
 

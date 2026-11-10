@@ -1,3 +1,0 @@
----
-- name: Exercise refresh, preservation, boot transitions and retention
-  ansible.builtin.import_playbook: ../shared/armbian_netboot/side_effect.yml

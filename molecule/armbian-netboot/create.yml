@@ -5,7 +5,7 @@
   gather_facts: false
   tasks:
     - name: Check the cluster and identity
-      ansible.builtin.include_tasks: tasks/cluster_identity.yml
+      ansible.builtin.include_tasks: helpers/cluster_identity.yml
     - name: Require the lab cluster and explicit test guests
       ansible.builtin.assert:
         that:

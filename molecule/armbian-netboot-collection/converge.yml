@@ -1,3 +1,0 @@
----
-- name: Exercise the collection's netboot workflows
-  ansible.builtin.import_playbook: ../shared/armbian_netboot/converge.yml

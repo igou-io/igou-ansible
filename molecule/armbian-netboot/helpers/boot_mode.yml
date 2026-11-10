@@ -68,12 +68,6 @@
 - name: Require an actual new kernel boot
   ansible.builtin.assert:
     that: lab_current_boot.stdout != lab_previous_boot.stdout
-- name: Verify the actual mounted root against the selected mode
-  ansible.builtin.include_role:
-    name: david_igou.armbian.board_boot_verify
-  vars:
-    board_boot_verify_mode: "{{ armbian_boot_mode }}"
-    board_boot_verify_local_kernel_match: ^/dev/vdd
 - name: Read the root source independently of Ansible's mount facts
   ansible.builtin.command: findmnt -n -o SOURCE /
   register: lab_booted_root
