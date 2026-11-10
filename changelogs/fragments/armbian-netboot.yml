@@ -16,3 +16,4 @@ bugfixes:
   - Full reimage safely skipped Kubernetes cleanup when disabled or when the target was outside rk8s.
   - Armbian publication honored inventory SSH private keys and allowed an isolated controller staging directory.
   - RouterOS uploads retried with a fresh persistent connection after exhausted SCP retries.
+  - Molecule reinstalled pinned collection content even when SCM revisions shared a Galaxy version.

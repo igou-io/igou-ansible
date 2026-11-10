@@ -39,10 +39,10 @@ ARMBIAN_COLLECTION_SOURCE=/workspace/ansible-collection-armbian \
 ```
 
 The dependency step builds and installs that checkout into this repository's
-`.ansible/collections`; it supplies no test assets. Until the fixes in
-[ansible-collection-armbian#137](https://github.com/david-igou/ansible-collection-armbian/pull/137)
-are released and pinned, use its branch for full acceptance. Configuration,
-syntax and lint checks do not require `ARMBIAN_COLLECTION_SOURCE`.
+`.ansible/collections`; it supplies no test assets. Normal runs use the immutable
+collection commit in root `requirements.yml`, including the portable fixes in
+[ansible-collection-armbian#137](https://github.com/david-igou/ansible-collection-armbian/pull/137).
+The override is only needed to test other collection changes.
 
 Validate the composed workflow locally before creating guests:
 

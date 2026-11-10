@@ -4,10 +4,6 @@
   ansible.builtin.import_playbook: boot_transition.yml
   vars:
     armbian_boot_mode: sd
-- name: Return to NFS root for the next local-disk transition
-  ansible.builtin.import_playbook: boot_transition.yml
-  vars:
-    armbian_boot_mode: nfs
 - name: Select the network kernel with a local root
   ansible.builtin.import_playbook: boot_transition.yml
   vars:

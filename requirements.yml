@@ -59,7 +59,8 @@ collections:
     version: 2.4.0
   - name: https://github.com/david-igou/ansible-collection-armbian.git
     type: git
-    version: v0.0.5-alpha
+    # Portable fixes in ansible-collection-armbian#137; replace with its release tag.
+    version: e7862dfe83302d6c084ff8ebb98b3cdbddc69b66
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
     version: 28.0.0
