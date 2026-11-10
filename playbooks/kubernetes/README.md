@@ -40,8 +40,8 @@ so allow for API interruption during backup and restart. Matching versions skip
 download, backup, drain and restart. Check mode is explicitly unsupported.
 
 AAP uses `k3s_upgrade_cluster` behind the `k3s_upgrade_rk8s` and
-`k3s_upgrade_vps` workflows. The companion inventory PR stages weekly schedules
-disabled. Operational activation, recovery and verification belong in
+`k3s_upgrade_vps` workflows. The companion inventory defines their weekly
+maintenance schedules. Operational configuration, recovery and verification belong in
 `igou-docs/kubernetes/rk8s Node Lifecycle - Adding, Upgrading, and Retiring Boards.md`
 and `igou-docs/kubernetes/VPS Kubernetes Architecture and Migration.md`.
 
