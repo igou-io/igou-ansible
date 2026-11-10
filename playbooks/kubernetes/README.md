@@ -29,7 +29,8 @@ Inventory supplies `k3s_release_version`, optional `k3s_upgrade_workloads`
 and does not force-delete unmanaged pods. Enabling emptyDir deletion permits
 eviction of disposable node-local data; PVC data is not deleted by that flag.
 Failed drain or health gates stop the remaining nodes; a failed worker may
-remain cordoned for investigation. No automatic downgrade is attempted.
+remain cordoned for investigation. Failed upgrades do not trigger an automatic
+rollback.
 
 Before a server upgrade, k3s stops briefly to archive its server data, token,
 configuration and old binary into root-only

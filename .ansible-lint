@@ -3,7 +3,6 @@ profile: production
 
 # Changelog fragment names can contain "playbook" without being Ansible plays.
 kinds:
-  - tasks: molecule/*/_*.yml
   - vars: molecule/*/overrides.yml
   - yaml: "**/changelogs/fragments/*.{yaml,yml}"
 

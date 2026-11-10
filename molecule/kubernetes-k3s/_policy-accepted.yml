@@ -1,6 +1,0 @@
----
-- name: Accept the supported version transition
-  ansible.builtin.include_tasks: ../../playbooks/kubernetes/tasks/k3s-upgrade-policy.yml
-  vars:
-    k3s_upgrade_current: "{{ policy_case.current }}"
-    k3s_release_version: "{{ policy_case.target }}"
