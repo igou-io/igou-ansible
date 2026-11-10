@@ -1,0 +1,52 @@
+---
+- name: Render the initial NFS pins through the lab entry point
+  ansible.builtin.import_playbook: ../../playbooks/armbian/converge_boot_mode.yaml
+  vars:
+    armbian_boot_mode: nfs
+- name: Put another host's same-size pin at the first host's path
+  hosts: routeros_netboot
+  gather_facts: false
+  vars:
+    lab_pin_a: "01-{{ hostvars['netboot-board-a'].armbian_board_mac | lower | replace(':', '-') }}"
+    lab_pin_b: "01-{{ hostvars['netboot-board-b'].armbian_board_mac | lower | replace(':', '-') }}"
+  tasks:
+    - name: Require distinct per-host pins with identical byte counts
+      ansible.builtin.assert:
+        that:
+          - lab_config_a != lab_config_b
+          - lab_config_a | length == lab_config_b | length
+      vars:
+        lab_config_a: "{{ lookup('ansible.builtin.file', armbian_tftp_cache_dir ~ '/pxelinux.cfg/' ~ lab_pin_a, rstrip=false) }}"
+        lab_config_b: "{{ lookup('ansible.builtin.file', armbian_tftp_cache_dir ~ '/pxelinux.cfg/' ~ lab_pin_b, rstrip=false) }}"
+    - name: Discard the previous SCP connection before changing the fixture
+      ansible.builtin.meta: reset_connection
+    - name: Replace the first pin with the second host's content
+      ansible.netcommon.net_put:
+        src: "{{ armbian_tftp_cache_dir }}/pxelinux.cfg/{{ lab_pin_b }}"
+        dest: "{{ armbian_tftp_flash_dir }}/pxelinux.cfg/{{ lab_pin_a }}"
+      register: lab_stale_pin
+    - name: Require an actual stale-content change before testing convergence
+      ansible.builtin.assert:
+        that: lab_stale_pin is changed
+- name: Repair the stale pin through the normal lab entry point
+  ansible.builtin.import_playbook: ../../playbooks/armbian/converge_boot_mode.yaml
+  vars:
+    armbian_boot_mode: nfs
+- name: Require the router to contain the correct host's pin before booting
+  hosts: routeros_netboot
+  gather_facts: false
+  vars:
+    lab_pin_a: "01-{{ hostvars['netboot-board-a'].armbian_board_mac | lower | replace(':', '-') }}"
+  tasks:
+    - name: Read the content served for the first board's MAC
+      community.routeros.command:
+        commands:
+          - ':put [/file get [find name="{{ armbian_tftp_flash_dir }}/pxelinux.cfg/{{ lab_pin_a }}"] contents]'
+      register: lab_repaired_pin
+      changed_when: false
+    - name: Require content convergence when the file size is unchanged
+      ansible.builtin.assert:
+        that: >-
+          lab_repaired_pin.stdout[0] | regex_replace('\r', '') | trim ==
+          lookup('ansible.builtin.file', armbian_tftp_cache_dir ~ '/pxelinux.cfg/' ~ lab_pin_a) | trim
+        fail_msg: The lab upload transport accepted another host's same-size PXE configuration.

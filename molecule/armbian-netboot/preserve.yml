@@ -1,11 +1,14 @@
 ---
+# The worker canary changes root-only -> preserved-data -> root-only layouts
+# across reprovision and full reimage. Both nodes retain the full boot matrix.
 - name: Reprovision through the lab workflow with a preserved application filesystem
   ansible.builtin.import_playbook: ../../playbooks/armbian/reprovision_to_local.yaml
   vars:
+    target_hosts: netboot-board-b
     armbian_local_disks:
       - "{{ lab_preserved_binding }}"
 - name: Write application state on the booted local system
-  hosts: boards
+  hosts: netboot-board-b
   become: true
   gather_facts: false
   tasks:
@@ -24,10 +27,11 @@
 - name: Repeat the lab reprovisioning workflow with the preserved filesystem
   ansible.builtin.import_playbook: ../../playbooks/armbian/reprovision_to_local.yaml
   vars:
+    target_hosts: netboot-board-b
     armbian_local_disks:
       - "{{ lab_preserved_binding }}"
 - name: Verify application state in the newly booted local systems
-  hosts: boards
+  hosts: netboot-board-b
   become: true
   gather_facts: false
   tasks:

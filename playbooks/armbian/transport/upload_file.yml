@@ -1,6 +1,6 @@
 ---
 # Shared primitive: upload a single file to RouterOS flash and register
-# a matching /ip tftp row. Idempotent; size-gated; retry-tolerant.
+# a matching /ip tftp row. Binary assets are size-gated; text can be compared.
 #
 # Required vars on include:
 #   _upload_local_src   path on the controller to the file to push
@@ -9,6 +9,8 @@
 #   _upload_req_filename_is_regex bool (default false) — when true,
 #                       the row is registered with a permissive ".*"
 #                       prefix and a regex match (used for pxelinux.cfg)
+#   _upload_compare_contents bool (default false) — compare text via net_put,
+#                       including changed content with an unchanged file size
 
 - name: Stat local source
   ansible.builtin.stat:
@@ -48,10 +50,10 @@
 
 - name: Reset persistent connection before net_put
   ansible.builtin.meta: reset_connection
-  when: (_upload_size_match.stdout[0] | trim | int) == 0
+  when: _upload_compare_contents | default(false) | bool or (_upload_size_match.stdout[0] | trim | int) == 0
 
-- name: Upload file when size differs or file missing
-  when: (_upload_size_match.stdout[0] | trim | int) == 0
+- name: Converge text content or upload missing and differently sized assets
+  when: _upload_compare_contents | default(false) | bool or (_upload_size_match.stdout[0] | trim | int) == 0
   block:
     - name: Send the file through the RouterOS SCP transport
       ansible.netcommon.net_put:

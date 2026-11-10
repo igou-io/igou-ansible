@@ -11,9 +11,15 @@
       until: lab_k3s_ready.rc == 0
       retries: 60
       delay: 5
-    - name: Wait for both nodes to become Ready
-      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml wait --for=condition=Ready node --all --timeout=300s
+    - name: Wait for both intended nodes to register and become Ready
+      ansible.builtin.command: >-
+        k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml wait
+        --for=condition=Ready node {{ groups['boards'] | join(' ') }} --timeout=10s
+      register: lab_node_readiness
       changed_when: false
+      until: lab_node_readiness.rc == 0
+      retries: 30
+      delay: 5
     - name: Read the cluster's registered nodes
       ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml get nodes -o json
       register: lab_k3s_nodes
@@ -69,6 +75,7 @@
     - name: Require service responses to come from the test pods
       ansible.builtin.assert:
         that: item.stdout in lab_pod_names
+        quiet: true
         fail_msg: "Service/DNS request failed from {{ item.item.spec.nodeName }}."
       vars:
         lab_pod_names: "{{ (lab_k3s_pods.stdout | from_json)['items'] | map(attribute='metadata.name') | list }}"
@@ -99,6 +106,7 @@
     - name: Require intact delivery of the entire cross-node payload
       ansible.builtin.assert:
         that: item.stdout.split()[0] == (('x' * 262144) | hash('sha256'))
+        quiet: true
         fail_msg: "Cross-node payload delivery failed from {{ item.item.spec.nodeName }}."
       loop: "{{ lab_peer_requests.results }}"
       loop_control:

@@ -18,6 +18,8 @@
   ansible.builtin.import_playbook: refresh.yml
 - name: Exercise the SD imaging operation used by the lab fleet test
   ansible.builtin.import_playbook: image_sd.yml
+- name: Repair a same-size stale per-MAC PXE configuration
+  ansible.builtin.import_playbook: pin_refresh.yml
 - name: Boot the staged NFS roots through the lab's mode and cycle entry points
   ansible.builtin.import_playbook: boot_transition.yml
   vars:
