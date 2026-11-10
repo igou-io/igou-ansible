@@ -2,13 +2,6 @@
 dependency:
   command: bash ${MOLECULE_PROJECT_DIRECTORY}/molecule/armbian-netboot/dependency.sh
 ansible:
-  executor:
-    args:
-      ansible_playbook:
-        - --inventory=${MOLECULE_PROJECT_DIRECTORY}/molecule/shared/inventory/
-        - --inventory=inventory/
-        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/
-        - --extra-vars=@${MOLECULE_SCENARIO_DIRECTORY}/overrides.yml
   playbooks:
     create: create.yml
     prepare: prepare.yml

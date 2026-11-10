@@ -58,11 +58,11 @@ shellcheck molecule/armbian-netboot/dependency.sh molecule/armbian-netboot/files
 
 | Lab entry point | Functional coverage |
 | --- | --- |
-| `build_and_publish.yaml` | Repeat cached builds, publish over builder/controller/server SSH, resolve board-a's published manifest through the production resolver, and stage/boot that image on both boards. Fetch the actual manifest and verify the compressed image checksum. |
-| `stage_netboot_assets.yaml` | Stage one source for two boards, reuse one download, retain modified content on cached staging, restore it on forced refresh, and retain separate host identities. Repair a same-size stale per-MAC pin through boot-mode convergence. Fetch actual kernel bytes and per-MAC boot configurations over RouterOS TFTP. |
+| `build_and_publish.yaml` | Repeat cached builds, publish over builder/controller/server SSH, resolve board-a's published manifest through the production resolver, and stage/boot that image on both boards. Fetch the manifest and verify the compressed image checksum. |
+| `stage_netboot_assets.yaml` | Stage one source for two boards, reuse one download, retain modified content on cached staging, restore it on forced refresh, and retain separate host identities. Repair a same-size stale per-MAC pin through boot-mode convergence. Fetch kernel bytes and per-MAC boot configurations over RouterOS TFTP. |
 | `tasks/image_sd.yml`, used by `tests/fleet_e2e.yaml` | Write the configured image to the disposable SD disk, compare its bytes with the source, then boot that disk through the lab's boot-mode operation. |
 | `bootstrap.yaml` | Bootstrap the running NFS system, copy it to local storage and require automation-key access, passwordless sudo, disabled password/root SSH login and a locked root account on the running local system. |
-| `provision_local_disk.yaml` | Copy the running NFS root onto the local disk, boot it and verify the actual root source, payload and mount table. |
+| `provision_local_disk.yaml` | Copy the running NFS root onto the local disk, boot it and verify the running root source, payload and mount table. |
 | `reprovision_to_local.yaml` | Repeat the NFS-to-local workflow on the worker canary; require a reset root, the exact data/root layout, and the same data filesystem UUID and application marker after the second boot. |
 | `set_boot_mode.yaml`, `converge_boot_mode.yaml`, `cycle_board.yaml` | Firmware boots in all four modes: `nfs`, `sd`, `local`, `local_kernel`. Require CHR DHCP leases, per-MAC pin TFTP hits, new boot IDs, the selected root and expected kernel release. Network-kernel modes must fetch kernel and initrd; local-kernel mode must leave those counters unchanged. |
 | `full_reimage.yaml` | Reimage the installed k3s worker through staging, bootstrap, provisioning and steady-state boot. Require old root/application state and the data partition to disappear, the sole root partition to boot, stale node/password registration to disappear, a new node UID after k3s reinstall and recovery of the existing workload. |
@@ -80,7 +80,7 @@ outside this lab workflow.
 ## Fixture limits
 
 The default builder seeds a bootable Debian x86 image and matching manifest to
-exercise actual cached build/publication. Set `LAB_NETBOOT_BUILD=true` to request
+exercise cached build/publication. Set `LAB_NETBOOT_BUILD=true` to request
 uncached compilation through the same lab playbook. The builder has four CPUs,
 8 GiB RAM and a 100 GiB boot disk. The optional `uefi-x86/current` build at
 `v26.8.0-trunk.180` failed on upstream Apple-driver patch conflicts on 2026-11-10;
@@ -94,14 +94,14 @@ BIOS PXE loads Debian's Syslinux loader from CHR, then consumes the unmodified
 per-MAC configuration rendered by the lab playbook. There is no kexec boot
 helper. `localboot 0` hands off to GRUB on the persistent management carrier;
 GRUB loads `/vmlinuz` and `/initrd.img` from the provisioned local root. This
-stands in for U-Boot's `localcmd`, while exercising the real apt-managed kernel.
+stands in for U-Boot's `localcmd`, while exercising the apt-managed kernel.
 The helper initializes missing GRUB files after provisioning and leaves existing
 ones intact; the update reboot does not regenerate or repair its boot menu.
 Rockchip BootROM, U-Boot, SPI, physical SD/eMMC controllers, PHY behavior and
 PoE remain hardware acceptance. The DTB is only a transport fixture on x86.
 
 The image's packages and kernel come from the Debian `20260801T000000Z`
-snapshot. The generated image records its actual kernel release; assertions
+snapshot. The generated image records its kernel release; assertions
 compare it with the running kernel before and after updates. The fixture
 switches apt sources to current trixie only after creation. Preserved-data
 reprovisioning runs before k3s installation. Full reimage then exercises the
@@ -137,8 +137,8 @@ Board `enp2s0` gets its address from CHR in firmware, initramfs and the running
 OS. The generated image stores its networkd DHCP policy in
 `/etc/systemd/network/20-lab.network`; it does not assign a static board IP.
 `enp1s0` uses separate KubeVirt management DHCP for controller SSH and internet
-access. CHR does not provide management DHCP. DHCP is declaratively stored in
-this scenario; its private lease advertises no default gateway, so initramfs
+access. CHR does not provide management DHCP. The private lease advertises no
+default gateway, so initramfs
 cannot displace the management interface's internet/SSH route. The inputs live in
 the inventory and `pxe.yml`, then are applied to the disposable router;
 production rb5009 configuration is never loaded.

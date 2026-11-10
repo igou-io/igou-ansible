@@ -55,6 +55,9 @@
     - name: Require root-only and application state to be absent after full reimage
       ansible.builtin.assert:
         that: lab_reimage_markers.results | selectattr('stat.exists') | list | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} retained old filesystem state:
+          {{ lab_reimage_markers.results | selectattr('stat.exists') | map(attribute='item') | list }}
 - name: Verify the production workflow removed the stale worker identity
   hosts: rk8s_control_plane
   become: true

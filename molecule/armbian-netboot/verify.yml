@@ -48,6 +48,10 @@
     - name: Require the excluded disk to match its original management-image baseline
       ansible.builtin.assert:
         that: lab_untouched_after.stdout == lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/' ~ inventory_hostname ~ '-untouched.sha256')
+        fail_msg: >-
+          {{ inventory_hostname }} excluded disk changed:
+          expected={{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/' ~ inventory_hostname ~ '-untouched.sha256') }},
+          observed={{ lab_untouched_after.stdout }}
     - name: Read the source of the running root filesystem
       ansible.builtin.command: findmnt -n -o SOURCE /
       register: lab_running_root

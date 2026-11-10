@@ -61,7 +61,7 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | `grafana-kiosk` | Browser/kiosk deployment and dashboard navigation against a small HTTP fixture. |
 | `upsmonitor` | NUT packages and configuration, running exporters, and host metrics without attached UPSes. |
 | `ghapp` | Separate credentialed GitHub App client/broker integration. |
-| `armbian-netboot` | Actual lab build/publication, staging and refresh, SD imaging, bootstrap, local provisioning, preserved-data reprovisioning, every boot mode and full reimage. |
+| `armbian-netboot` | Lab build/publication, staging and refresh, SD imaging, bootstrap, local provisioning, preserved-data reprovisioning, every boot mode and full reimage. |
 
 `armbian-netboot` is the single Armbian operations scenario. All fixtures live
 in its own directory and it exercises the lab's playbooks and task entry points.

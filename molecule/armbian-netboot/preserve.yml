@@ -70,3 +70,9 @@
           - lab_preserved_uuid.stdout | length > 0
           - lab_preserved_uuid_after.stdout == lab_preserved_uuid.stdout
           - not lab_old_root_marker.stat.exists
+        fail_msg: >-
+          {{ inventory_hostname }} reprovision result:
+          old_root_marker={{ lab_old_root_marker.stat.exists }},
+          data_uuid_before={{ lab_preserved_uuid.stdout }},
+          data_uuid_after={{ lab_preserved_uuid_after.stdout }},
+          application_state={{ lab_preserved_state.stdout }}
