@@ -12,9 +12,6 @@ lab_builder_address: 192.0.2.11
 lab_real_build: "{{ lookup('ansible.builtin.env', 'LAB_NETBOOT_BUILD') | default('false', true) | bool }}"
 lab_router_password_lookup: "{{ lookup('ansible.builtin.password', lab_ephemeral_directory ~ '/router-password length=24 chars=ascii_letters,digits') }}"
 lab_bootstrap_password_lookup: "{{ lookup('ansible.builtin.password', lab_ephemeral_directory ~ '/bootstrap-password length=24 chars=ascii_letters,digits') }}"
-lab_linux_boot_source:
-  type: container_disk
-  image: quay.io/containerdisks/debian:13@sha256:ddc9a3fc809b7e89f78862e267a5b246dfddeba0e878f8be74424f8cb9dfbb90
 lab_board_disks:
   - name: sd
     size: 2Gi
@@ -29,7 +26,15 @@ lab_kubevirt_defaults:
   namespace: "{{ lab_namespace }}"
   ssh_user: debian
   memory: 2Gi
-  boot_source: "{{ lab_linux_boot_source }}"
+  vm_overrides:
+    spec:
+      template:
+        spec:
+          domain:
+            firmware:
+              bootloader:
+                bios:
+                  useSerial: true
   tolerations:
     - key: workload
       operator: Equal

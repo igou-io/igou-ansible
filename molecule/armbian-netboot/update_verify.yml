@@ -1,0 +1,32 @@
+---
+- name: Verify the OS update advanced the apt-managed running kernel
+  hosts: "{{ lab_updated_hosts | default('none') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the updated running kernel
+      ansible.builtin.command: uname -r
+      register: lab_updated_kernel
+      changed_when: false
+    - name: Require the updated kernel to be newer than the image snapshot
+      ansible.builtin.command:
+        argv:
+          - dpkg
+          - --compare-versions
+          - "{{ lab_updated_kernel.stdout }}"
+          - gt
+          - "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/fixture-kernel-release') | trim }}"
+      changed_when: false
+    - name: Require module loading with the updated local kernel
+      ansible.builtin.command: modprobe --all overlay br_netfilter
+      changed_when: false
+    - name: Require the kernel to be owned by the package manager
+      ansible.builtin.command: "dpkg-query -W -f=${db:Status-Status} linux-image-{{ lab_updated_kernel.stdout }}"
+      register: lab_kernel_package
+      changed_when: false
+    - name: Require the updated kernel package to be installed
+      ansible.builtin.assert:
+        that: lab_kernel_package.stdout == 'installed'
+        fail_msg: "Running kernel {{ lab_updated_kernel.stdout }} is not managed by apt."
+- name: Verify the k3s workload after the rolling system update
+  ansible.builtin.import_playbook: k3s_verify.yml

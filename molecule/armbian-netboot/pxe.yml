@@ -1,0 +1,38 @@
+---
+- name: Select the noninteractive RouterOS transport
+  ansible.builtin.import_playbook: router_transport.yml
+- name: Configure RouterOS DHCP and the BIOS PXE loader
+  hosts: routeros_netboot
+  gather_facts: false
+  tasks:
+    - name: Configure a DHCP server confined to the private test interface
+      community.routeros.command:
+        commands:
+          - >-
+            :if ([:len [/ip pool find name="lab-boards"]] = 0)
+            do={/ip pool add name=lab-boards ranges=192.0.2.100-192.0.2.110};
+            :if ([:len [/ip dhcp-server find name="lab-pxe"]] = 0)
+            do={/ip dhcp-server add name=lab-pxe interface=ether2 address-pool=lab-boards lease-time=10m disabled=no};
+            :if ([:len [/ip dhcp-server network find address="192.0.2.0/24"]] = 0)
+            do={/ip dhcp-server network add address=192.0.2.0/24
+            next-server={{ lab_router_address }} boot-file-name=pxelinux.0};
+            /ip tftp settings set max-block-size=1024
+      changed_when: true
+    - name: Reserve each board's DHCP address by MAC
+      community.routeros.command:
+        commands:
+          - >-
+            :if ([:len [/ip dhcp-server lease find mac-address="{{ hostvars[item].armbian_board_mac }}"]] = 0)
+            do={/ip dhcp-server lease add server=lab-pxe address={{ hostvars[item].lab_address }}
+            mac-address={{ hostvars[item].armbian_board_mac }} comment="{{ item }}"}
+      loop: "{{ groups['boards'] }}"
+      changed_when: true
+    - name: Upload the PXE loader using the lab's normal RouterOS transport
+      ansible.builtin.include_tasks: ../../playbooks/armbian/transport/upload_file.yml
+      vars:
+        _upload_local_src: "{{ lab_ephemeral_directory }}/pxe/{{ item }}"
+        _upload_remote_path: "{{ armbian_tftp_flash_dir }}/{{ item }}"
+        _upload_req_filename: "{{ item }}"
+      loop:
+        - pxelinux.0
+        - ldlinux.c32

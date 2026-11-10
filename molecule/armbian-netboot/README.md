@@ -12,7 +12,7 @@ follows those same lab entry points.
 ## Run
 
 Activate a local virtual environment containing `requirements-molecule.txt`.
-The controller needs `oc`, `ssh`, `sshpass` and `rsync`; building
+The controller needs `oc`, `virtctl`, `ssh`, `sshpass` and `rsync`; building
 `ansible-pylibssh` from source also requires libssh development headers.
 Acquire a current Casval lease and credentials that can manage VMs, Services,
 DataVolumes/PVCs and UserDefinedNetworks in `molecule`, read the generated
@@ -64,8 +64,10 @@ shellcheck molecule/armbian-netboot/dependency.sh molecule/armbian-netboot/files
 | `bootstrap.yaml` | Bootstrap the running NFS system, copy it to local storage and require automation-key access, passwordless sudo, disabled password/root SSH login and a locked root account on the running local system. |
 | `provision_local_disk.yaml` | Copy the running NFS root onto the local disk, boot it and verify the actual root source, payload and mount table. |
 | `reprovision_to_local.yaml` | Repeat the NFS-to-local workflow with a preserved data partition; read application state from its normal mountpoint after the second boot. |
-| `set_boot_mode.yaml`, `converge_boot_mode.yaml`, `cycle_board.yaml` | Exercise NFS, SD, local and local-kernel modes. Require new kernel boot IDs and independently verify the running root. |
+| `set_boot_mode.yaml`, `converge_boot_mode.yaml`, `cycle_board.yaml` | Firmware boots in all four modes: `nfs`, `sd`, `local`, `local_kernel`. Require CHR DHCP leases, per-MAC pin TFTP hits, new boot IDs, the selected root and expected kernel release. Network-kernel modes must fetch kernel and initrd; local-kernel mode must leave those counters unchanged. |
 | `full_reimage.yaml` | Force a fresh image through staging, bootstrap, local provisioning and the declared steady-state boot on one canary; verify its new system and the other board's integrity. |
+| `kubernetes/install-k3s-cluster.yml` | Install the pinned k3s release on both booted local systems; require exactly the intended Ready nodes, containerd and a running pod on each. Test cluster DNS, Service HTTP and HTTP directly between pods on different nodes. |
+| `system-update.yaml` | Update the control plane and then the worker from the Debian snapshot to current trixie packages. Reboot through the normal boot-mode/cycle operation. Require a newer apt-owned running kernel, loadable modules and the existing k3s workload to recover after each node. |
 
 The excluded disk must remain byte-identical throughout. Its baseline is kept
 on the controller so root filesystem changes cannot erase the evidence.
@@ -84,16 +86,56 @@ uncached compilation through the same lab playbook. The builder has four CPUs,
 `v26.8.0-trunk.180` failed on upstream Apple-driver patch conflicts on 2026-11-10;
 full compilation has not passed acceptance.
 
-Kexec supplies the virtual power transport and boots real Linux kernels and
-root filesystems. Rockchip BootROM, U-Boot, SPI, physical SD/eMMC controllers,
-PHY behavior and PoE remain hardware acceptance. The DTB is a transport fixture.
-The fixtures contain no k3s cluster, so full-reimage's optional stale-node
-cleanup is disabled.
+BIOS PXE loads Debian's Syslinux loader from CHR, then consumes the unmodified
+per-MAC configuration rendered by the lab playbook. There is no kexec boot
+helper. `localboot 0` hands off to GRUB on the persistent management carrier;
+GRUB loads `/vmlinuz` and `/initrd.img` from the provisioned local root. This
+stands in for U-Boot's `localcmd`, while exercising the real apt-managed kernel.
+The helper initializes missing GRUB files after provisioning and leaves existing
+ones intact; the update reboot does not regenerate or repair its boot menu.
+Rockchip BootROM, U-Boot, SPI, physical SD/eMMC controllers, PHY behavior and
+PoE remain hardware acceptance. The DTB is only a transport fixture on x86.
 
-CHR uses e1000 interfaces and an unpacked raw image served to CDI by this run's
-HTTP Service. A dedicated generated account avoids the factory admin's password
-change prompt. TFTP downloads run sequentially because the free CHR license
-limits each interface to 1 Mbps; allow several minutes for verification.
+The image's packages and kernel come from the Debian `20260801T000000Z`
+snapshot. The generated image records its actual kernel release; assertions
+compare it with the running kernel before and after updates. The fixture
+switches apt sources to current trixie only after creation. Destructive
+reprovisioning/full-reimage runs before k3s installation; optional production
+stale-node deletion is disabled and is not covered by this scenario.
+
+`inventory/hosts.yml` describes OS releases, source images, board payload
+snapshot and k3s version. The router's source is MikroTik's public, versioned
+download URL. CDI cannot unpack ZIP: create adapts that source to a temporary
+run-owned HTTP endpoint, and prepare downloads/unpacks the public archive there.
+The internal URL is an import adapter, not an alternate image source.
+CHR uses e1000 interfaces and a generated account. The free license limits an
+interface to 1 Mbps; firmware TFTP downloads can take several minutes.
+TFTP blocks are capped at 1024 bytes: larger negotiated blocks caused iPXE
+downloads to time out on this private OVN network. The minimal initrd explicitly
+includes `nfsv3`, required by the production pin's `nfsvers=3` root mount.
+
+## DHCP and boot network
+
+`pxe.yml` configures CHR's `lab-pxe` DHCP server on `ether2` only, with
+MAC reservations from `inventory/hosts.yml`. Its `192.0.2.0/24` network advertises
+`next-server=192.0.2.1` and `boot-file-name=pxelinux.0`. The router serves the
+loader, matching Syslinux core, rendered per-MAC pins, kernels and initrds over
+TFTP. The Debian server at `192.0.2.10` exports the running NFS roots. Both are
+on the private Layer2 UDN; it has no OVN IPAM or connection to the physical LAN.
+
+Board `enp2s0` gets its address from CHR in firmware, initramfs and the running
+OS. The generated image stores its networkd DHCP policy in
+`/etc/systemd/network/20-lab.network`; it does not assign a static board IP.
+`enp1s0` uses separate KubeVirt management DHCP for controller SSH and internet
+access. CHR does not provide management DHCP. DHCP is declaratively stored in
+this scenario; its private lease advertises no default gateway, so initramfs
+cannot displace the management interface's internet/SSH route. The inputs live in
+the inventory and `pxe.yml`, then are applied to the disposable router;
+production rb5009 configuration is never loaded.
+
+Successful mode transitions leave temporary evidence under
+`boot-evidence/<host>-<mode>.yml`: boot ID, root, kernel, bound DHCP lease and
+before/after TFTP counters. Verify requires all eight host/mode results.
 
 ## Cleanup
 

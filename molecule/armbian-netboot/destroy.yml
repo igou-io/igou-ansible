@@ -84,6 +84,9 @@
       loop:
         - publish
         - tftp
+        - pxe
+        - boot-evidence
+        - fixture-kernel-release
         - router-password
         - bootstrap-password
         - network.yml

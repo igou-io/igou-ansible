@@ -1,87 +1,170 @@
 ---
-# Kexec substitutes for the physical board's firmware/power transport. It boots
-# a real kernel and rootfs; it does not emulate Rockchip U-Boot or switch PoE.
-- name: Record the running kernel boot identity
+# Firmware, DHCP and TFTP execute on every cycle. GRUB on the management disk
+# stands in for the SBC's U-Boot localcmd; its kernel/initrd live on /dev/vdd.
+- name: Record the running boot identity
   ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
   register: lab_previous_boot
   changed_when: false
-  become: true
-- name: Release earlier staging handles before loading a refreshed kernel
-  ansible.posix.mount:
-    path: /mnt/netboot-source
-    state: unmounted
-  become: true
-  when: armbian_boot_mode != 'local_kernel'
-- name: Ensure the staged rootfs is available to the virtual boot transport
-  ansible.posix.mount:
-    path: /mnt/netboot-source
-    src: "{{ lab_server_address }}:{{ armbian_nfs_rootfs_path }}/{{ inventory_hostname }}"
-    fstype: nfs
-    opts: vers=3,rw,nolock
-    state: ephemeral
-  become: true
-  when: armbian_boot_mode != 'local_kernel'
-- name: Mount the local kernel filesystem for local-kernel boot
-  ansible.posix.mount:
-    path: /mnt/netboot-local
-    src: LABEL=armbi_root_local
-    fstype: ext4
-    state: ephemeral
-  become: true
+- name: Prepare the BIOS local-kernel handoff
   when: armbian_boot_mode == 'local_kernel'
-- name: Load the next kernel from the selected boot source
-  ansible.builtin.shell: |
-    set -euo pipefail
-    kernel=$(find {{ lab_boot_directory }}/boot -maxdepth 1 -name 'vmlinuz-*' | sort -V | tail -1)
-    initrd=$(find {{ lab_boot_directory }}/boot -maxdepth 1 -name 'initrd.img-*' | sort -V | tail -1)
-    kexec --load "$kernel" --initrd="$initrd" --append={{ lab_boot_arguments | quote }}
-  args:
-    executable: /bin/bash
+  become: true
+  block:
+    - name: Mount the provisioned local root for its bootloader
+      ansible.posix.mount:
+        path: /mnt/netboot-local
+        src: LABEL=armbi_root_local
+        fstype: ext4
+        state: ephemeral
+    - name: Install the x86 firmware handoff on the management carrier disk
+      ansible.builtin.command:
+        argv:
+          - grub-install
+          - --target=i386-pc
+          - --boot-directory=/mnt/netboot-local/boot
+          - /dev/vda
+      args:
+        creates: /mnt/netboot-local/boot/grub/i386-pc/core.img
+    - name: Select the apt-managed kernel and initrd on the local root
+      ansible.builtin.copy:
+        dest: /mnt/netboot-local/boot/grub/grub.cfg
+        content: |
+          set timeout=0
+          search --no-floppy --label armbi_root_local --set=root
+          linux /vmlinuz root=LABEL=armbi_root_local rootfstype=ext4 rw console=ttyS0,115200 lab.boot=local_kernel
+          initrd /initrd.img
+          boot
+        mode: "0644"
+        force: false
+    - name: Read the kernel release selected by the local package manager
+      ansible.builtin.command: readlink /mnt/netboot-local/vmlinuz
+      register: lab_local_kernel_link
+      changed_when: false
+    - name: Release the local bootloader mount before restarting
+      ansible.posix.mount:
+        path: /mnt/netboot-local
+        state: unmounted
+- name: Snapshot the router's firmware and kernel transfer counters
+  ansible.builtin.include_tasks: tftp_counters.yml
+- name: Retain the pre-boot counters
+  ansible.builtin.set_fact:
+    lab_tftp_before: "{{ lab_tftp_counters.stdout | map('trim') | map('int') | list }}"
+- name: Restart the run-owned VM through its firmware
+  ansible.builtin.command:
+    argv:
+      - virtctl
+      - restart
+      - "{{ lab_state.hosts[inventory_hostname].name }}"
+      - --namespace
+      - "{{ lab_namespace }}"
+  delegate_to: localhost
+  become: false
   vars:
-    lab_boot_directory: "{{ '/mnt/netboot-local' if armbian_boot_mode == 'local_kernel' else '/mnt/netboot-source' }}"
-    lab_root_arguments: >-
-      {{ 'boot=nfs root=/dev/nfs nfsroot=' ~ lab_server_address ~ ':' ~ armbian_nfs_rootfs_path ~ '/' ~ inventory_hostname ~ ',nfsvers=3,rw'
-         if armbian_boot_mode == 'nfs' else
-         'boot=local root=LABEL=' ~ ('armbi_root' if armbian_boot_mode == 'sd' else 'armbi_root_local') ~ ' rootfstype=ext4' }}
-    lab_boot_arguments: >-
-      {{ lab_root_arguments ~ ' rw console=ttyS0,115200 ip=' ~ lab_address
-         ~ ':::255.255.255.0:' ~ inventory_hostname ~ ':enp2s0:none' }}
-  become: true
+    ansible_connection: local
   changed_when: true
-- name: Reboot into the loaded kernel and selected rootfs
-  # systemd_service cannot request a kexec boot.
-  ansible.builtin.command: systemctl kexec # noqa command-instead-of-module
-  become: true
-  async: 45
-  poll: 0
-  changed_when: true
-- name: Discard the previous SSH control connection
+- name: Discard the old management connection
   ansible.builtin.meta: reset_connection
-- name: Wait for the new kernel's SSH service
+- name: Wait for firmware PXE and the new root's SSH service
   ansible.builtin.wait_for_connection:
-    delay: 15
-    timeout: 300
-- name: Read the new kernel boot identity
-  ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
-  register: lab_current_boot
+    delay: 20
+    timeout: 900
+- name: Read the boot identity, root, kernel and command line
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - cat /proc/sys/kernel/random/boot_id
+    - findmnt -n -o SOURCE /
+    - uname -r
+    - cat /proc/cmdline
+  register: lab_boot_result
   changed_when: false
-- name: Require an actual new kernel boot
+- name: Require a new kernel boot with the selected root and kernel source
   ansible.builtin.assert:
-    that: lab_current_boot.stdout != lab_previous_boot.stdout
-- name: Read the root source independently of Ansible's mount facts
-  ansible.builtin.command: findmnt -n -o SOURCE /
-  register: lab_booted_root
-  changed_when: false
-- name: Require the requested test disk or NFS export to be the running root
-  ansible.builtin.assert:
-    that: lab_booted_root.stdout is match(lab_expected_roots[armbian_boot_mode])
+    that:
+      - lab_boot_result.results[0].stdout != lab_previous_boot.stdout
+      - lab_boot_result.results[1].stdout is match(lab_expected_roots[armbian_boot_mode])
+      - lab_boot_result.results[2].stdout == lab_expected_kernel
+      - "('lab.boot=local_kernel' in lab_boot_result.results[3].stdout) == (armbian_boot_mode == 'local_kernel')"
+    fail_msg: "{{ inventory_hostname }} failed firmware boot into {{ armbian_boot_mode }}: {{ lab_boot_result.results | map(attribute='stdout') | list }}"
   vars:
+    lab_expected_kernel: >-
+      {{ (lab_local_kernel_link.stdout | basename | regex_replace('^vmlinuz-', ''))
+         if armbian_boot_mode == 'local_kernel' else
+         lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/fixture-kernel-release') | trim }}
     lab_expected_roots:
       nfs: "^{{ lab_server_address | regex_escape }}:{{ armbian_nfs_rootfs_path }}/{{ inventory_hostname }}$"
       sd: ^/dev/vdc1$
       local: ^/dev/vdd[0-9]+$
       local_kernel: ^/dev/vdd[0-9]+$
-- name: Validate the mount table in the system that actually boots it
+- name: Read the router's post-boot transfer counters
+  ansible.builtin.include_tasks: tftp_counters.yml
+- name: Require firmware to fetch its pin and the selected kernel source
+  ansible.builtin.assert:
+    that:
+      - lab_tftp_after[0] > lab_tftp_before[0]
+      - lab_tftp_after[1] > lab_tftp_before[1]
+      - "(lab_tftp_after[2] > lab_tftp_before[2]) == (armbian_boot_mode != 'local_kernel')"
+      - "(lab_tftp_after[3] > lab_tftp_before[3]) == (armbian_boot_mode != 'local_kernel')"
+    fail_msg: "{{ inventory_hostname }} {{ armbian_boot_mode }} TFTP counters: before={{ lab_tftp_before }}, after={{ lab_tftp_after }}"
+  vars:
+    lab_tftp_after: "{{ lab_tftp_counters.stdout | map('trim') | map('int') | list }}"
+- name: Read this board's actual DHCP lease from CHR
+  community.routeros.command:
+    commands:
+      - >-
+        :local lease [/ip dhcp-server lease find mac-address="{{ armbian_board_mac }}"];
+        :put ([/ip dhcp-server lease get $lease status] . "|" . [/ip dhcp-server lease get $lease active-address])
+  delegate_to: "{{ armbian_router }}"
+  become: false
+  register: lab_boot_lease
+  changed_when: false
+- name: Require the reserved address to be actively leased by the virtual router
+  ansible.builtin.assert:
+    that: lab_boot_lease.stdout[0] | trim == 'bound|' ~ lab_address
+    fail_msg: "CHR did not lease {{ lab_address }} to {{ armbian_board_mac }}: {{ lab_boot_lease.stdout }}"
+- name: Require the running OS to use the virtual router's DHCP address
+  ansible.builtin.command: networkctl status --no-pager enp2s0
+  register: lab_guest_dhcp
+  changed_when: false
+  until: "('DHCP4 via ' ~ lab_router_address) in lab_guest_dhcp.stdout and lab_address in lab_guest_dhcp.stdout"
+  retries: 20
+  delay: 2
+- name: Verify loaded-kernel modules work on the booted root
+  ansible.builtin.command: modprobe overlay
+  become: true
+  changed_when: false
+- name: Report the verified firmware boot outcome
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} mode={{ armbian_boot_mode }}
+      kernel={{ lab_boot_result.results[2].stdout }}
+      root={{ lab_boot_result.results[1].stdout }}
+      DHCP={{ lab_boot_lease.stdout[0] | trim }}
+- name: Validate the mount table in the booted system
   ansible.builtin.command: findmnt --verify --tab-file /etc/fstab
   changed_when: false
   when: armbian_boot_mode != 'nfs'
+- name: Create the controller evidence directory
+  ansible.builtin.file:
+    path: "{{ lab_ephemeral_directory }}/boot-evidence"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_connection: local
+- name: Record the successful firmware boot for this host and mode
+  ansible.builtin.copy:
+    dest: "{{ lab_ephemeral_directory }}/boot-evidence/{{ inventory_hostname }}-{{ armbian_boot_mode }}.yml"
+    content: "{{ lab_boot_evidence | to_nice_yaml }}"
+    mode: "0600"
+  vars:
+    ansible_connection: local
+    lab_boot_evidence:
+      mode: "{{ armbian_boot_mode }}"
+      boot_id: "{{ lab_boot_result.results[0].stdout }}"
+      root: "{{ lab_boot_result.results[1].stdout }}"
+      kernel: "{{ lab_boot_result.results[2].stdout }}"
+      dhcp: "{{ lab_boot_lease.stdout[0] | trim }}"
+      tftp_before: "{{ lab_tftp_before }}"
+      tftp_after: "{{ lab_tftp_counters.stdout | map('trim') | map('int') | list }}"
+  delegate_to: localhost
+  become: false

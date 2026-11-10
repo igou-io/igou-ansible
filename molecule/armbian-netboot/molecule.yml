@@ -14,6 +14,9 @@ ansible:
     prepare: prepare.yml
     destroy: destroy.yml
 scenario:
+  # These workflows image disks and reboot machines. Cached publication/staging
+  # and preserved-data reprovisioning have explicit functional reuse assertions;
+  # running all of converge again as an idempotence action would reimage k3s.
   test_sequence:
     - dependency
     - syntax

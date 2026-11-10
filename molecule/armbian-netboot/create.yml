@@ -86,6 +86,21 @@
       until: lab_attachment.resources | length == 1
       retries: 30
       delay: 2
+- name: Adapt the public MikroTik ZIP for CDI's raw image importer
+  hosts: routeros_netboot
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Use the run's unpacked vendor image for the generated DataVolume
+      # CDI does not unpack ZIP. Keep the public source in hosts.yml; prepare
+      # downloads that source and exposes its raw member through the test server.
+      ansible.builtin.set_fact:
+        mp: "{{ mp | combine(lab_router_import, recursive=true) }}"
+      vars:
+        lab_router_import:
+          kubevirt:
+            boot_source:
+              url: "http://{{ lab_network }}.{{ lab_namespace }}.svc.cluster.local:8080/chr-{{ lab_os.release }}.img"
 - name: Create guests using the public provisioner
   ansible.builtin.import_playbook: david_igou.molecule_provisioners.create
 - name: Expose the raw-image fixture to CDI

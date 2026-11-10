@@ -1,11 +1,29 @@
 ---
-- name: Configure the RouterOS transport for the repeated lab workflows
+- name: Configure RouterOS for the rolling system-update boots
   ansible.builtin.import_playbook: router_transport.yml
-- name: Exercise data preservation through repeated lab reprovisioning
-  ansible.builtin.import_playbook: preserve.yml
-- name: Exercise all boot modes through the lab's mode and cycle entry points
-  ansible.builtin.import_playbook: boot.yml
-- name: Exercise the complete lab reimage workflow on one virtual canary
-  ansible.builtin.import_playbook: ../../playbooks/armbian/full_reimage.yaml
+- name: Update OS packages on the control plane through the lab playbook
+  ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
+  vars:
+    ansible_limit: netboot-board-a  # noqa: var-naming[read-only] -- target this imported play only
+- name: Boot the updated control-plane kernel from local disk
+  ansible.builtin.import_playbook: boot_transition.yml
   vars:
     target_hosts: netboot-board-a
+    armbian_boot_mode: local_kernel
+- name: Verify the updated control plane and surviving cluster
+  ansible.builtin.import_playbook: update_verify.yml
+  vars:
+    lab_updated_hosts: netboot-board-a
+- name: Update OS packages on the worker through the lab playbook
+  ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
+  vars:
+    ansible_limit: netboot-board-b  # noqa: var-naming[read-only] -- target this imported play only
+- name: Boot the updated worker kernel from local disk
+  ansible.builtin.import_playbook: boot_transition.yml
+  vars:
+    target_hosts: netboot-board-b
+    armbian_boot_mode: local_kernel
+- name: Verify both updated kernels and the recovered cluster
+  ansible.builtin.import_playbook: update_verify.yml
+  vars:
+    lab_updated_hosts: boards

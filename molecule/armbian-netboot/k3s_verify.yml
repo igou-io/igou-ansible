@@ -1,0 +1,111 @@
+---
+- name: Verify the installed guest cluster and cross-node workload
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require the guest Kubernetes API to be healthy
+      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml get --raw=/readyz
+      register: lab_k3s_ready
+      changed_when: false
+      until: lab_k3s_ready.rc == 0
+      retries: 60
+      delay: 5
+    - name: Wait for both nodes to become Ready
+      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml wait --for=condition=Ready node --all --timeout=300s
+      changed_when: false
+    - name: Read the cluster's registered nodes
+      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml get nodes -o json
+      register: lab_k3s_nodes
+      changed_when: false
+    - name: Require exactly the intended nodes and pinned k3s version
+      ansible.builtin.assert:
+        that:
+          - lab_nodes | map(attribute='metadata.name') | sort == groups['boards'] | sort
+          - lab_nodes | map(attribute='status.nodeInfo.kubeletVersion') | unique | list == [k3s_release_version]
+          - lab_nodes | map(attribute='status.nodeInfo.containerRuntimeVersion') | select('match', '^containerd://') | list | length == 2
+        fail_msg: "Expected two Ready board substitutes running {{ k3s_release_version }} with containerd."
+      vars:
+        lab_nodes: "{{ (lab_k3s_nodes.stdout | from_json)['items'] }}"
+    - name: Wait for one healthy workload pod per node
+      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml rollout status daemonset/netboot-check --namespace netboot-check --timeout=300s
+      changed_when: false
+    - name: Read the running test pods
+      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml get pods --namespace netboot-check -l app=netboot-check -o json
+      register: lab_k3s_pods
+      changed_when: false
+    - name: Require a running container on each board
+      ansible.builtin.assert:
+        that:
+          - lab_pods | length == 2
+          - lab_pods | map(attribute='spec.nodeName') | sort == groups['boards'] | sort
+          - lab_pods | map(attribute='status.phase') | unique | list == ['Running']
+        fail_msg: The workload did not run on both board substitutes.
+      vars:
+        lab_pods: "{{ (lab_k3s_pods.stdout | from_json)['items'] }}"
+    - name: Verify DNS and service networking from both pods
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --kubeconfig=/etc/rancher/k3s/k3s.yaml
+          - exec
+          - --namespace
+          - netboot-check
+          - "{{ item.metadata.name }}"
+          - --
+          - wget
+          - -q
+          - -O
+          - '-'
+          - -T
+          - "10"
+          - http://netboot-check.netboot-check.svc.cluster.local:8080
+      loop: "{{ (lab_k3s_pods.stdout | from_json)['items'] }}"
+      loop_control:
+        label: "{{ item.spec.nodeName }}"
+      register: lab_service_requests
+      changed_when: false
+    - name: Require service responses to come from the test pods
+      ansible.builtin.assert:
+        that: item.stdout in lab_pod_names
+        fail_msg: "Service/DNS request failed from {{ item.item.spec.nodeName }}."
+      vars:
+        lab_pod_names: "{{ (lab_k3s_pods.stdout | from_json)['items'] | map(attribute='metadata.name') | list }}"
+      loop: "{{ lab_service_requests.results }}"
+      loop_control:
+        label: "{{ item.item.spec.nodeName }}"
+    - name: Verify HTTP delivery to the pod on the other node
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --kubeconfig=/etc/rancher/k3s/k3s.yaml
+          - exec
+          - --namespace
+          - netboot-check
+          - "{{ item.metadata.name }}"
+          - --
+          - wget
+          - -q
+          - -O
+          - '-'
+          - -T
+          - "10"
+          - "http://{{ lab_peer.status.podIP }}:8080"
+      vars:
+        lab_peer: "{{ (lab_k3s_pods.stdout | from_json)['items'] | rejectattr('spec.nodeName', 'equalto', item.spec.nodeName) | first }}"
+      loop: "{{ (lab_k3s_pods.stdout | from_json)['items'] }}"
+      loop_control:
+        label: "{{ item.spec.nodeName }}"
+      register: lab_peer_requests
+      changed_when: false
+    - name: Require cross-node responses from the expected peer
+      ansible.builtin.assert:
+        that: item.stdout == lab_peer.metadata.name
+        fail_msg: "Cross-node networking failed from {{ item.item.spec.nodeName }}."
+      vars:
+        lab_peer: "{{ (lab_k3s_pods.stdout | from_json)['items'] | rejectattr('spec.nodeName', 'equalto', item.item.spec.nodeName) | first }}"
+      loop: "{{ lab_peer_requests.results }}"
+      loop_control:
+        label: "{{ item.item.spec.nodeName }}"
