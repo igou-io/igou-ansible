@@ -1,4 +1,26 @@
 ---
+- name: Mark the installed worker's root before full reimage
+  hosts: netboot-board-b
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify the preserved-data layout before destroying it
+      ansible.builtin.include_tasks: helpers/local_layout.yml
+      vars:
+        lab_expected_local_labels:
+          - lab_preserved
+          - armbi_root_local
+        lab_expected_local_root: /dev/vdd2
+    - name: Require the earlier application state to exist before reimage
+      ansible.builtin.command: cat /var/lib/lab-data/application-state
+      register: lab_pre_reimage_data
+      changed_when: false
+      failed_when: lab_pre_reimage_data.stdout != inventory_hostname
+    - name: Mark root-only state that a fresh image must remove
+      ansible.builtin.copy:
+        dest: /root/netboot-old-root
+        content: "This root must be replaced.\n"
+        mode: "0600"
 - name: Remember the installed worker's Kubernetes identity
   hosts: rk8s_control_plane
   become: true
@@ -12,6 +34,27 @@
   ansible.builtin.import_playbook: ../../playbooks/armbian/full_reimage.yaml
   vars:
     target_hosts: netboot-board-b
+- name: Verify full reimage replaced the root and removed the old data partition
+  hosts: netboot-board-b
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require only the declared root partition after full reimage
+      ansible.builtin.include_tasks: helpers/local_layout.yml
+      vars:
+        lab_expected_local_labels:
+          - armbi_root_local
+        lab_expected_local_root: /dev/vdd1
+    - name: Inspect state left from the old root and data filesystems
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /root/netboot-old-root
+        - /var/lib/lab-data/application-state
+      register: lab_reimage_markers
+    - name: Require root-only and application state to be absent after full reimage
+      ansible.builtin.assert:
+        that: lab_reimage_markers.results | selectattr('stat.exists') | list | length == 0
 - name: Verify the production workflow removed the stale worker identity
   hosts: rk8s_control_plane
   become: true
