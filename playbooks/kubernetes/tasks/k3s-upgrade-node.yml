@@ -1,0 +1,116 @@
+---
+- name: Upgrade only when the installed version differs from inventory
+  when: k3s_upgrade_current != k3s_release_version
+  block:
+    - name: Read the upstream checksums for this architecture
+      ansible.builtin.uri:
+        url: >-
+          https://github.com/k3s-io/k3s/releases/download/{{ k3s_release_version }}/sha256sum-{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}.txt
+        return_content: true
+      register: k3s_upgrade_checksums
+
+    - name: Stage the checksum-verified binary before interrupting services
+      ansible.builtin.get_url:
+        url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_release_version }}/{{ k3s_upgrade_asset }}"
+        dest: "/usr/local/bin/k3s-{{ k3s_release_version }}"
+        checksum: "sha256:{{ (k3s_upgrade_checksums.content.splitlines() | select('search', '  ' ~ k3s_upgrade_asset ~ '$') | first).split()[0] }}"
+        owner: root
+        group: root
+        mode: "0755"
+      vars:
+        k3s_upgrade_asset: "{{ 'k3s-arm64' if ansible_facts.architecture == 'aarch64' else 'k3s' }}"
+
+    - name: Back up the stopped SQLite server before replacing its binary
+      ansible.builtin.include_tasks: k3s-upgrade-backup.yml
+      when: k3s_control_node | bool
+
+    - name: Evict worker workloads while respecting disruption budgets and local data
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - drain
+          - "{{ k3s_upgrade_node }}"
+          - --ignore-daemonsets
+          - "--delete-emptydir-data={{ k3s_upgrade_delete_emptydir_data | default(false) | bool | lower }}"
+          - --timeout=300s
+      delegate_to: "{{ k3s_upgrade_server }}"
+      changed_when: true
+      when: not k3s_control_node | bool
+
+    - name: Link k3s and its bundled clients to the staged release
+      ansible.builtin.file:
+        src: "/usr/local/bin/k3s-{{ k3s_release_version }}"
+        dest: "/usr/local/bin/{{ item }}"
+        state: hard
+        force: true
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - k3s
+        - kubectl
+        - crictl
+        - ctr
+
+    - name: Restart the existing service with its existing configuration
+      ansible.builtin.systemd_service:
+        name: k3s.service
+        state: restarted
+
+- name: Wait for API readiness after this node
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - --request-timeout=15s
+      - get
+      - --raw=/readyz
+  delegate_to: "{{ k3s_upgrade_server }}"
+  register: k3s_upgrade_ready
+  changed_when: false
+  retries: 60
+  delay: 5
+  until: k3s_upgrade_ready.rc == 0 and k3s_upgrade_ready.stdout | trim == 'ok'
+
+- name: Wait for the node to report the desired version and readiness
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - --request-timeout=15s
+      - get
+      - node
+      - "{{ k3s_upgrade_node }}"
+      - --output=json
+  delegate_to: "{{ k3s_upgrade_server }}"
+  register: k3s_upgrade_node_after
+  changed_when: false
+  retries: 60
+  delay: 5
+  until:
+    - k3s_upgrade_node_after.rc == 0
+    - (k3s_upgrade_node_after.stdout | from_json).status.nodeInfo.kubeletVersion == k3s_release_version
+    - >-
+      (k3s_upgrade_node_after.stdout | from_json).status.conditions
+      | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
+
+- name: Return the healthy upgraded worker to scheduling
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - uncordon
+      - "{{ k3s_upgrade_node }}"
+  delegate_to: "{{ k3s_upgrade_server }}"
+  changed_when: true
+  when:
+    - not k3s_control_node | bool
+    - k3s_upgrade_current != k3s_release_version
+
+- name: Check critical workloads before proceeding to another node
+  ansible.builtin.import_tasks: k3s-upgrade-workloads.yml
+
+- name: Report the verified node release
+  ansible.builtin.debug:
+    msg: "{{ k3s_upgrade_node }} is Ready on {{ k3s_release_version }} (previously {{ k3s_upgrade_current }})."

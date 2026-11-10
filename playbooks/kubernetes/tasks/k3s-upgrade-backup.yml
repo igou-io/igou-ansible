@@ -1,0 +1,63 @@
+---
+- name: Inspect the expected SQLite datastore
+  ansible.builtin.stat:
+    path: /var/lib/rancher/k3s/server/db/state.db
+  register: k3s_upgrade_sqlite
+
+- name: Require the supported SQLite datastore before server maintenance
+  ansible.builtin.assert:
+    that:
+      - k3s_upgrade_sqlite.stat.isreg | default(false)
+    fail_msg: This upgrade path supports the existing single-server SQLite clusters only.
+
+- name: Create a private backup directory for this target release
+  ansible.builtin.file:
+    path: "/var/backups/k3s/{{ k3s_release_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Take a consistent datastore, token, configuration, and binary backup
+  block:
+    - name: Stop k3s while copying its SQLite datastore
+      ansible.builtin.systemd_service:
+        name: k3s.service
+        state: stopped
+
+    # tar is used instead of fetching files: recovery material stays root-only
+    # on the server, including the token required to decrypt the datastore.
+    - name: Preserve the first recovery archive for this target release
+      ansible.builtin.command:
+        argv:
+          - tar
+          - --dereference
+          - --create
+          - --gzip
+          - "--file=/var/backups/k3s/{{ k3s_release_version }}/recovery.partial.tgz"
+          - --directory=/
+          - etc/rancher/k3s
+          - var/lib/rancher/k3s/server
+          - usr/local/bin/k3s
+        creates: "/var/backups/k3s/{{ k3s_release_version }}/recovery.tgz"
+      no_log: true
+
+    - name: Publish the completed recovery archive
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "/var/backups/k3s/{{ k3s_release_version }}/recovery.partial.tgz"
+          - "/var/backups/k3s/{{ k3s_release_version }}/recovery.tgz"
+        creates: "/var/backups/k3s/{{ k3s_release_version }}/recovery.tgz"
+
+    - name: Restrict the recovery archive to root
+      ansible.builtin.file:
+        path: "/var/backups/k3s/{{ k3s_release_version }}/recovery.tgz"
+        owner: root
+        group: root
+        mode: "0600"
+  always:
+    - name: Restore service availability even if backup fails
+      ansible.builtin.systemd_service:
+        name: k3s.service
+        state: started

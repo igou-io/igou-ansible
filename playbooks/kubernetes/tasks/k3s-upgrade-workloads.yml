@@ -1,0 +1,17 @@
+---
+- name: Wait for the configured critical workload rollouts
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - --namespace
+      - "{{ item.namespace }}"
+      - rollout
+      - status
+      - "{{ item.resource }}"
+      - --timeout=300s
+  delegate_to: "{{ k3s_upgrade_server }}"
+  loop: "{{ k3s_upgrade_workloads | default([]) }}"
+  loop_control:
+    label: "{{ item.namespace }}/{{ item.resource }}"
+  changed_when: false
