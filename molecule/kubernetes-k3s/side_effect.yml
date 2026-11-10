@@ -1,0 +1,6 @@
+---
+- name: Exercise the k3s version guards
+  ansible.builtin.import_playbook: policy.yml
+
+- name: Exercise upgrades and repeat convergence on the disposable cluster
+  ansible.builtin.import_playbook: ../shared/k3s-upgrade.yml

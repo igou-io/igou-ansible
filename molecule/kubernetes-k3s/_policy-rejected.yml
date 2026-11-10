@@ -1,0 +1,22 @@
+---
+- name: Reset the rejected-transition result
+  ansible.builtin.set_fact:
+    policy_rejected: false
+
+- name: Exercise an unsupported version transition
+  block:
+    - name: Attempt the unsupported version transition
+      ansible.builtin.include_tasks: ../../playbooks/kubernetes/tasks/k3s-upgrade-policy.yml
+      vars:
+        k3s_upgrade_current: "{{ policy_case.current }}"
+        k3s_release_version: "{{ policy_case.target }}"
+  rescue:
+    - name: Record that the upgrade guard rejected the transition
+      ansible.builtin.set_fact:
+        policy_rejected: true
+
+- name: Require rejection of the unsupported transition
+  ansible.builtin.assert:
+    that:
+      - policy_rejected | bool
+    fail_msg: "The upgrade guard accepted {{ policy_case.current }} -> {{ policy_case.target }}."

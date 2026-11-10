@@ -52,9 +52,9 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | `devenv` | First-boot OS update and conditional reboot, running-kernel modules, repeat convergence without another reboot, editor/service smoke, local-file backup and restore of synthetic agent state, and restored bind-mount visibility. |
 | `codex-desktop` | Production Fedora guest configuration with controller/guest inventory groups, desktop session, app/CLIs, T3, metrics, and retained home after reboot. |
 | `linux-maintenance` | Baseline hardening, packages, SSH keys, node exporter, update, reboot, admin access, and metrics. |
-| `kubernetes-k3s` | Disposable control plane and worker, production k3s install, local API readiness, and Ready nodes. |
+| `kubernetes-k3s` | Disposable control plane and worker, production install, patch upgrade, repeat run without service restart, SQLite backup integrity, local API readiness, and Ready nodes. |
 | `kubernetes-kubeadm` | Independent control plane and worker, production kubeadm install, local API readiness, and Ready nodes. |
-| `kubernetes-vps` | Single Debian VPS install, local kubeconfig/API health, and Ready node. |
+| `kubernetes-vps` | Single Debian VPS install, patch upgrade, repeat run without service restart, SQLite backup integrity, local kubeconfig/API health, and Ready node. |
 | `windows-general` | Windows client/server configuration and functional behavior after reboot. |
 | `windows-domain` | Disposable controller/member join and authenticated domain behavior. |
 | `windows-image-build` | Build, generalize, clone, boot, and guest management connection. |
@@ -62,8 +62,9 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | `upsmonitor` | NUT packages and configuration, running exporters, and host metrics without attached UPSes. |
 | `ghapp` | Separate credentialed GitHub App client/broker integration. |
 
-No Molecule scenario enrolls Tailscale. The three Kubernetes scenarios stop at
-installation and API/node health; they do not install GitOps or applications.
+No Molecule scenario enrolls Tailscale. The Kubernetes scenarios do not install GitOps or applications. The k3s and VPS
+scenarios also exercise the focused upgrade path; kubeadm stops at installation
+and API/node health.
 The devenv file round trip does not verify S3 transport. `upsmonitor` does not
 claim live USB UPS or device telemetry coverage. `ghapp` requires its existing
 integration credential profile.

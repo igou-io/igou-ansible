@@ -7,13 +7,44 @@ cluster lifetime, don't mix.
 | File                              | Purpose                                                        |
 | --------------------------------- | -------------------------------------------------------------- |
 | `install-k3s-cluster.yml`         | **Primary.** Install k3s via `xanmanning.k3s`.                 |
+| `upgrade-k3s.yaml` | Converge one complete existing SQLite cluster to its inventory pin, server first and workers serially, with a recovery archive and health gates. |
 | `prepare-k3s-datastore.yml`       | ZFS pool + data-dir mounts on the control plane (run first).   |
 | `install-kubernetes-cluster.yml`  | Alternative. Install kubeadm-based kubernetes via `geerlingguy.kubernetes` (+ `geerlingguy.containerd`). |
 | `bootstrap-gitops.yaml`           | Post-install: seeds the ESO Connect token, installs argocd, applies the igou-kubernetes app-of-apps root. Runs against `localhost`, talks to whatever `KUBECONFIG` points at. |
 | `bootstrap-vps.yaml` | Standalone Debian VPS: public API firewall guard, host Tailscale, and lean pinned k3s; node-exporter is a GitOps-managed pod. |
 | `publish-vps-access.yaml` | Seeds only the `argocd` namespace and cluster-admin Argo identity through the Kubernetes API using system:admin, then publishes its generated token, CA and administrator kubeconfig to the management vault. Argo's wave-0 `bootstrap` Application creates the other namespaces; adding a workload namespace needs no AAP run. Seeds no pods or separate ESO credential. |
 
-## Standalone VPS
+## Pinned k3s upgrades
+
+`upgrade-k3s.yaml` targets `ansible_limit` (default `none`); select all of `rk8s`
+or the standalone `igou.io` host. It supports the current systemd, amd64/arm64,
+single-server SQLite installations at `/usr/local/bin` and `/var/lib/rancher/k3s`.
+It leaves bootstrap-owned service configuration, firewall and Tailscale alone.
+The bundled `k3s kubectl` client uses the server's native kubeconfig over SSH;
+no cluster credentials are fetched into the controller or AAP inventory.
+
+Inventory supplies `k3s_release_version`, optional `k3s_upgrade_workloads`
+(`namespace` and `resource` such as `deployment/argocd-server`), and
+`k3s_upgrade_delete_emptydir_data` (default `false`). Worker drain respects PDBs
+and does not force-delete unmanaged pods. Enabling emptyDir deletion permits
+eviction of disposable node-local data; PVC data is not deleted by that flag.
+Failed drain or health gates stop the remaining nodes; a failed worker may
+remain cordoned for investigation. No automatic downgrade is attempted.
+
+Before a server upgrade, k3s stops briefly to archive its server data, token,
+configuration and old binary into root-only
+`/var/backups/k3s/<target-version>/recovery.tgz`. This on-host archive is not an
+off-host backup or a backup of workload volumes. Both clusters have one server,
+so allow for API interruption during backup and restart. Matching versions skip
+download, backup, drain and restart. Check mode is explicitly unsupported.
+
+AAP uses `k3s_upgrade_cluster` behind the `k3s_upgrade_rk8s` and
+`k3s_upgrade_vps` workflows. The companion inventory PR stages weekly schedules
+disabled. Operational activation, recovery and verification belong in
+`igou-docs/kubernetes/rk8s Node Lifecycle - Adding, Upgrading, and Retiring Boards.md`
+and `igou-docs/kubernetes/VPS Kubernetes Architecture and Migration.md`.
+
+## Standalone VPS bootstrap
 
 The VPS is cluster `vps`, inventory host `igou.io`. Target both VPS playbooks
 explicitly with `ansible_limit=igou.io`; their default target is `none`.

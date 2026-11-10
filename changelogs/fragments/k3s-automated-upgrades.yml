@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - Added a pinned k3s upgrade playbook with complete-cluster validation, checksum-verified downloads, private SQLite recovery archives, server-first sequencing, worker drain and health gates, and unchanged-version no-op runs.

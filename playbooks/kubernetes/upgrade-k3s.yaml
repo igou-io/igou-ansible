@@ -1,0 +1,125 @@
+---
+- name: Inspect the explicitly selected k3s cluster before changing any node
+  hosts: "{{ ansible_limit | default('none') }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  tasks:
+    - name: Require a pinned release and one complete single-server cluster
+      ansible.builtin.assert:
+        that:
+          - not ansible_check_mode
+          - k3s_release_version | default('') is match('^v[0-9]+\.[0-9]+\.[0-9]+\+k3s[0-9]+$')
+          - ansible_facts.architecture in ['x86_64', 'aarch64']
+          - ansible_facts.service_mgr == 'systemd'
+          - k3s_control_node is defined
+          - ansible_play_hosts_all | map('extract', hostvars, 'cluster_name') | unique | list | length == 1
+          - ansible_play_hosts_all | map('extract', hostvars, 'k3s_release_version') | unique | list | length == 1
+          - >-
+            ansible_play_hosts_all | map('extract', hostvars)
+            | selectattr('k3s_control_node', 'equalto', true) | list | length == 1
+        fail_msg: Select one complete single-server cluster with an explicit release; check mode is unsupported.
+
+    - name: Record the selected server and Kubernetes node name
+      ansible.builtin.set_fact:
+        k3s_upgrade_server: >-
+          {{ (ansible_play_hosts_all | map('extract', hostvars)
+              | selectattr('k3s_control_node', 'equalto', true) | first).inventory_hostname }}
+        k3s_upgrade_node: >-
+          {{ (k3s_server | default({}) if k3s_control_node else k3s_agent | default({})).get('node-name', inventory_hostname) }}
+
+    - name: Read the installed k3s version
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - --version
+      register: k3s_upgrade_version
+      changed_when: false
+
+    - name: Record the installed release
+      ansible.builtin.set_fact:
+        k3s_upgrade_current: >-
+          {{ k3s_upgrade_version.stdout | regex_search('v[0-9]+\.[0-9]+\.[0-9]+\+k3s[0-9]+') }}
+
+    - name: Validate the upgrade direction and supported version skew
+      ansible.builtin.import_tasks: tasks/k3s-upgrade-policy.yml
+
+    # The bundled client uses the server's native kubeconfig without exporting
+    # credentials or adding Kubernetes Python libraries to every board.
+    - name: Read the selected node through the existing server
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - --request-timeout=15s
+          - get
+          - node
+          - "{{ k3s_upgrade_node }}"
+          - --output=json
+      delegate_to: "{{ k3s_upgrade_server }}"
+      register: k3s_upgrade_node_before
+      changed_when: false
+
+    - name: Require a healthy schedulable node on its installed version
+      ansible.builtin.assert:
+        that:
+          - not ((k3s_upgrade_node_before.stdout | from_json).spec.unschedulable | default(false))
+          - (k3s_upgrade_node_before.stdout | from_json).status.nodeInfo.kubeletVersion == k3s_upgrade_current
+          - >-
+            (k3s_upgrade_node_before.stdout | from_json).status.conditions
+            | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
+        fail_msg: Resolve node readiness, cordon, or binary/runtime drift before upgrading.
+
+    - name: Read the complete cluster node list
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - --request-timeout=15s
+          - get
+          - nodes
+          - --output=json
+      delegate_to: "{{ k3s_upgrade_server }}"
+      run_once: true
+      register: k3s_upgrade_cluster_before
+      changed_when: false
+
+    - name: Require every registered node to be selected
+      ansible.builtin.assert:
+        that:
+          - >-
+            (k3s_upgrade_cluster_before.stdout | from_json)['items'] | map(attribute='metadata.name') | sort | list
+            == ansible_play_hosts_all | map('extract', hostvars, 'k3s_upgrade_node') | sort | list
+        fail_msg: Target the complete cluster, including its server and all registered workers.
+      run_once: true
+
+    - name: Check critical workloads before starting maintenance
+      ansible.builtin.import_tasks: tasks/k3s-upgrade-workloads.yml
+      when: k3s_control_node | bool
+
+    - name: Select the server before its workers
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: "{{ 'k3s_upgrade_servers' if hostvars[item].k3s_control_node else 'k3s_upgrade_agents' }}"
+      loop: "{{ ansible_play_hosts_all }}"
+      changed_when: false
+
+- name: Upgrade the k3s server and verify API recovery
+  hosts: k3s_upgrade_servers
+  become: true
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Converge the pinned server release
+      ansible.builtin.import_tasks: tasks/k3s-upgrade-node.yml
+
+- name: Upgrade k3s workers one at a time
+  hosts: k3s_upgrade_agents
+  become: true
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Converge the pinned worker release
+      ansible.builtin.import_tasks: tasks/k3s-upgrade-node.yml
