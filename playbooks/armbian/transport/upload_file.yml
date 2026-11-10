@@ -51,16 +51,34 @@
   when: (_upload_size_match.stdout[0] | trim | int) == 0
 
 - name: Upload file when size differs or file missing
-  ansible.netcommon.net_put:
-    src: "{{ _upload_local_src }}"
-    dest: "{{ _upload_remote_path }}"
-  vars:
-    ansible_command_timeout: 300
-  register: _upload_net_put
-  retries: 3
-  delay: 5
-  until: _upload_net_put is succeeded
   when: (_upload_size_match.stdout[0] | trim | int) == 0
+  block:
+    - name: Send the file through the RouterOS SCP transport
+      ansible.netcommon.net_put:
+        src: "{{ _upload_local_src }}"
+        dest: "{{ _upload_remote_path }}"
+      vars:
+        ansible_command_timeout: 300
+      register: _upload_net_put
+      retries: 3
+      delay: 5
+      until: _upload_net_put is succeeded
+  rescue:
+    # net_put probes a missing file with SCP get before sending it. RouterOS
+    # can close that SSH session; retrying on the same persistent socket does
+    # not recover. Bound the retry and start a new connection process first.
+    - name: Discard the failed SCP connection
+      ansible.builtin.meta: reset_connection
+    - name: Retry the upload on a fresh SSH connection
+      ansible.netcommon.net_put:
+        src: "{{ _upload_local_src }}"
+        dest: "{{ _upload_remote_path }}"
+      vars:
+        ansible_command_timeout: 300
+      register: _upload_net_put
+      retries: 3
+      delay: 5
+      until: _upload_net_put is succeeded
 
 - name: Reset persistent connection before /ip tftp count
   ansible.builtin.meta: reset_connection
