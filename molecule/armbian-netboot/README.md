@@ -85,6 +85,8 @@ uncached compilation through the same lab playbook. The builder has four CPUs,
 8 GiB RAM and a 100 GiB boot disk. The optional `uefi-x86/current` build at
 `v26.8.0-trunk.180` failed on upstream Apple-driver patch conflicts on 2026-11-10;
 full compilation has not passed acceptance.
+The cached path checks GitHub egress for resolving the build ref; only uncached
+compilation requires the Armbian package and build-container mirrors.
 
 BIOS PXE loads Debian's Syslinux loader from CHR, then consumes the unmodified
 per-MAC configuration rendered by the lab playbook. There is no kexec boot

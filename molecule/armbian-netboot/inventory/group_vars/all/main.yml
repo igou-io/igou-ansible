@@ -10,6 +10,16 @@ lab_server_address: 192.0.2.10
 lab_router_address: 192.0.2.1
 lab_builder_address: 192.0.2.11
 lab_real_build: "{{ lookup('ansible.builtin.env', 'LAB_NETBOOT_BUILD') | default('false', true) | bool }}"
+# Cached publication still resolves armbian/build's ref, but does not compile
+# or pull build containers. Do not require unused public mirrors in that path.
+armbian_build_required_egress_hosts: "{{ lab_build_egress_full if lab_real_build else lab_build_egress_cached }}"
+lab_build_egress_cached:
+  - github.com
+lab_build_egress_full:
+  - github.com
+  - apt.armbian.com
+  - ghcr.io
+  - registry-1.docker.io
 lab_router_password_lookup: "{{ lookup('ansible.builtin.password', lab_ephemeral_directory ~ '/router-password length=24 chars=ascii_letters,digits') }}"
 lab_bootstrap_password_lookup: "{{ lookup('ansible.builtin.password', lab_ephemeral_directory ~ '/bootstrap-password length=24 chars=ascii_letters,digits') }}"
 lab_board_disks:
