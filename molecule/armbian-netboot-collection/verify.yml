@@ -1,0 +1,3 @@
+---
+- name: Verify the shared functional contracts
+  ansible.builtin.import_playbook: ../shared/armbian_netboot/verify.yml

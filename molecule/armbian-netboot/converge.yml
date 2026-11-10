@@ -1,6 +1,6 @@
 ---
 - name: Prepare the cached or real image builder
-  ansible.builtin.import_playbook: "{{ lookup('ansible.builtin.env', 'ARMBIAN_COLLECTION_SOURCE') }}/extensions/molecule/lab_netboot/prepare_builder.yml"
+  ansible.builtin.import_playbook: ../shared/armbian_netboot/prepare_builder.yml
 - name: Exercise the lab's image-build and publication workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/build_and_publish.yaml
   vars:
@@ -11,10 +11,10 @@
     armbian_boards_group: build_targets
   when: not lab_real_build | bool
 - name: Configure the provisioned RouterOS transport
-  ansible.builtin.import_playbook: "{{ lookup('ansible.builtin.env', 'ARMBIAN_COLLECTION_SOURCE') }}/extensions/molecule/lab_netboot/router_transport.yml"
+  ansible.builtin.import_playbook: ../shared/armbian_netboot/router_transport.yml
 - name: Stage images and router assets using the production lab workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/stage_netboot_assets.yaml
 - name: Converge router state using the production lab workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/converge_boot_mode.yaml
 - name: Exercise collection imaging, bootstrap, and storage operations
-  ansible.builtin.import_playbook: "{{ lookup('ansible.builtin.env', 'ARMBIAN_COLLECTION_SOURCE') }}/extensions/molecule/lab_netboot/storage.yml"
+  ansible.builtin.import_playbook: ../shared/armbian_netboot/storage.yml

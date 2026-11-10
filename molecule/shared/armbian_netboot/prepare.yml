@@ -1,0 +1,267 @@
+---
+- name: Wait for Linux management connections
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.prepare
+  vars:
+    ansible_connection: "{{ 'local' if inventory_hostname == 'netboot-router' else 'ssh' }}"
+- name: Configure the private Linux guest interfaces and packages
+  hosts: linux_guests
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Install guest test tools
+      ansible.builtin.apt:
+        name:
+          - rsync
+          - parted
+          - xz-utils
+          - openssh-client
+          - nfs-common
+          - tftp-hpa
+          - systemd-repart
+          - kexec-tools
+        state: present
+        update_cache: true
+        lock_timeout: 300
+    - name: Discover the secondary network device
+      ansible.builtin.shell: |
+        set -o pipefail
+        ip -o link show | awk -F': ' '$2 !~ /^(lo|enp1s0|eth0)(@.*)?$/ {sub(/@.*/, "", $2); print $2; exit}'
+      args:
+        executable: /bin/bash
+      register: lab_secondary
+      changed_when: false
+    - name: Assign the private guest address
+      ansible.builtin.command:
+        argv:
+          - ip
+          - address
+          - replace
+          - "{{ lab_address | default(lab_server_address if inventory_hostname == 'netboot-server' else lab_builder_address) }}/24"
+          - dev
+          - "{{ lab_secondary.stdout }}"
+      changed_when: true
+    - name: Activate the private guest interface
+      ansible.builtin.command: "ip link set {{ lab_secondary.stdout }} up"
+      changed_when: true
+    - name: Persist the private address across management-image reboots
+      ansible.builtin.copy:
+        dest: /etc/systemd/network/20-netboot-lab.network
+        content: |
+          [Match]
+          Name={{ lab_secondary.stdout }}
+          [Network]
+          Address={{ lab_address | default(lab_server_address if inventory_hostname == 'netboot-server' else lab_builder_address) }}/24
+        mode: "0644"
+- name: Prepare the netboot server
+  hosts: netboot_server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Format the disposable export disk
+      community.general.filesystem:
+        dev: /dev/vdc
+        fstype: ext4
+        state: present
+    - name: Mount the export disk
+      ansible.posix.mount:
+        path: /srv/netboot
+        src: /dev/vdc
+        fstype: ext4
+        state: mounted
+    - name: Install the fixture server packages
+      ansible.builtin.apt:
+        name:
+          - nfs-kernel-server
+          - nginx
+          - linux-image-amd64
+          - initramfs-tools
+          - busybox
+          - debootstrap
+          - unzip
+        state: present
+    - name: Create the fixture directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /etc/exports.d
+        - /srv/netboot/rootfs
+        - /srv/netboot/boot-files/images
+        - /srv/netboot/cache
+        - /srv/netboot/tftp
+    - name: Serve only this test's NFS root filesystems
+      ansible.builtin.copy:
+        dest: /etc/exports.d/armbian-lab.exports
+        content: "/srv/netboot/rootfs 192.0.2.0/24(rw,sync,no_subtree_check,no_root_squash)\n"
+        mode: "0644"
+    - name: Activate the exports
+      ansible.builtin.command: exportfs -ra
+      changed_when: true
+    - name: Configure the fixture HTTP server
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-enabled/default
+        content: |
+          server {
+            listen 8080;
+            root /srv/netboot;
+            autoindex on;
+            access_log /var/log/nginx/armbian-access.log;
+          }
+        mode: "0644"
+    - name: Start the NFS and HTTP services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: restarted
+        enabled: true
+      loop:
+        - nfs-server
+        - nginx
+    - name: Download the pinned CHR archive
+      ansible.builtin.get_url:
+        url: https://download.mikrotik.com/routeros/7.23.8/chr-7.23.8.img.zip
+        dest: /srv/netboot/chr-7.23.8.img.zip
+        mode: "0644"
+    - name: Unpack CHR before CDI imports it as a raw disk
+      ansible.builtin.unarchive:
+        src: /srv/netboot/chr-7.23.8.img.zip
+        dest: /srv/netboot
+        remote_src: true
+        creates: /srv/netboot/chr-7.23.8.img
+    - name: Create an executable miniature disk-image fixture
+      block:
+        - name: Run the virtual-board image builder with generated credentials
+          ansible.builtin.script: files/make_fixture.sh
+          environment:
+            LAB_BOOTSTRAP_KEY: "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/identity_file.pub') }}"
+            LAB_BOOTSTRAP_PASSWORD: "{{ lab_bootstrap_password_lookup }}"
+          args:
+            creates: /srv/netboot/fixture.img.xz
+          no_log: true
+      rescue:
+        - name: Report the fixture failure with credentials redacted
+          ansible.builtin.fail:
+            msg: >-
+              {{ ((ansible_failed_result.stdout | default('')) ~ (ansible_failed_result.stderr | default('')))
+                 | replace(lab_bootstrap_password_lookup, '[redacted]') }}
+- name: Bootstrap RouterOS without a POSIX guest interpreter
+  hosts: routeros_netboot
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_connection: local
+  tasks:
+    - name: Wait for RouterOS SSH
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ansible_port }}"
+        timeout: 300
+    - name: Check whether this run already initialized RouterOS
+      ansible.builtin.command:
+        argv:
+          - sshpass
+          - -e
+          - ssh
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - PreferredAuthentications=password
+          - -o
+          - PubkeyAuthentication=no
+          - -p
+          - "{{ ansible_port | string }}"
+          - "admin@{{ ansible_host }}"
+          - ':put "lab-ready"'
+      environment:
+        SSHPASS: "{{ lab_router_password_lookup }}"
+      register: lab_router_initialized
+      changed_when: false
+      failed_when: lab_router_initialized.rc not in [0, 5, 255]
+      no_log: true
+    - name: Initialize the factory admin credential through native SSH
+      ansible.builtin.command:
+        argv:
+          - sshpass
+          - -p
+          - ""
+          - ssh
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - PreferredAuthentications=password
+          - -o
+          - PubkeyAuthentication=no
+          - -p
+          - "{{ ansible_port | string }}"
+          - "admin@{{ ansible_host }}"
+          - '/user set admin password="{{ lab_router_password_lookup }}"'
+      register: lab_router_bootstrap
+      retries: 12
+      delay: 5
+      until: lab_router_bootstrap.rc == 0
+      changed_when: true
+      no_log: true
+      when: lab_router_initialized.rc != 0
+    - name: Configure private networking and a non-expired test account
+      ansible.builtin.command:
+        argv:
+          - sshpass
+          - -e
+          - ssh
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - PreferredAuthentications=password
+          - -o
+          - PubkeyAuthentication=no
+          - -p
+          - "{{ ansible_port | string }}"
+          - "admin@{{ ansible_host }}"
+          - >-
+            :if ([:len [/ip address find interface=ether2]] = 0)
+            do={/ip address add address=192.0.2.1/24 interface=ether2};
+            :if ([:len [/file find name="sbc"]] = 0) do={/file add name=sbc type=directory};
+            /ip service set ftp disabled=no;
+            :if ([:len [/user find name="lab-netboot"]] = 0)
+            do={/user add name=lab-netboot group=full password="{{ lab_router_password_lookup }}"}
+      environment:
+        SSHPASS: "{{ lab_router_password_lookup }}"
+      changed_when: true
+      no_log: true
+    - name: Set the RouterOS transport for subsequent plays
+      ansible.builtin.set_fact:
+        ansible_connection: ansible.netcommon.network_cli
+        ansible_network_os: community.routeros.routeros
+        ansible_user: lab-netboot
+        ansible_password: "{{ lab_router_password_lookup }}"
+      no_log: true
+- name: Prepare disposable board data and capture excluded-disk evidence
+  hosts: boards
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Confirm all test disks exist
+      ansible.builtin.command: lsblk -nro NAME,SIZE,TYPE
+      register: lab_disks
+      changed_when: false
+    - name: Require the expected disposable device set
+      ansible.builtin.assert:
+        that:
+          - "'vdc' in lab_disks.stdout"
+          - "'vdd' in lab_disks.stdout"
+          - "'vde' in lab_disks.stdout"
+    - name: Record the excluded disk checksum
+      ansible.builtin.command: sha256sum /dev/vde
+      register: lab_untouched_checksum
+      changed_when: false
+    - name: Persist the baseline checksum inside the guest
+      ansible.builtin.copy:
+        dest: /var/tmp/armbian-untouched.sha256
+        content: "{{ lab_untouched_checksum.stdout }}\n"
+        mode: "0644"

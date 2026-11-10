@@ -4,4 +4,4 @@ armbian_bootstrap_ssh_keys:
   - "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/identity_file.pub') }}"
 armbian_default_password: "{{ lab_bootstrap_password_lookup }}"
 full_reimage_k3s_cleanup: false
-armbian_poe_cycle_tasks_file: "{{ lookup('ansible.builtin.env', 'ARMBIAN_COLLECTION_SOURCE') }}/extensions/molecule/lab_netboot/tasks/boot_mode.yml"
+armbian_poe_cycle_tasks_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/molecule/shared/armbian_netboot/tasks/boot_mode.yml"

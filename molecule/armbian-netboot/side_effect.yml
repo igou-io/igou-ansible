@@ -1,6 +1,6 @@
 ---
 - name: Configure the RouterOS transport for the production workflow
-  ansible.builtin.import_playbook: "{{ lookup('ansible.builtin.env', 'ARMBIAN_COLLECTION_SOURCE') }}/extensions/molecule/lab_netboot/router_transport.yml"
+  ansible.builtin.import_playbook: ../shared/armbian_netboot/router_transport.yml
 - name: Exercise the lab's NFS-to-local reprovision workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/reprovision_to_local.yaml
 - name: Converge both boards back to their declared steady-state mode

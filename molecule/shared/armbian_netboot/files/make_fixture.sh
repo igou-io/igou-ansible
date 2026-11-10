@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Build an x86 Debian fixture for actual NFS/local-root boot tests. This is
+# explicitly a virtual-board fixture, not a Rockchip firmware image.
+set -euo pipefail
+LAB_BOOTSTRAP_KEY=${LAB_BOOTSTRAP_KEY:-$(cat /home/debian/.ssh/authorized_keys)}
+image=/srv/netboot/fixture.img
+mountpoint=/mnt/lab-fixture
+truncate -s 2G "$image"
+parted -s "$image" mklabel gpt mkpart primary ext4 1MiB 100%
+loop_device=$(losetup --find --show --partscan "$image")
+mkdir -p "$mountpoint"
+trap 'umount "$mountpoint" 2>/dev/null || true; losetup -d "$loop_device"' EXIT
+udevadm settle --timeout=30
+mkfs.ext4 -q -F -E nodiscard -L armbi_root "${loop_device}p1"
+mount "${loop_device}p1" "$mountpoint"
+command -v debootstrap >/dev/null || apt-get install -y debootstrap
+debootstrap --variant=minbase trixie "$mountpoint" https://deb.debian.org/debian
+printf '#!/bin/sh\nexit 101\n' > "$mountpoint/usr/sbin/policy-rc.d"
+chmod +x "$mountpoint/usr/sbin/policy-rc.d"
+chroot "$mountpoint" apt-get update
+DEBIAN_FRONTEND=noninteractive chroot "$mountpoint" apt-get install -y --no-install-recommends \
+  systemd-sysv openssh-server python3 python3-apt sudo nfs-common rsync \
+  kexec-tools initramfs-tools busybox iproute2 systemd-repart parted e2fsprogs xz-utils tftp-hpa
+mkdir -p "$mountpoint"/{etc/ssh,var/lib/dbus,root,boot/dtb}
+printf 'fixture\n' > "$mountpoint/etc/hostname"
+printf '127.0.0.1 localhost\n127.0.1.1 fixture\n' > "$mountpoint/etc/hosts"
+printf '/dev/vdc1 / ext4 defaults 0 1\n' > "$mountpoint/etc/fstab"
+printf 'fixture payload\n' > "$mountpoint/root/payload"
+printf 'synthetic-dtb-not-board-firmware\n' > "$mountpoint/boot/dtb/fixture.dtb"
+kernel=$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -1)
+initrd=$(find /boot -maxdepth 1 -type f -name 'initrd.img-*' | sort -V | tail -1)
+cp "$kernel" "$mountpoint/boot/$(basename "$kernel")"
+cp "$initrd" "$mountpoint/boot/$(basename "$initrd")"
+kernel_release=${kernel##*/vmlinuz-}
+mkdir -p "$mountpoint/lib/modules"
+cp -a "/lib/modules/$kernel_release" "$mountpoint/lib/modules/"
+printf 'virtio_pci\nvirtio_net\nvirtio_blk\nnfs\n' >> "$mountpoint/etc/initramfs-tools/modules"
+printf 'BOOT=nfs\nDEVICE=enp2s0\n' > "$mountpoint/etc/initramfs-tools/conf.d/lab-nfs"
+chroot "$mountpoint" update-initramfs -u -k "$kernel_release"
+mkdir -p "$mountpoint/etc/systemd/network"
+printf '[Match]\nName=enp1s0\n[Network]\nDHCP=ipv4\n' > "$mountpoint/etc/systemd/network/10-management.network"
+printf '[Match]\nName=enp2s0\n[Network]\nKeepConfiguration=yes\n' > "$mountpoint/etc/systemd/network/20-lab.network"
+systemctl --root="$mountpoint" enable systemd-networkd ssh
+chroot "$mountpoint" useradd -m -s /bin/bash debian
+chroot "$mountpoint" usermod -p '*' debian
+mkdir -p "$mountpoint/home/debian/.ssh"
+printf '%s\n' "$LAB_BOOTSTRAP_KEY" > "$mountpoint/home/debian/.ssh/authorized_keys"
+chmod 700 "$mountpoint/home/debian/.ssh"
+chmod 600 "$mountpoint/home/debian/.ssh/authorized_keys"
+chroot "$mountpoint" chown -R debian:debian /home/debian/.ssh
+printf 'debian ALL=(ALL) NOPASSWD: ALL\n' > "$mountpoint/etc/sudoers.d/debian"
+chmod 440 "$mountpoint/etc/sudoers.d/debian"
+if [[ -n ${LAB_BOOTSTRAP_PASSWORD:-} ]]; then
+  printf 'root:%s\n' "$LAB_BOOTSTRAP_PASSWORD" | chroot "$mountpoint" chpasswd
+  sed -i '/^#\?PasswordAuthentication/d; /^#\?PermitRootLogin/d' "$mountpoint/etc/ssh/sshd_config"
+  sed -i '1iPasswordAuthentication yes\nPermitRootLogin yes' "$mountpoint/etc/ssh/sshd_config"
+fi
+rm -f "$mountpoint"/etc/ssh/ssh_host_*
+: > "$mountpoint/etc/machine-id"
+: > "$mountpoint/var/lib/dbus/machine-id"
+cat > "$mountpoint/etc/systemd/system/lab-ssh-hostkeys.service" <<'EOF'
+[Unit]
+Description=Generate missing fixture SSH host keys
+Before=ssh.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -A
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl --root="$mountpoint" enable lab-ssh-hostkeys
+cp /run/systemd/resolve/resolv.conf "$mountpoint/etc/resolv.conf"
+rm "$mountpoint/usr/sbin/policy-rc.d"
+umount "$mountpoint"
+losetup -d "$loop_device"
+trap - EXIT
+xz -T2 -1 -c "$image" > "${image}.xz.part"
+mv "${image}.xz.part" "${image}.xz"

@@ -1,0 +1,126 @@
+---
+- name: Check the cluster and create the private guest network
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Check the cluster and identity
+      ansible.builtin.include_tasks: tasks/cluster_identity.yml
+    - name: Require the lab cluster and explicit test guests
+      ansible.builtin.assert:
+        that:
+          - groups['molecule'] | sort == ['netboot-board-a', 'netboot-board-b', 'netboot-builder', 'netboot-router', 'netboot-server']
+    - name: Read the target node
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+        name: "{{ lab_node }}"
+      register: lab_target_node
+    - name: Require a Ready schedulable casval
+      ansible.builtin.assert:
+        that:
+          - lab_target_node.resources | length == 1
+          - not lab_target_node.resources[0].spec.unschedulable | default(false)
+          - >-
+            lab_target_node.resources[0].status.conditions
+            | selectattr('type', 'equalto', 'Ready')
+            | selectattr('status', 'equalto', 'True') | list | length == 1
+    - name: Record the network identity before creating infrastructure
+      ansible.builtin.copy:
+        dest: "{{ lab_ephemeral_directory }}/network.yml"
+        content: "{{ lab_network_record | to_nice_yaml }}"
+        mode: "0600"
+        force: false
+      vars:
+        lab_network_record:
+          name: "{{ lab_network }}"
+          namespace: "{{ lab_namespace }}"
+          owner: "{{ lab_ephemeral_directory | hash('sha1') }}"
+          kind: UserDefinedNetwork
+          api_version: k8s.ovn.org/v1
+    - name: Require the saved network identity to match the inventory
+      ansible.builtin.assert:
+        that:
+          - lab_record.name == lab_network
+          - lab_record.namespace == lab_namespace
+          - lab_record.kind == 'UserDefinedNetwork'
+      vars:
+        lab_record: "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/network.yml') | from_yaml }}"
+    - name: Inspect a pre-existing network before adopting it
+      kubernetes.core.k8s_info:
+        api_version: k8s.ovn.org/v1
+        kind: UserDefinedNetwork
+        name: "{{ lab_network }}"
+        namespace: "{{ lab_namespace }}"
+      register: lab_previous_network
+    - name: Refuse to adopt a network owned by another run
+      ansible.builtin.assert:
+        that: >-
+          lab_previous_network.resources | length == 0 or
+          lab_previous_network.resources[0].metadata.labels['armbian-molecule.igou.io/owner']
+          | default('') == (lab_ephemeral_directory | hash('sha1'))
+    - name: Create the scenario's isolated bridge network
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: k8s.ovn.org/v1
+          kind: UserDefinedNetwork
+          metadata:
+            name: "{{ lab_network }}"
+            namespace: "{{ lab_namespace }}"
+            labels:
+              armbian-molecule.igou.io/owner: "{{ lab_ephemeral_directory | hash('sha1') }}"
+          spec:
+            topology: Layer2
+            layer2:
+              role: Secondary
+              ipam:
+                mode: Disabled
+    - name: Wait for the controller-owned network attachment
+      kubernetes.core.k8s_info:
+        api_version: k8s.cni.cncf.io/v1
+        kind: NetworkAttachmentDefinition
+        name: "{{ lab_network }}"
+        namespace: "{{ lab_namespace }}"
+      register: lab_attachment
+      until: lab_attachment.resources | length == 1
+      retries: 30
+      delay: 2
+- name: Create guests using the public provisioner
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.create
+- name: Expose the raw-image fixture to CDI
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Inspect a pre-existing fixture HTTP service
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: "{{ lab_network }}"
+        namespace: "{{ lab_namespace }}"
+      register: lab_previous_service
+    - name: Refuse to adopt a fixture service owned by another run
+      ansible.builtin.assert:
+        that: >-
+          lab_previous_service.resources | length == 0 or
+          lab_previous_service.resources[0].metadata.labels['armbian-molecule.igou.io/owner']
+          | default('') == (lab_ephemeral_directory | hash('sha1'))
+    - name: Expose the run's fixture HTTP server to CDI importers
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ lab_network }}"
+            namespace: "{{ lab_namespace }}"
+            labels:
+              armbian-molecule.igou.io/owner: "{{ lab_ephemeral_directory | hash('sha1') }}"
+          spec:
+            selector:
+              kubevirt.io/domain: "{{ lab_state.hosts['netboot-server'].name }}"
+            ports:
+              - name: http
+                port: 8080
+                targetPort: 8080

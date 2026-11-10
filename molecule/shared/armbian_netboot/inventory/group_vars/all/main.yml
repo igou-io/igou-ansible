@@ -1,0 +1,112 @@
+---
+mp_backend: kubevirt
+mp_kubevirt_wait_timeout: 600
+lab_namespace: molecule
+lab_node: casval.igou.systems
+lab_ephemeral_directory: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
+lab_network: "armbian-{{ lab_ephemeral_directory | hash('sha1') | truncate(10, true, '') }}"
+lab_state: "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/kubevirt_run.yml', errors='ignore') | default('{}', true) | from_yaml }}"
+lab_server_address: 192.0.2.10
+lab_router_address: 192.0.2.1
+lab_builder_address: 192.0.2.11
+lab_real_build: "{{ lookup('ansible.builtin.env', 'LAB_NETBOOT_BUILD') | default('false', true) | bool }}"
+lab_router_password_lookup: "{{ lookup('ansible.builtin.password', lab_ephemeral_directory ~ '/router-password length=24 chars=ascii_letters,digits') }}"
+lab_bootstrap_password_lookup: "{{ lookup('ansible.builtin.password', lab_ephemeral_directory ~ '/bootstrap-password length=24 chars=ascii_letters,digits') }}"
+lab_linux_boot_source:
+  type: container_disk
+  image: quay.io/containerdisks/debian:13@sha256:ddc9a3fc809b7e89f78862e267a5b246dfddeba0e878f8be74424f8cb9dfbb90
+lab_board_disks:
+  - name: sd
+    size: 2Gi
+    storage_class: lvms-casval
+  - name: local
+    size: 8Gi
+    storage_class: lvms-casval
+  - name: untouched
+    size: 1Gi
+    storage_class: lvms-casval
+lab_kubevirt_defaults:
+  namespace: "{{ lab_namespace }}"
+  ssh_user: debian
+  memory: 2Gi
+  boot_source: "{{ lab_linux_boot_source }}"
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: burst
+      effect: NoSchedule
+  node_selector:
+    kubernetes.io/hostname: "{{ lab_node }}"
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - "{{ lab_node }}"
+  extra_interfaces:
+    - name: lab
+      bridge: {}
+  extra_networks:
+    - name: lab
+      multus:
+        networkName: "{{ lab_network }}"
+armbian_nfs_rootfs_path: /srv/netboot/rootfs
+armbian_nfs_assets_export: /srv/netboot/boot-files
+armbian_image_cache: /srv/netboot/cache
+armbian_server_ip: "{{ lab_server_address }}"
+armbian_nfs_server_ip: "{{ lab_server_address }}"
+armbian_assets_base_url: "http://{{ lab_server_address }}:8080/boot-files"
+armbian_publish_staging_dir: "{{ lab_ephemeral_directory }}/publish"
+armbian_build_cache_dir: /home/debian/armbian_build/cache
+armbian_build_output_dir: /home/debian/armbian_build/output
+armbian_build_force: "{{ lab_real_build }}"
+armbian_tftp_cache_dir: "{{ lab_ephemeral_directory }}/tftp"
+armbian_router: netboot-router
+armbian_boards_group: boards
+armbian_tftp_flash_dir: sbc
+armbian_persist_uboot_env: never
+armbian_cycle_board: false
+armbian_boot_mode: local_kernel
+armbian_poe_switch: netboot-router
+armbian_poe_port: virtual-test-port
+armbian_bootstrap_user: lab-automation
+armbian_bootstrap_ssh_keys:
+  - "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/identity_file.pub') }}"
+armbian_board_config_model:
+  armbian_board_name: uefi-x86
+  console: ttyS0,115200
+  dtb: fixture.dtb
+  local_kernel:
+    verify_match: ^/dev/vdd
+armbian_rootfs_src: "http://{{ lab_server_address }}:8080/fixture.img.xz"
+lab_disk_binding:
+  device: /dev/vdd
+  fast_wipe: true
+  layout:
+    - id: root
+      size: grow
+      type: root
+      format: ext4
+      label: armbi_root_local
+      mount: /
+armbian_local_disks:
+  - "{{ lab_disk_binding }}"
+armbian_local_kernel:
+  persist_via: hook
+  verify_match: ^/dev/vdd
+armbian_build_defaults:
+  branch: current
+  release: trixie
+  ref: v26.8.0-trunk.180
+  min_free_gb: 50
+  timeout: 7200
+  userpatches: []
+  compile_args:
+    KERNEL_CONFIGURE: "no"
+    BUILD_DESKTOP: "no"
+    BUILD_MINIMAL: "yes"
+    COMPRESS_OUTPUTIMAGE: sha,xz
+    EXPERT: "yes"

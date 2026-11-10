@@ -1,0 +1,2 @@
+---
+molecule_profile_overrides: "{{ lab_kubevirt_defaults }}"

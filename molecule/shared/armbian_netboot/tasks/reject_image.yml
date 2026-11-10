@@ -1,0 +1,34 @@
+---
+- name: Record the protected target bytes before validation
+  ansible.builtin.command: "sha256sum {{ lab_reject_target }}"
+  register: lab_before_rejection
+  changed_when: false
+- name: Clear the expected imaging failure
+  ansible.builtin.set_fact:
+    lab_image_rejected: false
+- name: Exercise the imaging refusal
+  block:
+    - name: Invoke the real imaging role with invalid inputs
+      ansible.builtin.include_role:
+        name: david_igou.armbian.disk_image
+      vars:
+        disk_image_target_device: "{{ lab_reject_target }}"
+        disk_image_source: "{{ lab_reject_source }}"
+  rescue:
+    - name: Require the specific validation failure
+      ansible.builtin.assert:
+        that: lab_reject_message in ansible_failed_result.msg
+    - name: Record the expected imaging rejection
+      ansible.builtin.set_fact:
+        lab_image_rejected: true
+- name: Reject an unexpected successful image write
+  ansible.builtin.assert:
+    that: lab_image_rejected
+    fail_msg: "disk_image unexpectedly accepted {{ lab_reject_target }} with {{ lab_reject_source }}"
+- name: Read the protected target bytes after validation
+  ansible.builtin.command: "sha256sum {{ lab_reject_target }}"
+  register: lab_after_rejection
+  changed_when: false
+- name: Require refusal without a disk write
+  ansible.builtin.assert:
+    that: lab_after_rejection.stdout == lab_before_rejection.stdout

@@ -62,13 +62,15 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | `upsmonitor` | NUT packages and configuration, running exporters, and host metrics without attached UPSes. |
 | `ghapp` | Separate credentialed GitHub App client/broker integration. |
 | `armbian-netboot` | Cached build/publication, staging, RouterOS delivery, disk operations, NFS-to-local and full reimage using shared KubeVirt fixtures. |
+| `armbian-netboot-collection` | Collection workflows, cache refresh, data preservation, all boot transitions and publication retention using the same local fixtures. |
 
-`armbian-netboot` is an explicit live-cluster integration: set
-`ARMBIAN_COLLECTION_SOURCE` to the checkout containing its shared fixtures and
-use credentials that can manage a private UserDefinedNetwork in
-`molecule`. It requires Casval and uses a virtual power transport; see
-[`armbian-netboot/README.md`](armbian-netboot/README.md) for the physical firmware
-coverage boundary and cleanup instructions.
+The two Armbian scenarios are explicit live-cluster integrations. All fixtures
+live in `molecule/shared/armbian_netboot/` in this repository. Use credentials
+that can manage a private UserDefinedNetwork in `molecule`. Casval placement
+and `lvms-casval` storage are required. `ARMBIAN_COLLECTION_SOURCE` optionally
+overrides the installed production collection; it supplies no test assets.
+See the [shared guide](shared/armbian_netboot/README.md) for prerequisites,
+the physical firmware coverage boundary and cleanup instructions.
 
 No Molecule scenario enrolls Tailscale. The Kubernetes scenarios do not install GitOps or applications. The k3s and VPS
 scenarios also exercise the focused upgrade path, with upgrade and recovery checks

@@ -1,0 +1,29 @@
+---
+- name: Select and boot NFS root
+  ansible.builtin.import_playbook: boot_transition.yml
+  vars:
+    armbian_boot_mode: nfs
+- name: Select and boot the imaged SD substitute
+  ansible.builtin.import_playbook: boot_transition.yml
+  vars:
+    armbian_boot_mode: sd
+- name: Return to NFS root for the next local-disk transition
+  ansible.builtin.import_playbook: boot_transition.yml
+  vars:
+    armbian_boot_mode: nfs
+- name: Select the network kernel with a local root
+  ansible.builtin.import_playbook: boot_transition.yml
+  vars:
+    armbian_boot_mode: local
+- name: Select a local kernel and local root
+  ansible.builtin.import_playbook: boot_transition.yml
+  vars:
+    armbian_boot_mode: local_kernel
+- name: Return guests to their original management image
+  hosts: boards
+  gather_facts: false
+  tasks:
+    - name: Return to the original management image after rootfs tests
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+      become: true

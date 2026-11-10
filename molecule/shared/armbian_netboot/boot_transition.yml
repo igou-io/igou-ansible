@@ -1,0 +1,11 @@
+---
+- name: Configure the RouterOS transport for this boot transition
+  ansible.builtin.import_playbook: router_transport.yml
+- name: Select the boot mode using the real collection entry point
+  ansible.builtin.import_playbook: david_igou.armbian.set_boot_mode
+- name: Boot the selected virtual-board root filesystem
+  hosts: boards
+  gather_facts: false
+  tasks:
+    - name: Apply the virtual firmware transport and verify the resulting root
+      ansible.builtin.include_tasks: tasks/boot_mode.yml

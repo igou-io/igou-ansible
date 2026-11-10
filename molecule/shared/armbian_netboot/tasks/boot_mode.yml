@@ -1,0 +1,93 @@
+---
+# Kexec substitutes for the physical board's firmware/power transport. It boots
+# a real kernel and rootfs; it does not emulate Rockchip U-Boot or switch PoE.
+- name: Record the running kernel boot identity
+  ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
+  register: lab_previous_boot
+  changed_when: false
+  become: true
+- name: Release earlier staging handles before loading a refreshed kernel
+  ansible.posix.mount:
+    path: /mnt/netboot-source
+    state: unmounted
+  become: true
+  when: armbian_boot_mode != 'local_kernel'
+- name: Ensure the staged rootfs is available to the virtual boot transport
+  ansible.posix.mount:
+    path: /mnt/netboot-source
+    src: "{{ lab_server_address }}:{{ armbian_nfs_rootfs_path }}/{{ inventory_hostname }}"
+    fstype: nfs
+    opts: vers=3,rw,nolock
+    state: ephemeral
+  become: true
+  when: armbian_boot_mode != 'local_kernel'
+- name: Mount the local kernel filesystem for local-kernel boot
+  ansible.posix.mount:
+    path: /mnt/netboot-local
+    src: LABEL=armbi_root_local
+    fstype: ext4
+    state: ephemeral
+  become: true
+  when: armbian_boot_mode == 'local_kernel'
+- name: Load the next kernel from the selected boot source
+  ansible.builtin.shell: |
+    set -euo pipefail
+    kernel=$(find {{ lab_boot_directory }}/boot -maxdepth 1 -name 'vmlinuz-*' | sort -V | tail -1)
+    initrd=$(find {{ lab_boot_directory }}/boot -maxdepth 1 -name 'initrd.img-*' | sort -V | tail -1)
+    kexec --load "$kernel" --initrd="$initrd" --append={{ lab_boot_arguments | quote }}
+  args:
+    executable: /bin/bash
+  vars:
+    lab_boot_directory: "{{ '/mnt/netboot-local' if armbian_boot_mode == 'local_kernel' else '/mnt/netboot-source' }}"
+    lab_root_arguments: >-
+      {{ 'boot=nfs root=/dev/nfs nfsroot=' ~ lab_server_address ~ ':' ~ armbian_nfs_rootfs_path ~ '/' ~ inventory_hostname ~ ',nfsvers=3,rw'
+         if armbian_boot_mode == 'nfs' else
+         'boot=local root=LABEL=' ~ ('armbi_root' if armbian_boot_mode == 'sd' else 'armbi_root_local') ~ ' rootfstype=ext4' }}
+    lab_boot_arguments: >-
+      {{ lab_root_arguments ~ ' rw console=ttyS0,115200 ip=' ~ lab_address
+         ~ ':::255.255.255.0:' ~ inventory_hostname ~ ':enp2s0:none' }}
+  become: true
+  changed_when: true
+- name: Reboot into the loaded kernel and selected rootfs
+  # systemd_service cannot request a kexec boot.
+  ansible.builtin.command: systemctl kexec # noqa command-instead-of-module
+  become: true
+  async: 45
+  poll: 0
+  changed_when: true
+- name: Discard the previous SSH control connection
+  ansible.builtin.meta: reset_connection
+- name: Wait for the new kernel's SSH service
+  ansible.builtin.wait_for_connection:
+    delay: 15
+    timeout: 300
+- name: Read the new kernel boot identity
+  ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
+  register: lab_current_boot
+  changed_when: false
+- name: Require an actual new kernel boot
+  ansible.builtin.assert:
+    that: lab_current_boot.stdout != lab_previous_boot.stdout
+- name: Verify the actual mounted root against the selected mode
+  ansible.builtin.include_role:
+    name: david_igou.armbian.board_boot_verify
+  vars:
+    board_boot_verify_mode: "{{ armbian_boot_mode }}"
+    board_boot_verify_local_kernel_match: ^/dev/vdd
+- name: Read the root source independently of Ansible's mount facts
+  ansible.builtin.command: findmnt -n -o SOURCE /
+  register: lab_booted_root
+  changed_when: false
+- name: Require the requested test disk or NFS export to be the running root
+  ansible.builtin.assert:
+    that: lab_booted_root.stdout is match(lab_expected_roots[armbian_boot_mode])
+  vars:
+    lab_expected_roots:
+      nfs: "^{{ lab_server_address | regex_escape }}:{{ armbian_nfs_rootfs_path }}/{{ inventory_hostname }}$"
+      sd: ^/dev/vdc1$
+      local: ^/dev/vdd[0-9]+$
+      local_kernel: ^/dev/vdd[0-9]+$
+- name: Validate the mount table in the system that actually boots it
+  ansible.builtin.command: findmnt --verify --tab-file /etc/fstab
+  changed_when: false
+  when: armbian_boot_mode != 'nfs'

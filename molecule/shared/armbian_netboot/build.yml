@@ -1,0 +1,12 @@
+---
+- name: Prepare the real builder
+  ansible.builtin.import_playbook: prepare_builder.yml
+- name: Reuse or build and publish an image through the collection workflow
+  ansible.builtin.import_playbook: david_igou.armbian.build_and_publish_from_inventory
+  vars:
+    armbian_boards_group: build_targets
+- name: Reuse the same cached build through a repeated publication run
+  ansible.builtin.import_playbook: david_igou.armbian.build_and_publish_from_inventory
+  vars:
+    armbian_boards_group: build_targets
+  when: not lab_real_build | bool

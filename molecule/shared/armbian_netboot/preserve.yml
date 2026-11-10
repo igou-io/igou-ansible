@@ -1,0 +1,72 @@
+---
+- name: Verify data preservation across repeated local-disk provisioning
+  hosts: boards
+  become: true
+  gather_facts: true
+  vars:
+    lab_preserved_binding:
+      device: /dev/vdd
+      fast_wipe: true
+      layout:
+        - id: data
+          size: 256M
+          type: linux
+          format: ext4
+          label: lab_preserved
+          mount: /var/lib/lab-data
+          preserve_on_reprovision: true
+        - id: root
+          size: grow
+          type: root
+          format: ext4
+          label: armbi_root_local
+          mount: /
+  tasks:
+    - name: Unmount the previous verification mount before repartitioning
+      ansible.posix.mount:
+        path: /mnt/netboot-local
+        state: unmounted
+    - name: Create the initial layout
+      ansible.builtin.include_role:
+        name: david_igou.armbian.disk_provision
+      vars:
+        disk_provision_source: /mnt/netboot-source
+        disk_provision_disk_binding: "{{ lab_preserved_binding }}"
+    - name: Mount the data partition
+      ansible.posix.mount:
+        path: /mnt/netboot-data
+        src: LABEL=lab_preserved
+        fstype: ext4
+        state: ephemeral
+    - name: Write data that must survive reprovisioning
+      ansible.builtin.copy:
+        dest: /mnt/netboot-data/application-state
+        content: "{{ inventory_hostname }}\n"
+        mode: "0644"
+    - name: Unmount the preserved filesystem
+      ansible.posix.mount:
+        path: /mnt/netboot-data
+        state: unmounted
+    - name: Reprovision with the same preserved partition
+      ansible.builtin.include_role:
+        name: david_igou.armbian.disk_provision
+      vars:
+        disk_provision_source: /mnt/netboot-source
+        disk_provision_disk_binding: "{{ lab_preserved_binding }}"
+    - name: Remount the preserved filesystem
+      ansible.posix.mount:
+        path: /mnt/netboot-data
+        src: LABEL=lab_preserved
+        fstype: ext4
+        state: ephemeral
+    - name: Read the application's retained state
+      ansible.builtin.command: cat /mnt/netboot-data/application-state
+      register: lab_preserved_state
+      changed_when: false
+    - name: Require independent retained data for each host
+      ansible.builtin.assert:
+        that: lab_preserved_state.stdout == inventory_hostname
+    - name: Release the verification mount
+      ansible.posix.mount:
+        path: /mnt/netboot-data
+        state: unmounted

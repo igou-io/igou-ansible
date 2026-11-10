@@ -1,0 +1,71 @@
+---
+- name: Exercise cached and forced rootfs staging
+  ansible.builtin.import_playbook: refresh.yml
+- name: Exercise preserved data during reprovisioning
+  ansible.builtin.import_playbook: preserve.yml
+- name: Exercise publication retention
+  ansible.builtin.import_playbook: cleanup_images.yml
+- name: Exercise refusal paths and wait contracts
+  hosts: boards
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Reject a partition as an imaging target
+      ansible.builtin.include_tasks: tasks/reject_image.yml
+      vars:
+        lab_reject_target: /dev/vdc1
+        lab_reject_source: /var/tmp/fixture.img.xz
+        lab_reject_message: partition
+    - name: Mount the imaged disk before testing its refusal guard
+      ansible.posix.mount:
+        path: /mnt/netboot-sd
+        src: /dev/vdc1
+        fstype: ext4
+        state: ephemeral
+    - name: Reject an imaging target with a mounted partition
+      ansible.builtin.include_tasks: tasks/reject_image.yml
+      vars:
+        lab_reject_target: /dev/vdc
+        lab_reject_source: /var/tmp/fixture.img.xz
+        lab_reject_message: mounted filesystem
+    - name: Unmount the imaged disk
+      ansible.posix.mount:
+        path: /mnt/netboot-sd
+        state: unmounted
+    - name: Reject a malformed source
+      ansible.builtin.include_tasks: tasks/reject_image.yml
+      vars:
+        lab_reject_target: /dev/vdc
+        lab_reject_source: invalid-source
+        lab_reject_message: disk_image_source must be
+    - name: Exercise the actual management-port wait
+      ansible.builtin.include_role:
+        name: david_igou.armbian.board_boot_wait
+    - name: Check local-root verification with the actual guest's root device
+      ansible.builtin.include_role:
+        name: david_igou.armbian.board_boot_verify
+      vars:
+        board_boot_verify_mode: local_kernel
+        board_boot_verify_local_kernel_match: ^/dev/vda
+    - name: Require an NFS mode mismatch to fail on this disk-rooted guest
+      block:
+        - name: Clear the expected-failure marker
+          ansible.builtin.set_fact:
+            lab_nfs_rejected: false
+        - name: Invoke NFS verification against a local root
+          ansible.builtin.include_role:
+            name: david_igou.armbian.board_boot_verify
+          vars:
+            board_boot_verify_mode: nfs
+      rescue:
+        - name: Require the root-filesystem mismatch diagnostic
+          ansible.builtin.assert:
+            that: "'expected NFS rootfs' in ansible_failed_result.msg"
+        - name: Record the expected rejection
+          ansible.builtin.set_fact:
+            lab_nfs_rejected: true
+    - name: Reject unexpected success from NFS verification
+      ansible.builtin.assert:
+        that: lab_nfs_rejected
+- name: Exercise actual root filesystem boots
+  ansible.builtin.import_playbook: boot.yml

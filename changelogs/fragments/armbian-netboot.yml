@@ -1,8 +1,8 @@
 ---
 minor_changes:
   - >-
-    Added a Casval KubeVirt companion scenario importing the Armbian lab build/publication,
-    staging, boot-mode, reprovision and full-reimage workflows
+    Added Casval KubeVirt scenarios and shared fixtures covering Armbian collection
+    operations and the lab build/publication, staging, boot-mode, reprovision and full-reimage workflows
     (https://github.com/igou-io/igou-ansible/pull/658).
 bugfixes:
   - Armbian boot waits honored inventory SSH ports, including the full-reimage path.
