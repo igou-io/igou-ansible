@@ -3,5 +3,5 @@ armbian_bootstrap_user: lab-automation
 armbian_bootstrap_ssh_keys:
   - "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/identity_file.pub') }}"
 armbian_default_password: "{{ lab_bootstrap_password_lookup }}"
-full_reimage_k3s_cleanup: false
+full_reimage_k3s_cleanup: true
 armbian_poe_cycle_tasks_file: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/molecule/armbian-netboot/helpers/boot_mode.yml"

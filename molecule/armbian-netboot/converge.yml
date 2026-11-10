@@ -30,10 +30,6 @@
   ansible.builtin.import_playbook: boot.yml
 - name: Exercise data preservation through repeated lab reprovisioning
   ansible.builtin.import_playbook: preserve.yml
-- name: Exercise the complete lab reimage workflow on one virtual canary
-  ansible.builtin.import_playbook: ../../playbooks/armbian/full_reimage.yaml
-  vars:
-    target_hosts: netboot-board-a
 - name: Return both boards to the declared local-kernel mode
   ansible.builtin.import_playbook: boot_transition.yml
   vars:

@@ -1,6 +1,8 @@
 ---
 - name: Configure RouterOS for the rolling system-update boots
   ansible.builtin.import_playbook: router_transport.yml
+- name: Reimage the installed worker and prove clean k3s re-registration
+  ansible.builtin.import_playbook: k3s_reimage.yml
 - name: Update OS packages on the control plane through the lab playbook
   ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
   vars:

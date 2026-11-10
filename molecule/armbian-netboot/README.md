@@ -65,7 +65,7 @@ shellcheck molecule/armbian-netboot/dependency.sh molecule/armbian-netboot/files
 | `provision_local_disk.yaml` | Copy the running NFS root onto the local disk, boot it and verify the actual root source, payload and mount table. |
 | `reprovision_to_local.yaml` | Repeat the NFS-to-local workflow with a preserved data partition; read application state from its normal mountpoint after the second boot. |
 | `set_boot_mode.yaml`, `converge_boot_mode.yaml`, `cycle_board.yaml` | Firmware boots in all four modes: `nfs`, `sd`, `local`, `local_kernel`. Require CHR DHCP leases, per-MAC pin TFTP hits, new boot IDs, the selected root and expected kernel release. Network-kernel modes must fetch kernel and initrd; local-kernel mode must leave those counters unchanged. |
-| `full_reimage.yaml` | Force a fresh image through staging, bootstrap, local provisioning and the declared steady-state boot on one canary; verify its new system and the other board's integrity. |
+| `full_reimage.yaml` | Reimage the installed k3s worker through staging, bootstrap, provisioning and steady-state boot. Require the stale node and password-secret registration to disappear, reinstall k3s, require a new node UID and verify the existing workload recovers. |
 | `kubernetes/install-k3s-cluster.yml` | Install the pinned k3s release on both booted local systems; require exactly the intended Ready nodes, containerd and a running pod on each. Test cluster DNS, Service HTTP and HTTP directly between pods on different nodes. |
 | `system-update.yaml` | Update the control plane and then the worker from the Debian snapshot to current trixie packages. Reboot through the normal boot-mode/cycle operation. Require a newer apt-owned running kernel, loadable modules and the existing k3s workload to recover after each node. |
 
@@ -99,9 +99,10 @@ PoE remain hardware acceptance. The DTB is only a transport fixture on x86.
 The image's packages and kernel come from the Debian `20260801T000000Z`
 snapshot. The generated image records its actual kernel release; assertions
 compare it with the running kernel before and after updates. The fixture
-switches apt sources to current trixie only after creation. Destructive
-reprovisioning/full-reimage runs before k3s installation; optional production
-stale-node deletion is disabled and is not covered by this scenario.
+switches apt sources to current trixie only after creation. Preserved-data
+reprovisioning runs before k3s installation. Full reimage then exercises the
+installed worker's stale-node cleanup and rejoin while preserving the control
+plane, before both nodes receive rolling OS updates.
 
 `inventory/hosts.yml` describes OS releases, source images, board payload
 snapshot and k3s version. The router's source is MikroTik's public, versioned
