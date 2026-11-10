@@ -108,6 +108,11 @@ reprovisioning runs before k3s installation. Full reimage then exercises the
 installed worker's stale-node cleanup and rejoin while preserving the control
 plane, before both nodes receive rolling OS updates.
 
+The fixture keeps a `debian` maintenance account for the boot harness;
+verification uses `lab-automation` to check the production bootstrap separately.
+Control-plane disaster recovery, application-volume recovery, and changed
+upstream image bytes behind an unchanged URL require separate acceptance.
+
 `inventory/hosts.yml` describes OS releases, source images, board payload
 snapshot and k3s version. The router's source is MikroTik's public, versioned
 download URL. CDI cannot unpack ZIP: create adapts that source to a temporary
