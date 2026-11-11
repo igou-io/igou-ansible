@@ -12,6 +12,7 @@ minor_changes:
   - Recorded fixture OS releases, image sources and k3s versions in the scenario inventory.
   - Exercised the control-plane ZFS datastore's creation, import and kernel-update recovery, plus k3s pod user namespaces.
 bugfixes:
+  - ZFS installation refreshed a newly enabled backports repository before selecting packages through its existing source-package pin.
   - k3s prerequisite installation refreshed package indexes on fresh images with an empty apt-list directory.
   - Armbian boot waits honored inventory SSH ports, including the full-reimage path.
   - Full reimage honored the existing configurable power-cycle transport hook.
