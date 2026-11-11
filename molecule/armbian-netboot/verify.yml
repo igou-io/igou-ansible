@@ -45,7 +45,7 @@
       ansible.builtin.command: sha256sum /dev/vde
       register: lab_untouched_after
       changed_when: false
-    - name: Require the excluded disk to match its original management-image baseline
+    - name: Require the excluded data disk to match its prepared filesystem baseline
       ansible.builtin.assert:
         that: lab_untouched_after.stdout == lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/' ~ inventory_hostname ~ '-untouched.sha256')
         fail_msg: >-

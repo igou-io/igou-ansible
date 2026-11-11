@@ -1,5 +1,6 @@
 ---
 minor_changes:
+  - Seeded an excluded filesystem with application data so off-target zeroing and signature wipes are detectable.
   - >-
     Added one Casval KubeVirt scenario exercising the lab's Armbian build/publication,
     staging and refresh, SD imaging, bootstrap, provisioning, boot-mode, reprovision and full-reimage operations

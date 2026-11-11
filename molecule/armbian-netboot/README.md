@@ -70,8 +70,10 @@ shellcheck molecule/armbian-netboot/dependency.sh molecule/armbian-netboot/files
 | `kubernetes/install-k3s-cluster.yml` | Install the pinned k3s release with the lab's hard links and user-namespace feature settings; require exactly the intended Ready nodes, containerd and a running pod on each. Verify unprivileged host UID mappings, cluster DNS, Service HTTP and a checksum-verified 256 KiB response between pods on different nodes. |
 | `system-update.yaml` | Update the control plane and then the worker from the Debian snapshot to current trixie packages. Reboot through the normal boot-mode/cycle operation. Require a newer apt-owned running kernel, loadable modules and the existing k3s workload to recover after each node. |
 
-The excluded disk must remain byte-identical throughout. Its baseline is kept
-on the controller so root filesystem changes cannot erase the evidence.
+The excluded disk contains an ext4 filesystem and application data before any
+imaging or provisioning. It must remain byte-identical throughout, so zeroing
+and signature wipes are detectable. Its baseline stays on the controller across
+root filesystem changes.
 The scenario omits blanket idempotence because imaging and boots intentionally
 change state; cached staging and retained application data have explicit
 repeat-run checks. It tests the lab's SD imaging path rather than a generic

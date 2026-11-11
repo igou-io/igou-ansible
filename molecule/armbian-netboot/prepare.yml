@@ -13,6 +13,7 @@
         name:
           - rsync
           - parted
+          - e2fsprogs
           - xz-utils
           - openssh-client
           - nfs-common
@@ -296,6 +297,28 @@
           - "'vdc' in lab_disks.stdout"
           - "'vdd' in lab_disks.stdout"
           - "'vde' in lab_disks.stdout"
+    - name: Create an existing filesystem on the excluded data disk
+      community.general.filesystem:
+        dev: /dev/vde
+        fstype: ext4
+        opts: -L lab_excluded
+        state: present
+    - name: Mount the excluded filesystem to seed application data
+      ansible.posix.mount:
+        path: /mnt/lab-excluded
+        src: /dev/vde
+        fstype: ext4
+        opts: nodev,nosuid,noexec
+        state: ephemeral
+    - name: Seed nonzero data that disk operations must preserve
+      ansible.builtin.copy:
+        dest: /mnt/lab-excluded/application-state
+        content: "Existing application data on {{ inventory_hostname }}\n"
+        mode: "0644"
+    - name: Unmount the excluded filesystem before recording its byte baseline
+      ansible.posix.mount:
+        path: /mnt/lab-excluded
+        state: unmounted
     - name: Record the excluded disk checksum
       ansible.builtin.command: sha256sum /dev/vde
       register: lab_untouched_checksum
