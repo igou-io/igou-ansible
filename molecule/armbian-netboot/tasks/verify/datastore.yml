@@ -1,0 +1,57 @@
+---
+- name: Read the imported pool's GUID
+  ansible.builtin.command: zpool get -H -o value guid rk8s
+  register: lab_datastore_guid_after
+  changed_when: false
+- name: Read the retained datastore content
+  ansible.builtin.command: cat /var/lib/rancher/k3s/lab-retained
+  register: lab_datastore_marker
+  changed_when: false
+- name: Require the original pool and content to survive
+  ansible.builtin.assert:
+    that:
+      - lab_datastore_guid_after.stdout == lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/datastore-guid') | trim
+      - lab_datastore_marker.stdout == 'datastore survives import and kernel updates'
+    fail_msg: The control-plane datastore was replaced or lost its retained content.
+- name: Read the pool's device topology
+  ansible.builtin.command: zpool status -P rk8s
+  register: lab_datastore_status
+  changed_when: false
+- name: Require two healthy two-way mirrors on the dedicated disks
+  ansible.builtin.assert:
+    that:
+      - lab_datastore_status.stdout | regex_findall('mirror-[0-9]+\s+ONLINE') | length == 2
+      - lab_datastore_status.stdout | regex_findall('/dev/[^\s]+\s+ONLINE') | length == 4
+      - "'errors: No known data errors' in lab_datastore_status.stdout"
+    fail_msg: "Unexpected datastore topology or health: {{ lab_datastore_status.stdout }}"
+- name: Read the source and filesystem of each datastore mount
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - -n
+      - -o
+      - SOURCE,FSTYPE
+      - --mountpoint
+      - "{{ item.mount.where }}"
+  loop: "{{ zfs_pool_datasets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: lab_datastore_mounts
+  changed_when: false
+- name: Require the intended ZFS datasets to back the live k3s paths
+  ansible.builtin.assert:
+    that: item.stdout.split() == [item.item.name, 'zfs']
+    fail_msg: "{{ item.item.mount.where }} is backed by {{ item.stdout }}, expected {{ item.item.name }} on ZFS."
+  loop: "{{ lab_datastore_mounts.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+- name: Read k3s service dependencies and ordering
+  ansible.builtin.systemd_service:
+    name: k3s.service
+  register: lab_datastore_service
+- name: Require k3s to depend on and start after the datastore mount
+  ansible.builtin.assert:
+    that:
+      - "'var-lib-rancher-k3s.mount' in lab_datastore_service.status['Requires'].split()"
+      - "'var-lib-rancher-k3s.mount' in lab_datastore_service.status['After'].split()"
+    fail_msg: k3s could start on the empty root filesystem if its ZFS mount fails.

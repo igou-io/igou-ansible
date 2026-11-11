@@ -1,0 +1,3 @@
+---
+trivial:
+  - Documented each Armbian Molecule phase and its assertions, grouped playbooks and shared task lists by phase, and moved builder fixture setup into prepare (https://github.com/igou-io/igou-ansible/pull/658).

@@ -25,7 +25,7 @@
         mode: "0644"
       loop: "{{ groups['boards'] }}"
 - name: Repeat staging without a forced extraction
-  ansible.builtin.import_playbook: ../../../playbooks/armbian/stage_netboot_assets.yaml
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/stage_netboot_assets.yaml
 - name: Verify that the matching sentinel preserved the existing rootfs
   hosts: netboot_server
   become: true
@@ -40,7 +40,7 @@
       ansible.builtin.assert:
         that: lab_cached_payloads.results | map(attribute='stdout') | unique | list == ['cache-preservation-check']
 - name: Force extraction from the original image
-  ansible.builtin.import_playbook: ../../../playbooks/armbian/stage_netboot_assets.yaml
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/stage_netboot_assets.yaml
   vars:
     armbian_force_refresh: true
 - name: Verify that forced refresh restored the source payload

@@ -2,6 +2,6 @@
 - name: Configure the RouterOS transport for this boot transition
   ansible.builtin.import_playbook: router_transport.yml
 - name: Select the boot mode through the lab entry point
-  ansible.builtin.import_playbook: ../../../playbooks/armbian/set_boot_mode.yaml
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/set_boot_mode.yaml
 - name: Cycle and verify the requested boot mode through the lab entry point
-  ansible.builtin.import_playbook: ../../../playbooks/armbian/cycle_board.yaml
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/cycle_board.yaml

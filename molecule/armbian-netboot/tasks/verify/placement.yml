@@ -1,6 +1,6 @@
 ---
 - name: Check the cluster and identity before verification
-  ansible.builtin.include_tasks: ../cluster_identity.yml
+  ansible.builtin.include_tasks: ../shared/cluster_identity.yml
 - name: Inspect this run's virtual machines
   kubernetes.core.k8s_info:
     api_version: kubevirt.io/v1

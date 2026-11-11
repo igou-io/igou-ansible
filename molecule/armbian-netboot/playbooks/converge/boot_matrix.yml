@@ -1,14 +1,14 @@
 ---
 # Converge has already booted NFS, bootstrapped it and provisioned local disk.
 - name: Select and boot the imaged SD substitute
-  ansible.builtin.import_playbook: boot_transition.yml
+  ansible.builtin.import_playbook: ../shared/boot_transition.yml
   vars:
     armbian_boot_mode: sd
 - name: Select the network kernel with a local root
-  ansible.builtin.import_playbook: boot_transition.yml
+  ansible.builtin.import_playbook: ../shared/boot_transition.yml
   vars:
     armbian_boot_mode: local
 - name: Select a local kernel and local root
-  ansible.builtin.import_playbook: boot_transition.yml
+  ansible.builtin.import_playbook: ../shared/boot_transition.yml
   vars:
     armbian_boot_mode: local_kernel

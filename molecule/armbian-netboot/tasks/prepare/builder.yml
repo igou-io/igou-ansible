@@ -1,0 +1,78 @@
+---
+- name: Install Docker and the image-build prerequisites
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - git
+      - curl
+      - ca-certificates
+    state: present
+- name: Match Docker networking to the virtual management interface MTU
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: "{{ lab_docker_config | to_json }}\n"
+    mode: "0644"
+  vars:
+    lab_docker_config:
+      mtu: "{{ ansible_facts[ansible_facts['default_ipv4']['interface']]['mtu'] }}"
+  register: lab_docker_networking
+- name: Start Docker with the fixture's network configuration
+  ansible.builtin.systemd_service:
+    name: docker
+    state: "{{ 'restarted' if lab_docker_networking.changed else 'started' }}"
+    enabled: true
+- name: Allow the builder user to invoke Docker
+  ansible.builtin.user:
+    name: debian
+    groups:
+      - docker
+    append: true
+- name: Renew the builder connection after group membership changes
+  ansible.builtin.meta: reset_connection
+- name: Create cached-image output directories
+  ansible.builtin.file:
+    path: "{{ armbian_build_output_dir }}/{{ item }}"
+    state: directory
+    owner: debian
+    group: debian
+    mode: "0755"
+  loop: "{{ groups['build_targets'] }}"
+  when: not lab_real_build | bool
+- name: Ensure the connecting builder user owns the build roots
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: debian
+    group: debian
+    mode: "0755"
+  loop:
+    - "{{ armbian_build_cache_dir }}"
+    - "{{ armbian_build_output_dir }}"
+- name: Seed cached builds with the actual bootable fixture image
+  ansible.builtin.get_url:
+    url: "{{ lab_fixture_url }}"
+    dest: "{{ armbian_build_output_dir }}/{{ item }}/Armbian_CACHED_FIXTURE.img.xz"
+    owner: debian
+    group: debian
+    mode: "0644"
+  loop: "{{ groups['build_targets'] }}"
+  when: not lab_real_build | bool
+- name: Seed matching manifests to exercise actual cached-build reuse
+  ansible.builtin.copy:
+    dest: "{{ armbian_build_output_dir }}/{{ item }}/manifest.json"
+    content: "{{ lab_cached_manifest | to_nice_json }}\n"
+    owner: debian
+    group: debian
+    mode: "0644"
+  vars:
+    lab_cached_manifest:
+      board: "{{ hostvars[item].armbian_board_config.armbian_board_name }}"
+      host: "{{ item }}"
+      branch: "{{ hostvars[item].armbian_build.branch }}"
+      release: "{{ hostvars[item].armbian_build.release }}"
+      armbian_build_ref: "{{ hostvars[item].armbian_build.ref }}"
+      patch_hash: "sha256:{{ hostvars[item].armbian_build.userpatches | to_json(sort_keys=true) | hash('sha256') }}"
+      image_filename: Armbian_CACHED_FIXTURE.img.xz
+      built_at: lab-cache-seed
+  loop: "{{ groups['build_targets'] }}"
+  when: not lab_real_build | bool

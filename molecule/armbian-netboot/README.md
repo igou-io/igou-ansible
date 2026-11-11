@@ -11,8 +11,9 @@ follows those same lab entry points.
 
 ## Layout and execution order
 
-The top-level playbooks are the Molecule lifecycle entry points. Supporting
-playbooks contain plays with host targets; task files contain task lists.
+Each top-level lifecycle file imports `playbooks/<phase>/main.yml`. That file
+shows the phase's plays and production imports in execution order. Supporting
+playbooks and task lists use matching phase directories:
 
 ```text
 armbian-netboot/
@@ -23,49 +24,82 @@ armbian-netboot/
   verify.yml
   side_effect.yml
   destroy.yml
-  overrides.yml
   dependency.sh
+  overrides.yml
   inventory/
     hosts.yml
     group_vars/
   playbooks/
-    boot_matrix.yml
-    boot_transition.yml
-    datastore.yml
-    k3s_reimage.yml
-    k3s_verify.yml
-    ...
+    create/main.yml
+    prepare/
+      main.yml
+      builder.yml
+      pxe.yml
+    converge/
+      main.yml
+      boot_matrix.yml
+      datastore.yml
+      image_sd.yml
+      pin_refresh.yml
+      preserve.yml
+      refresh.yml
+    verify/
+      main.yml
+      k3s.yml
+      datastore.yml
+      update.yml
+    side_effect/
+      main.yml
+      worker_reimage.yml
+    destroy/main.yml
+    shared/
+      boot_transition.yml
+      router_transport.yml
   tasks/
     create/
     prepare/
     converge/
     verify/
     destroy/
-    boot_mode.yml
-    cluster_identity.yml
-    local_layout.yml
-    tftp_counters.yml
+    shared/
   files/
 ```
 
-Read `create.yml` and `prepare.yml` for infrastructure and fixture setup.
-`converge.yml` lists publication, staging, disk imaging, the boot matrix,
-preserved-data reprovisioning, ZFS and k3s installation in execution order.
-`verify.yml` checks outcomes, then `side_effect.yml` reimages the worker and
-updates each node before the second verification. `destroy.yml` removes
-owned resources and local state.
-
-`ansible.builtin.import_playbook` composes the multi-host workflows in
-`playbooks/` and the production repository playbooks. Lifecycle plays use
-`ansible.builtin.import_tasks` for task lists under `tasks/`. Reusable task
-includes remain task files, including `tasks/boot_mode.yml`, the virtual
-power-cycle implementation passed to the production playbook.
+Worker-reimage checks stay beside their operations in
+`playbooks/side_effect/worker_reimage.yml`.
+`ansible.builtin.import_playbook` composes plays; `ansible.builtin.import_tasks`
+and `include_tasks` load task lists. `shared/` holds only code used across
+phases: boot transitions, RouterOS transport, cluster identity, local disk
+layout and TFTP counters. `tasks/shared/boot_mode.yml` supplies the virtual
+power-cycle hook used by the production playbook.
 
 Host inputs and shared values live in `inventory/hosts.yml` and `group_vars/`.
 The repository's shared Molecule config loads `overrides.yml` as extra vars;
-its bootstrap inputs and virtual power-cycle hook must override values in
-the imported production plays. Fixture scripts and manifests stay in `files/`,
-resolved from `lab_scenario_directory` so nested imports use the same assets.
+its bootstrap inputs and virtual power-cycle hook override values in imported
+production plays. Fixture scripts and manifests stay in `files/`, resolved
+from `lab_scenario_directory`.
+
+## Phase responsibilities and assertions
+
+The default sequence is `dependency → syntax → create → prepare → converge →
+verify → side_effect → verify → destroy`.
+
+| Phase | What happens | What is tested |
+| --- | --- | --- |
+| `dependency` | `dependency.sh` installs root `requirements.yml`; an explicit `ARMBIAN_COLLECTION_SOURCE` optionally replaces only the production collection. | Dependency installation must succeed. This phase does not boot or exercise a board. |
+| `syntax` | Molecule parses `converge.yml` and its static imports with Ansible. | Playbook syntax and imported roles resolve. Repository lint additionally checks the other entry points. |
+| `create` | `playbooks/create/main.yml` checks the cluster/node, records ownership, creates the private UDN, imports the public provisioner and exposes the fixture HTTP Service. The CHR DataVolume points at the run-owned raw-image adapter. | Correct API/identity, exact five-host scope, Ready Casval, matching saved identity and refusal to adopt another run's network/Service. Guest services and firmware boot modes are checked later. |
+| `prepare` | `playbooks/prepare/main.yml` waits for Linux management connections, installs tools, configures private networking and prepares NFS/HTTP exports. It builds the frozen boot image, unpacks the public CHR archive, initializes RouterOS and configures DHCP/TFTP. It seeds both excluded filesystems and saves their hashes, then prepares Docker and cached builder manifests/images. | CHR reservation supplies each board's private address; required disks exist; image creation and fixture downloads succeed. The nonzero excluded-disk baselines and original kernel release are retained on the controller for later comparisons. These are fixture/readiness checks, not the firmware boot matrix. |
+| `converge` | `playbooks/converge/main.yml` invokes the lab's build/publication, staging, SD imaging, bootstrap, local provisioning and reprovisioning workflows. It firmware-boots both boards in all four modes, creates/exports/imports the ZFS datastore, installs k3s and deploys the test workload. | Cached publication/staging reuse, one shared download, force-refresh restoration, same-size PXE pin repair, exact SD image bytes, eight host/mode boot outcomes, CHR DHCP/TFTP evidence, running roots/kernels, preserved-data UUID/content and removal of the old root. ZFS member identities and original pool GUID/content are captured for later verification. |
+| First `verify` | `playbooks/verify/main.yml` checks the converged systems and calls the reusable cluster/datastore verifiers. | Five guests on Casval; all eight boot records; original excluded-disk hashes; local root/payload/fstab; kernel bytes and per-MAC pins served by CHR; automation-user sudo and SSH/root hardening; published manifests/images and distinct host keys; two intended Ready k3s nodes, pinned version and containerd; effective pod user namespaces, DNS/Service and cross-node payload integrity; original ZFS GUID/content, healthy mirrors, live dataset mounts and k3s mount dependencies. |
+| `side_effect` | `playbooks/side_effect/main.yml` fully reimages/rejoins the installed worker, then runs the production system update and local-kernel reboot for the control plane followed by the worker. | Before reinstall: old root/application state and data partition are gone, only the root partition remains, and stale Node/password registration is absent. After reinstall: a new node UID and recovered workload. After each update: a newer apt-owned running kernel, working kernel modules, recovered networking/workloads and retained healthy ZFS mounts/data/dependencies. |
+| Second `verify` | Runs the same `verify.yml` against the reimaged worker and updated nodes. | Repeats the steady-state assertions, including both original nonzero excluded-disk hashes, cluster workload and datastore integrity. Updated-kernel assertions already ran after each reboot in `side_effect`; the local-kernel boot records now describe those updated boots. |
+| `destroy` | `playbooks/destroy/main.yml` reads saved ownership, imports provisioner destroy and removes the owned private network/HTTP Service, credentials, baselines and caches. | Provisioner cleanup waits for managed guest/claim removal; consumer cleanup checks ownership and waits for the NAD to disappear. Full acceptance also repeats destroy and independently checks all captured PVs, run resources and local credentials/state are absent. |
+
+Converge and side effects contain checks that must run before the next operation
+replaces their evidence, such as cached payloads and the old worker identity.
+The two verify actions check the resulting systems. The builder seed belongs
+to prepare; converge starts with the production publication workflow.
 
 ## Run
 
@@ -194,7 +228,7 @@ includes `nfsv3`, required by the production pin's `nfsvers=3` root mount.
 
 ## DHCP and boot network
 
-`playbooks/pxe.yml` configures CHR's `lab-pxe` DHCP server on `ether2` only, with
+`playbooks/prepare/pxe.yml` configures CHR's `lab-pxe` DHCP server on `ether2` only, with
 MAC reservations from `inventory/hosts.yml`. Its `192.0.2.0/24` network advertises
 `next-server=192.0.2.1` and `boot-file-name=pxelinux.0`. The router serves the
 loader, matching Syslinux core, rendered per-MAC pins, kernels and initrds over
@@ -208,7 +242,7 @@ OS. The generated image stores its networkd DHCP policy in
 access. CHR does not provide management DHCP. The private lease advertises no
 default gateway, so initramfs
 cannot displace the management interface's internet/SSH route. The inputs live in
-the inventory and `playbooks/pxe.yml`, then are applied to the disposable router;
+the inventory and `playbooks/prepare/pxe.yml`, then are applied to the disposable router;
 production rb5009 configuration is never loaded.
 
 Successful mode transitions leave temporary evidence under

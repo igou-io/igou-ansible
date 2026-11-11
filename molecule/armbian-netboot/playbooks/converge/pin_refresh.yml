@@ -1,6 +1,6 @@
 ---
 - name: Render the initial NFS pins through the lab entry point
-  ansible.builtin.import_playbook: ../../../playbooks/armbian/converge_boot_mode.yaml
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/converge_boot_mode.yaml
   vars:
     armbian_boot_mode: nfs
 - name: Put another host's same-size pin at the first host's path
@@ -29,7 +29,7 @@
       ansible.builtin.assert:
         that: lab_stale_pin is changed
 - name: Repair the stale pin through the normal lab entry point
-  ansible.builtin.import_playbook: ../../../playbooks/armbian/converge_boot_mode.yaml
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/converge_boot_mode.yaml
   vars:
     armbian_boot_mode: nfs
 - name: Require the router to contain the correct host's pin before booting

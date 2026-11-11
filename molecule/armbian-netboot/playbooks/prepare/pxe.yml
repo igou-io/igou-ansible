@@ -1,6 +1,6 @@
 ---
 - name: Select the noninteractive RouterOS transport
-  ansible.builtin.import_playbook: router_transport.yml
+  ansible.builtin.import_playbook: ../shared/router_transport.yml
 - name: Configure RouterOS DHCP and the BIOS PXE loader
   hosts: routeros_netboot
   gather_facts: false
@@ -28,7 +28,7 @@
       loop: "{{ groups['boards'] }}"
       changed_when: true
     - name: Upload the PXE loader using the lab's normal RouterOS transport
-      ansible.builtin.include_tasks: ../../../playbooks/armbian/transport/upload_file.yml
+      ansible.builtin.include_tasks: ../../../../playbooks/armbian/transport/upload_file.yml
       vars:
         _upload_local_src: "{{ lab_ephemeral_directory }}/pxe/{{ item }}"
         _upload_remote_path: "{{ armbian_tftp_flash_dir }}/{{ item }}"

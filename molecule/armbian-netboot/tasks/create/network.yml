@@ -1,6 +1,6 @@
 ---
 - name: Check the cluster and identity
-  ansible.builtin.include_tasks: ../cluster_identity.yml
+  ansible.builtin.include_tasks: ../shared/cluster_identity.yml
 - name: Require the lab cluster and explicit test guests
   ansible.builtin.assert:
     that:

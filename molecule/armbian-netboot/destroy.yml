@@ -1,17 +1,3 @@
 ---
-- name: Remember the consumer resource identity before provisioner cleanup
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  tasks:
-    - name: Read the saved resource identity
-      ansible.builtin.import_tasks: tasks/destroy/identity.yml
-- name: Destroy only the provisioner's run-owned resources
-  ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
-- name: Remove the scenario's network after guest cleanup
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  tasks:
-    - name: Remove the owned network and local state
-      ansible.builtin.import_tasks: tasks/destroy/network.yml
+- name: Destroy the disposable test infrastructure
+  ansible.builtin.import_playbook: playbooks/destroy/main.yml

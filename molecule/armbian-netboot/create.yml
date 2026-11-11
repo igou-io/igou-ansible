@@ -1,24 +1,3 @@
 ---
-- name: Check the cluster and create the private guest network
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  tasks:
-    - name: Create the isolated guest network
-      ansible.builtin.import_tasks: tasks/create/network.yml
-- name: Adapt the public MikroTik ZIP for CDI's raw image importer
-  hosts: routeros_netboot
-  connection: local
-  gather_facts: false
-  tasks:
-    - name: Adapt the RouterOS image source
-      ansible.builtin.import_tasks: tasks/create/router_image.yml
-- name: Create guests using the public provisioner
-  ansible.builtin.import_playbook: david_igou.molecule_provisioners.create
-- name: Expose the raw-image fixture to CDI
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  tasks:
-    - name: Expose the fixture HTTP service
-      ansible.builtin.import_tasks: tasks/create/fixture_service.yml
+- name: Create the disposable test infrastructure
+  ansible.builtin.import_playbook: playbooks/create/main.yml

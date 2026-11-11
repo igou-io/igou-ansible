@@ -5,7 +5,7 @@
   gather_facts: false
   tasks:
     - name: Invoke the same SD imaging tasks as fleet_e2e
-      ansible.builtin.include_tasks: ../../../playbooks/armbian/tasks/image_sd.yml
+      ansible.builtin.include_tasks: ../../../../playbooks/armbian/tasks/image_sd.yml
     - name: Download an independent copy of the source image for comparison
       ansible.builtin.get_url:
         url: "{{ armbian_rootfs_src }}"
