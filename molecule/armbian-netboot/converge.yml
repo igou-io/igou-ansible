@@ -1,6 +1,6 @@
 ---
 - name: Prepare the cached or real image builder
-  ansible.builtin.import_playbook: prepare_builder.yml
+  ansible.builtin.import_playbook: playbooks/prepare_builder.yml
 - name: Exercise the lab's image-build and publication workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/build_and_publish.yaml
   vars:
@@ -11,17 +11,17 @@
     armbian_boards_group: build_targets
   when: not lab_real_build | bool
 - name: Configure the provisioned RouterOS transport
-  ansible.builtin.import_playbook: router_transport.yml
+  ansible.builtin.import_playbook: playbooks/router_transport.yml
 - name: Stage images and router assets through the lab workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/stage_netboot_assets.yaml
 - name: Exercise cached staging and forced refresh before booting the exports
-  ansible.builtin.import_playbook: refresh.yml
+  ansible.builtin.import_playbook: playbooks/refresh.yml
 - name: Exercise the SD imaging operation used by the lab fleet test
-  ansible.builtin.import_playbook: image_sd.yml
+  ansible.builtin.import_playbook: playbooks/image_sd.yml
 - name: Repair a same-size stale per-MAC PXE configuration
-  ansible.builtin.import_playbook: pin_refresh.yml
+  ansible.builtin.import_playbook: playbooks/pin_refresh.yml
 - name: Boot the staged NFS roots through the lab's mode and cycle entry points
-  ansible.builtin.import_playbook: boot_transition.yml
+  ansible.builtin.import_playbook: playbooks/boot_transition.yml
   vars:
     armbian_boot_mode: nfs
 - name: Bootstrap and harden the running NFS systems through the lab workflow
@@ -29,15 +29,15 @@
 - name: Provision local disks from the running NFS roots through the lab workflow
   ansible.builtin.import_playbook: ../../playbooks/armbian/provision_local_disk.yaml
 - name: Exercise every supported boot mode through firmware DHCP and PXE
-  ansible.builtin.import_playbook: boot.yml
+  ansible.builtin.import_playbook: playbooks/boot_matrix.yml
 - name: Exercise data preservation through repeated lab reprovisioning
-  ansible.builtin.import_playbook: preserve.yml
+  ansible.builtin.import_playbook: playbooks/preserve.yml
 - name: Return both boards to the declared local-kernel mode
-  ansible.builtin.import_playbook: boot_transition.yml
+  ansible.builtin.import_playbook: playbooks/boot_transition.yml
   vars:
     armbian_boot_mode: local_kernel
 - name: Prepare and reimport the control-plane datastore through the production workflow
-  ansible.builtin.import_playbook: datastore.yml
+  ansible.builtin.import_playbook: playbooks/datastore.yml
 - name: Install the two-node cluster through the production k3s playbook
   ansible.builtin.import_playbook: ../../playbooks/kubernetes/install-k3s-cluster.yml
   vars:
@@ -47,12 +47,5 @@
   become: true
   gather_facts: false
   tasks:
-    - name: Install the disposable cluster workload manifest
-      ansible.builtin.copy:
-        src: files/k3s-workload.yml
-        dest: /var/tmp/netboot-workload.yml
-        mode: "0644"
-    - name: Deploy the workload into the guest cluster only
-      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml apply -f /var/tmp/netboot-workload.yml
-      register: lab_workload_apply
-      changed_when: "'created' in lab_workload_apply.stdout or 'configured' in lab_workload_apply.stdout"
+    - name: Deploy the guest cluster workload
+      ansible.builtin.import_tasks: tasks/converge/workload.yml

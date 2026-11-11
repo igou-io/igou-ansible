@@ -2,7 +2,7 @@
 # The worker canary changes root-only -> preserved-data -> root-only layouts
 # across reprovision and full reimage. Both nodes retain the full boot matrix.
 - name: Reprovision through the lab workflow with a preserved application filesystem
-  ansible.builtin.import_playbook: ../../playbooks/armbian/reprovision_to_local.yaml
+  ansible.builtin.import_playbook: ../../../playbooks/armbian/reprovision_to_local.yaml
   vars:
     target_hosts: netboot-board-b
     armbian_local_disks:
@@ -34,7 +34,7 @@
         content: "This root must be replaced.\n"
         mode: "0600"
 - name: Repeat the lab reprovisioning workflow with the preserved filesystem
-  ansible.builtin.import_playbook: ../../playbooks/armbian/reprovision_to_local.yaml
+  ansible.builtin.import_playbook: ../../../playbooks/armbian/reprovision_to_local.yaml
   vars:
     target_hosts: netboot-board-b
     armbian_local_disks:
@@ -45,7 +45,7 @@
   gather_facts: false
   tasks:
     - name: Verify the preserved-data layout on the newly booted root
-      ansible.builtin.include_tasks: helpers/local_layout.yml
+      ansible.builtin.include_tasks: ../tasks/local_layout.yml
       vars:
         lab_expected_local_labels:
           - lab_preserved

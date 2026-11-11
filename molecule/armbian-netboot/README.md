@@ -9,6 +9,64 @@ The lab playbooks use collection roles and their own orchestration and RouterOS
 transport; they do not import the collection's published playbooks. This scenario
 follows those same lab entry points.
 
+## Layout and execution order
+
+The top-level playbooks are the Molecule lifecycle entry points. Supporting
+playbooks contain plays with host targets; task files contain task lists.
+
+```text
+armbian-netboot/
+  molecule.yml
+  create.yml
+  prepare.yml
+  converge.yml
+  verify.yml
+  side_effect.yml
+  destroy.yml
+  overrides.yml
+  dependency.sh
+  inventory/
+    hosts.yml
+    group_vars/
+  playbooks/
+    boot_matrix.yml
+    boot_transition.yml
+    datastore.yml
+    k3s_reimage.yml
+    k3s_verify.yml
+    ...
+  tasks/
+    create/
+    prepare/
+    converge/
+    verify/
+    destroy/
+    boot_mode.yml
+    cluster_identity.yml
+    local_layout.yml
+    tftp_counters.yml
+  files/
+```
+
+Read `create.yml` and `prepare.yml` for infrastructure and fixture setup.
+`converge.yml` lists publication, staging, disk imaging, the boot matrix,
+preserved-data reprovisioning, ZFS and k3s installation in execution order.
+`verify.yml` checks outcomes, then `side_effect.yml` reimages the worker and
+updates each node before the second verification. `destroy.yml` removes
+owned resources and local state.
+
+`ansible.builtin.import_playbook` composes the multi-host workflows in
+`playbooks/` and the production repository playbooks. Lifecycle plays use
+`ansible.builtin.import_tasks` for task lists under `tasks/`. Reusable task
+includes remain task files, including `tasks/boot_mode.yml`, the virtual
+power-cycle implementation passed to the production playbook.
+
+Host inputs and shared values live in `inventory/hosts.yml` and `group_vars/`.
+The repository's shared Molecule config loads `overrides.yml` as extra vars;
+its bootstrap inputs and virtual power-cycle hook must override values in
+the imported production plays. Fixture scripts and manifests stay in `files/`,
+resolved from `lab_scenario_directory` so nested imports use the same assets.
+
 ## Run
 
 Activate a local virtual environment containing `requirements-molecule.txt`.
@@ -136,7 +194,7 @@ includes `nfsv3`, required by the production pin's `nfsvers=3` root mount.
 
 ## DHCP and boot network
 
-`pxe.yml` configures CHR's `lab-pxe` DHCP server on `ether2` only, with
+`playbooks/pxe.yml` configures CHR's `lab-pxe` DHCP server on `ether2` only, with
 MAC reservations from `inventory/hosts.yml`. Its `192.0.2.0/24` network advertises
 `next-server=192.0.2.1` and `boot-file-name=pxelinux.0`. The router serves the
 loader, matching Syslinux core, rendered per-MAC pins, kernels and initrds over
@@ -150,7 +208,7 @@ OS. The generated image stores its networkd DHCP policy in
 access. CHR does not provide management DHCP. The private lease advertises no
 default gateway, so initramfs
 cannot displace the management interface's internet/SSH route. The inputs live in
-the inventory and `pxe.yml`, then are applied to the disposable router;
+the inventory and `playbooks/pxe.yml`, then are applied to the disposable router;
 production rb5009 configuration is never loaded.
 
 Successful mode transitions leave temporary evidence under

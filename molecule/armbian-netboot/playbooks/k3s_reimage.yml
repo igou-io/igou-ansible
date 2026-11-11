@@ -5,7 +5,7 @@
   gather_facts: false
   tasks:
     - name: Verify the preserved-data layout before destroying it
-      ansible.builtin.include_tasks: helpers/local_layout.yml
+      ansible.builtin.include_tasks: ../tasks/local_layout.yml
       vars:
         lab_expected_local_labels:
           - lab_preserved
@@ -31,7 +31,7 @@
       register: lab_worker_before_reimage
       changed_when: false
 - name: Exercise the production full-reimage workflow on the installed worker
-  ansible.builtin.import_playbook: ../../playbooks/armbian/full_reimage.yaml
+  ansible.builtin.import_playbook: ../../../playbooks/armbian/full_reimage.yaml
   vars:
     target_hosts: netboot-board-b
 - name: Verify full reimage replaced the root and removed the old data partition
@@ -40,7 +40,7 @@
   gather_facts: false
   tasks:
     - name: Require only the declared root partition after full reimage
-      ansible.builtin.include_tasks: helpers/local_layout.yml
+      ansible.builtin.include_tasks: ../tasks/local_layout.yml
       vars:
         lab_expected_local_labels:
           - armbi_root_local
@@ -80,7 +80,7 @@
           - lab_stale_password_name.stdout | trim | length == 0
         fail_msg: The full-reimage workflow left a stale worker registration in the guest cluster.
 - name: Reinstall the worker through the production k3s playbook
-  ansible.builtin.import_playbook: ../../playbooks/kubernetes/install-k3s-cluster.yml
+  ansible.builtin.import_playbook: ../../../playbooks/kubernetes/install-k3s-cluster.yml
   vars:
     ansible_limit: rk8s  # noqa: var-naming[read-only] -- repository caller target convention
 - name: Verify the existing workload recovers on the rejoined worker

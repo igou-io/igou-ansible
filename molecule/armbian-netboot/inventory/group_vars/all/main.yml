@@ -3,6 +3,7 @@ mp_backend: kubevirt
 mp_kubevirt_wait_timeout: 600
 lab_namespace: molecule
 lab_node: casval.igou.systems
+lab_scenario_directory: "{{ lookup('ansible.builtin.env', 'MOLECULE_SCENARIO_DIRECTORY') }}"
 lab_ephemeral_directory: "{{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
 lab_network: "armbian-{{ lab_ephemeral_directory | hash('sha1') | truncate(10, true, '') }}"
 lab_state: "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/kubevirt_run.yml', errors='ignore') | default('{}', true) | from_yaml }}"

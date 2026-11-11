@@ -1,0 +1,3 @@
+---
+trivial:
+  - Organized the Armbian Molecule scenario into lifecycle entry points, supporting playbooks and native task directories, preserving its operations and assertions (https://github.com/igou-io/igou-ansible/pull/658).

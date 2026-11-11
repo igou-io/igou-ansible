@@ -4,13 +4,8 @@
   connection: local
   gather_facts: false
   tasks:
-    - name: Check the cluster and identity before cleanup
-      ansible.builtin.include_tasks: helpers/cluster_identity.yml
-    - name: Read the saved network identity
-      ansible.builtin.set_fact:
-        lab_saved_network: >-
-          {{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/network.yml', errors='ignore')
-             | default('{}', true) | from_yaml }}
+    - name: Read the saved resource identity
+      ansible.builtin.import_tasks: tasks/destroy/identity.yml
 - name: Destroy only the provisioner's run-owned resources
   ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
 - name: Remove the scenario's network after guest cleanup
@@ -18,78 +13,5 @@
   connection: local
   gather_facts: false
   tasks:
-    - name: Inspect the recorded network before deleting it
-      kubernetes.core.k8s_info:
-        api_version: "{{ lab_saved_network.api_version }}"
-        kind: "{{ lab_saved_network.kind }}"
-        name: "{{ lab_saved_network.name }}"
-        namespace: "{{ lab_saved_network.namespace }}"
-      register: lab_existing_network
-      when: lab_saved_network | length > 0
-    - name: Require ownership of the recorded network
-      ansible.builtin.assert:
-        that: >-
-          lab_existing_network.resources | length == 0 or
-          lab_existing_network.resources[0].metadata.labels['armbian-molecule.igou.io/owner']
-          == lab_saved_network.owner
-      when: lab_saved_network | length > 0
-    - name: Remove the private test network
-      kubernetes.core.k8s:
-        api_version: "{{ lab_saved_network.api_version }}"
-        kind: "{{ lab_saved_network.kind }}"
-        name: "{{ lab_saved_network.name }}"
-        namespace: "{{ lab_saved_network.namespace }}"
-        state: absent
-        wait: true
-      when: lab_saved_network | length > 0
-    - name: Wait for the generated network attachment to disappear
-      kubernetes.core.k8s_info:
-        api_version: k8s.cni.cncf.io/v1
-        kind: NetworkAttachmentDefinition
-        name: "{{ lab_saved_network.name }}"
-        namespace: "{{ lab_saved_network.namespace }}"
-      register: lab_remaining_attachment
-      until: lab_remaining_attachment.resources | length == 0
-      retries: 30
-      delay: 2
-      when: lab_saved_network | length > 0
-    - name: Inspect the fixture HTTP service before deleting it
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Service
-        name: "{{ lab_saved_network.name }}"
-        namespace: "{{ lab_saved_network.namespace }}"
-      register: lab_existing_service
-      when: lab_saved_network | length > 0
-    - name: Require ownership of the fixture HTTP service
-      ansible.builtin.assert:
-        that: >-
-          lab_existing_service.resources | length == 0 or
-          lab_existing_service.resources[0].metadata.labels['armbian-molecule.igou.io/owner']
-          == lab_saved_network.owner
-      when: lab_saved_network | length > 0
-    - name: Remove the scenario's fixture HTTP service
-      kubernetes.core.k8s:
-        api_version: v1
-        kind: Service
-        name: "{{ lab_saved_network.name }}"
-        namespace: "{{ lab_saved_network.namespace }}"
-        state: absent
-        wait: true
-      when: lab_saved_network | length > 0
-    - name: Remove local consumer state only after resource cleanup
-      ansible.builtin.file:
-        path: "{{ lab_ephemeral_directory }}/{{ item }}"
-        state: absent
-      loop:
-        - publish
-        - tftp
-        - pxe
-        - boot-evidence
-        - fixture-kernel-release
-        - datastore-guid
-        - router-password
-        - bootstrap-password
-        - network.yml
-        - netboot-board-a-untouched.sha256
-        - netboot-board-b-untouched.sha256
+    - name: Remove the owned network and local state
+      ansible.builtin.import_tasks: tasks/destroy/network.yml

@@ -4,9 +4,9 @@
   gather_facts: false
   tasks:
     - name: Resolve board metadata
-      ansible.builtin.include_tasks: ../../playbooks/armbian/tasks/_resolve_board_config.yml
+      ansible.builtin.include_tasks: ../../../playbooks/armbian/tasks/_resolve_board_config.yml
     - name: Resolve build metadata
-      ansible.builtin.include_tasks: ../../playbooks/armbian/tasks/_resolve_build_profile.yml
+      ansible.builtin.include_tasks: ../../../playbooks/armbian/tasks/_resolve_build_profile.yml
 - name: Prepare the cached or real image builder
   hosts: armbian_builders
   become: true

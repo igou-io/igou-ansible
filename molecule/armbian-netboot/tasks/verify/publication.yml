@@ -1,0 +1,18 @@
+---
+- name: Read each staged public host-key fingerprint
+  ansible.builtin.command: "ssh-keygen -lf {{ armbian_nfs_rootfs_path }}/{{ item }}/etc/ssh/ssh_host_ed25519_key.pub"
+  loop: "{{ groups['boards'] }}"
+  register: lab_fingerprints
+  changed_when: false
+- name: Require different SSH identities for hosts sharing the same image
+  ansible.builtin.assert:
+    that: lab_fingerprints.results | map(attribute='stdout') | unique | list | length == 2
+- name: Count HTTP image-download requests
+  ansible.builtin.command: cat /var/log/nginx/armbian-access.log
+  register: lab_http_log
+  changed_when: false
+- name: Require the shared staging download to have happened
+  ansible.builtin.assert:
+    that: >-
+      lab_http_log.stdout | regex_findall(lab_image_request_pattern)
+      | length > 0

@@ -31,7 +31,7 @@
       ansible.builtin.set_fact:
         zfs_pool_devices: "{{ lab_datastore_ids.results | map(attribute='stdout') | list }}"
 - name: Create the disposable two-mirror datastore through the production playbook
-  ansible.builtin.import_playbook: ../../playbooks/kubernetes/prepare-k3s-datastore.yml
+  ansible.builtin.import_playbook: ../../../playbooks/kubernetes/prepare-k3s-datastore.yml
   vars:
     ansible_limit: rk8s_control_plane  # noqa: var-naming[read-only] -- repository caller target convention
     zfs_pool_wipe: true
@@ -71,7 +71,7 @@
         path: /etc/zfs/zpool.cache
         state: absent
 - name: Import existing datastore members without permission to create a pool
-  ansible.builtin.import_playbook: ../../playbooks/kubernetes/prepare-k3s-datastore.yml
+  ansible.builtin.import_playbook: ../../../playbooks/kubernetes/prepare-k3s-datastore.yml
   vars:
     ansible_limit: rk8s_control_plane  # noqa: var-naming[read-only] -- repository caller target convention
     zfs_pool_wipe: false
