@@ -1,0 +1,18 @@
+---
+- name: Use the native RouterOS transport with provisioner-discovered endpoints
+  hosts: routeros_netboot
+  gather_facts: false
+  tasks:
+    - name: Select network_cli without replacing runtime host and port information
+      ansible.builtin.set_fact:
+        ansible_connection: ansible.netcommon.network_cli
+        ansible_network_os: community.routeros.routeros
+        ansible_user: lab-netboot+cet1024w
+        ansible_password: "{{ lab_router_password_lookup }}"
+        ansible_ssh_private_key_file: ""
+        ansible_private_key_file: ""
+        ansible_network_cli_ssh_type: libssh
+        ansible_libssh_look_for_keys: false
+      no_log: true
+    - name: Discard any earlier SSH transport session
+      ansible.builtin.meta: reset_connection

@@ -1,0 +1,22 @@
+---
+dependency:
+  command: bash ${MOLECULE_PROJECT_DIRECTORY}/molecule/armbian-netboot/dependency.sh
+ansible:
+  playbooks:
+    create: create.yml
+    prepare: prepare.yml
+    destroy: destroy.yml
+scenario:
+  # These workflows image disks and reboot machines. Cached publication/staging
+  # and preserved-data reprovisioning have explicit functional reuse assertions;
+  # running all of converge again as an idempotence action would reimage k3s.
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - verify
+    - side_effect
+    - verify
+    - destroy

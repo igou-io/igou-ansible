@@ -1,0 +1,26 @@
+---
+- name: Check the cluster and identity before verification
+  ansible.builtin.include_tasks: ../shared/cluster_identity.yml
+- name: Inspect this run's virtual machines
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    namespace: "{{ lab_namespace }}"
+    label_selectors:
+      - "molecule-provisioners.igou.io/run-id={{ lab_state.id }}"
+  register: lab_vmis
+- name: Require all five guests to run on casval
+  ansible.builtin.assert:
+    that:
+      - lab_vmis.resources | length == 5
+      - lab_vmis.resources | map(attribute='status.nodeName') | unique | list == [lab_node]
+- name: Require successful firmware-boot evidence for every host and mode
+  ansible.builtin.assert:
+    that:
+      - lab_evidence.mode == item.1
+      - lab_evidence.dhcp == 'bound|' ~ hostvars[item.0].lab_address
+      - lab_evidence.boot_id | length > 0
+    fail_msg: "Missing successful DHCP/PXE boot for {{ item.0 }} in {{ item.1 }} mode."
+  vars:
+    lab_evidence: "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/boot-evidence/' ~ item.0 ~ '-' ~ item.1 ~ '.yml') | from_yaml }}"
+  loop: "{{ groups['boards'] | product(['nfs', 'sd', 'local', 'local_kernel']) | list }}"

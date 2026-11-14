@@ -1,0 +1,54 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netboot-check
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: netboot-check
+  namespace: netboot-check
+spec:
+  selector:
+    matchLabels:
+      app: netboot-check
+  template:
+    metadata:
+      labels:
+        app: netboot-check
+    spec:
+      hostUsers: false
+      containers:
+        - name: http
+          image: docker.io/library/busybox:1.37.0
+          command:
+            - sh
+            - -ec
+            - |
+              mkdir -p /www
+              hostname > /www/index.html
+              head -c 262144 /dev/zero | tr '\000' x > /www/payload
+              exec httpd -f -p 8080 -h /www
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netboot-check
+  namespace: netboot-check
+spec:
+  selector:
+    app: netboot-check
+  ports:
+    - port: 8080
+      targetPort: 8080

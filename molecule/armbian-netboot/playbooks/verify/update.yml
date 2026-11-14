@@ -1,0 +1,10 @@
+---
+- name: Verify the OS update advanced the apt-managed running kernel
+  hosts: "{{ lab_updated_hosts | default('none') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify the updated apt-owned running kernel
+      ansible.builtin.import_tasks: ../../tasks/verify/update.yml
+- name: Verify the k3s workload after the rolling system update
+  ansible.builtin.import_playbook: k3s.yml

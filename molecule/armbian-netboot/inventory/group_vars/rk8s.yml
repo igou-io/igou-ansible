@@ -1,0 +1,37 @@
+---
+cluster_name: molecule-armbian
+k3s_publish_kubeconfig: false
+k3s_become: true
+k3s_become_for_all: true
+k3s_install_hard_links: true
+k3s_release_version: "{{ lab_os.k3s }}"
+k3s_registration_address: "{{ hostvars['netboot-board-a'].lab_address }}"
+k3s_server:
+  node-name: "{{ inventory_hostname }}"
+  node-ip: "{{ lab_address }}"
+  advertise-address: "{{ lab_address }}"
+  flannel-iface: enp2s0
+  cluster-cidr: 10.74.0.0/16
+  service-cidr: 10.75.0.0/16
+  write-kubeconfig-mode: "600"
+  disable:
+    - traefik
+    - servicelb
+  kubelet-arg:
+    - feature-gates=UserNamespacesSupport=true
+  kube-controller-manager-arg:
+    - feature-gates=UserNamespacesSupport=true
+  kube-proxy-arg:
+    - feature-gates=UserNamespacesSupport=true
+  kube-scheduler-arg:
+    - feature-gates=UserNamespacesSupport=true
+  kube-apiserver-arg:
+    - feature-gates=UserNamespacesSupport=true
+k3s_agent:
+  node-name: "{{ inventory_hostname }}"
+  node-ip: "{{ lab_address }}"
+  flannel-iface: enp2s0
+  kubelet-arg:
+    - feature-gates=UserNamespacesSupport=true
+  kube-proxy-arg:
+    - feature-gates=UserNamespacesSupport=true

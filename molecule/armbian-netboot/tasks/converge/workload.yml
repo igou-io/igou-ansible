@@ -1,0 +1,10 @@
+---
+- name: Install the disposable cluster workload manifest
+  ansible.builtin.copy:
+    src: "{{ lab_scenario_directory }}/files/k3s-workload.yml"
+    dest: /var/tmp/netboot-workload.yml
+    mode: "0644"
+- name: Deploy the workload into the guest cluster only
+  ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml apply -f /var/tmp/netboot-workload.yml
+  register: lab_workload_apply
+  changed_when: "'created' in lab_workload_apply.stdout or 'configured' in lab_workload_apply.stdout"

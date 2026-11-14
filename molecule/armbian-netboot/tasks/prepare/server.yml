@@ -1,0 +1,107 @@
+---
+- name: Format the disposable export disk
+  community.general.filesystem:
+    dev: /dev/vdc
+    fstype: ext4
+    state: present
+- name: Mount the export disk
+  ansible.posix.mount:
+    path: /srv/netboot
+    src: /dev/vdc
+    fstype: ext4
+    state: mounted
+- name: Install the fixture server packages
+  ansible.builtin.apt:
+    name:
+      - nfs-kernel-server
+      - nginx
+      - linux-image-amd64
+      - initramfs-tools
+      - busybox
+      - debootstrap
+      - unzip
+      - pxelinux
+      - syslinux-common
+    state: present
+- name: Create the fixture directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /etc/exports.d
+    - /srv/netboot/rootfs
+    - /srv/netboot/boot-files/images
+    - /srv/netboot/cache
+    - /srv/netboot/tftp
+- name: Serve only this test's NFS root filesystems
+  ansible.builtin.copy:
+    dest: /etc/exports.d/armbian-lab.exports
+    content: "/srv/netboot/rootfs 192.0.2.0/24(rw,sync,no_subtree_check,no_root_squash)\n"
+    mode: "0644"
+- name: Activate the exports
+  ansible.builtin.command: exportfs -ra
+  changed_when: true
+- name: Configure the fixture HTTP server
+  ansible.builtin.copy:
+    dest: /etc/nginx/sites-enabled/default
+    content: |
+      server {
+        listen 8080;
+        root /srv/netboot;
+        autoindex on;
+        access_log /var/log/nginx/armbian-access.log;
+      }
+    mode: "0644"
+- name: Start the NFS and HTTP services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: restarted
+    enabled: true
+  loop:
+    - nfs-server
+    - nginx
+- name: Download the pinned CHR archive
+  ansible.builtin.get_url:
+    url: "{{ hostvars['netboot-router'].mp.kubevirt.boot_source.url }}"
+    checksum: "sha256:{{ hostvars['netboot-router'].lab_os.archive_sha256 }}"
+    dest: "/srv/netboot/chr-{{ hostvars['netboot-router'].lab_os.release }}.img.zip"
+    mode: "0644"
+- name: Unpack CHR before CDI imports it as a raw disk
+  ansible.builtin.unarchive:
+    src: "/srv/netboot/chr-{{ hostvars['netboot-router'].lab_os.release }}.img.zip"
+    dest: /srv/netboot
+    remote_src: true
+    creates: "/srv/netboot/chr-{{ hostvars['netboot-router'].lab_os.release }}.img"
+- name: Fetch the BIOS PXE loader and its matching Syslinux core
+  ansible.builtin.fetch:
+    src: "{{ item.src }}"
+    dest: "{{ lab_ephemeral_directory }}/pxe/{{ item.name }}"
+    flat: true
+  loop:
+    - name: pxelinux.0
+      src: /usr/lib/PXELINUX/pxelinux.0
+    - name: ldlinux.c32
+      src: /usr/lib/syslinux/modules/bios/ldlinux.c32
+- name: Create an executable miniature disk-image fixture
+  block:
+    - name: Run the virtual-board image builder with generated credentials
+      ansible.builtin.script: "{{ lab_scenario_directory }}/files/make_fixture.sh"
+      environment:
+        LAB_BOOTSTRAP_KEY: "{{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/identity_file.pub') }}"
+        LAB_BOOTSTRAP_PASSWORD: "{{ lab_bootstrap_password_lookup }}"
+        LAB_DEBIAN_SNAPSHOT: "{{ hostvars[groups['boards'][0]].lab_os.fixture_snapshot }}"
+      args:
+        creates: /srv/netboot/fixture.img.xz
+      no_log: true
+  rescue:
+    - name: Report the fixture failure with credentials redacted
+      ansible.builtin.fail:
+        msg: >-
+          {{ ((ansible_failed_result.stdout | default('')) ~ (ansible_failed_result.stderr | default('')))
+             | replace(lab_bootstrap_password_lookup, '[redacted]') }}
+- name: Retain the original kernel version for boot and update assertions
+  ansible.builtin.fetch:
+    src: /srv/netboot/fixture-kernel-release
+    dest: "{{ lab_ephemeral_directory }}/fixture-kernel-release"
+    flat: true

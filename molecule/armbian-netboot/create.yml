@@ -1,0 +1,3 @@
+---
+- name: Create the disposable test infrastructure
+  ansible.builtin.import_playbook: playbooks/create/main.yml

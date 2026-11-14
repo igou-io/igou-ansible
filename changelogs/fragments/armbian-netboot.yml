@@ -1,0 +1,24 @@
+---
+minor_changes:
+  - Seeded an excluded filesystem with application data so off-target zeroing and signature wipes are detectable.
+  - >-
+    Added one Casval KubeVirt scenario exercising the lab's Armbian build/publication,
+    staging and refresh, SD imaging, bootstrap, provisioning, boot-mode, reprovision and full-reimage operations
+    (https://github.com/igou-io/igou-ansible/pull/658).
+  - Shared the lab fleet test's SD imaging task with the operations scenario.
+  - >-
+    Exercised firmware DHCP/PXE for NFS, SD, local-root and local-kernel modes,
+    k3s installation and worker re-registration, and rolling OS/kernel updates
+    in the same disposable operations scenario.
+  - Recorded fixture OS releases, image sources and k3s versions in the scenario inventory.
+  - Exercised the control-plane ZFS datastore's creation, import and kernel-update recovery, plus k3s pod user namespaces.
+bugfixes:
+  - ZFS installation refreshed a newly enabled backports repository before selecting packages through its existing source-package pin.
+  - k3s prerequisite installation refreshed package indexes on fresh images with an empty apt-list directory.
+  - Armbian boot waits honored inventory SSH ports, including the full-reimage path.
+  - Full reimage honored the existing configurable power-cycle transport hook.
+  - Full reimage skipped Kubernetes cleanup when disabled or when the target was outside rk8s.
+  - Armbian publication honored inventory SSH private keys and allowed an isolated controller staging directory.
+  - RouterOS uploads retried with a fresh persistent connection after exhausted SCP retries.
+  - Per-MAC PXE pins converged changed content even when the file size stayed the same.
+  - Molecule reinstalled pinned collection content even when SCM revisions shared a Galaxy version.

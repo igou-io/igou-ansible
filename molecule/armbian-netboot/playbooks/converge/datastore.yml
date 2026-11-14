@@ -1,0 +1,77 @@
+---
+- name: Discover stable identities for the dedicated datastore disks
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Resolve each disposable SCSI disk's by-id link
+      ansible.builtin.command:
+        argv:
+          - find
+          - -L
+          - /dev/disk/by-id
+          - -samefile
+          - "{{ item }}"
+          - -print
+          - -quit
+      loop:
+        - /dev/sda
+        - /dev/sdb
+        - /dev/sdc
+        - /dev/sdd
+      register: lab_datastore_ids
+      changed_when: false
+    - name: Require four distinct by-id paths before allowing pool creation
+      ansible.builtin.assert:
+        that:
+          - lab_datastore_ids.results | map(attribute='stdout') | unique | list | length == 4
+          - lab_datastore_ids.results | map(attribute='stdout') | select('match', '^/dev/disk/by-id/') | list | length == 4
+        fail_msg: The four dedicated datastore disks must have distinct persistent identities.
+    - name: Supply the discovered member identities to the production role
+      ansible.builtin.set_fact:
+        zfs_pool_devices: "{{ lab_datastore_ids.results | map(attribute='stdout') | list }}"
+- name: Create the disposable two-mirror datastore through the production playbook
+  ansible.builtin.import_playbook: ../../../../playbooks/kubernetes/prepare-k3s-datastore.yml
+  vars:
+    ansible_limit: rk8s_control_plane  # noqa: var-naming[read-only] -- repository caller target convention
+    zfs_pool_wipe: true
+- name: Preserve datastore identity and content across pool export
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Record the original pool GUID
+      ansible.builtin.command: zpool get -H -o value guid rk8s
+      register: lab_datastore_guid
+      changed_when: false
+    - name: Keep the original pool identity on the controller across Molecule phases
+      ansible.builtin.copy:
+        dest: "{{ lab_ephemeral_directory }}/datastore-guid"
+        content: "{{ lab_datastore_guid.stdout }}\n"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+    - name: Write a marker into the datastore before import recovery
+      ansible.builtin.copy:
+        dest: /var/lib/rancher/k3s/lab-retained
+        content: "datastore survives import and kernel updates\n"
+        mode: "0644"
+    - name: Unmount the nested datastore datasets before export
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - var-lib-rancher-k3s-server-db.mount
+        - var-lib-rancher-k3s.mount
+    - name: Export the disposable pool to exercise adoption of existing member drives
+      ansible.builtin.command: zpool export rk8s
+      changed_when: true
+    - name: Remove the root filesystem's import cache
+      ansible.builtin.file:
+        path: /etc/zfs/zpool.cache
+        state: absent
+- name: Import existing datastore members without permission to create a pool
+  ansible.builtin.import_playbook: ../../../../playbooks/kubernetes/prepare-k3s-datastore.yml
+  vars:
+    ansible_limit: rk8s_control_plane  # noqa: var-naming[read-only] -- repository caller target convention
+    zfs_pool_wipe: false

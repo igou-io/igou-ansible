@@ -1,0 +1,8 @@
+---
+- name: Verify the control-plane datastore after installation and reboots
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify retained ZFS data and service dependencies
+      ansible.builtin.import_tasks: ../../tasks/verify/datastore.yml

@@ -14,7 +14,7 @@
     - name: "Wait for board TCP/22 — {{ _phase_label ~ ' attempt ' ~ _attempt_num }}"
       ansible.builtin.wait_for:
         host: "{{ ansible_host | default(inventory_hostname) }}"
-        port: 22
+        port: "{{ ansible_port | default(22) }}"
         timeout: "{{ armbian_boot_attempt_timeout | default(180) }}"
         state: started
       delegate_to: localhost

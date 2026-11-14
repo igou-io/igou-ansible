@@ -1,0 +1,9 @@
+---
+- name: Resolve the published SD image source
+  ansible.builtin.include_tasks: _resolve_rootfs_src.yml
+- name: Write the SD image
+  ansible.builtin.include_role:
+    name: david_igou.armbian.disk_image
+  vars:
+    disk_image_source: "{{ armbian_rootfs_src }}"
+    disk_image_target_device: "{{ armbian_sd_device | default('/dev/mmcblk0') }}"
