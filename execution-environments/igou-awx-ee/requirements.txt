@@ -1,7 +1,7 @@
 ncclient==0.7.1
-paramiko==5.0.0
+paramiko==5.1.0
 pykerberos==1.2.4
-distlib==0.4.3
+distlib==0.4.4
 dnspython==2.9.2
 pyOpenSSL==26.4.0
 pypsrp[kerberos,credssp]==0.9.1
