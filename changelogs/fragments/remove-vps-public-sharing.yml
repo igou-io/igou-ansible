@@ -1,0 +1,5 @@
+---
+removed_features:
+  - public-share - removed the VPS public sharing playbooks, task files, filter plugin, and backend example; the feature was never released.
+security_fixes:
+  - bootstrap-vps - replaced the public management-port denylist with explicit TCP/UDP listener allowlists before k3s NAT.
