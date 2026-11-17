@@ -1,0 +1,5 @@
+---
+removed_features:
+  - public-share - removed the VPS public sharing playbooks, task files, filter plugin, and backend example; the feature was never released (https://github.com/igou-io/igou-ansible/pull/670).
+security_fixes:
+  - bootstrap-vps - replaced the public management-port denylist with explicit TCP/UDP listener allowlists before k3s NAT.
