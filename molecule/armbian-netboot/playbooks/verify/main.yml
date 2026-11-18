@@ -1,0 +1,25 @@
+---
+# Run after converge and again after side effects to check the surviving systems.
+- name: Verify guest placement and resource ownership
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Verify guest placement and boot evidence
+      ansible.builtin.import_tasks: ../../tasks/verify/placement.yml
+- name: Verify actual network delivery, storage, and authentication
+  hosts: boards
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify network delivery, storage and authentication
+      ansible.builtin.import_tasks: ../../tasks/verify/boards.yml
+- name: Verify per-host identities and shared-download behavior
+  hosts: netboot_server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify host identities and shared downloads
+      ansible.builtin.import_tasks: ../../tasks/verify/publication.yml
+- name: Verify the installed guest k3s cluster and its workloads
+  ansible.builtin.import_playbook: k3s.yml

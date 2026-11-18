@@ -1,0 +1,12 @@
+---
+- name: Read the board-specific PXE configuration and kernel transfer counts
+  community.routeros.command:
+    commands:
+      - ':put [/ip tftp get [find req-filename="pxelinux.0"] hits]'
+      - ':put [/ip tftp get [find real-filename="{{ armbian_tftp_flash_dir }}/pxelinux.cfg/01-{{ armbian_board_mac | lower | replace(":", "-") }}"] hits]'
+      - ':put [/ip tftp get [find req-filename="armbian/{{ inventory_hostname }}/vmlinuz"] hits]'
+      - ':put [/ip tftp get [find req-filename="armbian/{{ inventory_hostname }}/initrd.img"] hits]'
+  delegate_to: "{{ armbian_router }}"
+  become: false
+  register: lab_tftp_counters
+  changed_when: false

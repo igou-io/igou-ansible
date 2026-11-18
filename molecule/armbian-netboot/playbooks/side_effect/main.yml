@@ -1,0 +1,32 @@
+---
+# Reimage the worker, then update each node and require recovery before continuing.
+- name: Configure RouterOS for the rolling system-update boots
+  ansible.builtin.import_playbook: ../shared/router_transport.yml
+- name: Reimage the installed worker and prove clean k3s re-registration
+  ansible.builtin.import_playbook: worker_reimage.yml
+- name: Update OS packages on the control plane through the lab playbook
+  ansible.builtin.import_playbook: ../../../../playbooks/system-update.yaml
+  vars:
+    ansible_limit: netboot-board-a  # noqa: var-naming[read-only] -- target this imported play only
+- name: Boot the updated control-plane kernel from local disk
+  ansible.builtin.import_playbook: ../shared/boot_transition.yml
+  vars:
+    target_hosts: netboot-board-a
+    armbian_boot_mode: local_kernel
+- name: Verify the updated control plane and surviving cluster
+  ansible.builtin.import_playbook: ../verify/update.yml
+  vars:
+    lab_updated_hosts: netboot-board-a
+- name: Update OS packages on the worker through the lab playbook
+  ansible.builtin.import_playbook: ../../../../playbooks/system-update.yaml
+  vars:
+    ansible_limit: netboot-board-b  # noqa: var-naming[read-only] -- target this imported play only
+- name: Boot the updated worker kernel from local disk
+  ansible.builtin.import_playbook: ../shared/boot_transition.yml
+  vars:
+    target_hosts: netboot-board-b
+    armbian_boot_mode: local_kernel
+- name: Verify both updated kernels and the recovered cluster
+  ansible.builtin.import_playbook: ../verify/update.yml
+  vars:
+    lab_updated_hosts: boards

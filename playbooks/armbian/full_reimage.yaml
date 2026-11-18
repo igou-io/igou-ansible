@@ -60,14 +60,16 @@
 - name: Cold-cycle into the fresh NFS rootfs (port check only — no automation user yet)
   hosts: _reimage_board
   gather_facts: false
+  vars:
+    armbian_boot_mode: nfs
   tasks:
     - name: PoE cycle the board
-      ansible.builtin.include_tasks: transport/poe_cycle.yml
+      ansible.builtin.include_tasks: "{{ armbian_poe_cycle_tasks_file | default('transport/poe_cycle.yml') }}"
 
     - name: Wait for TCP/22 on the fresh rootfs
       ansible.builtin.wait_for:
         host: "{{ ansible_host | default(inventory_hostname) }}"
-        port: 22
+        port: "{{ ansible_port | default(22) }}"
         delay: 30
         timeout: 420
       delegate_to: localhost
@@ -105,7 +107,10 @@
       loop:
         - "k3s kubectl delete node {{ target_hosts }} --ignore-not-found"
         - "k3s kubectl --namespace kube-system delete secret {{ target_hosts }}.node-password.k3s --ignore-not-found"
-      delegate_to: "{{ _k3s_master }}"
+      delegate_to: "{{ _k3s_master | default('localhost', true) }}"
       become: true
       changed_when: true
-      when: _k3s_master | default('') | length > 0
+      when:
+        - full_reimage_k3s_cleanup | default(true) | bool
+        - target_hosts in (groups['rk8s'] | default([]))
+        - _k3s_master | default('') | length > 0

@@ -1,0 +1,136 @@
+---
+- name: Mount the staged rootfs for independent network-delivery verification
+  ansible.posix.mount:
+    path: /mnt/netboot-source
+    src: "{{ lab_server_address }}:{{ armbian_nfs_rootfs_path }}/{{ inventory_hostname }}"
+    fstype: nfs
+    opts: vers=3,rw,nolock
+    state: ephemeral
+- name: Hash the excluded disk after the operational workflows
+  ansible.builtin.command: sha256sum /dev/vde
+  register: lab_untouched_after
+  changed_when: false
+- name: Require the excluded data disk to match its prepared filesystem baseline
+  ansible.builtin.assert:
+    that: lab_untouched_after.stdout == lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/' ~ inventory_hostname ~ '-untouched.sha256')
+    fail_msg: >-
+      {{ inventory_hostname }} excluded disk changed:
+      expected={{ lookup('ansible.builtin.file', lab_ephemeral_directory ~ '/' ~ inventory_hostname ~ '-untouched.sha256') }},
+      observed={{ lab_untouched_after.stdout }}
+- name: Read the source of the running root filesystem
+  ansible.builtin.command: findmnt -n -o SOURCE /
+  register: lab_running_root
+  changed_when: false
+- name: Require the provisioned local disk to be the running system
+  ansible.builtin.assert:
+    that: lab_running_root.stdout is match('^/dev/vdd[0-9]+$')
+- name: Read the image payload from the running system
+  ansible.builtin.command: cat /root/payload
+  register: lab_local_payload
+  changed_when: false
+- name: Require usable data on the target filesystem
+  ansible.builtin.assert:
+    that: lab_local_payload.stdout == 'fixture payload'
+- name: Validate the mount table in the system that actually booted
+  ansible.builtin.command: findmnt --verify --tab-file /etc/fstab
+  changed_when: false
+- name: Fetch actual kernel bytes from the test router
+  throttle: 1
+  ansible.builtin.command:
+    argv:
+      - timeout
+      - "300"
+      - tftp
+      - -m
+      - binary
+      - "{{ lab_router_address }}"
+      - -c
+      - get
+      - "armbian/{{ inventory_hostname }}/vmlinuz"
+      - /var/tmp/router-vmlinuz
+  changed_when: false
+- name: Compare the TFTP response to the staged NFS kernel
+  ansible.builtin.shell: cmp /var/tmp/router-vmlinuz /mnt/netboot-source/boot/vmlinuz-*
+  changed_when: false
+- name: Fetch the actual per-MAC boot configuration
+  ansible.builtin.command:
+    argv:
+      - timeout
+      - "60"
+      - tftp
+      - "{{ lab_router_address }}"
+      - -c
+      - get
+      - "pxelinux.cfg/01-{{ armbian_board_mac | lower | replace(':', '-') }}"
+      - /var/tmp/router-pxelinux
+  changed_when: false
+- name: Read the configuration that a boot client receives
+  ansible.builtin.slurp:
+    src: /var/tmp/router-pxelinux
+  register: lab_received_pxe
+- name: Require this host's mode, NFS root and assets in the custom boot format
+  ansible.builtin.assert:
+    that:
+      - "('default ' ~ armbian_boot_mode) in (lab_received_pxe.content | b64decode)"
+      - "('rootfs/' ~ inventory_hostname) in (lab_received_pxe.content | b64decode)"
+      - "('armbian/' ~ inventory_hostname ~ '/vmlinuz') in (lab_received_pxe.content | b64decode)"
+- name: Verify automation-user authentication and passwordless privilege escalation
+  ansible.builtin.command: sudo -n id -u
+  become: false
+  vars:
+    ansible_user: "{{ armbian_bootstrap_user }}"
+  register: lab_sudo
+  changed_when: false
+- name: Require root privileges through the newly bootstrapped account
+  ansible.builtin.assert:
+    that: lab_sudo.stdout == '0'
+- name: Query sshd's effective password-authentication setting
+  ansible.builtin.command: sshd -T
+  register: lab_password_authentication
+  changed_when: false
+- name: Require password authentication to be disabled
+  ansible.builtin.assert:
+    that:
+      - "'passwordauthentication no' in lab_password_authentication.stdout_lines"
+      - "'permitrootlogin no' in lab_password_authentication.stdout_lines"
+- name: Read the root account's lock status without exposing its hash
+  ansible.builtin.command: passwd -S root
+  register: lab_root_status
+  changed_when: false
+- name: Require the lab's root-account hardening
+  ansible.builtin.assert:
+    that: lab_root_status.stdout.split()[1] == 'L'
+- name: Fetch the manifest published through the builder and controller
+  ansible.builtin.uri:
+    url: "{{ armbian_assets_base_url }}/images/{{ inventory_hostname }}/manifest.json"
+    return_content: true
+  register: lab_published_manifest
+  when: inventory_hostname in groups['build_targets']
+- name: Require the cached build to retain its original manifest
+  ansible.builtin.assert:
+    that: lab_published_manifest.json.built_at == 'lab-cache-seed'
+  when:
+    - inventory_hostname in groups['build_targets']
+    - not lab_real_build | bool
+- name: Hash the original fixture for publication verification
+  ansible.builtin.stat:
+    path: /srv/netboot/fixture.img.xz
+    checksum_algorithm: sha256
+  delegate_to: netboot-server
+  register: lab_fixture_digest
+  when: inventory_hostname in groups['build_targets']
+- name: Download the published image and verify its cached-mode checksum
+  ansible.builtin.get_url:
+    url: "{{ armbian_assets_base_url }}/images/{{ inventory_hostname }}/{{ lab_published_manifest.json.image_filename }}"
+    dest: /var/tmp/published.img.xz
+    checksum: "{{ omit if lab_real_build else 'sha256:' ~ lab_fixture_digest.stat.checksum }}"
+    mode: "0644"
+  when: inventory_hostname in groups['build_targets']
+- name: Validate the published compressed image
+  ansible.builtin.command: xz -t /var/tmp/published.img.xz
+  changed_when: false
+  when: inventory_hostname in groups['build_targets']
+- name: Release the verification mount before later forced reprovisioning
+  ansible.posix.mount:
+    path: /mnt/netboot-source
+    state: unmounted

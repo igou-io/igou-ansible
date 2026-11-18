@@ -67,9 +67,15 @@
           - --delete
           - --mkpath
           - --rsh
-          - "ssh -p {{ hostvars[inventory_hostname].ansible_port | default(22) }} -o StrictHostKeyChecking=accept-new"
+          - >-
+            ssh -p {{ hostvars[inventory_hostname].ansible_port | default(22) }}
+            {% if hostvars[inventory_hostname].ansible_ssh_private_key_file | default('') | length > 0 %}
+            -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file | quote }}
+            {% endif %}
+            {{ hostvars[inventory_hostname].ansible_ssh_common_args | default('') }}
+            -o StrictHostKeyChecking=accept-new
           - "{{ hostvars[inventory_hostname].ansible_user | default('igou') }}@{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ armbian_build_output_dir }}/{{ item }}/"
-          - "/tmp/armbian_publish/{{ item }}/"
+          - "{{ armbian_publish_staging_dir | default('/tmp/armbian_publish') }}/{{ item }}/"
       delegate_to: localhost
       connection: local
       changed_when: true
@@ -91,8 +97,14 @@
           - --mkpath
           - --rsync-path=sudo rsync
           - --rsh
-          - "ssh -p {{ hostvars[inventory_hostname].ansible_port | default(22) }} -o StrictHostKeyChecking=accept-new"
-          - "/tmp/armbian_publish/{{ item }}/"
+          - >-
+            ssh -p {{ hostvars[inventory_hostname].ansible_port | default(22) }}
+            {% if hostvars[inventory_hostname].ansible_ssh_private_key_file | default('') | length > 0 %}
+            -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file | quote }}
+            {% endif %}
+            {{ hostvars[inventory_hostname].ansible_ssh_common_args | default('') }}
+            -o StrictHostKeyChecking=accept-new
+          - "{{ armbian_publish_staging_dir | default('/tmp/armbian_publish') }}/{{ item }}/"
           - "{{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ armbian_nfs_assets_export }}/images/{{ item }}/"
       delegate_to: localhost
       connection: local

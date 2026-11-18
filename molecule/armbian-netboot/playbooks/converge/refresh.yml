@@ -1,0 +1,58 @@
+---
+- name: Modify staged content to exercise cache and force-refresh behavior
+  hosts: netboot_server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require both staged hosts to consume the intended published image
+      ansible.builtin.assert:
+        that: >-
+          groups['boards'] | map('extract', hostvars, 'armbian_rootfs_src') | unique | list
+          == [lab_stage_image_url]
+    - name: Read the source server's request log before forced refresh
+      ansible.builtin.command: cat /var/log/nginx/armbian-access.log
+      register: lab_initial_downloads
+      changed_when: false
+    - name: Require one image download shared by both staged hosts
+      ansible.builtin.assert:
+        that: >-
+          lab_initial_downloads.stdout
+          | regex_findall(lab_image_request_pattern) | length == 1
+    - name: Change the staged payload without changing its source
+      ansible.builtin.copy:
+        dest: "{{ armbian_nfs_rootfs_path }}/{{ item }}/root/payload"
+        content: "cache-preservation-check\n"
+        mode: "0644"
+      loop: "{{ groups['boards'] }}"
+- name: Repeat staging without a forced extraction
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/stage_netboot_assets.yaml
+- name: Verify that the matching sentinel preserved the existing rootfs
+  hosts: netboot_server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read each existing payload
+      ansible.builtin.command: "cat {{ armbian_nfs_rootfs_path }}/{{ item }}/root/payload"
+      loop: "{{ groups['boards'] }}"
+      register: lab_cached_payloads
+      changed_when: false
+    - name: Require sentinel-based extraction skipping
+      ansible.builtin.assert:
+        that: lab_cached_payloads.results | map(attribute='stdout') | unique | list == ['cache-preservation-check']
+- name: Force extraction from the original image
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/stage_netboot_assets.yaml
+  vars:
+    armbian_force_refresh: true
+- name: Verify that forced refresh restored the source payload
+  hosts: netboot_server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read each refreshed payload
+      ansible.builtin.command: "cat {{ armbian_nfs_rootfs_path }}/{{ item }}/root/payload"
+      loop: "{{ groups['boards'] }}"
+      register: lab_refreshed_payloads
+      changed_when: false
+    - name: Require the original image content after forced refresh
+      ansible.builtin.assert:
+        that: lab_refreshed_payloads.results | map(attribute='stdout') | unique | list == ['fixture payload']

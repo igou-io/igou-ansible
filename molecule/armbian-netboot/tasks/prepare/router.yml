@@ -1,0 +1,91 @@
+---
+- name: Wait for RouterOS SSH
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: "{{ ansible_port }}"
+    timeout: 300
+- name: Check whether this run already initialized RouterOS
+  ansible.builtin.command:
+    argv:
+      - sshpass
+      - -e
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - PreferredAuthentications=password
+      - -o
+      - PubkeyAuthentication=no
+      - -p
+      - "{{ ansible_port | string }}"
+      - "admin@{{ ansible_host }}"
+      - ':put "lab-ready"'
+  environment:
+    SSHPASS: "{{ lab_router_password_lookup }}"
+  register: lab_router_initialized
+  changed_when: false
+  failed_when: lab_router_initialized.rc not in [0, 5, 255]
+  no_log: true
+- name: Initialize the factory admin credential through native SSH
+  ansible.builtin.command:
+    argv:
+      - sshpass
+      - -p
+      - ""
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - PreferredAuthentications=password
+      - -o
+      - PubkeyAuthentication=no
+      - -p
+      - "{{ ansible_port | string }}"
+      - "admin@{{ ansible_host }}"
+      - '/user set admin password="{{ lab_router_password_lookup }}"'
+  register: lab_router_bootstrap
+  retries: 12
+  delay: 5
+  until: lab_router_bootstrap.rc == 0
+  changed_when: true
+  no_log: true
+  when: lab_router_initialized.rc != 0
+- name: Configure private networking and a non-expired test account
+  ansible.builtin.command:
+    argv:
+      - sshpass
+      - -e
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - PreferredAuthentications=password
+      - -o
+      - PubkeyAuthentication=no
+      - -p
+      - "{{ ansible_port | string }}"
+      - "admin@{{ ansible_host }}"
+      - >-
+        :if ([:len [/ip address find interface=ether2]] = 0)
+        do={/ip address add address=192.0.2.1/24 interface=ether2};
+        :if ([:len [/file find name="sbc"]] = 0) do={/file add name=sbc type=directory};
+        /ip service set ftp disabled=no;
+        :if ([:len [/user find name="lab-netboot"]] = 0)
+        do={/user add name=lab-netboot group=full password="{{ lab_router_password_lookup }}"}
+  environment:
+    SSHPASS: "{{ lab_router_password_lookup }}"
+  changed_when: true
+  no_log: true
+- name: Set the RouterOS transport for subsequent plays
+  ansible.builtin.set_fact:
+    ansible_connection: ansible.netcommon.network_cli
+    ansible_network_os: community.routeros.routeros
+    ansible_user: lab-netboot
+    ansible_password: "{{ lab_router_password_lookup }}"
+  no_log: true

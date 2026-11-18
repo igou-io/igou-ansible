@@ -1,0 +1,15 @@
+---
+- name: Read the actual local disk partition labels
+  ansible.builtin.command: lsblk --json --output NAME,LABEL /dev/vdd
+  register: lab_disk_layout
+  changed_when: false
+- name: Read the root mounted by the running system
+  ansible.builtin.command: findmnt -n -o SOURCE /
+  register: lab_layout_root
+  changed_when: false
+- name: Require the declared partition layout and running root
+  ansible.builtin.assert:
+    that:
+      - (lab_disk_layout.stdout | from_json).blockdevices[0].children | map(attribute='label') | list == lab_expected_local_labels
+      - lab_layout_root.stdout == lab_expected_local_root
+    fail_msg: "{{ inventory_hostname }} root={{ lab_layout_root.stdout }}, layout={{ lab_disk_layout.stdout }}"

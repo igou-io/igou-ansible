@@ -1,0 +1,3 @@
+---
+- name: Reimage the worker and apply rolling updates
+  ansible.builtin.import_playbook: playbooks/side_effect/main.yml

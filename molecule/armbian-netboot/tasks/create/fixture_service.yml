@@ -1,0 +1,32 @@
+---
+- name: Inspect a pre-existing fixture HTTP service
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Service
+    name: "{{ lab_network }}"
+    namespace: "{{ lab_namespace }}"
+  register: lab_previous_service
+- name: Refuse to adopt a fixture service owned by another run
+  ansible.builtin.assert:
+    that: >-
+      lab_previous_service.resources | length == 0 or
+      lab_previous_service.resources[0].metadata.labels['armbian-molecule.igou.io/owner']
+      | default('') == (lab_ephemeral_directory | hash('sha1'))
+- name: Expose the run's fixture HTTP server to CDI importers
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ lab_network }}"
+        namespace: "{{ lab_namespace }}"
+        labels:
+          armbian-molecule.igou.io/owner: "{{ lab_ephemeral_directory | hash('sha1') }}"
+      spec:
+        selector:
+          kubevirt.io/domain: "{{ lab_state.hosts['netboot-server'].name }}"
+        ports:
+          - name: http
+            port: 8080
+            targetPort: 8080

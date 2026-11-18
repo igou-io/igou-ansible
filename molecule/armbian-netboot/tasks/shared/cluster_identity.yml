@@ -1,0 +1,18 @@
+---
+- name: Verify the selected API server
+  ansible.builtin.command: oc whoami --show-server
+  register: lab_server
+  changed_when: false
+- name: Verify the selected identity
+  ansible.builtin.command: oc whoami
+  register: lab_identity
+  changed_when: false
+- name: Require the intended cluster and test namespace
+  ansible.builtin.assert:
+    that:
+      - lab_server.stdout == 'https://api.ocp.igou.systems:6443'
+      - lab_identity.stdout | length > 0
+      - lab_namespace == 'molecule'
+      - lab_node == 'casval.igou.systems'
+      - lab_ephemeral_directory | length > 1
+      - lab_ephemeral_directory.startswith('/')

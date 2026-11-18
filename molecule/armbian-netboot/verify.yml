@@ -1,0 +1,3 @@
+---
+- name: Verify booted systems, publication, storage and k3s
+  ansible.builtin.import_playbook: playbooks/verify/main.yml

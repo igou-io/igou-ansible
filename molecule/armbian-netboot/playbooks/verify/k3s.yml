@@ -1,0 +1,10 @@
+---
+- name: Verify the installed guest cluster and cross-node workload
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify the guest cluster and workload
+      ansible.builtin.import_tasks: ../../tasks/verify/k3s.yml
+- name: Verify the ZFS datastore used by the running control plane
+  ansible.builtin.import_playbook: datastore.yml

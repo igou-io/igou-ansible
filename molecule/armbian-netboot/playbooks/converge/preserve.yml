@@ -1,0 +1,78 @@
+---
+# The worker canary changes root-only -> preserved-data -> root-only layouts
+# across reprovision and full reimage. Both nodes retain the full boot matrix.
+- name: Reprovision through the lab workflow with a preserved application filesystem
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/reprovision_to_local.yaml
+  vars:
+    target_hosts: netboot-board-b
+    armbian_local_disks:
+      - "{{ lab_preserved_binding }}"
+- name: Write application state on the booted local system
+  hosts: netboot-board-b
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require the application filesystem to be mounted separately
+      ansible.builtin.command: findmnt -n -o SOURCE --mountpoint /var/lib/lab-data
+      register: lab_data_mount
+      changed_when: false
+    - name: Require the preserved partition on the disposable local disk
+      ansible.builtin.assert:
+        that: lab_data_mount.stdout == '/dev/vdd1'
+    - name: Record the preserved filesystem identity
+      ansible.builtin.command: findmnt -n -o UUID --mountpoint /var/lib/lab-data
+      register: lab_preserved_uuid
+      changed_when: false
+    - name: Store state that must survive another reprovision
+      ansible.builtin.copy:
+        dest: /var/lib/lab-data/application-state
+        content: "{{ inventory_hostname }}\n"
+        mode: "0644"
+    - name: Mark the old root with state that must be removed
+      ansible.builtin.copy:
+        dest: /root/netboot-old-root
+        content: "This root must be replaced.\n"
+        mode: "0600"
+- name: Repeat the lab reprovisioning workflow with the preserved filesystem
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/reprovision_to_local.yaml
+  vars:
+    target_hosts: netboot-board-b
+    armbian_local_disks:
+      - "{{ lab_preserved_binding }}"
+- name: Verify application state in the newly booted local systems
+  hosts: netboot-board-b
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify the preserved-data layout on the newly booted root
+      ansible.builtin.include_tasks: ../../tasks/shared/local_layout.yml
+      vars:
+        lab_expected_local_labels:
+          - lab_preserved
+          - armbi_root_local
+        lab_expected_local_root: /dev/vdd2
+    - name: Check that old root-only state was removed
+      ansible.builtin.stat:
+        path: /root/netboot-old-root
+      register: lab_old_root_marker
+    - name: Read the retained filesystem identity
+      ansible.builtin.command: findmnt -n -o UUID --mountpoint /var/lib/lab-data
+      register: lab_preserved_uuid_after
+      changed_when: false
+    - name: Read retained application state from its normal mountpoint
+      ansible.builtin.command: cat /var/lib/lab-data/application-state
+      register: lab_preserved_state
+      changed_when: false
+    - name: Require each board's application data to survive the full workflow
+      ansible.builtin.assert:
+        that:
+          - lab_preserved_state.stdout == inventory_hostname
+          - lab_preserved_uuid.stdout | length > 0
+          - lab_preserved_uuid_after.stdout == lab_preserved_uuid.stdout
+          - not lab_old_root_marker.stat.exists
+        fail_msg: >-
+          {{ inventory_hostname }} reprovision result:
+          old_root_marker={{ lab_old_root_marker.stat.exists }},
+          data_uuid_before={{ lab_preserved_uuid.stdout }},
+          data_uuid_after={{ lab_preserved_uuid_after.stdout }},
+          application_state={{ lab_preserved_state.stdout }}

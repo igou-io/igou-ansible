@@ -1,0 +1,3 @@
+---
+# An empty overlay opts these hosts into builds; all inputs live in all/main.yml.
+armbian_build_host: {}

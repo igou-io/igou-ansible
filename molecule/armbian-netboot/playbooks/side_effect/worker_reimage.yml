@@ -1,0 +1,102 @@
+---
+- name: Mark the installed worker's root before full reimage
+  hosts: netboot-board-b
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify the preserved-data layout before destroying it
+      ansible.builtin.include_tasks: ../../tasks/shared/local_layout.yml
+      vars:
+        lab_expected_local_labels:
+          - lab_preserved
+          - armbi_root_local
+        lab_expected_local_root: /dev/vdd2
+    - name: Require the earlier application state to exist before reimage
+      ansible.builtin.command: cat /var/lib/lab-data/application-state
+      register: lab_pre_reimage_data
+      changed_when: false
+      failed_when: lab_pre_reimage_data.stdout != inventory_hostname
+    - name: Mark root-only state that a fresh image must remove
+      ansible.builtin.copy:
+        dest: /root/netboot-old-root
+        content: "This root must be replaced.\n"
+        mode: "0600"
+- name: Remember the installed worker's Kubernetes identity
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the original worker UID
+      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml get node netboot-board-b -o jsonpath={.metadata.uid}
+      register: lab_worker_before_reimage
+      changed_when: false
+- name: Exercise the production full-reimage workflow on the installed worker
+  ansible.builtin.import_playbook: ../../../../playbooks/armbian/full_reimage.yaml
+  vars:
+    target_hosts: netboot-board-b
+- name: Verify full reimage replaced the root and removed the old data partition
+  hosts: netboot-board-b
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require only the declared root partition after full reimage
+      ansible.builtin.include_tasks: ../../tasks/shared/local_layout.yml
+      vars:
+        lab_expected_local_labels:
+          - armbi_root_local
+        lab_expected_local_root: /dev/vdd1
+    - name: Inspect state left from the old root and data filesystems
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /root/netboot-old-root
+        - /var/lib/lab-data/application-state
+      register: lab_reimage_markers
+    - name: Require root-only and application state to be absent after full reimage
+      ansible.builtin.assert:
+        that: lab_reimage_markers.results | selectattr('stat.exists') | list | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} retained old filesystem state:
+          {{ lab_reimage_markers.results | selectattr('stat.exists') | map(attribute='item') | list }}
+- name: Verify the production workflow removed the stale worker identity
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the surviving cluster nodes
+      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml get nodes -o json
+      register: lab_surviving_nodes
+      changed_when: false
+    - name: Read only the stale password Secret's name if it remains
+      ansible.builtin.command: >-
+        k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml get secret
+        netboot-board-b.node-password.k3s --namespace kube-system --ignore-not-found -o name
+      register: lab_stale_password_name
+      changed_when: false
+    - name: Require the old node and password registration to be gone
+      ansible.builtin.assert:
+        that:
+          - (lab_surviving_nodes.stdout | from_json)['items'] | map(attribute='metadata.name') | list == ['netboot-board-a']
+          - lab_stale_password_name.stdout | trim | length == 0
+        fail_msg: The full-reimage workflow left a stale worker registration in the guest cluster.
+- name: Reinstall the worker through the production k3s playbook
+  ansible.builtin.import_playbook: ../../../../playbooks/kubernetes/install-k3s-cluster.yml
+  vars:
+    ansible_limit: rk8s  # noqa: var-naming[read-only] -- repository caller target convention
+- name: Verify the existing workload recovers on the rejoined worker
+  ansible.builtin.import_playbook: ../verify/k3s.yml
+- name: Verify the worker received a new Kubernetes identity
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the rejoined worker UID
+      ansible.builtin.command: k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml get node netboot-board-b -o jsonpath={.metadata.uid}
+      register: lab_worker_after_reimage
+      changed_when: false
+    - name: Require successful registration as a new node
+      ansible.builtin.assert:
+        that:
+          - lab_worker_after_reimage.stdout | length > 0
+          - lab_worker_after_reimage.stdout != lab_worker_before_reimage.stdout
+        fail_msg: The reimaged worker did not register with a new node UID.
