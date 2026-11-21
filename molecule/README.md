@@ -60,15 +60,13 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | `windows-image-build` | Build, generalize, clone, boot, and guest management connection. |
 | `grafana-kiosk` | Browser/kiosk deployment and dashboard navigation against a small HTTP fixture. |
 | `upsmonitor` | NUT packages and configuration, running exporters, and host metrics without attached UPSes. |
-| `ghapp` | Separate credentialed GitHub App client/broker integration. |
 
 No Molecule scenario enrolls Tailscale. The Kubernetes scenarios do not install GitOps or applications. The k3s and VPS
 scenarios also exercise the focused upgrade path, with upgrade and recovery checks
 in each scenario's own `side_effect.yml`; kubeadm stops at installation and
 API/node health.
 The devenv file round trip does not verify S3 transport. `upsmonitor` does not
-claim live USB UPS or device telemetry coverage. `ghapp` requires its existing
-integration credential profile.
+claim live USB UPS or device telemetry coverage.
 `linux-maintenance` verifies the post-reboot result; its repeat-run check is
 omitted because the upstream hardening role changes system-account shells on
 a second pass.
