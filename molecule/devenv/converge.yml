@@ -17,7 +17,7 @@
         mode: '0755'
 - name: Deploy the production devenv
   ansible.builtin.import_playbook: ../../playbooks/devenv/bootstrap.yml
-- name: Wait for the devcontainer's editor to finish starting
+- name: Wait for the devcontainer's T3 service to finish starting
   hosts: devenv
   gather_facts: false
   tasks:
@@ -32,10 +32,9 @@
           - >-
             (molecule_devenv_boot_before.stdout != molecule_devenv_boot_after.stdout)
             == (devenv_os_reboot.changed | default(false))
-    - name: Require code-server to answer locally
+    - name: Require T3 Code to answer locally
       ansible.builtin.uri:
-        url: https://localhost:8080/
-        validate_certs: false
+        url: http://localhost:3773/
         status_code: 200
       register: molecule_devenv_editor
       retries: 24

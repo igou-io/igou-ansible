@@ -60,18 +60,21 @@
       ansible.builtin.assert:
         that:
           - molecule_devenv_container.stdout == 'true'
-    - name: Request the externally reachable editor login page
-      ansible.builtin.uri:
-        url: https://{{ mp_kubevirt_endpoints['code-server'].host }}:{{ mp_kubevirt_endpoints['code-server'].port }}/
-        validate_certs: false
-        return_content: true
-      delegate_to: localhost
-      register: molecule_devenv_editor
-    - name: Require authenticated editor access
+    - name: Inspect the running devcontainer release
+      community.docker.docker_container_info:
+        name: igou-devenv
+      register: molecule_devenv_release
+    - name: Require the pinned release and expected source revision
       ansible.builtin.assert:
         that:
-          - "'code-server login' in molecule_devenv_editor.content"
-          - "'name=\"password\"' in molecule_devenv_editor.content"
+          - molecule_devenv_release.container.Config.Image == devenv_image
+          - molecule_devenv_release.container.Config.Labels['org.opencontainers.image.revision'] == devenv_expected_image_revision
+        fail_msg: The running devcontainer does not match the pinned devenv release.
+    - name: Request the externally reachable T3 service
+      ansible.builtin.uri:
+        url: http://{{ mp_kubevirt_endpoints['t3'].host }}:{{ mp_kubevirt_endpoints['t3'].port }}/
+        status_code: 200
+      delegate_to: localhost
     - name: Require the T3 service to answer
       ansible.builtin.uri:
         url: http://127.0.0.1:3773/

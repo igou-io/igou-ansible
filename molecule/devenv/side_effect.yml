@@ -5,12 +5,12 @@
   tasks:
     - name: Ensure the synthetic agent state directory exists
       ansible.builtin.file:
-        path: /home/igou/.claude-container
+        path: /home/igou/.codex
         state: directory
         mode: '0700'
     - name: Write the state to be backed up
       ansible.builtin.copy:
-        dest: /home/igou/.claude-container/molecule-state.json
+        dest: /home/igou/.codex/molecule-state.json
         content: '{"marker":"before-backup"}'
         mode: '0600'
 
@@ -38,7 +38,7 @@
   tasks:
     - name: Write the different pre-restore state
       ansible.builtin.copy:
-        dest: /home/igou/.claude-container/molecule-state.json
+        dest: /home/igou/.codex/molecule-state.json
         content: '{"marker":"before-restore"}'
         mode: '0600'
 
@@ -53,8 +53,8 @@
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
-        - /home/igou/.claude-container
-        - /home/igou/.claude-container/molecule-state.json
+        - /home/igou/.codex
+        - /home/igou/.codex/molecule-state.json
       register: devenv_molecule_state_stat
     - name: Require the restored directory and marker to remain private
       ansible.builtin.assert:
@@ -65,7 +65,7 @@
           - devenv_molecule_state_stat.results[1].stat.mode == '0600'
     - name: Read the restored state from the host
       ansible.builtin.slurp:
-        src: /home/igou/.claude-container/molecule-state.json
+        src: /home/igou/.codex/molecule-state.json
       register: devenv_molecule_restored_state
     - name: Require the archived state to be restored
       ansible.builtin.assert:
@@ -78,7 +78,7 @@
           - exec
           - igou-devenv
           - cat
-          - /home/igou/.claude/molecule-state.json
+          - /home/igou/.codex/molecule-state.json
       register: devenv_molecule_container_state
       changed_when: false
       retries: 24
@@ -94,7 +94,7 @@
           - tar
           - xOzf
           - /home/igou/.devenv-pre-restore.tar.gz
-          - .claude-container/molecule-state.json
+          - .codex/molecule-state.json
       register: devenv_molecule_rollback_state
       changed_when: false
     - name: Require the rollback archive to contain the displaced state

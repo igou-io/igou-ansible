@@ -12,10 +12,10 @@
 # targeted explicitly via `-e ansible_limit=<host>`; its
 # devcontainer layout maps the same way.)
 #
-# Container<->host path mapping: the devcontainer binds host ~/.claude-container
-# -> container ~/.claude, and host ~/workspace -> container /workspace. This
+# Container<->host path mapping: the devcontainer binds host ~/.codex
+# -> container ~/.codex, and host ~/workspace -> container /workspace. This
 # play SSHes to the HOST, so it archives the HOST-side bind sources (e.g.
-# .claude-container, workspace/scratch), NOT the in-container paths.
+# .codex, workspace/scratch), NOT the in-container paths.
 #
 # HOT backup by design: nothing is quiesced. The state is dotfiles and
 # session scratch, so a crash-consistent snapshot is fine and the agents
@@ -40,7 +40,7 @@
     devenv_backup_home: /home/igou
     devenv_backup_paths: # host-side, relative to devenv_backup_home
       - .claude.json
-      - .claude-container # host-side bind source of the container's ~/.claude (the primary agent state)
+      - .claude-container # legacy host-side bind source of the container's ~/.claude
       - .claude # the host's own native claude state, if any
       - .tmux.conf
       - .codex
@@ -49,7 +49,7 @@
       - .local/share/opencode # durable opencode data (bind-mounted into the container)
       - workspace/scratch # host-side bind source of the devcontainer's /workspace/scratch
     devenv_backup_required_paths: # absent => wrong host/unprovisioned home => fail
-      - .claude-container
+      - .codex
     # Real agent state is tens of MB; an implausibly small tarball means the
     # home was empty or wrong - fail rather than upload garbage.
     devenv_backup_min_bytes: 10485760
