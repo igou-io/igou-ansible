@@ -373,6 +373,18 @@
         path: "{{ ansible_user_dir }}/.config/ghapp"
         state: absent
 
+    - name: Remove the retired ghapp CLI virtualenv and its PATH links
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /opt/ghapp
+        - /usr/local/bin/ghapp
+        - /usr/local/bin/gh-app
+        - /usr/local/bin/git-app
+        - /usr/local/bin/git-credential-ghapp
+      become: true
+
     # ------------------------------------------------------------------
     # Write the operator's ~/.ssh/config on the host user. Like the git identity
     # above, this mirrors a david_igou.devhost.host_prep task (its "Write SSH
