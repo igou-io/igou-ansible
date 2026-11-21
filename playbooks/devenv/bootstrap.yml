@@ -7,8 +7,7 @@
 #
 # Targets the `devenv` inventory group (github.com/igou-io/igou-inventory):
 # every devenv VM is added to that group and converged against the real
-# inventory, so its per-host connection details (ansible_host) and the ghapp
-# GitHub App wiring (group_vars/devenv/ghapp.yml — 1Password lookups) attach
+# inventory, so its per-host connection details (ansible_host) attach
 # automatically. `ansible_limit` still narrows the run to a single host when
 # passed (AAP limit field or `--limit`); it defaults to the whole `devenv`
 # group. The play connects as remote_user igou (ansible.cfg) with the
@@ -58,20 +57,6 @@
     # Native VS Code policy: wait ten days before automatic extension updates.
     devenv_editor_extension_delay_hours: 240
     devenv_editor_policy_file: /etc/vscode/policy.json
-
-    # GitHub App policy and credential lookups come from the devenv inventory.
-    #
-    # Key source note (implemented in group_vars): the op lookups resolve on the
-    # ANSIBLE CONTROLLER (the devcontainer or the AAP EE, both of which have op
-    # + 1P auth) and the PEM is written 0600 to ~/.config/ghapp/key.pem on the
-    # host via ghapp_client_private_key_content. We deliberately do NOT use
-    # private_key_cmd (`op read`) on the host: even with the 1Password CLI now
-    # installed (full toolset), the host has no 1P credential of its own (no
-    # Connect token / service account), so an on-host `op read` would have
-    # nothing to authenticate with — and seeding one would just move a
-    # long-lived secret onto the box, which is what ghapp exists to avoid.
-    # In-container we DO use private_key_cmd, because the devcontainer already
-    # has op auth bind-mounted (see igou-devenv).
 
   pre_tasks:
     - name: Wait for the VM's SSH to come up
@@ -272,17 +257,6 @@
   roles:
     - role: david_igou.devhost.docker
     - role: david_igou.devhost.packages
-    - role: david_igou.devhost.ghapp
-      when: devenv_ghapp_enabled | bool
-      # No vars: block. The role reads its parameters (ghapp_client_id,
-      # ghapp_client_app_slug, ghapp_client_installations,
-      # ghapp_client_private_key_content, ghapp_client_enabled, ghapp_client_user,
-      # ghapp_package_git_ref) straight from the inventory group_vars/devenv/
-      # ghapp.yml — validated by the role's argument_specs. Keeping them out of
-      # the play is deliberate: play/role vars outrank group_vars, so setting
-      # them here would shadow the inventory. Override at launch with extra vars
-      # (-e ghapp_client_id=...), which win over both.
-
     # Prometheus node_exporter as a host systemd service (downloads the binary,
     # creates a system user + hardened unit, enables the service) so the devenv
     # VM's host metrics are scrapeable — mirrors playbooks/linux/node_exporter.yaml.
@@ -362,8 +336,8 @@
     # host_prep_git_* vars from group_vars/devenv/gitconfig.yml. Applied before
     # the clones so any commit made afterwards — on the box or in the
     # devcontainer that inherits the bind-mounted ~/.gitconfig — is attributed
-    # correctly. The ghapp role supplies the credential helper; this supplies the
-    # author identity.
+    # correctly, and makes the gh CLI login (~/.config/gh, shared with the
+    # devcontainer via a bind mount) the HTTPS credential helper for github.com.
     # ------------------------------------------------------------------
     - name: Set global git user.name
       community.general.git_config:
@@ -378,6 +352,26 @@
         scope: global
         value: "{{ host_prep_git_user_email }}"
       when: host_prep_git_user_email | default('') | length > 0
+
+    - name: Use the gh CLI login as the github.com credential helper
+      # Replaces the retired ghapp helper. PATH-resolved so the same read-only
+      # ~/.gitconfig also works inside the devcontainer (gh in /usr/local/bin).
+      # The login itself is interactive: run `gh auth login` once on a new VM.
+      community.general.git_config:
+        name: credential.https://github.com.helper
+        scope: global
+        value: "!gh auth git-credential"
+
+    - name: Drop the ghapp-only useHttpPath setting
+      community.general.git_config:
+        name: credential.https://github.com.useHttpPath
+        scope: global
+        state: absent
+
+    - name: Remove the retired ghapp client config and App private key
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.config/ghapp"
+        state: absent
 
     # ------------------------------------------------------------------
     # Write the operator's ~/.ssh/config on the host user. Like the git identity
@@ -451,11 +445,10 @@
       # pinned, automation-owned repo is igou-devenv, cloned above at a tag.
       # update:false → an existing clone is left exactly as-is (work-in-progress
       # safety); only missing repos are cloned. Runs as the igou user over HTTPS,
-      # so the ghapp git credential helper mints App tokens for private repos in
-      # the selected set; public repos clone anonymously. GIT_TERMINAL_PROMPT=0
-      # makes a repo the App can't mint for (private + unselected, or an org the
-      # App isn't installed on) fail fast instead of hanging on a credential
-      # prompt. ignore_errors keeps the play going — unreachable repos are
+      # so private repos use the gh login once the operator has run
+      # `gh auth login`; public repos clone anonymously. GIT_TERMINAL_PROMPT=0
+      # makes a private repo fail fast instead of hanging on a credential
+      # prompt (e.g. on a fresh VM before the first login). ignore_errors keeps the play going — unreachable repos are
       # summarized below, not fatal.
       ansible.builtin.git:
         repo: "{{ item }}"
@@ -470,13 +463,13 @@
       ignore_errors: true
 
     - name: Summarize any workspace repos that could not be cloned
-      # Fail soft: these are almost always private repos outside the ghapp App's
-      # selected set, or orgs the App isn't installed on (e.g. third-party). The
-      # operator can add them by hand; the rest of the play proceeds.
+      # Fail soft: these are almost always private repos cloned before the
+      # operator's first `gh auth login`. Re-run the play (or clone by hand)
+      # after logging in; the rest of the play proceeds.
       ansible.builtin.debug:
         msg: >-
-          Skipped (clone failed — private repo outside the ghapp App's selected
-          set, or an org the App isn't installed on):
+          Skipped (clone failed — private repo; run `gh auth login` on the
+          host, then re-run):
           {{ devenv_workspace_clone.results
              | selectattr('failed', 'defined') | selectattr('failed')
              | map(attribute='item') | list }}
@@ -506,23 +499,17 @@
     # missing host mount source (including an empty ~/.config/op), the full
     # runArgs set applies (--privileged --network=host, /dev, fuse/tun — so
     # bwrap/agent sandboxes work with no seccomp override), post-create seeds
-    # the dotfiles (.bashrc with ght/GHAPP_CONFIG), and post-start brings up
+    # the dotfiles (.bashrc), and post-start brings up
     # the container-local ssh-agent, dbus/libvirt, and an always-on
     # code-server (0.0.0.0:8080, HTTPS self-signed, password auth — the
     # config persists on the host via the ~/.config/code-server mount).
     #
     # The image is NOT built on the VM: like the repo's `make up-release`,
     # jq derives an image-based config from the canonical devcontainer.json
-    # (del(.build) + .image = the pinned release). One VM-only addition: the
-    # host's FILE-BASED ghapp config (config.yaml with private_key_path +
-    # key.pem, rendered 0600 by the devhost ghapp role) is bind-mounted
-    # read-only at /home/igou/.config/ghapp, so the baked ghapp CLI + git
-    # credential helper mint GitHub App tokens with NO 1P credential on this
-    # VM. post-create (>= v2026.07.12-2) seeds the op-based dotfiles config
-    # only when this path is absent, so the laptop flow is untouched and the
-    # mounted config wins here. `--update-remote-user-uid-default off` skips
-    # the CLI's uid-remap wrapper image (host and container igou are both
-    # uid 1000), keeping the running container on the pinned tag itself —
+    # (del(.build) + .image = the pinned release); its mounts already include
+    # ~/.config/gh, so the host and container share one gh login.
+    # `--update-remote-user-uid-default off` skips the CLI's uid-remap
+    # wrapper image (host and container igou are both uid 1000), keeping the running container on the pinned tag itself —
     # which is also what the recreate-on-image-change check below compares.
     # ------------------------------------------------------------------
     - name: Remove the legacy bare code-server container (superseded by the native devcontainer)
@@ -553,11 +540,7 @@
           - --arg
           - img
           - "{{ devenv_image }}"
-          - --arg
-          - ghapp_mount
-          - >-
-            source={{ ansible_user_dir }}/.config/ghapp,target=/home/igou/.config/ghapp,type=bind,readonly
-          - del(.build) | .image = $img | .mounts += [$ghapp_mount]
+          - del(.build) | .image = $img
           - "{{ ansible_user_dir }}/igou-devenv/.devcontainer/devcontainer.json"
       register: devenv_devcontainer_render
       changed_when: false
