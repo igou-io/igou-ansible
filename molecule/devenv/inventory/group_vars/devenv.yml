@@ -1,7 +1,6 @@
 ---
 devenv_code_server_password: molecule-devenv-bootstrap-throwaway
 devenv_full_toolset: false
-devenv_ghapp_enabled: false
 devenv_tailscale_enabled: false
 docker_data_root: /home/docker-data
 docker_prune_on_calendar: "Sun *-*-* 05:00:00"
