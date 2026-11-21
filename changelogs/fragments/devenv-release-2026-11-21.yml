@@ -1,3 +1,3 @@
 ---
 minor_changes:
-  - devenv Molecule pins release v2026.11.21 and verifies the devcontainer uses the host's gh CLI login (the ~/.config/gh mount and the gh git credential helper).
+  - devenv Molecule pins release v2026.11.21 and verifies the devcontainer uses the host's gh CLI login (the ~/.config/gh mount and the gh git credential helper) (https://github.com/igou-io/igou-ansible/pull/673).
