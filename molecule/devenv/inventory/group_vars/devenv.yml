@@ -4,9 +4,9 @@ devenv_full_toolset: false
 devenv_tailscale_enabled: false
 docker_data_root: /home/docker-data
 docker_prune_on_calendar: "Sun *-*-* 05:00:00"
-devenv_repo_version: v2026.11.16
-devenv_image: ghcr.io/igou-io/igou-devenv:2026.11.16@sha256:459915762f4379b1d5a7ef29e8820609b5c42ae12044609b1c4fba681770a665
-devenv_expected_image_revision: 1ddea3e942f35a30af3be186e7947c2f20dcc7a9
+devenv_repo_version: v2026.11.21
+devenv_image: ghcr.io/igou-io/igou-devenv:2026.11.21@sha256:dff3e2f93a6ad1b3de907f400fdbf706b05a2c5a2e337b061d6a0ac890a72424
+devenv_expected_image_revision: bc6a4d25c35234543982dea9d6525b5a4e9c9f2d
 devenv_backup_destination: file
 devenv_restore_source: file
 devenv_archive_file: "{{ molecule_ephemeral_directory }}/devenv-agent-state.tar.gz"
