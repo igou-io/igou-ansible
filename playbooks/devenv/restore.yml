@@ -338,7 +338,7 @@
 
     - name: Verify the primary agent state landed
       ansible.builtin.stat:
-        path: "{{ devenv_restore_home }}/.claude-container"
+        path: "{{ devenv_restore_home }}/.codex"
       register: _verify_stat
 
     - name: Assert the primary agent state was restored
@@ -347,7 +347,7 @@
           - _verify_stat.stat.isdir | default(false)
           - _verify_stat.stat.pw_name == 'igou'
         fail_msg: >-
-          {{ devenv_restore_home }}/.claude-container is missing or is not
+          {{ devenv_restore_home }}/.codex is missing or is not
           owned by igou after extraction.
 
     - name: Record the restore outcome
