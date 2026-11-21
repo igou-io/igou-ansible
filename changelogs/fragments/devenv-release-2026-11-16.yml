@@ -1,0 +1,5 @@
+---
+bugfixes:
+  - devenv backup and restore validate the persistent Codex directory instead of requiring the removed Claude bind mount.
+minor_changes:
+  - devenv Molecule pins release v2026.11.16 and its image digest, checks T3 Code, and verifies a Codex state backup and restore.
