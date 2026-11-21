@@ -70,6 +70,28 @@
           - molecule_devenv_release.container.Config.Image == devenv_image
           - molecule_devenv_release.container.Config.Labels['org.opencontainers.image.revision'] == devenv_expected_image_revision
         fail_msg: The running devcontainer does not match the pinned devenv release.
+    - name: Read the devcontainer's github.com credential helper
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - igou-devenv
+          - git
+          - config
+          - --system
+          - --get
+          - credential.https://github.com.helper
+      register: molecule_devenv_git_helper
+      changed_when: false
+    - name: Require the shared gh CLI login wiring
+      ansible.builtin.assert:
+        that:
+          - molecule_devenv_git_helper.stdout == '!/usr/local/bin/gh auth git-credential'
+          - >-
+            molecule_devenv_release.container.Mounts
+            | selectattr('Destination', 'equalto', '/home/igou/.config/gh')
+            | list | length == 1
+        fail_msg: The devcontainer is not wired to the host's gh CLI login.
     - name: Request the externally reachable T3 service
       ansible.builtin.uri:
         url: http://{{ mp_kubevirt_endpoints['t3'].host }}:{{ mp_kubevirt_endpoints['t3'].port }}/
