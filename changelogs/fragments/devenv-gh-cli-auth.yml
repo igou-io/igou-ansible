@@ -1,0 +1,3 @@
+---
+breaking_changes:
+  - The devenv bootstrap no longer runs the david_igou.devhost.ghapp role or bind-mounts ~/.config/ghapp into the devcontainer. The host's github.com credential helper is now the gh CLI login (shared with the devcontainer via ~/.config/gh); run `gh auth login` once on a new devenv VM. Launch with a devenv_repo_version that mounts ~/.config/gh.
