@@ -1,0 +1,5 @@
+---
+removed_features:
+  - Removed the ``ghapp`` Molecule scenario; the devenv no longer uses the david_igou.devhost.ghapp role.
+minor_changes:
+  - The devenv bootstrap also removes the retired ghapp CLI virtualenv (/opt/ghapp) and its /usr/local/bin links.
