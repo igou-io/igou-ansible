@@ -220,6 +220,12 @@
         # (permission: [private]) makes a separate PutObjectAcl call after
         # a multipart upload, which 403s.
         permission: []
+        # Skip the default overwrite=different ETag comparison. RustFS ignores
+        # PartNumber on HeadObject and returns the whole object's length, so
+        # the module's per-part f.read(ContentLength) reads the local archive
+        # in one allocation the size of the previous backup (2026-11-22: 25 GiB,
+        # truenas-w1 hung). The bucket is versioned; every run is a new version.
+        overwrite: always
       # RustFS 1.0.0-beta.8 miscomputes CRC32 on UploadPart, so the default
       # integrity checksums boto3 >= 1.36 sends (2025-01 behavior change)
       # fail every multipart part with "Io error: checksum mismatch: CRC32".
