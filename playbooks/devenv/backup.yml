@@ -53,6 +53,18 @@
     # Real agent state is tens of MB; an implausibly small tarball means the
     # home was empty or wrong - fail rather than upload garbage.
     devenv_backup_min_bytes: 10485760
+    # Regenerable bulk under the backed-up paths (GNU tar --exclude patterns).
+    devenv_backup_excludes:
+      - node_modules
+      - .venv
+      - venv
+      - '*.iso'
+      - '*.qcow2'
+    # The archive is fetched into the AAP job pod and read back for the upload,
+    # so its page cache is charged to that pod. A 37 GB archive (2026-11-22,
+    # job 27730) drove the pod to 22 GiB and took truenas-w1 down; refuse
+    # anything this big before it leaves the target.
+    devenv_backup_max_bytes: 8589934592
 
   pre_tasks:
     - name: Validate the selected backup destination
@@ -139,23 +151,41 @@
       # --warning override is needed. rc=2 is a real error and still fails.
       ansible.builtin.command:
         argv: >-
-          {{ ['tar', 'czf', _remote_archive.path, '--numeric-owner', '-C', devenv_backup_home]
-             + _existing }}
+          {{ ['tar', 'czf', _remote_archive.path, '--numeric-owner']
+             + devenv_backup_excludes | map('regex_replace', '^', '--exclude=') | list
+             + ['-C', devenv_backup_home] + _existing }}
       register: _tar
       changed_when: true
       failed_when: _tar.rc not in [0, 1]
 
-    - name: Fetch the archive to the control node
-      ansible.builtin.fetch:
-        src: "{{ _remote_archive.path }}"
-        dest: "{{ _local_archive.path }}"
-        flat: true
+    - name: Fetch the archive unless it is too large for the job pod
+      block:
+        - name: Stat the guest archive
+          ansible.builtin.stat:
+            path: "{{ _remote_archive.path }}"
+            get_checksum: false
+          register: _remote_archive_stat
 
-    - name: Remove the guest scratch file
-      ansible.builtin.file:
-        path: "{{ _remote_archive.path }}"
-        state: absent
-      changed_when: false
+        - name: Refuse to fetch an oversized archive
+          ansible.builtin.assert:
+            that:
+              - _remote_archive_stat.stat.size | int <= devenv_backup_max_bytes | int
+            fail_msg: >-
+              Archive is {{ _remote_archive_stat.stat.size }} bytes (>
+              {{ devenv_backup_max_bytes }}) - trim {{ devenv_backup_paths }}
+              or extend devenv_backup_excludes.
+
+        - name: Fetch the archive to the control node
+          ansible.builtin.fetch:
+            src: "{{ _remote_archive.path }}"
+            dest: "{{ _local_archive.path }}"
+            flat: true
+      always:
+        - name: Remove the guest scratch file
+          ansible.builtin.file:
+            path: "{{ _remote_archive.path }}"
+            state: absent
+          changed_when: false
 
     - name: Stat the fetched archive
       ansible.builtin.stat:
