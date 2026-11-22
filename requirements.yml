@@ -62,7 +62,7 @@ collections:
     version: v0.0.5-alpha
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
-    version: 28.0.0
+    version: 29.0.0
   # Windows automation (playbooks/windows/)
   - name: ansible.windows
     version: 3.9.2
