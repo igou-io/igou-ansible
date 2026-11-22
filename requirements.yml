@@ -46,7 +46,7 @@ collections:
   - name: community.docker
     version: 5.4.0
   - name: ansible.netcommon
-    version: 8.7.1
+    version: 8.8.0
   - name: community.routeros
     version: 3.23.0
   - name: david_igou.routeros_configuration
