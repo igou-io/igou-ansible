@@ -23,7 +23,7 @@ collections:
   - name: david_igou.molecule_provisioners
     version: 0.0.6-alpha
   - name: community.general
-    version: 14.0.0
+    version: 14.0.1
   - name: ansible.posix
     version: 2.2.2
   - name: kubernetes.core
