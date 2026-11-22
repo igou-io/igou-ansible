@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - devenv backup - upload with ``overwrite=always``. RustFS ignores ``PartNumber`` on HeadObject, so the default ``overwrite=different`` multipart ETag check read the local archive into memory in a single allocation the size of the previous backup.
