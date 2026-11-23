@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - Added python3.12-devel to the RHEL 9 EE system dependencies, because the 2026-11-20 ee-minimal-rhel9:2.20 base image no longer ships Python headers and systemd-python failed to build (https://github.com/igou-io/igou-ansible/pull/691).
