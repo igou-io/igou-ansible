@@ -103,6 +103,16 @@
       "automerge": false
     },
     {
+      "description": "botocore and aiobotocore require python-dateutil<3.0.0; 4.x breaks the EE build",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchPackageNames": [
+        "python-dateutil"
+      ],
+      "allowedVersions": "<3.0.0"
+    },
+    {
       "description": "Keep main on stable Ansible Core releases",
       "enabled": true,
       "matchDatasources": [
