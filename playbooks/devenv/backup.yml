@@ -58,13 +58,19 @@
       - node_modules
       - .venv
       - venv
+      - site-packages
+      - __pycache__
+      - '*yarn-cache' # offline yarn mirrors (yarn-cache, rhdh-yarn-cache, ...)
       - '*.iso'
       - '*.qcow2'
-    # The archive is fetched into the AAP job pod and read back for the upload,
-    # so its page cache is charged to that pod. A 37 GB archive (2026-11-22,
-    # job 27730) drove the pod to 22 GiB and took truenas-w1 down; refuse
-    # anything this big before it leaves the target.
-    devenv_backup_max_bytes: 8589934592
+      - '*.vmdk'
+      - '*.ova'
+      - .codex/packages # codex-installed runtimes, re-downloaded on demand
+      - .codex/cache
+    # The archive is staged on the AAP job pod's ephemeral disk before upload;
+    # refuse anything that would crowd the smallest node's /var (~76 GiB free).
+    # Memory is not the limit since overwrite=always (igou-ansible#688).
+    devenv_backup_max_bytes: 17179869184
 
   pre_tasks:
     - name: Validate the selected backup destination
