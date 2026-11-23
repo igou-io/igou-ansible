@@ -1,4 +1,4 @@
-ansible-core==2.22.0
+ansible-core==2.22.1rc1
 molecule==26.11.0
 kubernetes==37.0.2
 jmespath==1.1.0
