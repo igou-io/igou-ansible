@@ -39,11 +39,26 @@
           once across all disks; mounts: {{ __provision_mounts }}.
         quiet: true
 
+    # A fresh image's first-boot jobs (Armbian's UEFI image rebuilds its
+    # initrd) can still hold the dpkg lock that disk_provision needs.
+    - name: Wait for the boot to finish
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-system-running
+          - --wait
+      register: __provision_boot_state
+      changed_when: false
+      failed_when: __provision_boot_state.stdout not in ['running', 'degraded']
+      timeout: 1200
+
     - name: Provision each disk
       ansible.builtin.include_role:
         name: david_igou.armbian.disk_provision
       vars:
-        disk_provision_disk_binding: "{{ item }}"
+        disk_provision_disk_binding: "{{ __provision_disk }}"
+      # Not item: the role's own loops would shadow it in the lazy binding.
       loop: "{{ armbian_local_disks }}"
       loop_control:
-        label: "{{ item.device }}"
+        loop_var: __provision_disk
+        label: "{{ __provision_disk.device }}"
