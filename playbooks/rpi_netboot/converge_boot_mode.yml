@@ -102,7 +102,7 @@
           loop: "{{ _pin_files }}"
 
         - name: Upload each pin file via shared primitive
-          ansible.builtin.include_tasks: ../armbian/transport/upload_file.yml
+          ansible.builtin.include_tasks: transport/upload_file.yml
           vars:
             _upload_local_src: "{{ rpi_tftp_cache_dir }}/pins/{{ inventory_hostname }}/{{ item }}"
             _upload_remote_path: "{{ _pin_flash_dir }}/{{ item }}"

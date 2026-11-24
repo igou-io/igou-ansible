@@ -1,7 +1,8 @@
 ---
 # Stage the targeted boards' netboot assets: provision each board's NFS
-# rootfs and TFTP kernel/initrd/dtb on the netboot server from its published
-# image, then copy the TFTP files to the router's flash.
+# rootfs on the netboot server from its published image, with the TFTP
+# kernel/initrd/dtb in the netboot server's HTTP staging directory, then
+# have the router pull the files it does not already hold.
 #
 #   ansible-playbook playbooks/armbian/stage_netboot_assets.yaml \
 #     -i igou-inventory/inventory.yaml -e target_hosts=opi5pro-01.igou.systems
@@ -39,110 +40,110 @@
         rootfs_provision_hostname: "{{ __board }}"
         rootfs_provision_dtb: "{{ hostvars[__board].board_config.dtb | default('') }}"
         rootfs_provision_target_dir: "{{ armbian_nfs_rootfs_path }}/{{ __board }}"
-        rootfs_provision_tftp_dir: "{{ armbian_image_cache }}/sbc-tftp/{{ __board }}"
+        rootfs_provision_tftp_dir: "{{ armbian_tftp_staging_dir }}/{{ __board }}"
         rootfs_provision_cache_dir: "{{ armbian_image_cache }}/downloads"
         rootfs_provision_force: "{{ armbian_rootfs_force | default(false) }}"
       loop: "{{ __stage_boards }}"
       loop_control:
         loop_var: __board
 
-- name: Fetch each board's TFTP files to the controller
-  hosts: netboot_server
-  become: true
+- name: Pull each board's TFTP files onto the router
+  hosts: "{{ target_hosts }}:&boards"
   gather_facts: false
+  module_defaults:
+    group/community.routeros.api:
+      hostname: "{{ __armbian_router_api.hostname }}"
+      port: "{{ __armbian_router_api.port }}"
+      tls: "{{ __armbian_router_api.tls }}"
+      validate_certs: "{{ __armbian_router_api.validate_certs }}"
+      username: "{{ __armbian_router_api.username }}"
+      password: "{{ __armbian_router_api.password }}"
   vars:
-    __stage_boards: "{{ query('inventory_hostnames', target_hosts ~ ':&boards') }}"
-    __stage_assets:
-      - vmlinuz
-      - initrd.img
-      - board.dtb
+    __stage_files: "{{ ['vmlinuz', 'initrd.img'] + (['board.dtb'] if board_config.dtb | default('') | length > 0 else []) }}"
+    __stage_router_dir: "{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}"
+    __stage_router_names: "{{ __stage_router_query.msg | map(attribute='name') | list }}"
+    __stage_router_sums: >-
+      {{ __stage_router_query.msg | selectattr('name', 'search', '[.]sha256$')
+         | items2dict(key_name='name', value_name='contents') }}
   tasks:
-    - name: Ensure the controller cache directory exists per board
-      ansible.builtin.file:
-        path: "{{ armbian_tftp_cache_dir }}/{{ item }}"
-        state: directory
-        mode: "0755"
+    # The credentials are 1Password lookups in production; resolve them once
+    # instead of once per API task.
+    - name: Resolve the router API connection once
+      ansible.builtin.set_fact:
+        __armbian_router_api: >-
+          {{ hostvars[armbian_router].routeros_api_connection
+             | combine(hostvars[armbian_router].routeros_api_credentials) }}
+      no_log: true
+
+    - name: Hash the staged files on the netboot server
+      ansible.builtin.stat:
+        path: "{{ armbian_tftp_staging_dir }}/{{ inventory_hostname }}/{{ item }}"
+        checksum_algorithm: sha256
+      delegate_to: "{{ groups['netboot_server'] | first }}"
+      register: __stage_staged
+      failed_when: not __stage_staged.stat.exists
+      loop: "{{ __stage_files }}"
+
+    # RouterOS reports no file checksums: each file has a <name>.sha256
+    # sidecar recording what was fetched. The router pulls over HTTP because
+    # pushing through its API or SSH is slow and unreliable for 100 MB files.
+    - name: Bring the router's copies up to date
       delegate_to: localhost
-      # A real local connection: inventory localhost is an SSH build host
-      # whose sshd has PrivateTmp, so an SSH-delegated mkdir would create
-      # a private /tmp the fetch below cannot see.
       vars:
         ansible_connection: local
       become: false
-      loop: "{{ __stage_boards }}"
-
-    - name: Fetch each board's TFTP files
-      ansible.builtin.fetch:
-        src: "{{ armbian_image_cache }}/sbc-tftp/{{ item.0 }}/{{ item.1 }}"
-        dest: "{{ armbian_tftp_cache_dir }}/{{ item.0 }}/{{ item.1 }}"
-        flat: true
-      loop: "{{ __stage_boards | product(__stage_assets) | list }}"
-      loop_control:
-        label: "{{ item.0 }}/{{ item.1 }}"
-
-- name: Upload each board's TFTP files to the router
-  hosts: "{{ target_hosts }}:&boards"
-  gather_facts: false
-  # One board at a time: every upload delegates to the same router, and
-  # parallel net_put bursts flake RouterOS's SSH server.
-  serial: 1
-  vars:
-    __stage_assets:
-      - vmlinuz
-      - initrd.img
-      - board.dtb
-  tasks:
-    - name: Upload the TFTP files to the router
-      delegate_to: "{{ armbian_router }}"
       block:
-        - name: Ensure the base armbian directory exists on router flash
-          community.routeros.command:
-            commands:
-              - >-
-                :if ([/file find name="{{ armbian_tftp_flash_dir }}/armbian" type=directory] = "")
-                do={/file add name="{{ armbian_tftp_flash_dir }}/armbian" type=directory}
-          register: __stage_basedir
-          retries: 3
-          delay: 5
-          until: __stage_basedir is succeeded
-          changed_when: false
+        - name: Read the router's copies and their checksum sidecars
+          community.routeros.api:
+            path: file
+            extended_query:
+              attributes:
+                - name
+                - contents
+              where:
+                - attribute: name
+                  is: in
+                  value: >-
+                    {{ __stage_files | product(['', '.sha256']) | map('join')
+                       | map('regex_replace', '^', __stage_router_dir ~ '/') | list }}
+          register: __stage_router_query
 
-        - name: Ensure the board's directory exists on router flash
-          community.routeros.command:
-            commands:
-              - >-
-                :if ([/file find name="{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}" type=directory] = "")
-                do={/file add name="{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}" type=directory}
-          register: __stage_hostdir
-          retries: 3
-          delay: 5
-          until: __stage_hostdir is succeeded
-          changed_when: false
+        - name: Pull each changed or missing file from the staging directory
+          community.routeros.api:
+            path: tool
+            cmd: >-
+              fetch url={{ armbian_tftp_staging_url }}/{{ inventory_hostname }}/{{ item.item }}
+              dst-path={{ __stage_router_dir }}/{{ item.item }}
+          loop: "{{ __stage_staged.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when: >-
+            (__stage_router_dir ~ '/' ~ item.item) not in __stage_router_names
+            or __stage_router_sums[__stage_router_dir ~ '/' ~ item.item ~ '.sha256'] | default('') != item.stat.checksum
+          changed_when: true
 
-        # The upload primitive is size-gated, and a same-size stale
-        # vmlinuz once left the router serving an old kernel whose modules
-        # no longer matched the rootfs. Remove first so every run pushes.
-        - name: Remove the board's router-side TFTP files
-          community.routeros.command:
-            commands:
-              - >-
-                /file remove
-                [find name="{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}/{{ item }}"]
-          register: __stage_preremove
-          retries: 3
-          delay: 5
-          until: __stage_preremove is succeeded
-          changed_when: false
-          loop: "{{ __stage_assets }}"
-
-        - name: Upload each TFTP file
-          ansible.builtin.include_tasks: transport/upload_file.yml
+        - name: Record each file's checksum in its sidecar
+          ansible.builtin.include_tasks: transport/router_ensure.yml
           vars:
-            _upload_local_src: "{{ armbian_tftp_cache_dir }}/{{ inventory_hostname }}/{{ item }}"
-            _upload_remote_path: "{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}/{{ item }}"
-            _upload_req_filename: "armbian/{{ inventory_hostname }}/{{ item }}"
-            _upload_req_filename_is_regex: false
-          loop: "{{ __stage_assets }}"
+            __armbian_router_path: file
+            __armbian_router_key: name
+            __armbian_router_entries:
+              - name: "{{ __stage_router_dir }}/{{ item.item }}.sha256"
+                contents: "{{ item.stat.checksum }}"
+          loop: "{{ __stage_staged.results }}"
+          loop_control:
+            label: "{{ item.item }}"
 
-        - name: Verify the /ip tftp rows landed
-          ansible.builtin.include_tasks: transport/plumbing_check.yml
+        # A directory real-filename serves <dir>/<requested path>. The
+        # initrd outgrows 65535 blocks, hence allow-rollover.
+        - name: Serve armbian/ from the router's flash directory
+          ansible.builtin.include_tasks: transport/router_ensure.yml
+          vars:
+            __armbian_router_path: ip tftp
+            __armbian_router_key: req-filename
+            __armbian_router_entries:
+              - req-filename: armbian/.*
+                real-filename: "{{ armbian_tftp_flash_dir }}"
+                allow: true
+                read-only: true
+                allow-rollover: true

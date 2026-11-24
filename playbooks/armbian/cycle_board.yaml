@@ -24,7 +24,10 @@
         board_boot_wait_power_cycle_tasks: "{{ playbook_dir }}/{{ armbian_power_cycle_tasks }}"
         board_boot_wait_ssh: "{{ not __cycle_board_fresh_image }}"
         # A fresh image regenerates host keys and resizes on first boot.
-        board_boot_wait_port_timeout: "{{ 420 if __cycle_board_fresh_image else 180 }}"
+        board_boot_wait_port_timeout: >-
+          {{ armbian_boot_wait_timeouts.fresh_port if __cycle_board_fresh_image
+             else armbian_boot_wait_timeouts.port }}
+        board_boot_wait_ssh_timeout: "{{ armbian_boot_wait_timeouts.ssh }}"
 
     - name: Verify the root filesystem matches the boot mode
       ansible.builtin.include_role:
