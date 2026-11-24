@@ -57,10 +57,9 @@ collections:
     version: 0.30.2
   - name: onepassword.connect
     version: 2.4.0
-  # Replace the refactor/roles-only branch with the release tag before merge.
   - name: https://github.com/david-igou/ansible-collection-armbian.git
     type: git
-    version: refactor/roles-only
+    version: v0.1.0-alpha
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
     version: 29.0.0
