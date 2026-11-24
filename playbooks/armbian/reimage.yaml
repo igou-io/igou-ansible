@@ -58,6 +58,17 @@
   vars:
     __reimage_control_plane: "{{ groups['rk8s_control_plane'] | default([]) | first | default('') }}"
   tasks:
+    # During a rebuild from zero the control plane has no k3s yet, so there
+    # is no stale identity to remove.
+    - name: Check whether k3s is installed on the control plane
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      delegate_to: "{{ __reimage_control_plane | default('localhost', true) }}"
+      register: __reimage_k3s
+      when:
+        - __reimage_control_plane | length > 0
+        - __reimage_control_plane != inventory_hostname
+
     # The reinstalled node re-registers with a new password; the old node
     # object and its node-password secret would reject it.
     - name: Delete the stale node object and node-password secret
@@ -85,3 +96,4 @@
         - __reimage_control_plane | length > 0
         # A reimaged control plane has no k3s to ask until it is reinstalled.
         - __reimage_control_plane != inventory_hostname
+        - __reimage_k3s.stat.exists
