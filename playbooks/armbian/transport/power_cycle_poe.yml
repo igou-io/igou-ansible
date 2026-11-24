@@ -1,0 +1,45 @@
+---
+# Power-cycle hook for PoE-powered boards (armbian_power_cycle_tasks): turn
+# the board's switch port off, let the capacitors drain, set it back to
+# auto. Included by board_boot_wait on the board's host; talks to the
+# switch's API from the controller.
+#
+# Required hostvars:
+#   armbian_poe_switch  inventory host of the switch (its
+#                       routeros_api_connection and routeros_api_credentials)
+#   armbian_poe_port    the board's switch port
+# Optional:
+#   armbian_poe_cycle_delay (default 5)
+
+- name: Resolve the switch API connection once
+  ansible.builtin.set_fact:
+    __armbian_poe_api: >-
+      {{ hostvars[armbian_poe_switch].routeros_api_connection
+         | combine(hostvars[armbian_poe_switch].routeros_api_credentials) }}
+  no_log: true
+
+# loop_control.pause is the drain time between the two states.
+- name: Switch the board's PoE port off, then back to auto
+  community.routeros.api_find_and_modify:
+    hostname: "{{ __armbian_poe_api.hostname }}"
+    port: "{{ __armbian_poe_api.port }}"
+    tls: "{{ __armbian_poe_api.tls }}"
+    validate_certs: "{{ __armbian_poe_api.validate_certs }}"
+    username: "{{ __armbian_poe_api.username }}"
+    password: "{{ __armbian_poe_api.password }}"
+    path: interface ethernet poe
+    find:
+      name: "{{ armbian_poe_port }}"
+    values:
+      poe-out: "{{ item }}"
+    require_matches_min: 1
+    require_matches_max: 1
+  loop:
+    - "off"
+    - auto-on
+  loop_control:
+    pause: "{{ armbian_poe_cycle_delay | default(5) }}"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+  become: false

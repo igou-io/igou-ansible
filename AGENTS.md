@@ -77,8 +77,9 @@ Many playbooks use `ansible_limit` variable for dynamic host targeting;
 `playbooks/armbian/` and `playbooks/rpi_netboot/` use `target_hosts`
 instead (`rpi_group` for the multi-tier staging playbook;
 `publish_to_netboot.yml` targets the builder/netboot_server groups
-directly). AAP template extra_vars
-must match the playbook's hosts var or the play silently matches no hosts.
+directly). The armbian playbooks fail when `target_hosts` is missing;
+elsewhere AAP template extra_vars must match the playbook's hosts var or
+the play silently matches no hosts.
 
 ### ARM SBC boot modes
 
@@ -162,7 +163,7 @@ placement. Require Casval affinity for every guest in the default profile.
 Molecule never creates or deletes shared seeds. Concurrent batches use the
 bounded `molecule-test-batch` target; install dependencies once before workers.
 Keep workflow assertions focused on outcomes. See `molecule/README.md` for
-the 12-scenario roster, profile commands, and lifecycle limits.
+the 13-scenario roster, profile commands, and lifecycle limits.
 Do not run Molecule in GitHub Actions. Functional testing uses the local
 `ocp-ansible-molecule` profile, and must prove cleanup in `molecule`.
 

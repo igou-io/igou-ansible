@@ -1,0 +1,23 @@
+From: David Igou <igou.david@gmail.com>
+Subject: [PATCH] iommu: rockchip: allocate v2 page tables below 4 GiB
+
+The IOMMU v2 hardware in RK35xx SoCs (rk3568-iommu compatible, also
+used by the RK3588 NPU/VPU MMUs) fetches its DTE/PT page tables with
+32-bit physical addresses. On boards with more than 4 GiB of RAM the
+unconstrained allocations can land above 4 GiB, and the IOMMU then
+raises AXI bus errors when walking them (observed as rknpu job
+submissions that never start, raw status 0xC0010000, on a 16 GiB
+ROCK 5B; reproduced independently on RK3566 by the rknpu-module
+project). Constrain v2 page-table allocations with GFP_DMA32 the same
+way v1 already does.
+
+--- a/drivers/iommu/rockchip-iommu.c
++++ b/drivers/iommu/rockchip-iommu.c
+@@ -1358,6 +1358,6 @@ static struct rk_iommu_ops iommu_data_ops_v2 = {
+ 	.pt_address = &rk_dte_pt_address_v2,
+ 	.mk_dtentries = &rk_mk_dte_v2,
+ 	.mk_ptentries = &rk_mk_pte_v2,
+ 	.dma_bit_mask = DMA_BIT_MASK(40),
+-	.gfp_flags = 0,
++	.gfp_flags = GFP_DMA32,
+ };

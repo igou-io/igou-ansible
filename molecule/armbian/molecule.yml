@@ -1,0 +1,24 @@
+---
+ansible:
+  playbooks:
+    # The scenario owns its private network as well as its guests.
+    create: create.yml
+    destroy: destroy.yml
+    # The shared prepare waits for every guest over SSH; the boards have no
+    # reachable sshd until this scenario configures the router.
+    prepare: prepare.yml
+scenario:
+  name: armbian
+  # No idempotence step: converge reimages a board, which rewrites its disks
+  # and reboots it twice by design. side_effect reimages board-a again and
+  # the repeated verify checks what a re-run must and must not change.
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - verify
+    - side_effect
+    - verify
+    - destroy

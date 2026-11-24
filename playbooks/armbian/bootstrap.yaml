@@ -1,63 +1,27 @@
 ---
-# Bootstrap a freshly flashed Armbian board: provision the automation
-# user (SSH-key auth + passwordless sudo) via the collection role, then
-# apply homelab parity hardening the role does not cover (hostname, root
-# SSH lockout, root account disable) to match the retired
-# playbooks/armbian-firstboot.yaml.
+# Bootstrap a freshly imaged board: log in as root with the image's default
+# password, create the automation user (armbian_bootstrap_user, keys from
+# armbian_bootstrap_ssh_keys) with passwordless sudo, disable SSH password
+# and root login, and lock the root password. Later plays connect as the
+# automation user.
 #
-# Connects as root with the Armbian default password until the user is
-# provisioned. Override the defaults below in inventory or via -e.
-#
-# Usage:
 #   ansible-playbook playbooks/armbian/bootstrap.yaml \
-#     -i igou-inventory/inventory.yaml -e target_hosts=rock-5b-01
-- name: Bootstrap Armbian automation user
-  hosts: "{{ target_hosts | default('boards') }}"
+#     -i igou-inventory/inventory.yaml -e target_hosts=opi5pro-01.igou.systems
+- name: Bootstrap the automation user
+  hosts: "{{ target_hosts | mandatory('target_hosts is required: pass -e target_hosts=<board or group>') }}:&boards"
   gather_facts: false
+  # Connection overrides for the first-boot root session only. The fresh
+  # image regenerated its host keys, so known_hosts is bypassed.
   vars:
     ansible_user: root
-    ansible_password: "{{ armbian_default_password | default('1234') }}"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    ansible_password: "{{ armbian_default_password }}"
     ansible_become: false
-    armbian_bootstrap_user: igou
-    armbian_bootstrap_ssh_keys:
-      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINHO7UsiIgAepf5+s2z+1CbPQf2eqJo8aNK/vT9Oaf4B"
-      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWgNfV1zdod84sj28d+z7YBLkaD5ZImElWt8zHw+u7/"
-  roles:
-    - role: david_igou.armbian.bootstrap_armbian
-
-- name: Homelab parity hardening (hostname, root lockout)
-  hosts: "{{ target_hosts | default('boards') }}"
-  gather_facts: false
-  become: true
-  vars:
-    ansible_user: "{{ armbian_bootstrap_user | default('igou') }}"
+    ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
   tasks:
-    - name: Set /etc/hostname when new_hostname provided
-      ansible.builtin.copy:
-        dest: /etc/hostname
-        content: "{{ new_hostname }}\n"
-        owner: root
-        group: root
-        mode: "0644"
-      when: new_hostname is defined
-
-    - name: Disable root login via ssh
-      ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        regexp: "^#?PermitRootLogin"
-        line: "PermitRootLogin no"
-        state: present
-        backup: true
-      notify: Restart sshd
-
-    - name: Disable root account password
-      ansible.builtin.user:
-        name: root
-        password: "!"
-
-  handlers:
-    - name: Restart sshd
-      ansible.builtin.service:
-        name: sshd
-        state: restarted
+    - name: Create the automation user and lock root
+      ansible.builtin.include_role:
+        name: david_igou.armbian.bootstrap_armbian
+      vars:
+        bootstrap_armbian_user: "{{ armbian_bootstrap_user }}"
+        bootstrap_armbian_ssh_keys: "{{ armbian_bootstrap_ssh_keys }}"
+        bootstrap_armbian_lock_root: true

@@ -1,0 +1,10 @@
+---
+- name: Reimage board-a
+  ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
+  vars:
+    target_hosts: board-a
+
+- name: Reimage board-b
+  ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
+  vars:
+    target_hosts: board-b

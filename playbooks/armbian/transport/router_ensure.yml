@@ -1,0 +1,32 @@
+---
+# Create or update RouterOS entries under one API path, matched on one key
+# field, and leave every other entry of the path alone (the router has
+# unrelated /file and /ip tftp entries). Neither path has a primary key, so
+# api_modify alone appends a second entry when a field of an existing one
+# changes: existing entries are updated in place first, then the missing
+# ones are created.
+#
+# Include from a block delegated to the controller, with the router's API
+# connection in the play's module_defaults.
+#
+# Required vars:
+#   __armbian_router_path     API path, e.g. "file" or "ip tftp"
+#   __armbian_router_key      field that identifies an entry, e.g. "name"
+#   __armbian_router_entries  entries (mappings) to ensure
+
+- name: Update the entries that already exist
+  community.routeros.api_find_and_modify:
+    path: "{{ __armbian_router_path }}"
+    find: "{{ {__armbian_router_key: __armbian_router_entry[__armbian_router_key]} }}"
+    values: "{{ __armbian_router_entry }}"
+    require_matches_min: 0
+  loop: "{{ __armbian_router_entries }}"
+  loop_control:
+    loop_var: __armbian_router_entry
+    label: "{{ __armbian_router_entry[__armbian_router_key] }}"
+
+- name: Create the entries that are missing
+  community.routeros.api_modify:
+    path: "{{ __armbian_router_path }}"
+    handle_absent_entries: ignore
+    data: "{{ __armbian_router_entries }}"

@@ -1,0 +1,38 @@
+---
+# Reimage board-a again with data on its preserved partition and its root
+# filesystem; verify then checks what survived and that board-b was left
+# alone.
+- name: Record board-b's boot identity
+  hosts: board-b
+  gather_facts: false
+  tasks:
+    - name: Read the boot identity
+      ansible.builtin.slurp:
+        src: /proc/sys/kernel/random/boot_id
+      register: __side_effect_boot_id
+
+    - name: Save it for verify
+      ansible.builtin.copy:
+        dest: "{{ armbian_test_boot_id_file }}"
+        content: "{{ __side_effect_boot_id.content | b64decode }}"
+        mode: "0600"
+      delegate_to: localhost
+
+- name: Mark board-a's preserved partition and root filesystem
+  hosts: board-a
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Write the markers
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        content: "before the second reimage\n"
+        mode: "0644"
+      loop:
+        - "{{ armbian_test_markers.preserved }}"
+        - "{{ armbian_test_markers.root }}"
+
+- name: Reimage board-a again
+  ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
+  vars:
+    target_hosts: board-a

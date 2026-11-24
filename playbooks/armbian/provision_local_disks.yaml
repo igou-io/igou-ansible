@@ -1,0 +1,64 @@
+---
+# Provision each disk in the board's armbian_local_disks with a copy of the
+# running rootfs. WIPES those disks, so the board must be booted from NFS
+# (pin nfs with pin_boot_mode.yaml, then cycle_board.yaml).
+#
+#   ansible-playbook playbooks/armbian/provision_local_disks.yaml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=opi5pro-01.igou.systems
+- name: Provision the local disks from the NFS-booted rootfs
+  hosts: "{{ target_hosts | mandatory('target_hosts is required: pass -e target_hosts=<board or group>') }}:&boards"
+  gather_facts: false
+  vars:
+    __provision_mounts: >-
+      {{ armbian_local_disks | map(attribute='layout') | flatten
+         | selectattr('mount', 'defined') | map(attribute='mount') | list }}
+  tasks:
+    - name: Gather the mount facts
+      ansible.builtin.setup:
+        gather_subset:
+          - "!all"
+          - "!min"
+          - mounts
+
+    - name: Assert / is on NFS before wiping anything
+      ansible.builtin.assert:
+        that:
+          - >-
+            (ansible_facts['mounts'] | selectattr('mount', 'equalto', '/')
+             | map(attribute='fstype') | first) in ['nfs', 'nfs4']
+        fail_msg: "{{ inventory_hostname }} must be NFS-booted before its local disks are provisioned."
+        quiet: true
+
+    - name: Assert the disk layouts mount each path once and / exactly once
+      ansible.builtin.assert:
+        that:
+          - __provision_mounts | unique | length == __provision_mounts | length
+          - __provision_mounts | select('equalto', '/') | list | length == 1
+        fail_msg: >-
+          armbian_local_disks must mount every path at most once and / exactly
+          once across all disks; mounts: {{ __provision_mounts }}.
+        quiet: true
+
+    # A fresh image's first-boot jobs (Armbian's UEFI image rebuilds its
+    # initrd) can still hold the dpkg lock that disk_provision needs.
+    - name: Wait for the boot to finish
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-system-running
+          - --wait
+      register: __provision_boot_state
+      changed_when: false
+      failed_when: __provision_boot_state.stdout not in ['running', 'degraded']
+      timeout: 1200
+
+    - name: Provision each disk
+      ansible.builtin.include_role:
+        name: david_igou.armbian.disk_provision
+      vars:
+        disk_provision_disk_binding: "{{ __provision_disk }}"
+      # Not item: the role's own loops would shadow it in the lazy binding.
+      loop: "{{ armbian_local_disks }}"
+      loop_control:
+        loop_var: __provision_disk
+        label: "{{ __provision_disk.device }}"

@@ -1,0 +1,27 @@
+---
+# Power-cycle hook for boards without switchable power
+# (armbian_power_cycle_tasks): reboot the running OS over SSH as the
+# inventory user, then wait for sshd to go away so board_boot_wait only
+# sees the board once it is back. ansible.builtin.reboot is not used: it
+# waits to log in again, and after a reimage the rebooted image may not
+# have the automation user yet. The board must be up and reachable.
+
+- name: Reboot the running OS
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - reboot
+  become: true
+  # Fire and forget: the reboot drops the SSH session under the task.
+  async: 30
+  poll: 0
+  changed_when: true
+
+- name: Wait for the board to go down
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host | default(inventory_hostname) }}"
+    port: "{{ ansible_port | default(22) }}"
+    state: stopped
+    timeout: 120
+  delegate_to: localhost
+  become: false

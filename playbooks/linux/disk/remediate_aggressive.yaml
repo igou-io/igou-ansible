@@ -10,8 +10,7 @@
 #     --filter until=720h; images backing RUNNING containers are always
 #     protected by podman, so the live devcontainer is untouchable — worst
 #     case a future rebuild re-pulls)
-#   - old kernels (dnf) — SKIPPED on hosts with a pinned local kernel
-#     (armbian_local_kernel) and on non-dnf hosts
+#   - old kernels (dnf hosts only)
 #
 # Still never: container/volume prune, /tmp, service restarts.
 # If usage stays above disk_crit_percent afterwards, escalate=true so the
@@ -58,12 +57,11 @@
       changed_when: aggressive_podman.stdout | length > 0
       failed_when: false
 
-    - name: Remove old kernels (dnf hosts without a pinned local kernel)
+    - name: Remove old kernels (dnf hosts)
       ansible.builtin.command:
         argv: [dnf, -y, remove, --oldinstallonly]
       when:
         - ansible_facts.pkg_mgr in ['dnf', 'dnf5']
-        - armbian_local_kernel is not defined
       register: aggressive_kernels
       changed_when: "'Removed' in aggressive_kernels.stdout | default('')"
       failed_when: false
@@ -87,7 +85,7 @@
           actions_taken: >-
             package cache, journald vacuum ({{ journal_vacuum_size }}),
             unused images >{{ unused_image_age }},
-            old kernels{{ '' if armbian_local_kernel is not defined else ' (skipped: pinned kernel)' }}
+            old kernels (dnf hosts)
           freed_mb: "{{ [disk_after_mb | int - disk_before_mb | int, 0] | max }}"
           disk_use_percent_after: "{{ disk_use_percent_after | int }}"
           escalate: "{{ disk_use_percent_after | int > disk_crit_percent }}"

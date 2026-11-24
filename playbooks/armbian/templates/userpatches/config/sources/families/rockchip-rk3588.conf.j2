@@ -1,0 +1,84 @@
+# PXE-first override + rk3588 PCI/NVMe defconfig backfill.
+function pre_config_uboot_target__999_pxe_first() {
+    declare -a t=("pxe" "dhcp" "mmc1" "mmc0" "nvme" "scsi" "usb" "spi")
+    sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${t[*]}\"/" \
+        include/configs/rockchip-common.h
+
+    local defconfig="configs/${BOOTCONFIG}"
+    if [[ -f "$defconfig" ]]; then
+        grep -q "^CONFIG_PCI=y"              "$defconfig" || echo "CONFIG_PCI=y"              >> "$defconfig"
+        grep -q "^CONFIG_PCIE_DW_ROCKCHIP=y" "$defconfig" || echo "CONFIG_PCIE_DW_ROCKCHIP=y" >> "$defconfig"
+        grep -q "^CONFIG_PCI_INIT_R=y"       "$defconfig" || echo "CONFIG_PCI_INIT_R=y"       >> "$defconfig"
+        grep -q "^CONFIG_CMD_NVME=y"         "$defconfig" || echo "CONFIG_CMD_NVME=y"         >> "$defconfig"
+        grep -q "^CONFIG_NVME_PCI=y"         "$defconfig" || echo "CONFIG_NVME_PCI=y"         >> "$defconfig"
+    fi
+}
+
+# local_kernel bake — uses host-resolved board_config (no dispatch table).
+function pre_config_uboot_target__999_local_kernel_bake() {
+    [[ "${BRANCH}" != "edge" ]] && return 0
+    {% if board_config.local_kernel is defined %}
+    {% set _lk = board_config.local_kernel %}
+    {% set _cands = _lk.storage_candidates | default([{'scan': _lk.storage_scan, 'dev': _lk.storage}]) %}
+    # U-Boot env values cannot contain embedded newlines; this string MUST remain on one line.
+    # One if-block per local_kernel storage candidate (ordered): booti never
+    # returns on success, so a later candidate is tried only when an earlier
+    # one fails to load — e.g. cm3588-nas prefers NVMe but falls back to eMMC.
+    local chain='setenv bootargs root=LABEL=armbi_root_local rootfstype=ext4 rootwait rw console={{ board_config.console }};{% for c in _cands %} {{ c.scan }}; if ext4load {{ c.dev }} ${kernel_addr_r} /boot/Image; then ext4load {{ c.dev }} ${ramdisk_addr_r} /boot/uInitrd; setenv ramdisk_size ${filesize}; ext4load {{ c.dev }} ${fdt_addr_r} /boot/dtb/{{ board_config.dtb }}; booti ${kernel_addr_r} ${ramdisk_addr_r}:${ramdisk_size} ${fdt_addr_r}; fi;{% endfor %}'
+    {% else %}
+    return 0
+    {% endif %}
+
+    local header marker
+    if [[ -f include/configs/rk3588_common.h ]] \
+       && grep -qE '^[[:space:]]*#define[[:space:]]+(CFG_|CONFIG_)EXTRA_ENV_SETTINGS' include/configs/rk3588_common.h; then
+        header=include/configs/rk3588_common.h
+    else
+        header="$(grep -lE '^[[:space:]]*#define[[:space:]]+(CFG_|CONFIG_)EXTRA_ENV_SETTINGS' include/configs/rk3588*.h 2>/dev/null | head -n 1)"
+    fi
+    if [[ -z "${header}" ]]; then
+        exit_with_error "${BOARD}: no EXTRA_ENV_SETTINGS in include/configs/rk3588*.h"
+    fi
+    if grep -q '^[[:space:]]*#define[[:space:]]\+CFG_EXTRA_ENV_SETTINGS' "${header}"; then
+        marker='^[[:space:]]*#define[[:space:]]\+CFG_EXTRA_ENV_SETTINGS'
+    else
+        marker='^[[:space:]]*#define[[:space:]]\+CONFIG_EXTRA_ENV_SETTINGS'
+    fi
+    display_alert "${BOARD}" "localcmd target macro found in ${header}" "info"
+    if grep -q 'localcmd=setenv bootargs root=LABEL=' "${header}"; then
+        display_alert "${BOARD}" "localcmd already baked into ${header}" "info"
+        return 0
+    fi
+    local tmp
+    tmp="$(mktemp)"
+    printf '\t"localcmd=%s\\0" \\\n' "${chain}" > "${tmp}"
+    sed -i "/${marker}/r ${tmp}" "${header}"
+    rm -f "${tmp}"
+    if ! grep -q 'localcmd=setenv bootargs root=LABEL=' "${header}"; then
+        exit_with_error "${BOARD}: localcmd bake silently failed in ${header}"
+    fi
+    display_alert "${BOARD}" "baked local_kernel localcmd into U-Boot default env" "info"
+}
+
+# Defconfig drift check — uses host-resolved board_config (no table).
+function pre_config_uboot_target__999_uboot_env_check() {
+    local expected='{{ board_config.uboot_env.storage | default("") }}'
+    [[ -z "${expected}" ]] && return 0
+    local defconfig="configs/${BOOTCONFIG}"
+    [[ ! -f "${defconfig}" ]] && return 0
+    local discovered=nowhere
+    if   grep -q '^CONFIG_ENV_IS_NOWHERE=y'      "${defconfig}"; then discovered=nowhere
+    elif grep -q '^CONFIG_ENV_IS_IN_SPI_FLASH=y' "${defconfig}"; then discovered=spi_flash
+    elif grep -q '^CONFIG_ENV_IS_IN_MMC=y'       "${defconfig}"; then discovered=mmc
+    fi
+    if [[ "${discovered}" != "${expected}" ]]; then
+        display_alert "${BOARD}" "uboot_env.storage drift: defconfig=${discovered} vs inventory=${expected}" "wrn"
+    fi
+}
+
+function extension_finish_config__999_no_bcmdhd_for_netboot() {
+    [[ -z "${BCMDHD_TYPE}" ]] && return 0
+    display_alert "${BOARD}" "disabling bcmdhd DKMS (wired netboot, no WiFi)" "info"
+    unset BCMDHD_TYPE
+    declare -g INSTALL_HEADERS="no"
+}
