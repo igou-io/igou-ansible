@@ -1,107 +1,99 @@
 # AGENTS.md — ARM SBC / Armbian fleet
 
-Guidance for AI agents working with the `boards` fleet. This directory
-holds the playbooks that drive it; the collection logic lives in the
-external `david_igou.armbian` collection.
+Playbooks for the `boards` fleet. They are thin: the logic lives in the
+roles of the `david_igou.armbian` collection, RouterOS transport lives in
+`transport/`, and image userpatch bodies live in `templates/userpatches/`.
 
 > **Authoritative reference:** [Managing the Armbian SBC Fleet](https://github.com/igou-io/igou-docs/blob/main/hardware/Managing%20the%20Armbian%20SBC%20Fleet.md).
-> If inventory comments, role docs, or this file disagree with it, that
-> doc wins — fix the others to match. Read it before touching board
-> kernels, boot modes, or netboot TFTP assets.
+> If this file, inventory comments or role docs disagree with it, that doc
+> wins. Read it before touching board kernels, boot modes or TFTP assets.
 
-## The fleet
+## Inventory is the source of truth
 
-Rockchip RK3588/RK3588S ARM SBCs in `igou-inventory` group `boards`:
-Orange Pi 5, 5 Pro, 5 Max, Rock 5A, and the FriendlyElec CM3588-NAS.
-Powered/cold-cycled over PoE off the `crs328` switch (exception:
-cm3588-nas, see per-board notes). **Inventory is the source of truth** —
-router pins, TFTP artifacts, and on-disk partition layout are all
-derived state rendered from host vars (`armbian_board_model`,
-`armbian_boot_mode`, `armbian_local_kernel`, `armbian_local_disks`,
-`armbian_poe_*`). Never hand-edit derived state; change inventory and
-re-converge.
+Boards are Rockchip RK3588/RK3588S SBCs in `igou-inventory` group
+`boards`. Router pins, TFTP assets and disk layouts are rendered from
+inventory; never hand-edit them, change inventory and re-run.
 
-## Boot chain
+- Hardware and build layers: `board_config_{family,model,host}` and
+  `board_config_build_{defaults,family,model,host}`, resolved by the
+  `board_config` role. The family layer is `group_vars/rk3588_family.yml`.
+- Per board: `armbian_board_mac`, `armbian_boot_mode`, `armbian_local_disks`,
+  `armbian_power_cycle_tasks`, `armbian_poe_port`. Fleet defaults are in
+  `group_vars/boards.yml`.
+- Userpatch entries are `{dest, template}`; `template` is a path under
+  `templates/` here, rendered in the board's context.
 
-Every board's u-boot DHCPs and TFTP-fetches a **per-MAC pxelinux pin**
-from rb5009 (`sbc/pxelinux.cfg/01-<mac>`). The pin's `default <label>`
-line selects the active mode. The pin is rendered from the
-`armbian_boot_mode` host var by `converge_boot_mode.yaml` — inventory
-intent in, router state out.
+## Targeting
+
+Every playbook requires `-e target_hosts=<board, group or pattern>`; a
+missing value fails before anything runs. Board plays intersect it with
+`boards`. Builder, netboot-server and router plays derive their board list
+from the same value. `reimage.yaml` requires exactly one board. AAP
+templates carry `target_hosts: changeme`.
+
+(`k3s_install_cluster`, which reaches the same boards through `rk8s`,
+takes `ansible_limit` instead.)
+
+## Playbooks / AAP job templates
+
+| Playbook | Job template | What it does | Optional extra vars |
+| --- | --- | --- | --- |
+| `pin_boot_mode.yaml` | `armbian_pin_boot_mode` | Render the board's pxelinux pin (`pxelinux_render`) and upload it to rb5009. Router state only. | `armbian_boot_mode` (one-off override) |
+| `cycle_board.yaml` | `armbian_cycle_board` | Power-cycle through the board's hook (`board_boot_wait`) and assert the booted root matches `armbian_boot_mode` (`board_boot_verify`). | |
+| `stage_netboot_assets.yaml` | `armbian_stage_netboot` | Provision the per-board NFS rootfs and TFTP kernel/initrd/dtb on TrueNAS from the published image (`rootfs_provision`), then copy the TFTP files to rb5009. | `armbian_rootfs_force` |
+| `build_and_publish.yaml` | `armbian_build_publish` | Build images with `armbian/build` on the builder (`image_build`) and publish them to `images/<board>/`. | `armbian_build_force` |
+| `bootstrap.yaml` | `armbian_firstboot` | On a fresh image, log in as root, create the automation user and lock root (`bootstrap_armbian`). | |
+| `provision_local_disks.yaml` | `armbian_provision_local_disks` | On an NFS-booted board, write each `armbian_local_disks` entry from the running rootfs (`disk_provision`). WIPES them. | |
+| `reimage.yaml` | `armbian_reimage` | One board, two boots: stage (forced) → pin `nfs` → boot (sshd only) → bootstrap → provision disks → pin the declared mode → boot and verify → delete the stale k3s node object and node-password secret. | |
+
+## Power cycling
+
+`armbian_power_cycle_tasks` selects the hook per board: a path under this
+directory, passed to `board_boot_wait` as `{{ playbook_dir }}/<path>` in
+`cycle_board.yaml` (the only place it is resolved; `reimage.yaml` imports
+it for both boots).
+
+- `transport/power_cycle_poe.yml` (fleet default): PoE off, drain, on via
+  `armbian_poe_switch`/`armbian_poe_port`.
+- `transport/power_cycle_warm_reboot.yml`: `systemctl reboot` over SSH,
+  then wait for sshd to stop. Needs the board up and reachable.
+
+## Boot modes
 
 | Mode | Kernel from | Root on | Purpose |
 | --- | --- | --- | --- |
-| `local_kernel` | local disk (`/boot/Image` via u-boot `localcmd`) | NVMe/eMMC | **Fleet default / steady state.** Kernel owned by the package manager; `apt upgrade` + reboot updates it, kernel and `/lib/modules` stay coherent. |
-| `nfs` | rb5009 TFTP | NFS export on netboot server | **Reimaging.** Known-good network rootfs to wipe/provision local disks. |
-| `sd` | rb5009 TFTP | microSD (`LABEL=armbi_root`) | Bring-up / recovery of a freshly-flashed SD card. |
-| `local` | rb5009 TFTP | local disk (`LABEL=armbi_root_local`) | **Transitional only** — network kernel, local root. Used mid-provisioning. |
+| `local_kernel` | local disk (U-Boot `localcmd`) | NVMe/eMMC | **Fleet default.** apt owns the kernel; kernel and `/lib/modules` stay coherent. |
+| `nfs` | rb5009 TFTP | NFS on TrueNAS | Reimaging. |
+| `sd` | rb5009 TFTP | microSD (`LABEL=armbi_root`) | Bring-up / recovery. |
+| `local` | rb5009 TFTP | local disk (`LABEL=armbi_root_local`) | Debugging a local root with a network kernel. |
 
-**Do not leave a board in a TFTP-kernel mode (`nfs`/`sd`/`local`)
-long-term.** `system_update` advances on-disk `/lib/modules` while the
-TFTP-staged kernel stays frozen → module loads fail (`BTF: -22`; first
-real-world symptom is k3s/containerd unable to mount overlayfs).
+Do not leave a board in a TFTP-kernel mode long-term: `system_update`
+advances `/lib/modules` while the TFTP kernel stays frozen, and module
+loads fail (first symptom: k3s cannot mount overlayfs).
 
-## Playbooks / job templates
+The `localcmd` chain is baked into U-Boot at image build time by
+`templates/userpatches/config/sources/families/rockchip-rk3588.conf.j2`
+(edge branch only) from `local_kernel.storage` or the ordered
+`local_kernel.storage_candidates`. Changing it means rebuilding the image
+and re-flashing the board's U-Boot carrier.
 
-| Playbook | AAP job template | What it does |
-| --- | --- | --- |
-| `converge_boot_mode.yaml` | `armbian_converge_boot_mode` | Render + upload the pin for the host's declared `armbian_boot_mode`. Router state only. |
-| `set_boot_mode.yaml` | `armbian_set_boot_mode` | Same, with `-e armbian_boot_mode=…` override (e.g. flip to `nfs` for a reimage). |
-| `cycle_board.yaml` | `armbian_cycle_board` | PoE cold-cycle + wait-for-SSH + verify the mounted root matches the declared mode. Run after a converge. |
-| `stage_netboot_assets.yaml` | `armbian_stage_netboot` | (Re)provision NFS rootfs + per-host TFTP kernel artifacts on the netboot server (TrueNAS). Feeds the `nfs`/`sd`/`local` paths. |
-| `provision_local_disk.yaml` | `armbian_provision_local_disk` | Wipe + provision a board's local disk from the running rootfs. |
-| `reprovision_to_local.yaml` | `armbian_reprovision_local` | **Full reimage chain:** NFS boot → disk provision → boot transitional `local`. Follow with converge + cycle to inventory `local_kernel`. |
-| `build_and_publish.yaml` | `armbian_build_publish` | Drive `armbian/build` on the docker builder to produce custom PXE-first images. |
-| `bootstrap.yaml` | `armbian_firstboot` | First-boot bootstrap of a board. |
+## Per-board notes
 
-## Common workflows
-
-- **Reimage a board:** `reprovision_to_local.yaml` (flip to `nfs` →
-  boot network rootfs → wipe/provision local disk → boot `local`).
-  Finish with `converge_boot_mode.yaml` + `cycle_board.yaml` using inventory
-  `local_kernel`; the AAP full-reimage workflow includes that final transition. Ensure `stage_netboot_assets.yaml` has staged current
-  NFS + TFTP artifacts first.
-- **Update in place:** steady-state boards use the repo's normal
-  `system-update` / `system-reboot` path — the kernel is local, so no
-  netboot step. Use `cycle_board.yaml` for the reboot so the mode gets
-  verified afterward.
-- **Change boot mode:** edit `armbian_boot_mode` in inventory (or use
-  `set_boot_mode.yaml -e …` for a one-off) → `converge_boot_mode.yaml`
-  → `cycle_board.yaml`.
-- **Build a new image:** `build_and_publish.yaml` on the builder
-  (`vscode.igou.systems`). Fleet standard is edge branch + mainline
-  u-boot v2026.04 with a baked-in `localcmd`.
-
-## Targeting gotcha
-
-All `armbian_*` job templates take **`target_hosts=<inventory
-hostname>`**, *not* `ansible_limit`. A mismatched targeting var silently
-matches no hosts and the play reports success having done nothing.
-(`k3s_install_cluster`, which touches the same boards via the `rk8s`
-group, is the inverse — it takes `ansible_limit`.)
-
-## Per-board quirks (see the doc for the full list)
-
-- **cm3588-nas-01** — `local_kernel` with an NVMe→eMMC `localcmd`
-  fallback chain. Root is PERMANENTLY eMMC (since 2026-07 the four NVMe
-  are the `rk8s` ZFS pool of two mirrored vdevs (width 2) backing the k3s data-dir — never add
-  them to `armbian_local_disks`; `prepare-k3s-datastore.yml` owns
-  them). **Not PoE-powered** (crs328 ether13 reports
-  short-circuit; runs off its DC supply), so `cycle_board.yaml` cannot
-  actually power-cycle it — it reports success while the board never
-  reboots. Use a warm reboot (rtl8125 WoL udev rule keeps the PHY up for
-  u-boot) or pull power physically. After any reimage, run AAP
-  `k3s_prepare_datastore` (pool IMPORTS; only bare-drive creation needs
-  zfs_pool_wipe=true) before `k3s_install_cluster`.
-- U-boot `localcmd` is baked at image-build time (`persist_via: hook`,
-  edge branch only) for most boards; changing the chain means rebuilding
-  the image and re-flashing the board's u-boot carrier.
+- **cm3588-nas-01** (`rk8s` control plane): root is permanently eMMC; the
+  four NVMe are the ZFS pool backing the k3s data-dir, so never add them to
+  `armbian_local_disks` (`prepare-k3s-datastore.yml` owns them).
+  `local_kernel.verify_match: ^/dev/mmcblk0` makes `cycle_board.yaml`
+  assert the eMMC root. Not PoE-powered: it uses the warm-reboot hook
+  (the rtl8125 WoL udev rule in the image keeps the PHY up for PXE), so an
+  unreachable board needs a physical power pull. After a reimage, run AAP
+  `k3s_prepare_datastore` (the pool imports; only bare drives need
+  `zfs_pool_wipe=true`) before `k3s_install_cluster`. `reimage.yaml` skips
+  the k3s cleanup for the control plane itself.
 
 ## Verify what actually booted
 
-- Pin's active mode: `ssh -p 3480 rb5009 ':put [/file get
-  "sbc/pxelinux.cfg/01-<mac>" contents]'`
-- TFTP hit counters (`/ip tftp print` on rb5009) — a `local_kernel` boot
-  must **not** increment the board's `vmlinuz` row.
-- On the board: `findmnt /` shows a local block device for `local*`
-  modes; `modprobe overlay` succeeds ⇒ kernel/module coherence.
+- Active pin: `ssh -p 3480 rb5009 ':put [/file get "sbc/pxelinux.cfg/01-<mac>" contents]'`
+- TFTP hit counters (`/ip tftp print` on rb5009): a `local_kernel` boot
+  must not increment the board's `vmlinuz` row.
+- On the board: `findmnt /` shows a local block device for `local*` modes;
+  `modprobe overlay` succeeds when kernel and modules agree.
