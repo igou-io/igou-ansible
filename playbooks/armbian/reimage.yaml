@@ -1,0 +1,87 @@
+---
+# Reimage ONE board end to end with two boots:
+#   stage a fresh NFS rootfs -> pin nfs -> boot it (sshd only: the fresh
+#   image has no automation user) -> bootstrap -> provision local disks ->
+#   pin the declared armbian_boot_mode -> boot it and verify -> drop the
+#   stale k3s node identity when the board is a cluster member.
+#
+#   ansible-playbook playbooks/armbian/reimage.yaml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=opi5pro-01.igou.systems
+- name: Check that exactly one board is targeted
+  hosts: localhost
+  any_errors_fatal: true
+  gather_facts: false
+  vars:
+    __reimage_target: "{{ target_hosts | mandatory('target_hosts is required: pass -e target_hosts=<one board>') }}"
+    __reimage_boards: "{{ query('inventory_hostnames', __reimage_target ~ ':&boards') }}"
+  tasks:
+    - name: Assert target_hosts selects exactly one board
+      ansible.builtin.assert:
+        that:
+          - __reimage_boards | length == 1
+        fail_msg: >-
+          reimage.yaml reimages exactly one board; target_hosts={{ __reimage_target }}
+          selects {{ __reimage_boards }}.
+        quiet: true
+
+- name: Stage a fresh NFS rootfs and TFTP assets
+  ansible.builtin.import_playbook: stage_netboot_assets.yaml
+  vars:
+    armbian_rootfs_force: true
+
+- name: Pin the nfs boot mode
+  ansible.builtin.import_playbook: pin_boot_mode.yaml
+  vars:
+    armbian_boot_mode: nfs
+
+- name: Boot the fresh NFS rootfs
+  ansible.builtin.import_playbook: cycle_board.yaml
+  vars:
+    armbian_boot_mode: nfs
+    __cycle_board_fresh_image: true
+
+- name: Bootstrap the automation user
+  ansible.builtin.import_playbook: bootstrap.yaml
+
+- name: Provision the local disks
+  ansible.builtin.import_playbook: provision_local_disks.yaml
+
+- name: Pin the declared boot mode
+  ansible.builtin.import_playbook: pin_boot_mode.yaml
+
+- name: Boot the declared boot mode and verify it
+  ansible.builtin.import_playbook: cycle_board.yaml
+
+- name: Remove the board's stale k3s node identity
+  hosts: "{{ target_hosts }}:&rk8s"
+  gather_facts: false
+  vars:
+    __reimage_control_plane: "{{ groups['rk8s_control_plane'] | default([]) | first | default('') }}"
+  tasks:
+    # The reinstalled node re-registers with a new password; the old node
+    # object and its node-password secret would reject it.
+    - name: Delete the stale node object and node-password secret
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - - k3s
+          - kubectl
+          - delete
+          - node
+          - "{{ inventory_hostname }}"
+          - --ignore-not-found
+        - - k3s
+          - kubectl
+          - --namespace
+          - kube-system
+          - delete
+          - secret
+          - "{{ inventory_hostname }}.node-password.k3s"
+          - --ignore-not-found
+      delegate_to: "{{ __reimage_control_plane | default('localhost', true) }}"
+      become: true
+      changed_when: true
+      when:
+        - __reimage_control_plane | length > 0
+        # A reimaged control plane has no k3s to ask until it is reinstalled.
+        - __reimage_control_plane != inventory_hostname

@@ -61,9 +61,12 @@ jobs:
             fi
             echo "Checking ${playbook}..."
             extra_args=()
-            # Restore requires explicit targeting, including for syntax-only checks.
+            # Restore and the armbian playbooks require explicit targeting,
+            # including for syntax-only checks.
             if [[ "${playbook}" == playbooks/devenv/restore.yml ]]; then
               extra_args=(-e ansible_limit=localhost)
+            elif [[ "${playbook}" == playbooks/armbian/* ]]; then
+              extra_args=(-e target_hosts=boards)
             fi
             if ! ansible-playbook --syntax-check "${playbook}" "${extra_args[@]}"; then
               failed=1

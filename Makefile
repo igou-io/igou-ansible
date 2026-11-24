@@ -25,9 +25,10 @@ syntax-check: install-deps
 	    ! -name '*-orchestrator-workflow.yml' -print | sort); do \
 		echo "Checking $${playbook}..."; \
 		set --; \
-		if [ "$${playbook}" = playbooks/devenv/restore.yml ]; then \
-			set -- -e ansible_limit=localhost; \
-		fi; \
+		case "$${playbook}" in \
+			playbooks/devenv/restore.yml) set -- -e ansible_limit=localhost ;; \
+			playbooks/armbian/*) set -- -e target_hosts=boards ;; \
+		esac; \
 		if ! ansible-playbook --syntax-check "$${playbook}" "$$@"; then \
 			failed=1; \
 		fi; \

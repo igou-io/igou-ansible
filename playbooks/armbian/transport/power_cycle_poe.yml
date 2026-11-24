@@ -1,6 +1,8 @@
 ---
-# Shared primitive: PoE-cycle a single board's switch port.
-# Delegated to the per-board switch (armbian_poe_switch).
+# Power-cycle hook for PoE-powered boards (armbian_power_cycle_tasks):
+# turn the board's switch port off, let the capacitors drain, turn it back
+# on. Included by board_boot_wait on the board's host, delegated to the
+# board's switch.
 #
 # Required hostvars:
 #   armbian_poe_switch

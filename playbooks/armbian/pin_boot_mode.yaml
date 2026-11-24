@@ -1,0 +1,73 @@
+---
+# Render each targeted board's pxelinux pin for its armbian_boot_mode and
+# upload it to the router. Router state only: the board is not touched; run
+# cycle_board.yaml to boot into the pinned mode.
+#
+#   ansible-playbook playbooks/armbian/pin_boot_mode.yaml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=opi5pro-01.igou.systems
+#
+# Add -e armbian_boot_mode=<nfs|sd|local|local_kernel> for a one-off pin that
+# differs from inventory.
+- name: Pin the boot mode on the router
+  hosts: "{{ target_hosts | mandatory('target_hosts is required: pass -e target_hosts=<board or group>') }}:&boards"
+  gather_facts: false
+  vars:
+    __pin_boot_mode_modes:
+      - nfs
+      - sd
+      - local
+      - local_kernel
+  tasks:
+    - name: Assert the boot mode is supported
+      ansible.builtin.assert:
+        that:
+          - armbian_boot_mode in __pin_boot_mode_modes
+        fail_msg: >-
+          armbian_boot_mode must be one of {{ __pin_boot_mode_modes | join(', ') }}
+          (got {{ armbian_boot_mode }}).
+        quiet: true
+
+    - name: Resolve the board configuration
+      ansible.builtin.include_role:
+        name: david_igou.armbian.board_config
+
+    # One board at a time: parallel sessions flake RouterOS's SSH server.
+    - name: Check the board's TFTP assets are registered on the router
+      delegate_to: "{{ armbian_router }}"
+      throttle: 1
+      block:
+        - name: Include the TFTP plumbing check
+          ansible.builtin.include_tasks: transport/plumbing_check.yml
+
+    - name: Render the pxelinux pin
+      delegate_to: localhost
+      # A real local connection: inventory localhost is an SSH build host
+      # whose sshd has PrivateTmp, so an SSH-delegated render would land
+      # in a /tmp the router upload cannot read.
+      vars:
+        ansible_connection: local
+      become: false
+      block:
+        - name: Include the pxelinux_render role
+          ansible.builtin.include_role:
+            name: david_igou.armbian.pxelinux_render
+          vars:
+            pxelinux_render_board_mac: "{{ armbian_board_mac }}"
+            pxelinux_render_boot_mode: "{{ armbian_boot_mode }}"
+            pxelinux_render_console: "{{ board_config.console }}"
+            pxelinux_render_earlycon: "{{ board_config.earlycon | default('') }}"
+            pxelinux_render_board_name: "{{ board_config.armbian_board_name }}"
+            pxelinux_render_nfs_server_ip: "{{ armbian_nfs_server_ip }}"
+            pxelinux_render_nfs_root_path: "{{ armbian_nfs_rootfs_path }}"
+            pxelinux_render_hostname: "{{ inventory_hostname }}"
+            pxelinux_render_output_dir: "{{ armbian_tftp_cache_dir }}/pxelinux.cfg"
+            pxelinux_render_pxe_verbose: "{{ armbian_pxe_verbose | default(false) }}"
+
+    - name: Upload the pin to the router
+      delegate_to: "{{ armbian_router }}"
+      throttle: 1
+      block:
+        - name: Include the pxelinux upload
+          ansible.builtin.include_tasks: transport/upload_pxelinux_cfg.yml
+          vars:
+            _upload_pxe_hostname: "{{ inventory_hostname }}"

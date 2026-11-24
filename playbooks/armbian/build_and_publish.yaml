@@ -1,64 +1,61 @@
 ---
-# Per-host custom Armbian image build pipeline.
-#   1. boards group: resolve board_config + build profile, mark opt-in.
-#   2. builders group: image_build per opted-in host, rsync output to controller.
-#   3. netboot_server group: publish staged per-host dirs to images/<host>/.
-# A host opts in by setting any of armbian_build_{family,model,host}.
-- name: Resolve effective configs per board host
-  hosts: "{{ armbian_boards_group | default('boards') }}"
+# Build a custom Armbian image for each targeted board that defines a build
+# layer (board_config_build_family/_model/_host), stage the results on the
+# controller and publish them to the netboot server's images/<board>/.
+#
+#   ansible-playbook playbooks/armbian/build_and_publish.yaml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=opi5pro-01.igou.systems
+#
+# Add -e armbian_build_force=true to rebuild an image whose inputs are
+# unchanged.
+- name: Resolve each board's build profile
+  hosts: "{{ target_hosts | mandatory('target_hosts is required: pass -e target_hosts=<board or group>') }}:&boards"
   gather_facts: false
   tasks:
-    - name: Resolve effective armbian_board_config
-      ansible.builtin.include_tasks: tasks/_resolve_board_config.yml
-    - name: Resolve effective armbian_build
-      ansible.builtin.include_tasks: tasks/_resolve_build_profile.yml
-    - name: Set custom-build opt-in fact
-      ansible.builtin.set_fact:
-        __wants_custom_build: >-
-          {{ (armbian_build_family is defined)
-             or (armbian_build_model is defined)
-             or (armbian_build_host is defined) }}
+    - name: Resolve the board configuration
+      ansible.builtin.include_role:
+        name: david_igou.armbian.board_config
 
-- name: Build custom images per opted-in host; stage on controller
-  hosts: "{{ armbian_builders_group | default('armbian_builders') }}"
-  # gather_facts required: image_build's argument_specs default cache/output
-  # dirs to "{{ ansible_env.HOME }}/...", templated at role entry before the
-  # role's own setup runs, so ansible_env must already be populated.
-  gather_facts: true
+    - name: Resolve the build profile
+      ansible.builtin.include_role:
+        name: david_igou.armbian.board_config
+        tasks_from: build
+
+- name: Build each board's image and stage it on the controller
+  hosts: armbian_builders
+  gather_facts: false
   vars:
-    __build_hosts: >-
-      {{ groups[armbian_boards_group | default('boards')] | map('extract', hostvars)
-         | selectattr('__wants_custom_build', 'equalto', true)
+    __build_boards: >-
+      {{ query('inventory_hostnames', target_hosts ~ ':&boards')
+         | map('extract', hostvars) | selectattr('board_config_build_enabled')
          | map(attribute='inventory_hostname') | list }}
   tasks:
-    - name: Report build targets
-      ansible.builtin.debug:
-        msg: "Will build images for: {{ __build_hosts }}"
-        verbosity: 1
-
-    - name: Build per opted-in host
+    - name: Build the image
       ansible.builtin.include_role:
         name: david_igou.armbian.image_build
       vars:
-        armbian_build_host: "{{ item }}"
-        armbian_build_board: "{{ hostvars[item].armbian_board_config.armbian_board_name }}"
-        armbian_build_branch: "{{ hostvars[item].armbian_build.branch }}"
-        armbian_build_release: "{{ hostvars[item].armbian_build.release }}"
-        armbian_build_ref: "{{ hostvars[item].armbian_build.ref }}"
-        armbian_build_userpatches: "{{ hostvars[item].armbian_build.userpatches }}"
-        armbian_build_compile_args: "{{ hostvars[item].armbian_build.compile_args }}"
-        armbian_build_timeout: "{{ hostvars[item].armbian_build.timeout }}"
-        armbian_build_min_free_gb: "{{ hostvars[item].armbian_build.min_free_gb }}"
-      loop: "{{ __build_hosts }}"
+        image_build_board: "{{ hostvars[__board].board_config.armbian_board_name }}"
+        image_build_name: "{{ __board }}"
+        image_build_cache_dir: "{{ armbian_build_cache_dir }}"
+        image_build_output_dir: "{{ armbian_build_output_dir }}"
+        image_build_branch: "{{ hostvars[__board].board_config_build.branch }}"
+        image_build_release: "{{ hostvars[__board].board_config_build.release }}"
+        image_build_ref: "{{ hostvars[__board].board_config_build.ref }}"
+        image_build_userpatches: "{{ hostvars[__board].board_config_build.userpatches }}"
+        image_build_compile_args: "{{ hostvars[__board].board_config_build.compile_args }}"
+        image_build_timeout: "{{ hostvars[__board].board_config_build.timeout }}"
+        image_build_min_free_gb: "{{ hostvars[__board].board_config_build.min_free_gb }}"
+        image_build_force: "{{ armbian_build_force | default(false) }}"
+      loop: "{{ __build_boards }}"
+      loop_control:
+        loop_var: __board
 
-    # hostvars[inventory_hostname] on purpose: under delegate_to,
-    # bare {{ ansible_host }}/{{ ansible_user }} resolve from the
-    # DELEGATE (localhost) — in an AAP EE that rendered
-    # igou@localhost:22 (connection refused; only a local devcontainer
-    # run, where localhost happens to be the builder, masked it). No
-    # IdentityAgent=none either: the EE's only key is the runner
-    # ssh-agent one injected by the machine credential.
-    - name: Stage per-host build dir on controller via direct rsync
+    # hostvars[inventory_hostname] on purpose: under delegate_to, bare
+    # ansible_host/ansible_user resolve from the delegate (localhost), which
+    # in an AAP EE rendered igou@localhost:22. No IdentityAgent=none either:
+    # the EE's only key is the runner ssh-agent one from the machine
+    # credential.
+    - name: Stage each board's build directory on the controller
       ansible.builtin.command:
         argv:
           - rsync
@@ -66,38 +63,43 @@
           - --compress
           - --delete
           - --mkpath
+          - --itemize-changes
           - --rsh
           - "ssh -p {{ hostvars[inventory_hostname].ansible_port | default(22) }} -o StrictHostKeyChecking=accept-new"
-          - "{{ hostvars[inventory_hostname].ansible_user | default('igou') }}@{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ armbian_build_output_dir }}/{{ item }}/"
-          - "/tmp/armbian_publish/{{ item }}/"
+          - "{{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ armbian_build_output_dir }}/{{ item }}/"
+          - "{{ armbian_publish_staging_dir }}/{{ item }}/"
       delegate_to: localhost
       connection: local
-      changed_when: true
-      loop: "{{ __build_hosts }}"
+      register: __build_stage
+      changed_when: __build_stage.stdout | length > 0
+      loop: "{{ __build_boards }}"
 
-- name: Publish staged per-host directories to netboot server
-  hosts: "{{ armbian_netboot_server_group | default('netboot_server') }}"
+- name: Publish each board's staged image to the netboot server
+  hosts: netboot_server
   gather_facts: false
+  vars:
+    __build_boards: >-
+      {{ query('inventory_hostnames', target_hosts ~ ':&boards')
+         | map('extract', hostvars) | selectattr('board_config_build_enabled')
+         | map(attribute='inventory_hostname') | list }}
   tasks:
-    # Same delegation gotcha as the staging task above: pin user/port
-    # to the netboot server's OWN hostvars, and let the EE runner
-    # agent supply the key.
-    - name: Push staged per-host image + manifest (sudo on receive)
+    # Same delegation rule as the staging task: user and port come from the
+    # netboot server's own hostvars, the key from the runner agent.
+    - name: Push each staged image and manifest (sudo on receive)
       ansible.builtin.command:
         argv:
           - rsync
           - --archive
           - --compress
           - --mkpath
+          - --itemize-changes
           - --rsync-path=sudo rsync
           - --rsh
           - "ssh -p {{ hostvars[inventory_hostname].ansible_port | default(22) }} -o StrictHostKeyChecking=accept-new"
-          - "/tmp/armbian_publish/{{ item }}/"
+          - "{{ armbian_publish_staging_dir }}/{{ item }}/"
           - "{{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ armbian_nfs_assets_export }}/images/{{ item }}/"
       delegate_to: localhost
       connection: local
-      changed_when: true
-      loop: >-
-        {{ groups[armbian_boards_group | default('boards')] | map('extract', hostvars)
-           | selectattr('__wants_custom_build', 'equalto', true)
-           | map(attribute='inventory_hostname') | list }}
+      register: __build_publish
+      changed_when: __build_publish.stdout | length > 0
+      loop: "{{ __build_boards }}"
