@@ -1,0 +1,24 @@
+--- a/arch/arm/mach-rockchip/board.c
++++ b/arch/arm/mach-rockchip/board.c
+@@ -329,6 +329,21 @@ int rockchip_setup_macaddr(void)
+ 	int size = sizeof(hash);
+ 	u8 mac_addr[6];
+
++	/*
++	 * Skip env-set on boards whose NIC has a hardware-stored MAC
++	 * (e.g. RTL8125 reads MAC from its own MAC0 register at probe
++	 * time). If we write a SHA-of-cpuid MAC to env here,
++	 * eth_post_probe in net/eth-uclass.c will override the chip
++	 * MAC with our env value, causing U-Boot DHCP/PXE to use a
++	 * different MAC than the Linux kernel uses (kernel reads
++	 * chip MAC directly). Symptom: two DHCP leases per cold
++	 * boot, pxelinux.cfg/01-<mac> miss against the MAC visible
++	 * from Linux. See david_igou.armbian's
++	 * inventory/group_vars/orange_pi_5_max.yml for rationale.
++	 */
++	if (of_machine_is_compatible("xunlong,orangepi-5-max"))
++		return 0;
++
+ 	/* Only generate a MAC address, if none is set in the environment */
+ 	if (env_get("ethaddr"))
+ 		return 0;
