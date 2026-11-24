@@ -10,7 +10,7 @@ argument_specs:
         Armbian edge kernels this fleet runs), DKMS-builds the module
         against the running kernel (the image must ship matching
         linux-headers — see INSTALL_HEADERS in the board's
-        armbian_build profile), then converges the pool: an existing
+        board_config_build profile), then converges the pool: an existing
         pool is left alone, an importable pool is imported (the
         reprovision path — a reimaged rootfs loses /etc/zfs but the
         drives still carry the pool), and creation from bare drives

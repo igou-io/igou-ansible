@@ -17,8 +17,6 @@
 # rpi_image_default_config → 'igou-pi-lite'; publish_to_netboot.yml
 # derives its target config through the same chain, so the manifest
 # producer and this consumer cannot disagree.
-#
-# Mirrors playbooks/armbian/tasks/_resolve_rootfs_src.yml.
 
 - name: Compute effective image config
   ansible.builtin.set_fact:

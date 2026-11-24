@@ -1,0 +1,8 @@
+---
+- name: Destroy only provisioner-owned resources
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.destroy
+# The network cannot go while a guest is still attached to it.
+- name: Remove the run's netboot network
+  ansible.builtin.import_playbook: network.yml
+  vars:
+    armbian_test_network_state: absent

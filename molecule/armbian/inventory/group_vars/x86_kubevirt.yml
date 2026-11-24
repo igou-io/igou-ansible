@@ -1,0 +1,7 @@
+---
+# A KubeVirt BIOS guest: no device tree; its local disk is the fourth virtio
+# disk (provisioner boot disk, cloud-init, carrier, local).
+board_config_model:
+  armbian_board_name: uefi-x86
+  local_kernel:
+    verify_match: ^/dev/vdd

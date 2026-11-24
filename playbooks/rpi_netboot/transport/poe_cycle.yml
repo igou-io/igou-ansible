@@ -1,7 +1,7 @@
 ---
 # Shared primitive: PoE-cycle a single Pi's switch port.
 # Delegated to the per-Pi switch (rpi_poe_switch). Mirrors
-# playbooks/armbian/transport/poe_cycle.yml with rpi_* hostvars.
+# playbooks/armbian/transport/power_cycle_poe.yml with rpi_* hostvars.
 #
 # Required hostvars:
 #   rpi_poe_switch

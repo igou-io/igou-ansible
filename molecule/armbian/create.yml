@@ -1,0 +1,7 @@
+---
+- name: Check cluster and inventory prerequisites
+  ansible.builtin.import_playbook: ../shared/preflight.yml
+- name: Create the run's netboot network
+  ansible.builtin.import_playbook: network.yml
+- name: Provision disposable guests
+  ansible.builtin.import_playbook: david_igou.molecule_provisioners.create

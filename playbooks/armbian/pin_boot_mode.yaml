@@ -1,0 +1,119 @@
+---
+# Render each targeted board's pxelinux pin for its armbian_boot_mode and
+# write it to the router through the RouterOS API. Router state only: the
+# board is not touched; run cycle_board.yaml to boot into the pinned mode.
+#
+#   ansible-playbook playbooks/armbian/pin_boot_mode.yaml \
+#     -i igou-inventory/inventory.yaml -e target_hosts=opi5pro-01.igou.systems
+#
+# Add -e armbian_boot_mode=<nfs|sd|local|local_kernel> for a one-off pin that
+# differs from inventory.
+- name: Pin the boot mode on the router
+  hosts: "{{ target_hosts | mandatory('target_hosts is required: pass -e target_hosts=<board or group>') }}:&boards"
+  gather_facts: false
+  module_defaults:
+    group/community.routeros.api:
+      hostname: "{{ __armbian_router_api.hostname }}"
+      port: "{{ __armbian_router_api.port }}"
+      tls: "{{ __armbian_router_api.tls }}"
+      validate_certs: "{{ __armbian_router_api.validate_certs }}"
+      username: "{{ __armbian_router_api.username }}"
+      password: "{{ __armbian_router_api.password }}"
+  vars:
+    __pin_boot_mode_modes:
+      - nfs
+      - sd
+      - local
+      - local_kernel
+    __pin_boot_mode_files: >-
+      {{ (['vmlinuz', 'initrd.img'] + (['board.dtb'] if board_config.dtb | default('') | length > 0 else []))
+         | map('regex_replace', '^', armbian_tftp_flash_dir ~ '/armbian/' ~ inventory_hostname ~ '/') | list }}
+  tasks:
+    - name: Assert the boot mode is supported
+      ansible.builtin.assert:
+        that:
+          - armbian_boot_mode in __pin_boot_mode_modes
+        fail_msg: >-
+          armbian_boot_mode must be one of {{ __pin_boot_mode_modes | join(', ') }}
+          (got {{ armbian_boot_mode }}).
+        quiet: true
+
+    - name: Resolve the board configuration
+      ansible.builtin.include_role:
+        name: david_igou.armbian.board_config
+
+    # The credentials are 1Password lookups in production; resolve them once
+    # instead of once per API task.
+    - name: Resolve the router API connection once
+      ansible.builtin.set_fact:
+        __armbian_router_api: >-
+          {{ hostvars[armbian_router].routeros_api_connection
+             | combine(hostvars[armbian_router].routeros_api_credentials) }}
+      no_log: true
+
+    # A real local connection: inventory localhost is an SSH build host
+    # whose sshd has PrivateTmp, so an SSH-delegated render would land in a
+    # /tmp the API write cannot read.
+    - name: Render the pin and write it to the router
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+      become: false
+      block:
+        - name: Look for the board's TFTP files on the router
+          community.routeros.api:
+            path: file
+            extended_query:
+              attributes:
+                - name
+              where:
+                - attribute: name
+                  is: in
+                  value: "{{ __pin_boot_mode_files }}"
+          register: __pin_boot_mode_present
+
+        - name: Assert the board's TFTP files are on the router
+          ansible.builtin.assert:
+            that:
+              - __pin_boot_mode_present.msg | map(attribute='name') | sort == __pin_boot_mode_files | sort
+            fail_msg: >-
+              The router lacks {{ __pin_boot_mode_files | difference(__pin_boot_mode_present.msg | map(attribute='name')) }}.
+              Run playbooks/armbian/stage_netboot_assets.yaml before pinning a boot mode.
+            quiet: true
+
+        - name: Render the pxelinux pin
+          ansible.builtin.include_role:
+            name: david_igou.armbian.pxelinux_render
+          vars:
+            pxelinux_render_board_mac: "{{ armbian_board_mac }}"
+            pxelinux_render_boot_mode: "{{ armbian_boot_mode }}"
+            pxelinux_render_console: "{{ board_config.console }}"
+            pxelinux_render_earlycon: "{{ board_config.earlycon | default('') }}"
+            pxelinux_render_board_name: "{{ board_config.armbian_board_name }}"
+            pxelinux_render_nfs_server_ip: "{{ armbian_nfs_server_ip }}"
+            pxelinux_render_nfs_root_path: "{{ armbian_nfs_rootfs_path }}"
+            pxelinux_render_hostname: "{{ inventory_hostname }}"
+            pxelinux_render_output_dir: "{{ armbian_pin_render_dir }}"
+            pxelinux_render_pxe_verbose: "{{ armbian_pxe_verbose | default(false) }}"
+            pxelinux_render_tftp_dtb: "{{ ('armbian/' ~ inventory_hostname ~ '/board.dtb') if board_config.dtb | default('') | length > 0 else '' }}"
+
+        - name: Write the pin to the router
+          ansible.builtin.include_tasks: transport/router_ensure.yml
+          vars:
+            __armbian_router_path: file
+            __armbian_router_key: name
+            __armbian_router_entries:
+              - name: "{{ armbian_tftp_flash_dir }}/pxelinux.cfg/{{ pxelinux_render_filename }}"
+                contents: "{{ lookup('ansible.builtin.file', pxelinux_render_file) }}"
+
+        # A directory real-filename serves <dir>/<requested path>.
+        - name: Serve pxelinux.cfg/ from the router's flash directory
+          ansible.builtin.include_tasks: transport/router_ensure.yml
+          vars:
+            __armbian_router_path: ip tftp
+            __armbian_router_key: req-filename
+            __armbian_router_entries:
+              - req-filename: pxelinux\.cfg/.*
+                real-filename: "{{ armbian_tftp_flash_dir }}"
+                allow: true
+                read-only: true

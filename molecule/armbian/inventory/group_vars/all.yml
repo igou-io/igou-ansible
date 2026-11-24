@@ -1,0 +1,140 @@
+---
+# Guest definitions. Every guest has one NIC on the run's private Layer2
+# network, which create.yml makes and destroy.yml removes.
+armbian_test_network: "armbian-netboot-{{ molecule_consumer_run_id }}"
+armbian_test_lab_network:
+  - name: lab
+    multus:
+      networkName: "{{ armbian_test_network }}"
+
+# MikroTik publishes CHR as a zipped raw image, which CDI cannot import. The
+# router therefore starts on the provisioner's Debian disk; prepare writes
+# CHR to the chr disk from there and restarts the VM on it.
+armbian_test_chr_version: 7.23.8
+armbian_test_chr_image:
+  url: "https://download.mikrotik.com/routeros/{{ armbian_test_chr_version }}/chr-{{ armbian_test_chr_version }}.img.zip"
+  checksum: sha256:ac01ec7c092f4cab8136212e8ebfd613e0a37844c406317fa228d1ad446ce62c
+
+# CHR's own disk is too small for kernels and initrds: files live on a blank
+# 1 GiB disk that prepare formats. CHR numbers the disks it does not boot
+# from: Debian (pcie1), cloud-init (pcie2), then flash. It would mount the
+# first two and list their files; prepare unmounts them.
+armbian_test_flash_slot: pcie3
+armbian_test_router_vm: >-
+  {{ molecule_guest_profiles.debian | combine(armbian_test_router_overrides) }}
+armbian_test_router_overrides:
+  extra_interfaces:
+    - name: lab
+      bridge: {}
+      macAddress: "52:54:00:aa:00:01"
+  extra_networks: "{{ armbian_test_lab_network }}"
+  data_disks:
+    - name: chr
+      size: 1Gi
+      storage_class: "{{ molecule_storage_class }}"
+  extra_disks:
+    - name: flash
+      disk:
+        bus: virtio
+  extra_volumes:
+    - name: flash
+      emptyDisk:
+        capacity: 1Gi
+  # The API, and one forward per board (named after it) to its sshd.
+  application_ports:
+    - name: api
+      port: 8728
+    - name: board-a
+      port: 2201
+    - name: board-b
+      port: 2202
+
+armbian_test_server_vm: >-
+  {{ molecule_guest_profiles.debian | combine(armbian_test_server_overrides) }}
+armbian_test_server_overrides:
+  interfaces:
+    - name: default
+      masquerade: {}
+      macAddress: "52:54:00:aa:01:10"
+  extra_interfaces:
+    - name: lab
+      bridge: {}
+      macAddress: "52:54:00:aa:00:10"
+  extra_networks: "{{ armbian_test_lab_network }}"
+  cloud_init:
+    network_data:
+      version: 2
+      ethernets:
+        mgmt:
+          match:
+            macaddress: "52:54:00:aa:01:10"
+          dhcp4: true
+        lab:
+          match:
+            macaddress: "52:54:00:aa:00:10"
+          addresses:
+            - 192.0.2.10/24
+  # Image cache, decompressed image and both NFS roots.
+  data_disks:
+    - name: exports
+      size: 24Gi
+      storage_class: "{{ molecule_storage_class }}"
+
+# A board boots its NIC, then the GRUB carrier (stands in for U-Boot's
+# localcmd), then the local disk. SeaBIOS stops at a blank disk, so the
+# provisioner's Debian disk starts ahead of them for prepare to write the
+# carrier from it; prepare then drops it from the boot order.
+armbian_test_board_vm: >-
+  {{ molecule_guest_profiles.debian | combine(armbian_test_board_overrides) }}
+armbian_test_board_overrides:
+  boot_disk:
+    boot_order: 2
+  ssh_service:
+    type: "None"
+  connection_ip: "{{ armbian_test_ip }}"
+  interfaces:
+    - name: lab
+      bridge: {}
+      model: virtio
+      macAddress: "{{ armbian_test_mac }}"
+      bootOrder: 1
+  networks: "{{ armbian_test_lab_network }}"
+  # Debian's address is static: it boots before the router serves DHCP.
+  cloud_init:
+    network_data:
+      version: 2
+      ethernets:
+        lab:
+          match:
+            macaddress: "{{ armbian_test_mac }}"
+          addresses:
+            - "{{ armbian_test_ip }}/24"
+          routes:
+            - to: default
+              via: 192.0.2.1
+  # Stopping the VM is then a power cut, not an ACPI shutdown.
+  vm_overrides:
+    spec:
+      template:
+        spec:
+          terminationGracePeriodSeconds: 0
+  data_disks:
+    - name: carrier
+      size: 1Gi
+      boot_order: 3
+      storage_class: "{{ molecule_storage_class }}"
+    - name: local
+      size: 8Gi
+      boot_order: 4
+      storage_class: "{{ molecule_storage_class }}"
+
+# Netboot server layout (production: group_vars/all/main.yml). The HTTP
+# root is nginx's default; everything large lives on the exports disk.
+armbian_nfs_assets_export: /var/www/html
+armbian_assets_base_url: http://192.0.2.10
+armbian_tftp_staging_dir: "{{ armbian_nfs_assets_export }}/sbc-tftp"
+armbian_tftp_staging_url: "{{ armbian_assets_base_url }}/sbc-tftp"
+armbian_nfs_rootfs_path: /srv/netboot/rootfs
+armbian_image_cache: /srv/cache
+armbian_tftp_flash_dir: "{{ armbian_test_flash_slot }}/sbc"
+armbian_pin_render_dir: "{{ molecule_ephemeral_directory }}/pins"

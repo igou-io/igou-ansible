@@ -140,7 +140,7 @@
           # it only consumes _upload_* vars. The shared path is keyed by
           # build_id (immutable content), so the size gate is safe and
           # dedups the upload across Pis on the same build.
-          ansible.builtin.include_tasks: ../armbian/transport/upload_file.yml
+          ansible.builtin.include_tasks: transport/upload_file.yml
           vars:
             _upload_local_src: "{{ rpi_tftp_cache_dir }}/{{ inventory_hostname }}/{{ item }}"
             _upload_remote_path: "{{ _shared_dir }}/{{ item }}"
