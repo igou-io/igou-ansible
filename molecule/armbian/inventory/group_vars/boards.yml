@@ -1,0 +1,55 @@
+---
+# Production keys (igou-inventory group_vars/boards.yml) with test values.
+armbian_router: router
+armbian_nfs_server_ip: 192.0.2.10
+armbian_bootstrap_user: igou
+armbian_bootstrap_ssh_keys:
+  - "{{ lookup('ansible.builtin.file', molecule_ephemeral_directory ~ '/identity_file.pub') }}"
+armbian_default_password: "1234"
+armbian_boot_mode: local_kernel
+# Resolved against playbooks/armbian/ (playbook_dir of the imported plays).
+armbian_power_cycle_tasks: ../../molecule/armbian/tasks/power_cycle_vm.yml
+# An nfs boot pulls the kernel and initrd through CHR's ~1 Mbit/s TFTP.
+armbian_boot_wait_timeouts:
+  port: 300
+  fresh_port: 1500
+  ssh: 300
+
+# The unmodified upstream image instead of a published build.
+board_config_rootfs_src_override: https://dl.armbian.com/uefi-x86/archive/Armbian_26.11.2_Uefi-x86_trixie_current_6.18.64_minimal.img.xz
+board_config_rootfs_checksum_override: "sha256:{{ board_config_rootfs_src_override }}.sha"
+
+# The data partition comes second so a reimage must preserve it in place.
+armbian_local_disks:
+  - device: /dev/vdd
+    fast_wipe: true
+    layout:
+      - id: root
+        size: grow
+        type: root
+        format: ext4
+        label: armbi_root_local
+        mount: /
+      - id: data
+        size: 256MiB
+        type: srv
+        format: ext4
+        label: armbi_data
+        mount: /srv/data
+        preserve_on_reprovision: true
+
+# Reached only through the router's forward to the board's sshd.
+ansible_user: "{{ armbian_bootstrap_user }}"
+ansible_host: "{{ hostvars['router'].mp_kubevirt_endpoints[inventory_hostname].host }}"
+ansible_port: "{{ hostvars['router'].mp_kubevirt_endpoints[inventory_hostname].port }}"
+ansible_ssh_private_key_file: "{{ molecule_ephemeral_directory }}/identity_file"
+# Every reimage regenerates the host keys.
+ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+# Written by side_effect.yml before board-a's second reimage; the recorded
+# boot identity switches verify.yml to its second pass.
+armbian_test_boot_id_file: "{{ molecule_ephemeral_directory }}/board-b-boot-id"
+armbian_test_second_pass: "{{ lookup('ansible.builtin.file', armbian_test_boot_id_file, errors='ignore') | default('', true) | length > 0 }}"
+armbian_test_markers:
+  preserved: /srv/data/armbian-test-marker
+  root: /armbian-test-marker

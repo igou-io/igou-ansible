@@ -1,0 +1,163 @@
+---
+# Runs after converge and again after side_effect. The side_effect checks
+# run once side_effect has recorded board-b's boot identity.
+- name: Verify each board runs local_kernel from its local disk
+  hosts: boards
+  become: true
+  gather_facts: false
+  vars:
+    __verify_root: "{{ ansible_facts.mounts | selectattr('mount', 'equalto', '/') | first }}"
+  tasks:
+    - name: Gather the kernel, command line and mounts
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+          - mounts
+
+    - name: Find the kernel installed on the local root
+      ansible.builtin.find:
+        paths: /boot
+        patterns: vmlinuz-*
+      register: __verify_kernels
+
+    # The GRUB carrier passes BOOT_IMAGE=/vmlinuz; PXELINUX would pass the
+    # TFTP path of the network kernel.
+    - name: Assert the local disk's kernel booted with the local root
+      ansible.builtin.assert:
+        that:
+          - __verify_root.device is match(board_config_model.local_kernel.verify_match)
+          - __verify_root.fstype == 'ext4'
+          - ansible_facts.proc_cmdline.BOOT_IMAGE == '/vmlinuz'
+          - ansible_facts.proc_cmdline.root == 'LABEL=armbi_root_local'
+          - __verify_kernels.files | length == 1
+          - (__verify_kernels.files | first).path == '/boot/vmlinuz-' ~ ansible_facts.kernel
+          - ansible_facts.mounts | selectattr('mount', 'equalto', '/srv/data') | list | length == 1
+        fail_msg: >-
+          root {{ __verify_root.device }} ({{ __verify_root.fstype }}), cmdline
+          {{ ansible_facts.proc_cmdline }}, running {{ ansible_facts.kernel }}, installed
+          {{ __verify_kernels.files | map(attribute='path') | list }}
+
+    - name: Read root's password entry
+      ansible.builtin.getent:
+        database: shadow
+        key: root
+
+    - name: Read the effective sshd settings
+      ansible.builtin.command:
+        argv:
+          - sshd
+          - -T
+      register: __verify_sshd
+      changed_when: false
+
+    - name: Assert root is locked and SSH takes keys only
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.getent_shadow.root[0] is match('[!*]')
+          - "'permitrootlogin no' in __verify_sshd.stdout_lines"
+          - "'passwordauthentication no' in __verify_sshd.stdout_lines"
+
+    - name: Try the image's root password over SSH
+      ansible.builtin.ping:
+      vars:
+        ansible_user: root
+        ansible_password: "{{ armbian_default_password }}"
+      become: false
+      ignore_unreachable: true
+      register: __verify_root_login
+
+    - name: Assert the root password login was refused
+      ansible.builtin.assert:
+        that:
+          - __verify_root_login.unreachable | default(false)
+
+- name: Verify the router served each board its own pin and no network kernel at the last boot
+  hosts: boards
+  gather_facts: false
+  module_defaults:
+    group/community.routeros.api:
+      hostname: "{{ hostvars[armbian_router].routeros_api_connection.hostname }}"
+      port: "{{ hostvars[armbian_router].routeros_api_connection.port }}"
+      tls: "{{ hostvars[armbian_router].routeros_api_connection.tls }}"
+      validate_certs: "{{ hostvars[armbian_router].routeros_api_connection.validate_certs }}"
+      username: "{{ hostvars[armbian_router].routeros_api_credentials.username }}"
+      password: "{{ hostvars[armbian_router].routeros_api_credentials.password }}"
+  vars:
+    __verify_pin: "pxelinux.cfg/01-{{ armbian_board_mac | lower | replace(':', '-') }}"
+    # The TFTP log names the client on the line before each requested file.
+    __verify_requests: >-
+      {{ __verify_log.msg | selectattr('topics', 'search', 'tftp') | map(attribute='message') | join(' ')
+         | regex_findall('from ' ~ (armbian_test_ip | regex_escape) ~ ':[0-9]+ on \S+ +requested \(\w+\) file: (\S+)') }}
+    # Every request since the board's last PXE start.
+    __verify_last_boot: >-
+      {{ __verify_requests[__verify_requests | length - 1 - (__verify_requests | reverse | list).index('pxelinux.0'):] }}
+  tasks:
+    - name: Read the router's log and the board's pin
+      delegate_to: localhost
+      block:
+        - name: Read the router's log
+          community.routeros.api:
+            path: log
+          register: __verify_log
+
+        - name: Read the board's pin
+          community.routeros.api:
+            path: file
+            extended_query:
+              attributes:
+                - name
+                - contents
+              where:
+                - attribute: name
+                  is: "=="
+                  value: "{{ armbian_tftp_flash_dir }}/{{ __verify_pin }}"
+          register: __verify_pin_file
+
+    - name: Assert the last boot fetched the board's own local_kernel pin and no kernel
+      ansible.builtin.assert:
+        that:
+          - "'pxelinux.0' in __verify_requests"
+          - __verify_pin in __verify_last_boot
+          - __verify_last_boot | select('search', 'vmlinuz|initrd') | list | length == 0
+          - __verify_pin_file.msg[0].contents is search('(?m)^default local_kernel$')
+          - __verify_pin_file.msg[0].contents is search('kernel armbian/' ~ inventory_hostname ~ '/vmlinuz')
+        fail_msg: "Requests since the last PXE start: {{ __verify_last_boot }}"
+
+- name: Verify that the second reimage kept board-a's preserved data only
+  hosts: board-a
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Look for the markers
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        get_checksum: false
+      loop:
+        - "{{ armbian_test_markers.preserved }}"
+        - "{{ armbian_test_markers.root }}"
+      register: __verify_markers
+      when: armbian_test_second_pass
+
+    - name: Assert the preserved partition kept its marker and the root lost it
+      ansible.builtin.assert:
+        that:
+          - __verify_markers.results[0].stat.exists
+          - not __verify_markers.results[1].stat.exists
+      when: armbian_test_second_pass
+
+- name: Verify that the second reimage of board-a left board-b running
+  hosts: board-b
+  gather_facts: false
+  tasks:
+    - name: Read the boot identity
+      ansible.builtin.slurp:
+        src: /proc/sys/kernel/random/boot_id
+      register: __verify_boot_id
+      when: armbian_test_second_pass
+
+    - name: Assert board-b did not reboot
+      ansible.builtin.assert:
+        that:
+          - __verify_boot_id.content | b64decode | trim == lookup('ansible.builtin.file', armbian_test_boot_id_file)
+        fail_msg: "board-b's boot id changed: {{ __verify_boot_id.content | b64decode | trim }}"
+      when: armbian_test_second_pass

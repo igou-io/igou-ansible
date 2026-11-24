@@ -1,0 +1,325 @@
+---
+- name: Prepare the netboot server (NFS export, HTTP root, PXELINUX loader)
+  hosts: netboot_server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for the server
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+
+    # The provisioner's boot disk and cloud-init disk come first.
+    - name: Format the exports disk
+      community.general.filesystem:
+        dev: /dev/vdc
+        fstype: ext4
+
+    - name: Mount the exports disk on /srv
+      ansible.posix.mount:
+        path: /srv
+        src: /dev/vdc
+        fstype: ext4
+        state: mounted
+
+    - name: Install the NFS server, HTTP server and the PXELINUX loader
+      ansible.builtin.apt:
+        name:
+          - nfs-kernel-server
+          - nginx
+          - pxelinux
+          - rsync
+          - syslinux-common
+          - xz-utils
+        update_cache: true
+
+    - name: Create the NFS root parent, exports.d and the loader directory
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ armbian_nfs_rootfs_path }}"
+        - /etc/exports.d
+        - "{{ armbian_nfs_assets_export }}/pxelinux"
+
+    - name: Export the NFS roots to the private network
+      ansible.builtin.copy:
+        dest: /etc/exports.d/armbian.exports
+        content: "{{ armbian_nfs_rootfs_path }} 192.0.2.0/24(rw,no_root_squash,no_subtree_check,insecure)\n"
+        mode: "0644"
+      notify: Reload the NFS exports
+
+    - name: Publish the PXELINUX loader for the router to fetch
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ armbian_nfs_assets_export }}/pxelinux/"
+        remote_src: true
+        mode: "0644"
+      loop:
+        - /usr/lib/PXELINUX/pxelinux.0
+        - /usr/lib/syslinux/modules/bios/ldlinux.c32
+
+  handlers:
+    - name: Reload the NFS exports
+      ansible.builtin.command:
+        argv:
+          - exportfs
+          - -ra
+      changed_when: true
+
+# Runs once per create: the last task takes the boards' Debian disk out of
+# their boot order.
+- name: Prepare the router (stands in for rb5009)
+  hosts: routeros
+  gather_facts: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  module_defaults:
+    group/community.routeros.api:
+      hostname: "{{ routeros_api_connection.hostname }}"
+      port: "{{ routeros_api_connection.port }}"
+      tls: "{{ routeros_api_connection.tls }}"
+      validate_certs: "{{ routeros_api_connection.validate_certs }}"
+      username: "{{ routeros_api_credentials.username }}"
+      password: "{{ routeros_api_credentials.password }}"
+  tasks:
+    - name: Wait for the API port
+      ansible.builtin.wait_for:
+        host: "{{ routeros_api_connection.hostname }}"
+        port: "{{ routeros_api_connection.port }}"
+        timeout: 600
+
+    # A factory CHR accepts admin with an empty password.
+    - name: Create the automation user as the factory admin
+      community.routeros.api_modify:
+        username: admin
+        password: ""
+        path: user
+        handle_absent_entries: ignore
+        data:
+          - name: "{{ routeros_api_credentials.username }}"
+            group: full
+            password: "{{ routeros_api_credentials.password }}"
+      no_log: true
+
+    - name: Disable the factory admin
+      community.routeros.api_find_and_modify:
+        path: user
+        find:
+          name: admin
+        values:
+          disabled: true
+
+    - name: Stop mounting the provisioner's Debian disk
+      community.routeros.api_find_and_modify:
+        path: disk
+        find:
+          slot: pcie1-part1
+        values:
+          mount-filesystem: false
+
+    - name: Format the flash disk
+      community.routeros.api:
+        path: disk
+        cmd: format numbers=pcie2 file-system=ext4
+      changed_when: true
+
+    - name: Configure addresses, DHCP, DNS, NAT, TFTP and the PXE fall-through
+      community.routeros.api_modify:
+        path: "{{ item.path }}"
+        handle_absent_entries: ignore
+        data: "{{ item.data }}"
+      loop_control:
+        label: "{{ item.path }}"
+      loop:
+        - path: ip address
+          data:
+            - address: 192.0.2.1/24
+              interface: ether2
+        - path: ip pool
+          data:
+            - name: lab
+              ranges: 192.0.2.100-192.0.2.199
+        - path: ip dhcp-server
+          data:
+            - name: lab
+              interface: ether2
+              address-pool: lab
+              lease-time: 1h
+        - path: ip dhcp-server network
+          data:
+            - address: 192.0.2.0/24
+              gateway: 192.0.2.1
+              dns-server: 192.0.2.1
+              next-server: 192.0.2.1
+              boot-file-name: pxelinux.0
+        - path: ip dns
+          data:
+            - allow-remote-requests: true
+        - path: ip firewall nat
+          data:
+            - chain: srcnat
+              action: masquerade
+              out-interface: ether1
+        # The private network's MTU is 1400.
+        - path: ip tftp settings
+          data:
+            - max-block-size: 1024
+        # TFTP log lines are the evidence of which files each boot fetched.
+        - path: system logging
+          data:
+            - topics: tftp,!packet
+              action: memory
+        # Without a pin PXELINUX would retry forever; falling through to
+        # the disks matches U-Boot running its bootcmd.
+        - path: file
+          data:
+            - name: "{{ armbian_tftp_flash_dir }}/pxelinux.cfg/default"
+              contents: "default local\nlabel local\n  localboot 0\n"
+        - path: ip tftp
+          data:
+            - req-filename: (pxelinux\.0|ldlinux\.c32|pxelinux\.cfg/default)
+              real-filename: "{{ armbian_tftp_flash_dir }}"
+              allow: true
+              read-only: true
+
+    - name: Keep enough log lines for every boot of the run
+      community.routeros.api_find_and_modify:
+        path: system logging action
+        find:
+          name: memory
+        values:
+          memory-lines: 10000
+
+    - name: Give each board a static lease
+      community.routeros.api_modify:
+        path: ip dhcp-server lease
+        handle_absent_entries: ignore
+        data:
+          - server: lab
+            address: "{{ hostvars[item].armbian_test_ip }}"
+            mac-address: "{{ hostvars[item].armbian_board_mac | upper }}"
+      loop: "{{ groups['boards'] }}"
+
+    # The controller's only way to a board's sshd.
+    - name: Forward each board's port to its sshd
+      community.routeros.api_modify:
+        path: ip firewall nat
+        handle_absent_entries: ignore
+        data:
+          - chain: dstnat
+            action: dst-nat
+            in-interface: ether1
+            protocol: tcp
+            dst-port: "{{ mp_kubevirt_endpoints[item].guest_port | string }}"
+            to-addresses: "{{ hostvars[item].armbian_test_ip }}"
+            to-ports: "22"
+      loop: "{{ groups['boards'] }}"
+
+    - name: Fetch the PXELINUX loader that stands in for the boards' firmware
+      community.routeros.api:
+        path: tool
+        cmd: >-
+          fetch url={{ armbian_assets_base_url }}/pxelinux/{{ item }}
+          dst-path={{ armbian_tftp_flash_dir }}/{{ item }}
+      loop:
+        - pxelinux.0
+        - ldlinux.c32
+      changed_when: true
+
+- name: Write the GRUB carrier that stands in for U-Boot's localcmd
+  hosts: boards
+  become: true
+  gather_facts: false
+  vars:
+    # The boards still run the provisioner's Debian disk.
+    ansible_user: "{{ molecule_guest_profiles.debian.ssh_user }}"
+  tasks:
+    - name: Wait for Debian through the router's forward
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+
+    # The Debian image ships GRUB's BIOS modules but not parted; sfdisk
+    # (util-linux) saves an apt update through the router on each board.
+    - name: Partition the carrier disk
+      ansible.builtin.command:
+        argv:
+          - sfdisk
+          - --label
+          - dos
+          - /dev/vdc
+        stdin: ",,L"
+        creates: /dev/vdc1
+
+    - name: Format the carrier partition
+      community.general.filesystem:
+        dev: /dev/vdc1
+        fstype: ext2
+
+    - name: Install GRUB on the carrier
+      block:
+        - name: Mount the carrier
+          ansible.posix.mount:
+            path: /mnt/carrier
+            src: /dev/vdc1
+            fstype: ext2
+            state: ephemeral
+
+        - name: Install GRUB's boot code and modules
+          ansible.builtin.command:
+            argv:
+              - grub-install
+              - --target=i386-pc
+              - --boot-directory=/mnt/carrier/boot
+              - /dev/vdc
+            creates: /mnt/carrier/boot/grub/i386-pc/core.img
+
+        - name: Boot the kernel from the local disk's root
+          ansible.builtin.copy:
+            dest: /mnt/carrier/boot/grub/grub.cfg
+            mode: "0644"
+            content: |
+              set timeout=0
+              insmod part_gpt
+              insmod ext2
+              search --no-floppy --label --set=root armbi_root_local
+              linux /vmlinuz root=LABEL=armbi_root_local rw rootwait console=ttyS0,115200
+              initrd /initrd.img
+              boot
+      always:
+        - name: Unmount the carrier
+          ansible.posix.mount:
+            path: /mnt/carrier
+            state: unmounted
+
+    # Applies from the next power cycle (the first boot of converge). The
+    # test ops pin the provisioner's disk order: boot disk, cloud-init,
+    # carrier, local.
+    - name: Boot the board from its NIC, carrier and local disk only
+      kubernetes.core.k8s_json_patch:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        name: "{{ molecule_kubevirt_run.hosts[armbian_test_vm].name }}"
+        namespace: "{{ molecule_namespace }}"
+        patch:
+          - op: test
+            path: /spec/template/spec/domain/devices/disks/2/name
+            value: carrier
+          - op: test
+            path: /spec/template/spec/domain/devices/disks/3/name
+            value: local
+          - op: remove
+            path: /spec/template/spec/domain/devices/disks/0/bootOrder
+          - op: replace
+            path: /spec/template/spec/domain/devices/disks/2/bootOrder
+            value: 2
+          - op: replace
+            path: /spec/template/spec/domain/devices/disks/3/bootOrder
+            value: 3
+      delegate_to: localhost
+      become: false
+
+# Last: every guest has been seen running by now.
+- name: Verify placement on the selected worker
+  ansible.builtin.import_playbook: ../shared/storage_verify.yml

@@ -1,0 +1,11 @@
+---
+# Same keys as igou-inventory group_vars/routeros.yml, pointed at the CHR's
+# plain API through its NodePort. The password is generated per run.
+routeros_api_connection:
+  hostname: "{{ mp_kubevirt_endpoints.api.host }}"
+  port: "{{ mp_kubevirt_endpoints.api.port }}"
+  tls: false
+  validate_certs: false
+routeros_api_credentials:
+  username: armbian-test
+  password: "{{ lookup('ansible.builtin.password', molecule_ephemeral_directory ~ '/router-password length=24 chars=ascii_letters,digits') }}"

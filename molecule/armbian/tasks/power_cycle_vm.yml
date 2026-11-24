@@ -1,0 +1,49 @@
+---
+# Power-cycle hook for the test boards (armbian_power_cycle_tasks, resolved
+# against the scenario directory): stop the board's VM, wait until its
+# instance is gone, start it again. The test identity cannot delete VMIs,
+# so the VM is switched off and on through spec.running; a zero grace
+# period makes the stop a power cut.
+- name: Switch the board's VM off
+  kubernetes.core.k8s:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachine
+    name: "{{ molecule_kubevirt_run.hosts[armbian_test_vm].name }}"
+    namespace: "{{ molecule_namespace }}"
+    state: patched
+    definition:
+      spec:
+        running: false
+  delegate_to: localhost
+  become: false
+
+- name: Wait for the board's VM instance to go away
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    name: "{{ molecule_kubevirt_run.hosts[armbian_test_vm].name }}"
+    namespace: "{{ molecule_namespace }}"
+  delegate_to: localhost
+  become: false
+  register: __power_cycle_vmi
+  until: __power_cycle_vmi.resources | length == 0
+  retries: 60
+  delay: 2
+
+- name: Switch the board's VM on and wait until it runs
+  kubernetes.core.k8s:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachine
+    name: "{{ molecule_kubevirt_run.hosts[armbian_test_vm].name }}"
+    namespace: "{{ molecule_namespace }}"
+    state: patched
+    definition:
+      spec:
+        running: true
+    wait: true
+    wait_condition:
+      type: Ready
+      status: "True"
+    wait_timeout: 300
+  delegate_to: localhost
+  become: false
