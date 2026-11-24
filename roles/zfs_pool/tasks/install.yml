@@ -43,9 +43,9 @@
       /usr/src/linux-headers-{{ ansible_facts['kernel'] }} is missing —
       zfs-dkms cannot build against the running kernel. The Armbian
       image must ship its own headers package: set
-      armbian_build_model.compile_args.INSTALL_HEADERS="yes" for this
-      board (see group_vars/cm3588_nas.yml), rebuild with
-      armbian_build_force=true, and reimage.
+      board_config_build_model.compile_args.INSTALL_HEADERS="yes" for this
+      board (see group_vars/cm3588_nas.yml), rebuild the image with
+      playbooks/armbian/build_and_publish.yaml, and reimage.
 
 # DKMS build of zfs on the RK3588 takes ~10-15 min; async keeps the
 # task alive across any SSH hiccup instead of dying mid-build.
