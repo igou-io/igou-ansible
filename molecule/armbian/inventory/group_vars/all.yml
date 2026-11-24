@@ -1,45 +1,42 @@
 ---
-# Guest definitions. Every guest has one NIC on armbian-netboot, a
-# pre-existing Layer2 UserDefinedNetwork in the molecule namespace.
-armbian_test_network: armbian-netboot
+# Guest definitions. Every guest has one NIC on the run's private Layer2
+# network, which create.yml makes and destroy.yml removes.
+armbian_test_network: "armbian-netboot-{{ molecule_consumer_run_id }}"
 armbian_test_lab_network:
   - name: lab
     multus:
       networkName: "{{ armbian_test_network }}"
 
-# The provisioner always attaches its own boot volume and cannot give it an
-# imagePullSecret, so the private CHR image is an extra disk with the only
-# boot order; the public Debian boot volume is attached but never booted.
-# CHR's own disk is too small for kernels and initrds: files live on a
-# blank 1 GiB disk (slot pcie2) that prepare formats. CHR would also mount
-# the Debian disk (pcie1) and list its files; prepare unmounts it.
-armbian_test_router_vm:
-  boot_source: "{{ molecule_guest_profiles.debian.boot_source }}"
-  cloud_init:
-    enabled: false
-  interfaces:
-    - name: default
-      masquerade: {}
-      model: e1000
+# MikroTik publishes CHR as a zipped raw image, which CDI cannot import. The
+# router therefore starts on the provisioner's Debian disk; prepare writes
+# CHR to the chr disk from there and restarts the VM on it.
+armbian_test_chr_version: 7.23.8
+armbian_test_chr_image:
+  url: "https://download.mikrotik.com/routeros/{{ armbian_test_chr_version }}/chr-{{ armbian_test_chr_version }}.img.zip"
+  checksum: sha256:ac01ec7c092f4cab8136212e8ebfd613e0a37844c406317fa228d1ad446ce62c
+
+# CHR's own disk is too small for kernels and initrds: files live on a blank
+# 1 GiB disk that prepare formats. CHR numbers the disks it does not boot
+# from: Debian (pcie1), cloud-init (pcie2), then flash. It would mount the
+# first two and list their files; prepare unmounts them.
+armbian_test_flash_slot: pcie3
+armbian_test_router_vm: >-
+  {{ molecule_guest_profiles.debian | combine(armbian_test_router_overrides) }}
+armbian_test_router_overrides:
   extra_interfaces:
     - name: lab
       bridge: {}
-      model: e1000
       macAddress: "52:54:00:aa:00:01"
   extra_networks: "{{ armbian_test_lab_network }}"
-  extra_disks:
+  data_disks:
     - name: chr
-      bootOrder: 1
-      disk:
-        bus: virtio
+      size: 1Gi
+      storage_class: "{{ molecule_storage_class }}"
+  extra_disks:
     - name: flash
       disk:
         bus: virtio
   extra_volumes:
-    - name: chr
-      containerDisk:
-        image: quay.apps.ocp.igou.systems/igou-io/routeros-chr:7.23.8@sha256:cf469f484231512f368cd44066cdb1b15be925ad38aa8338bf874598512ac225
-        imagePullSecret: quay-local-pull
     - name: flash
       emptyDisk:
         capacity: 1Gi
@@ -139,5 +136,5 @@ armbian_tftp_staging_dir: "{{ armbian_nfs_assets_export }}/sbc-tftp"
 armbian_tftp_staging_url: "{{ armbian_assets_base_url }}/sbc-tftp"
 armbian_nfs_rootfs_path: /srv/netboot/rootfs
 armbian_image_cache: /srv/cache
-armbian_tftp_flash_dir: pcie2/sbc
+armbian_tftp_flash_dir: "{{ armbian_test_flash_slot }}/sbc"
 armbian_pin_render_dir: "{{ molecule_ephemeral_directory }}/pins"

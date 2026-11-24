@@ -67,9 +67,76 @@
           - -ra
       changed_when: true
 
-# Runs once per create: the last task takes the boards' Debian disk out of
-# their boot order.
-- name: Prepare the router (stands in for rb5009)
+# Runs once per create: the router and the boards leave the provisioner's
+# Debian disk for good.
+- name: Install RouterOS CHR on the router
+  hosts: routeros
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for the provisioner's Debian
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+
+    - name: Install unzip
+      ansible.builtin.apt:
+        name: unzip
+        update_cache: true
+
+    - name: Download the CHR image
+      ansible.builtin.get_url:
+        url: "{{ armbian_test_chr_image.url }}"
+        checksum: "{{ armbian_test_chr_image.checksum }}"
+        dest: /tmp/chr.img.zip
+        mode: "0644"
+
+    - name: Unpack the CHR image
+      ansible.builtin.unarchive:
+        src: /tmp/chr.img.zip
+        dest: /tmp
+        remote_src: true
+
+    # The provisioner's boot disk and cloud-init disk come first.
+    - name: Write the CHR image to the chr disk
+      ansible.builtin.command:
+        argv:
+          - dd
+          - if=/tmp/chr-{{ armbian_test_chr_version }}.img
+          - of=/dev/vdc
+          - bs=4M
+          - conv=fsync
+      changed_when: true
+
+    # Debian's cloud kernel has no e1000 driver, and CHR's virtio NICs never
+    # come up on KubeVirt, so the NIC model changes with the boot disk.
+    - name: Boot the router from the chr disk with e1000 NICs
+      kubernetes.core.k8s_json_patch:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        name: "{{ molecule_kubevirt_run.hosts[inventory_hostname].name }}"
+        namespace: "{{ molecule_namespace }}"
+        patch:
+          - op: test
+            path: /spec/template/spec/domain/devices/disks/2/name
+            value: chr
+          - op: add
+            path: /spec/template/spec/domain/devices/disks/2/bootOrder
+            value: 1
+          - op: add
+            path: /spec/template/spec/domain/devices/interfaces/0/model
+            value: e1000
+          - op: add
+            path: /spec/template/spec/domain/devices/interfaces/1/model
+            value: e1000
+      delegate_to: localhost
+      become: false
+
+    - name: Restart the router on CHR
+      ansible.builtin.include_tasks: tasks/power_cycle_vm.yml
+      vars:
+        armbian_test_vm: "{{ inventory_hostname }}"
+
+- name: Configure the router (stands in for rb5009)
   hosts: routeros
   gather_facts: false
   vars:
@@ -111,18 +178,21 @@
         values:
           disabled: true
 
-    - name: Stop mounting the provisioner's Debian disk
+    - name: Stop mounting the provisioner's Debian and cloud-init disks
       community.routeros.api_find_and_modify:
         path: disk
         find:
-          slot: pcie1-part1
+          slot: "{{ item }}"
         values:
           mount-filesystem: false
+      loop:
+        - pcie1-part1
+        - pcie2
 
     - name: Format the flash disk
       community.routeros.api:
         path: disk
-        cmd: format numbers=pcie2 file-system=ext4
+        cmd: format numbers={{ armbian_test_flash_slot }} file-system=ext4
       changed_when: true
 
     - name: Configure addresses, DHCP, DNS, NAT, TFTP and the PXE fall-through

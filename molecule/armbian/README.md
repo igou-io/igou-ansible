@@ -36,11 +36,13 @@ end.
 
 - A Casval lease and the `ocp-ansible-molecule` profile (see
   `../README.md`).
-- In namespace `molecule`: the Layer2 UserDefinedNetwork `armbian-netboot`
-  and the pull secret `quay-local-pull` for the private CHR image.
+- No shared cluster objects beyond the `molecule` namespace: `create.yml`
+  makes the run's Layer2 UserDefinedNetwork (`network.yml`) and waits for
+  it, and `destroy.yml` removes it after the guests.
 - `sshpass` on the controller (the bootstrap logs in with the image's root
   password).
-- Egress from the cluster to `dl.armbian.com` (about 1 GiB per run).
+- Egress from the cluster to `dl.armbian.com` (about 1 GiB per run) and
+  `download.mikrotik.com` (the pinned CHR image, 45 MiB).
 
 ## Run
 
@@ -61,9 +63,9 @@ A full run reimages three times and takes about 70 minutes (67 on Casval,
 
 | Guest | Role |
 | --- | --- |
-| `router` | CHR: DHCP with static leases, TFTP from a 1 GiB flash disk, NAT and one port forward per board's sshd. API through a NodePort. |
+| `router` | CHR: DHCP with static leases, TFTP from a 1 GiB flash disk, NAT and one port forward per board's sshd. API through a NodePort. It first boots the provisioner's Debian disk, from which prepare downloads CHR and writes it to the `chr` disk. |
 | `server` | Debian 13: NFS export, nginx HTTP root (staging directory and the PXELINUX loader), image cache on a data disk. |
-| `board-a-vm`, `board-b-vm` | BIOS, one NIC on `armbian-netboot`, a carrier disk and a local disk. They first boot the provisioner's Debian disk (static address), from which prepare writes the carrier; prepare then leaves only NIC, carrier and local disk in the boot order, so it runs once per create. |
+| `board-a-vm`, `board-b-vm` | BIOS, one NIC on the netboot network, a carrier disk and a local disk. They first boot the provisioner's Debian disk (static address), from which prepare writes the carrier; prepare then leaves only NIC, carrier and local disk in the boot order, so it runs once per create. |
 
 The inventory hosts `board-a` and `board-b` are the boards the playbooks
 target; they are reached through the router's forwards, separate from their

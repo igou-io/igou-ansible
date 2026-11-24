@@ -1,0 +1,31 @@
+---
+# The run's private Layer2 network. The router guest serves DHCP and TFTP on
+# it, so OVN assigns no addresses.
+- name: Manage the run's netboot network
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Manage the network and wait for its attachment definition
+      kubernetes.core.k8s:
+        state: "{{ armbian_test_network_state | default('present') }}"
+        definition:
+          apiVersion: k8s.ovn.org/v1
+          kind: UserDefinedNetwork
+          metadata:
+            name: "{{ armbian_test_network }}"
+            namespace: "{{ molecule_namespace }}"
+            labels:
+              molecule.igou.systems/consumer-run: "{{ molecule_consumer_run_id }}"
+          spec:
+            topology: Layer2
+            layer2:
+              role: Secondary
+              ipam:
+                mode: Disabled
+        wait: true
+        wait_condition:
+          type: NetworkCreated
+          status: "True"
+        wait_timeout: 120
+      when: molecule_consumer_run_id | length > 0

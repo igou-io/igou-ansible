@@ -1,8 +1,11 @@
 ---
 ansible:
   playbooks:
-    # The shared prepare waits for every guest over SSH; the router and the
-    # boards have no reachable sshd until this scenario configures them.
+    # The scenario owns its private network as well as its guests.
+    create: create.yml
+    destroy: destroy.yml
+    # The shared prepare waits for every guest over SSH; the boards have no
+    # reachable sshd until this scenario configures the router.
     prepare: prepare.yml
 scenario:
   name: armbian
