@@ -97,3 +97,14 @@ argument_specs:
         type: str
         default: trixie-backports
         description: "Apt suite providing zfs-dkms/zfsutils-linux; pinned to priority 990 for src:zfs-linux."
+      zfs_pool_hold_packages:
+        type: list
+        elements: str
+        default: []
+        description: >-
+          Packages to put on dpkg hold before ZFS is installed, normally the
+          host's kernel image, dtb and headers packages. zfs-dkms builds only
+          up to its META Linux-Maximum; an apt upgrade to a newer kernel
+          leaves the next boot without a zfs module and the pool unmounted.
+          Release the hold when a zfs release supporting the newer kernel is
+          installable.
