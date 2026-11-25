@@ -1,0 +1,67 @@
+---
+# Update software on the Macs (AAP template: macos_update). Never restarts:
+# Apple updates that need a restart (macOS itself, security responses) are
+# left to macOS automatic updates, which configure.yaml turns on.
+#
+# Requires the onepassword-connect-token credential on the job template for
+# the become password (sudo, and casks whose installers need it).
+#
+# Variables (inventory or extra_vars):
+#   ansible_limit      host or group, default macos
+#   macos_brew_path    default /opt/homebrew/bin/brew; skipped when absent
+#   macos_update_brew  upgrade Homebrew formulae and casks, default true
+#   macos_update_mas   upgrade App Store apps with mas, default false. Needs
+#                      mas installed and the SSH user signed in to the App Store
+#   macos_update_apple install Apple updates that need no restart, default true
+- name: Update macOS software
+  hosts: "{{ ansible_limit | default('macos') }}"
+  gather_facts: false
+  tasks:
+    - name: Find Homebrew
+      ansible.builtin.stat:
+        path: "{{ macos_brew_path | default('/opt/homebrew/bin/brew') }}"
+      register: macos_brew
+
+    - name: Upgrade Homebrew packages
+      when:
+        - macos_brew.stat.exists
+        - macos_update_brew | default(true) | bool
+      block:
+        - name: Upgrade Homebrew formulae
+          community.general.homebrew:
+            path: "{{ macos_brew.stat.path | dirname }}"
+            update_homebrew: true
+            upgrade_all: true
+
+        - name: Upgrade Homebrew casks
+          community.general.homebrew_cask:
+            path: "{{ macos_brew.stat.path | dirname }}"
+            upgrade_all: true
+            sudo_password: "{{ ansible_become_password | default(omit) }}"
+          no_log: true
+
+    - name: Upgrade App Store apps
+      community.general.mas:
+        upgrade_all: true
+      environment:
+        PATH: "{{ macos_brew.stat.path | default('/opt/homebrew/bin/brew') | dirname }}:/usr/bin:/bin"
+      when: macos_update_mas | default(false) | bool
+
+    - name: List pending updates
+      ansible.builtin.import_tasks: tasks/pending_updates.yaml
+
+    - name: Install Apple updates that need no restart
+      ansible.builtin.command:
+        argv: "{{ ['softwareupdate', '--install', '--agree-to-license'] + macos_install_updates }}"
+      vars:
+        macos_install_updates: "{{ macos_pending_updates | difference(macos_restart_updates) }}"
+      become: true
+      changed_when: true
+      when:
+        - macos_update_apple | default(true) | bool
+        - macos_install_updates | length > 0
+
+    - name: Report updates left for macOS to install
+      ansible.builtin.debug:
+        msg: "Waiting on a restart: {{ macos_restart_updates | join(', ') }}"
+      when: macos_restart_updates | length > 0

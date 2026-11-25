@@ -1,0 +1,23 @@
+---
+# Lists pending Apple software updates. Sets:
+#   macos_pending_updates  every pending update label
+#   macos_restart_updates  the labels that need a restart (macOS itself,
+#                          security responses); these are left to macOS
+#                          automatic updates
+- name: List pending macOS updates
+  ansible.builtin.command:
+    argv:
+      - softwareupdate
+      - --list
+  register: macos_softwareupdate_list
+  changed_when: false
+  check_mode: false
+
+- name: Parse the pending updates
+  ansible.builtin.set_fact:
+    macos_pending_updates: >-
+      {{ macos_softwareupdate_list.stdout
+         | regex_findall('[*] Label: (.+)') | map('trim') | list }}
+    macos_restart_updates: >-
+      {{ macos_softwareupdate_list.stdout
+         | regex_findall('[*] Label: (.+)\n[^\n]*Action: restart') | map('trim') | list }}
