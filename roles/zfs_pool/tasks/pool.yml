@@ -13,12 +13,16 @@
   failed_when: false
 
 # The reprovision path: a reimaged rootfs loses /etc/zfs/zpool.cache
-# but the drives still carry the pool. Import, never recreate.
+# but the drives still carry the pool. Import, never recreate. The new
+# rootfs also has a new hostid and the old one never exported the pool, so
+# a plain import is refused ("last accessed by another system"): -f is
+# required. The drives are local to this host, so no other system has it.
 - name: Import an existing pool from the member drives
   ansible.builtin.command:
     argv:
       - zpool
       - import
+      - -f
       - -N
       - -d
       - /dev/disk/by-id
