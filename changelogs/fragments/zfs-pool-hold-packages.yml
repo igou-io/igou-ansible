@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - zfs_pool - new ``zfs_pool_hold_packages`` puts the listed packages on dpkg hold before ZFS is installed, so an apt upgrade cannot move a host to a kernel that zfs-dkms does not build against.
