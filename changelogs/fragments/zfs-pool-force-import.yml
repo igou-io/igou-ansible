@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - zfs_pool - the reimage path imports the pool with ``-f``. A reimaged rootfs has a new hostid and the previous one never exported the pool, so the plain import was refused and the role stopped at its refuse-to-create guard.
