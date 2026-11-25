@@ -15,8 +15,10 @@ function pre_config_uboot_target__999_pxe_first() {
 }
 
 # local_kernel bake — uses host-resolved board_config (no dispatch table).
+# Mainline U-Boot only, whatever the kernel branch: the vendor forks have
+# neither the header layout nor the bootflow this chain is written for.
 function pre_config_uboot_target__999_local_kernel_bake() {
-    [[ "${BRANCH}" != "edge" ]] && return 0
+    [[ "${BOOTSOURCE}" != "https://github.com/u-boot/u-boot.git" ]] && return 0
     {% if board_config.local_kernel is defined %}
     {% set _lk = board_config.local_kernel %}
     {% set _cands = _lk.storage_candidates | default([{'scan': _lk.storage_scan, 'dev': _lk.storage}]) %}
