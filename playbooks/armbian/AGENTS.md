@@ -106,7 +106,7 @@ loads fail (first symptom: k3s cannot mount overlayfs).
 
 The `localcmd` chain is baked into U-Boot at image build time by
 `templates/userpatches/config/sources/families/rockchip-rk3588.conf.j2`
-(edge branch only) from `local_kernel.storage` or the ordered
+(mainline U-Boot builds only) from `local_kernel.storage` or the ordered
 `local_kernel.storage_candidates`. Changing it means rebuilding the image
 and re-flashing the board's U-Boot carrier.
 

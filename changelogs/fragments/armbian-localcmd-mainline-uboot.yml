@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - armbian - the U-Boot ``localcmd`` bake now runs for every mainline U-Boot build instead of only ``edge`` kernel builds, so a board on the ``current`` kernel branch keeps ``local_kernel`` boot.

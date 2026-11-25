@@ -7,7 +7,7 @@ argument_specs:
         Runs ON the target host. Installs ZFS from a configurable apt
         suite (default trixie-backports — Debian trixie main ships
         zfs 2.3.2 whose Linux-Maximum is 6.14, too old for the
-        Armbian edge kernels this fleet runs), DKMS-builds the module
+        Armbian kernels this fleet runs), DKMS-builds the module
         against the running kernel (the image must ship matching
         linux-headers — see INSTALL_HEADERS in the board's
         board_config_build profile), then converges the pool: an existing
