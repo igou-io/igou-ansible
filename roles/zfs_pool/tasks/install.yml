@@ -28,6 +28,15 @@
       Pin: release n={{ zfs_pool_apt_suite }}
       Pin-Priority: 990
 
+# zfs-dkms builds only up to its META Linux-Maximum. An apt upgrade to a
+# newer kernel succeeds, the DKMS build fails, and the next boot has no zfs
+# module, so the pool does not mount.
+- name: Hold packages that must not be upgraded past what zfs-dkms supports
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ zfs_pool_hold_packages }}"
+
 - name: Stat kernel headers for the running kernel
   ansible.builtin.stat:
     path: "/usr/src/linux-headers-{{ ansible_facts['kernel'] }}"
