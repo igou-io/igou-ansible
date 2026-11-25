@@ -38,7 +38,7 @@
             path: "{{ macos_brew.stat.path | dirname }}"
             upgrade_all: true
             sudo_password: "{{ ansible_become_password | default(omit) }}"
-          no_log: true
+          no_log: "{{ ansible_become_password is defined }}"
 
     - name: Upgrade App Store apps
       community.general.mas:

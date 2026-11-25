@@ -38,14 +38,14 @@
   ansible.builtin.command:
     argv:
       - /usr/libexec/ApplicationFirewall/socketfilterfw
-      - "{{ item.get }}"
+      - "{{ item.query }}"
   loop:
     - name: firewall
-      get: --getglobalstate
-      set: --setglobalstate
+      query: --getglobalstate
+      enable: --setglobalstate
     - name: firewall stealth mode
-      get: --getstealthmode
-      set: --setstealthmode
+      query: --getstealthmode
+      enable: --setstealthmode
   loop_control:
     label: "{{ item.name }}"
   register: macos_baseline_firewall
@@ -72,7 +72,7 @@
     macos_baseline_drift: >-
       {{ macos_baseline_drift + [{
            'name': item.item.name ~ ' on',
-           'argv': ['/usr/libexec/ApplicationFirewall/socketfilterfw', item.item.set, 'on']}] }}
+           'argv': ['/usr/libexec/ApplicationFirewall/socketfilterfw', item.item.enable, 'on']}] }}
   loop: "{{ macos_baseline_firewall.results }}"
   loop_control:
     label: "{{ item.item.name }}"
