@@ -59,7 +59,7 @@ collections:
     version: 2.4.0
   - name: https://github.com/david-igou/ansible-collection-armbian.git
     type: git
-    version: v0.1.0-alpha
+    version: v0.1.1-alpha
   - name: https://github.com/david-igou/ansible-collection-devhost.git
     type: git
     version: 29.0.0
