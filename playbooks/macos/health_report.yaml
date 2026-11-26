@@ -100,6 +100,16 @@
       register: macos_diskutil
       changed_when: false
 
+    - name: Read the Time Machine destinations
+      ansible.builtin.command:
+        argv:
+          - tmutil
+          - destinationinfo
+      become: true
+      register: macos_tm_destinations
+      changed_when: false
+      failed_when: false
+
     - name: Read the latest Time Machine backup
       ansible.builtin.command:
         argv:
@@ -201,6 +211,9 @@
         macos_smart_status: "{{ macos_diskutil.stdout | regex_search('SMART Status:\\s*(.+)', '\\1') | default(['unknown'], true) | first | trim }}"
         macos_uptime_days: "{{ ((ansible_facts['uptime_seconds'] | default(0)) / 86400) | int }}"
         macos_backup_date: "{{ macos_tmutil.stdout | regex_search('\\d{4}-\\d{2}-\\d{2}') | default('', true) }}"
+        macos_backup_configured: >-
+          {{ macos_tm_destinations.rc == 0
+             and 'No destinations configured' not in (macos_tm_destinations.stdout ~ macos_tm_destinations.stderr) }}
         macos_bpf_members: "{{ macos_bpf.stdout | regex_replace('^GroupMembership:', '') | trim if macos_bpf.rc == 0 else '' }}"
         macos_screen_lock_delay: >-
           {{ ((macos_screen_lock.stdout | default('')) ~ (macos_screen_lock.stderr | default('')))
@@ -280,6 +293,17 @@
           message: "up {{ macos_uptime_days }} days, restart to finish updates"
           found: "{{ macos_uptime_days | int >= macos_uptime_warn_days | default(30) | int }}"
         - level: warn
+          message: no Time Machine backup destination
+          found: "{{ not macos_backup_configured | bool }}"
+        - level: warn
+          message: Time Machine destination configured but its latest backup can't be read
+          found: "{{ macos_backup_configured | bool and macos_backup_date | length == 0 }}"
+        - level: warn
+          message: >-
+            folder sizes incomplete: SSH lacks Full Disk Access (System Settings > General >
+            Sharing > Remote Login > Allow full disk access for remote users)
+          found: "{{ not macos_snapshot.disk.full_disk_access | bool }}"
+        - level: warn
           message: "last Time Machine backup {{ macos_backup_date }}"
           found: >-
             {{ macos_backup_date | length > 0
@@ -331,7 +355,9 @@
             {{ macos_battery.sppower_battery_health_maximum_capacity | default('') }},
             {{ macos_pending_updates | length }} updates pending
             ({{ macos_restart_updates | length }} need a restart),
-            last backup {{ macos_backup_date | default('unknown', true) }}
+            {{ ('last backup ' ~ macos_backup_date) if macos_backup_date
+               else ('Time Machine destination unreachable' if macos_backup_configured | bool
+                     else 'no Time Machine destination') }}
           changes: "{{ macos_changes | selectattr('level', 'equalto', 'info') | map(attribute='text') | list }}"
           previous: "{{ macos_snapshot_previous.collected_at | default('') }}"
 

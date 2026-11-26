@@ -45,6 +45,9 @@
         serial: "{{ macos_hardware.serial_number | default('') }}"
       battery: "{{ macos_battery }}"
       smart_status: "{{ macos_smart_status }}"
+      backup:
+        configured: "{{ macos_backup_configured | bool }}"
+        latest: "{{ macos_backup_date }}"
       pending_updates: "{{ macos_pending_updates }}"
       accounts: "{{ macos_snapshot_accounts }}"
       processes: "{{ macos_snapshot_processes }}"

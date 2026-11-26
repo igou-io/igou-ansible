@@ -137,7 +137,18 @@
       {%- set ns.out = ns.out + [{'level': 'warn', 'area': 'exposure',
                                   'text': 'Remote Login turned ' ~ ('on' if __cur.exposure.remote_login else 'off')}] -%}
       {%- endif -%}
-      {%- for f in __cur.disk.folders if f.path in __folders_prev -%}
+      {%- set fda_prev = __prev.disk.full_disk_access | default(none) -%}
+      {%- if fda_prev is not none and fda_prev != __cur.disk.full_disk_access -%}
+      {%- set ns.out = ns.out + [{'level': 'info' if __cur.disk.full_disk_access else 'warn', 'area': 'disk',
+                                  'text': 'Full Disk Access for SSH turned ' ~ ('on' if __cur.disk.full_disk_access else 'off')
+                                          ~ '; folder sizes are not comparable this week'}] -%}
+      {%- endif -%}
+      {%- if __prev.backup is defined and __prev.backup.configured != __cur.backup.configured -%}
+      {%- set ns.out = ns.out + [{'level': 'info' if __cur.backup.configured else 'warn', 'area': 'usability',
+                                  'text': 'Time Machine destination ' ~ ('added' if __cur.backup.configured else 'removed')}] -%}
+      {%- endif -%}
+      {#- Folder growth is only comparable when both snapshots saw the same folders. -#}
+      {%- for f in __cur.disk.folders if f.path in __folders_prev and fda_prev == __cur.disk.full_disk_access -%}
       {%- set grew = f.kb - __folders_prev[f.path] | int -%}
       {%- if grew >= macos_snapshot_growth_warn_kb | int
              or (grew >= 1048576 and grew * 100 >= (__folders_prev[f.path] | int) * macos_snapshot_growth_warn_pct | int) -%}

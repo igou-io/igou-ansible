@@ -90,7 +90,18 @@
 <tr><td class="mono">{{ f.path | e }}</td><td class="n">{{ (f.kb / gb) | round(2) }}</td><td class="muted">{{ '' if f.complete else 'partly not readable' }}</td></tr>
 {% endfor %}
 </table></div></details>
-{% if s.disk.unreadable %}<p class="muted">Not readable without Full Disk Access: {{ s.disk.unreadable | map('e') | join(', ') }}</p>{% endif %}
+<p class="muted">Full Disk Access for SSH: {{ 'on' if s.disk.full_disk_access | default(false) else 'off, so protected folders are left out of the sizes' }}.
+{% if s.disk.unreadable_system_count | default(0) %}{{ s.disk.unreadable_system_count }} SIP-protected system folders are not counted.{% endif %}
+{% if s.disk.icloud_unreadable | default([]) %}{{ s.disk.icloud_unreadable | length }} iCloud Drive folders can't be read over SSH (their evicted files take no local space).{% endif %}</p>
+{% if s.disk.unreadable_summary | default([]) %}
+<details><summary>{{ s.disk.unreadable | length }} protected folders not readable</summary>
+<div class="scroll"><table>
+<tr><th>Folder</th><th>Unreadable entries</th></tr>
+{% for u in s.disk.unreadable_summary %}
+<tr><td class="mono">{{ u.path | e }}</td><td class="n">{{ u.count }}</td></tr>
+{% endfor %}
+</table></div></details>
+{% endif %}
 {% if s.disk.local_snapshots %}<p class="muted">{{ s.disk.local_snapshots | length }} local Time Machine snapshots</p>{% endif %}
 
 <h3>Network exposure</h3>
@@ -148,7 +159,8 @@ Third-party kernel extensions: {{ s.persistence.kernel_extensions | map('e') | j
 {% if s.pending_updates %}<p>Pending Apple updates: {{ s.pending_updates | map('e') | join(', ') }}</p>{% endif %}
 
 <h3>Stability</h3>
-<p>Booted {{ s.usability.booted_at | e }} · {{ s.usability.boot_history | selectattr('unexpected') | list | length }} unexpected restarts in the recorded history ·
+<p>Time Machine: {% if s.backup is defined and s.backup.configured %}{{ ('last backup ' ~ s.backup.latest) if s.backup.latest else 'destination configured, latest backup unreadable' }}{% else %}no backup destination{% endif %} ·
+Booted {{ s.usability.booted_at | e }} · {{ s.usability.boot_history | selectattr('unexpected') | list | length }} unexpected restarts in the recorded history ·
 battery {{ s.battery.sppower_battery_health | default('n/a') | e }}, {{ s.battery.sppower_battery_cycle_count | default('?') }} cycles, {{ s.battery.sppower_battery_health_maximum_capacity | default('') | e }} · SMART {{ s.smart_status | e }}</p>
 <details><summary>{{ s.usability.diagnostics | length }} diagnostic reports in the past 7 days</summary>
 <div class="scroll"><table>
