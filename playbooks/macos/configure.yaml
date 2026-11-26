@@ -1,0 +1,27 @@
+---
+# Apply the macOS settings baseline (AAP template: macos_configure). The
+# baseline lives in tasks/baseline.yaml so health_report.yaml can audit the
+# same settings in check mode. Run with --check to preview.
+#
+# Requires the onepassword-connect-token credential on the job template for
+# the become password.
+#
+# Variables (inventory or extra_vars):
+#   ansible_limit          host or group, default macos
+#   macos_hostname         set HostName, LocalHostName and ComputerName; unset leaves them alone
+#   macos_system_defaults  system preferences, list of {domain, key, type, value}
+#   macos_user_defaults    preferences of the SSH user, same shape
+#   macos_pmset            power settings, map of pmset setting -> value
+- name: Apply the macOS settings baseline
+  hosts: "{{ ansible_limit | default('macos') }}"
+  gather_facts: false
+  tasks:
+    - name: Set the hostname
+      ansible.builtin.hostname:
+        name: "{{ macos_hostname }}"
+        use: darwin
+      become: true
+      when: macos_hostname is defined
+
+    - name: Apply the settings baseline
+      ansible.builtin.import_tasks: tasks/baseline.yaml

@@ -1,0 +1,49 @@
+---
+# Free disk space on the Macs (AAP template: macos_cleanup). Removes old
+# Homebrew downloads and aged entries from the SSH user's cleanup paths. It
+# never touches other users' files.
+#
+# Variables (inventory or extra_vars):
+#   ansible_limit          host or group, default macos
+#   macos_brew_path        default /opt/homebrew/bin/brew; skipped when absent
+#   macos_brew_prune_days  remove Homebrew downloads older than this, default 30
+#   macos_cleanup_paths    list of {path, age}: entries directly under path
+#                          older than age (find module syntax, e.g. 7d) are
+#                          removed. Missing paths are skipped.
+- name: Clean up macOS disk space
+  hosts: "{{ ansible_limit | default('macos') }}"
+  gather_facts: false
+  tasks:
+    - name: Find Homebrew
+      ansible.builtin.stat:
+        path: "{{ macos_brew_path | default('/opt/homebrew/bin/brew') }}"
+      register: macos_brew
+
+    - name: Remove old Homebrew downloads and versions
+      ansible.builtin.command:
+        argv:
+          - "{{ macos_brew.stat.path }}"
+          - cleanup
+          - --prune={{ macos_brew_prune_days | default(30) }}
+      register: macos_brew_cleanup
+      changed_when: macos_brew_cleanup.stdout | length > 0
+      when: macos_brew.stat.exists
+
+    - name: Find aged entries in the cleanup paths
+      ansible.builtin.find:
+        paths: "{{ item.path }}"
+        age: "{{ item.age }}"
+        file_type: any
+        hidden: true
+      loop: "{{ macos_cleanup_paths | default([]) }}"
+      loop_control:
+        label: "{{ item.path }}"
+      register: macos_cleanup_found
+
+    - name: Remove aged entries
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ macos_cleanup_found.results | map(attribute='files') | flatten }}"
+      loop_control:
+        label: "{{ item.path }}"
