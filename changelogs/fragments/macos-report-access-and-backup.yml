@@ -1,0 +1,4 @@
+---
+minor_changes:
+  - macos - ``health_report.yaml`` records whether SSH has Full Disk Access and warns when it doesn't, since folder sizes are then incomplete. Protected folders are summarized per folder and iCloud Drive folders are listed separately.
+  - macos - ``health_report.yaml`` distinguishes a Mac with no Time Machine destination (a warning) from one whose latest backup can't be read, and the diff notes when either state changes. Folder growth is not compared across a Full Disk Access change.
