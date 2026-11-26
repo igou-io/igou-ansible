@@ -1,0 +1,63 @@
+---
+# Data volume use and folder sizes: the system folders, each home folder and
+# the folders directly inside it (names and sizes only, never the files
+# inside). macOS privacy protection hides some folders in other users' homes
+# (Desktop, Documents, Downloads) even from root unless sshd has Full Disk
+# Access; those are recorded as not readable.
+- name: List the folders in each home folder
+  ansible.builtin.find:
+    paths: "{{ macos_snapshot_accounts.users | map(attribute='home') | list }}"
+    file_type: directory
+    hidden: true
+    recurse: false
+  become: true
+  register: macos_snapshot_home_dirs
+
+- name: Measure the folders
+  ansible.builtin.command:
+    argv: >-
+      {{ ['du', '-skx']
+         + macos_snapshot_system_folders
+         + (macos_snapshot_accounts.users | map(attribute='home') | list)
+         + (macos_snapshot_home_dirs.files | map(attribute='path') | sort) }}
+  become: true
+  register: macos_snapshot_du
+  changed_when: false
+  failed_when: macos_snapshot_du.rc not in [0, 1]
+
+- name: List local Time Machine snapshots
+  ansible.builtin.command:
+    argv:
+      - tmutil
+      - listlocalsnapshots
+      - /
+  register: macos_snapshot_tm_local
+  changed_when: false
+  failed_when: false
+
+- name: Parse the disk use
+  vars:
+    __macos_df: "{{ macos_df.stdout_lines[-1].split() }}"
+    __macos_unreadable: "{{ macos_snapshot_du.stderr_lines | map('regex_findall', '^du: (.+?): ') | select | map('first') | unique | list }}"
+  ansible.builtin.set_fact:
+    macos_snapshot_disk:
+      volume:
+        size_kb: "{{ __macos_df[1] | int }}"
+        used_kb: "{{ __macos_df[2] | int }}"
+        avail_kb: "{{ __macos_df[3] | int }}"
+        used_pct: "{{ __macos_df[4] | replace('%', '') | int }}"
+      folders: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for line in macos_snapshot_du.stdout_lines -%}
+        {%- set f = line.split('\t', 1) -%}
+        {%- set ns.out = ns.out + [{'path': f[1], 'kb': f[0] | int,
+                                    'complete': __macos_unreadable
+                                                | map('regex_search', '^' ~ (f[1] | regex_escape) ~ '(/|$)')
+                                                | select | list | length == 0}] -%}
+        {%- endfor -%}
+        {{ ns.out }}
+      # Protected folders in the home folders; SIP-protected system folders
+      # are only counted.
+      unreadable: "{{ __macos_unreadable | select('match', '/Users/') | sort }}"
+      unreadable_system_count: "{{ __macos_unreadable | reject('match', '/Users/') | list | length }}"
+      local_snapshots: "{{ macos_snapshot_tm_local.stdout_lines | select('match', 'com.apple') | list }}"

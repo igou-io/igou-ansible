@@ -1,0 +1,158 @@
+---
+# Compare macos_snapshot with macos_snapshot_previous and set macos_changes:
+# a list of {level: info|warn|critical, area, text}. Empty on the first run.
+# Thresholds: macos_snapshot_growth_warn_kb / macos_snapshot_growth_warn_pct.
+- name: Compare this week's snapshot with the previous one
+  vars:
+    __cur: "{{ macos_snapshot }}"
+    __prev: "{{ macos_snapshot_previous }}"
+    __system_paths: '^/(System|usr|bin|sbin|Library/Apple)/'
+    __exe_cur: "{{ __cur.processes | map(attribute='path') | reject('match', __system_paths) | select | unique | sort }}"
+    __exe_prev: "{{ __prev.processes | default([]) | map(attribute='path') | reject('match', __system_paths) | select | unique | sort }}"
+    __apps_cur: "{{ __cur.software.apps | rejectattr('system') | items2dict(key_name='path', value_name='version') }}"
+    __apps_prev: "{{ __prev.software.apps | default([]) | rejectattr('system') | items2dict(key_name='path', value_name='version') }}"
+    __app_info: "{{ __cur.software.apps | items2dict(key_name='path', value_name='obtained_from') }}"
+    __btm_cur: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for b in __cur.persistence.background_items -%}{%- set ns.out = ns.out + [b.name ~ ' @ ' ~ (b.url or b.identifier)] -%}{%- endfor -%}
+      {{ ns.out | unique | sort }}
+    __btm_prev: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for b in __prev.persistence.background_items | default([]) -%}{%- set ns.out = ns.out + [b.name ~ ' @ ' ~ (b.url or b.identifier)] -%}{%- endfor -%}
+      {{ ns.out | unique | sort }}
+    __launchd_cur: "{{ __cur.persistence.launchd | items2dict(key_name='path', value_name='program') }}"
+    __launchd_prev: "{{ __prev.persistence.launchd | default([]) | items2dict(key_name='path', value_name='program') }}"
+    __listen_cur: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for l in __cur.exposure.listeners | rejectattr('loopback') -%}{%- set ns.out = ns.out + [l.proto ~ '/' ~ l.port ~ ' ' ~ l.process] -%}{%- endfor -%}
+      {{ ns.out | unique | sort }}
+    __listen_prev: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for l in __prev.exposure.listeners | default([]) | rejectattr('loopback') -%}{%- set ns.out = ns.out + [l.proto ~ '/' ~ l.port ~ ' ' ~ l.process] -%}{%- endfor -%}
+      {{ ns.out | unique | sort }}
+    __folders_prev: "{{ __prev.disk.folders | default([]) | items2dict(key_name='path', value_name='kb') }}"
+    __boots_prev: "{{ __prev.usability.boot_history | default([]) | map(attribute='time') | list }}"
+    __sets:
+      - area: persistence
+        what: background item
+        cur: "{{ __btm_cur }}"
+        prev: "{{ __btm_prev }}"
+        added: warn
+        removed: warn
+      - area: persistence
+        what: launchd job
+        cur: "{{ __launchd_cur.keys() | sort }}"
+        prev: "{{ __launchd_prev.keys() | sort }}"
+        added: warn
+        removed: warn
+      - area: accounts
+        what: admin
+        cur: "{{ __cur.accounts.admins }}"
+        prev: "{{ __prev.accounts.admins | default([]) }}"
+        added: critical
+        removed: warn
+      - area: accounts
+        what: account
+        cur: "{{ __cur.accounts.users | map(attribute='name') | sort }}"
+        prev: "{{ __prev.accounts.users | default([]) | map(attribute='name') | sort }}"
+        added: warn
+        removed: warn
+      - area: persistence
+        what: configuration profile
+        cur: "{{ __cur.persistence.profiles }}"
+        prev: "{{ __prev.persistence.profiles | default([]) }}"
+        added: critical
+        removed: warn
+      - area: persistence
+        what: system extension
+        cur: "{{ __cur.persistence.system_extensions | map('regex_findall', '[a-z0-9-]+(?:[.][a-zA-Z0-9-]+)+') | select | map('first') | unique | sort }}"
+        prev: "{{ __prev.persistence.system_extensions | default([]) | map('regex_findall', '[a-z0-9-]+(?:[.][a-zA-Z0-9-]+)+') | select | map('first') | unique | sort }}"
+        added: warn
+        removed: warn
+      - area: persistence
+        what: kernel extension
+        cur: "{{ __cur.persistence.kernel_extensions }}"
+        prev: "{{ __prev.persistence.kernel_extensions | default([]) }}"
+        added: warn
+        removed: warn
+      - area: exposure
+        what: network listener
+        cur: "{{ __listen_cur }}"
+        prev: "{{ __listen_prev }}"
+        added: warn
+        removed: info
+      - area: processes
+        what: third-party executable
+        cur: "{{ __exe_cur }}"
+        prev: "{{ __exe_prev }}"
+        added: info
+        removed: info
+      - area: software
+        what: Homebrew formula
+        cur: "{{ __cur.software.homebrew.formulae | map('split') | map('first') | list }}"
+        prev: "{{ __prev.software.homebrew.formulae | default([]) | map('split') | map('first') | list }}"
+        added: info
+        removed: info
+      - area: software
+        what: Homebrew cask
+        cur: "{{ __cur.software.homebrew.casks | map('split') | map('first') | list }}"
+        prev: "{{ __prev.software.homebrew.casks | default([]) | map('split') | map('first') | list }}"
+        added: info
+        removed: info
+  ansible.builtin.set_fact:
+    macos_changes: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- if __prev | length > 0 -%}
+      {%- for s in __sets -%}
+      {%- for x in s.cur | difference(s.prev) -%}
+      {%- set ns.out = ns.out + [{'level': s.added, 'area': s.area, 'text': 'new ' ~ s.what ~ ': ' ~ x}] -%}
+      {%- endfor -%}
+      {%- for x in s.prev | difference(s.cur) -%}
+      {%- set ns.out = ns.out + [{'level': s.removed, 'area': s.area, 'text': s.what ~ ' removed: ' ~ x}] -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {%- for path, program in __launchd_cur.items() if path in __launchd_prev and __launchd_prev[path] != program -%}
+      {%- set ns.out = ns.out + [{'level': 'warn', 'area': 'persistence',
+                                  'text': 'launchd job ' ~ path ~ ' now runs ' ~ program ~ ' (was ' ~ __launchd_prev[path] ~ ')'}] -%}
+      {%- endfor -%}
+      {%- for path in __apps_cur.keys() | difference(__apps_prev.keys()) | sort -%}
+      {%- set unsigned = __app_info[path] == 'unknown' -%}
+      {%- set ns.out = ns.out + [{'level': 'warn' if unsigned else 'info', 'area': 'software',
+                                  'text': 'new app: ' ~ path ~ ' ' ~ __apps_cur[path] ~ (' (not from an identified developer)' if unsigned else '')}] -%}
+      {%- endfor -%}
+      {%- for path in __apps_prev.keys() | difference(__apps_cur.keys()) | sort -%}
+      {%- set ns.out = ns.out + [{'level': 'info', 'area': 'software', 'text': 'app removed: ' ~ path}] -%}
+      {%- endfor -%}
+      {%- for path, version in __apps_cur.items() if path in __apps_prev and __apps_prev[path] != version -%}
+      {%- set ns.out = ns.out + [{'level': 'info', 'area': 'software',
+                                  'text': path | basename ~ ' ' ~ __apps_prev[path] ~ ' -> ' ~ version}] -%}
+      {%- endfor -%}
+      {%- for name, ok in __cur.exposure.security.items() if __prev.exposure.security[name] | default(false) and not ok -%}
+      {%- set ns.out = ns.out + [{'level': 'critical', 'area': 'exposure', 'text': name ~ ' turned off'}] -%}
+      {%- endfor -%}
+      {%- for name in ['enabled', 'stealth'] if __prev.exposure.firewall[name] | default(false) and not __cur.exposure.firewall[name] -%}
+      {%- set ns.out = ns.out + [{'level': 'critical', 'area': 'exposure', 'text': 'firewall ' ~ name ~ ' turned off'}] -%}
+      {%- endfor -%}
+      {%- if __prev.exposure.remote_login is defined and __prev.exposure.remote_login != __cur.exposure.remote_login -%}
+      {%- set ns.out = ns.out + [{'level': 'warn', 'area': 'exposure',
+                                  'text': 'Remote Login turned ' ~ ('on' if __cur.exposure.remote_login else 'off')}] -%}
+      {%- endif -%}
+      {%- for f in __cur.disk.folders if f.path in __folders_prev -%}
+      {%- set grew = f.kb - __folders_prev[f.path] | int -%}
+      {%- if grew >= macos_snapshot_growth_warn_kb | int
+             or (grew >= 1048576 and grew * 100 >= (__folders_prev[f.path] | int) * macos_snapshot_growth_warn_pct | int) -%}
+      {%- set ns.out = ns.out + [{'level': 'warn', 'area': 'disk',
+                                  'text': f.path ~ ' grew ' ~ (grew / 1048576) | round(1) ~ ' GB to ' ~ (f.kb / 1048576) | round(1) ~ ' GB'}] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for i in __cur.software.installs if i.date > __prev.collected_at -%}
+      {%- set ns.out = ns.out + [{'level': 'info', 'area': 'software',
+                                  'text': 'installed ' ~ i.name ~ ' ' ~ i.version ~ ' on ' ~ i.date[:10]}] -%}
+      {%- endfor -%}
+      {%- for b in __cur.usability.boot_history if b.unexpected and b.time not in __boots_prev -%}
+      {%- set ns.out = ns.out + [{'level': 'warn', 'area': 'usability', 'text': 'unexpected restart ' ~ b.time}] -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {{ (ns.out | selectattr('level', 'equalto', 'critical') | list)
+         + (ns.out | selectattr('level', 'equalto', 'warn') | list)
+         + (ns.out | selectattr('level', 'equalto', 'info') | list) }}

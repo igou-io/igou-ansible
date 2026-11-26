@@ -1,0 +1,71 @@
+---
+# Snapshot history in S3 (macos_report_s3, igou-inventory
+# group_vars/all/macos_report.yml): s3://<bucket>/<host>/<YYYY-MM-DD>.json.
+#
+# macos_snapshot_history_action: fetch -> sets macos_snapshot_previous to the
+# newest snapshot before today's ({} on the first run); store -> uploads
+# macos_snapshot. Failures set macos_snapshot_history_errors instead of
+# failing the play, so the report still posts; the localhost play fails the
+# job afterwards.
+- name: Use the S3 snapshot history
+  delegate_to: localhost
+  connection: local
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    __macos_key: "{{ inventory_hostname }}/{{ macos_snapshot.collected_at[:10] }}.json"
+  module_defaults:
+    amazon.aws.s3_object:
+      endpoint_url: "{{ macos_report_s3.endpoint }}"
+      access_key: "{{ macos_report_s3.access_key_lookup }}"
+      secret_key: "{{ macos_report_s3.secret_key_lookup }}"
+      region: "{{ macos_report_s3.region }}"
+      bucket: "{{ macos_report_s3.bucket }}"
+  block:
+    - name: List this Mac's stored snapshots
+      amazon.aws.s3_object:
+        mode: list
+        prefix: "{{ inventory_hostname }}/"
+      register: macos_snapshot_keys
+      when: macos_snapshot_history_action == 'fetch'
+
+    - name: Read the previous snapshot
+      vars:
+        __macos_previous_key: >-
+          {{ macos_snapshot_keys.s3_keys | default([])
+             | select('match', '^' ~ inventory_hostname ~ '/\d{4}-\d{2}-\d{2}\.json$')
+             | select('lt', __macos_key) | sort | last | default('') }}
+      amazon.aws.s3_object:
+        mode: getstr
+        object: "{{ __macos_previous_key }}"
+      register: macos_snapshot_previous_raw
+      when:
+        - macos_snapshot_history_action == 'fetch'
+        - __macos_previous_key | length > 0
+      no_log: true
+
+    - name: Load the previous snapshot
+      ansible.builtin.set_fact:
+        macos_snapshot_previous: >-
+          {{ macos_snapshot_previous_raw.contents | from_json
+             if macos_snapshot_previous_raw.contents is defined else {} }}
+      when: macos_snapshot_history_action == 'fetch'
+      no_log: true
+
+    - name: Store this week's snapshot
+      amazon.aws.s3_object:
+        mode: put
+        object: "{{ __macos_key }}"
+        content: "{{ macos_snapshot | to_json }}"
+        headers:
+          Content-Type: application/json
+      when: macos_snapshot_history_action == 'store'
+      no_log: true
+  rescue:
+    - name: Record the history failure
+      ansible.builtin.set_fact:
+        macos_snapshot_previous: "{{ macos_snapshot_previous | default({}) }}"
+        macos_snapshot_history_errors: >-
+          {{ macos_snapshot_history_errors | default([])
+             + ['could not ' ~ macos_snapshot_history_action ~ ' the snapshot in s3://'
+                ~ macos_report_s3.bucket ~ '/' ~ __macos_key] }}
+      no_log: false

@@ -1,0 +1,170 @@
+<!doctype html>
+<!-- {{ ansible_managed }} -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macOS Report</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7; --card: #f5f5f7;
+          --ok: #1a7f37; --warn: #9a6700; --critical: #cf222e; --info: #0969da; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #f5f5f7; --muted: #a1a1a6; --line: #3a3a3c; --card: #1f1f22;
+            --ok: #3fb950; --warn: #d29922; --critical: #f85149; --info: #58a6ff; }
+  }
+  body { background: var(--bg); color: var(--fg); margin: 0 auto; max-width: 1200px; padding: 16px;
+         font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 32px 0 6px; padding-top: 16px; border-top: 2px solid var(--line); }
+  h3 { font-size: 15px; margin: 20px 0 6px; }
+  .muted { color: var(--muted); }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600;
+           color: var(--bg); vertical-align: middle; }
+  .ok { background: var(--ok); } .warn { background: var(--warn); } .critical { background: var(--critical); }
+  .info { background: var(--info); } .unreachable { background: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+  .tile { background: var(--card); border-radius: 8px; padding: 8px 10px; }
+  .tile b { display: block; font-size: 17px; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  code, .mono { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  details { margin: 6px 0; } summary { cursor: pointer; font-weight: 600; }
+  ul.changes { padding-left: 18px; margin: 4px 0; } ul.changes li { margin: 2px 0; }
+</style>
+</head>
+<body>
+{% set gb = 1048576 %}
+<h1>macOS Report</h1>
+<p class="muted">Generated {{ now(utc=true, fmt='%Y-%m-%d %H:%M UTC') }}. History: <code>s3://{{ macos_report_s3.bucket | e }}/&lt;host&gt;/&lt;date&gt;.json</code></p>
+{% for host in macos_report_hosts %}
+{% set s = hostvars[host].macos_snapshot | default({}) %}
+{% set h = hostvars[host].macos_health | default({'status': 'unreachable', 'summary': 'asleep or off the network', 'findings': [], 'changes': [], 'previous': ''}) %}
+<h2 id="{{ host | e }}">{{ host | e }} <span class="badge {{ h.status }}">{{ h.status }}</span></h2>
+<p>{{ h.summary | e }}</p>
+{% if s %}
+{% if h.findings %}
+<h3>Findings</h3>
+<ul class="changes">{% for f in h.findings %}<li>{{ f | e }}</li>{% endfor %}</ul>
+{% endif %}
+<h3>Changes since {{ h.previous[:10] if h.previous else 'the previous snapshot' }}</h3>
+{% if not h.previous %}<p class="muted">First snapshot recorded; changes are reported from the next run.</p>
+{% elif s.changes %}
+<ul class="changes">{% for c in s.changes %}<li><span class="badge {{ c.level }}">{{ c.level }}</span> <span class="muted">{{ c.area }}</span> {{ c.text | e }}</li>{% endfor %}</ul>
+{% else %}<p class="muted">No changes.</p>{% endif %}
+
+<h3>Resources at {{ s.collected_at | e }}</h3>
+<div class="grid">
+  <div class="tile">Load <b>{{ s.resources.load | join(' / ') }}</b></div>
+  <div class="tile">CPU <b>{{ (100 - s.resources.cpu_pct.idle) | round(1) }}%</b><span class="muted">user {{ s.resources.cpu_pct.user }}%, sys {{ s.resources.cpu_pct.sys }}%</span></div>
+  <div class="tile">Memory free <b>{{ s.resources.memory.free_pct }}%</b><span class="muted">of {{ (s.resources.memory.total_mb / 1024) | round(0) | int }} GB</span></div>
+  <div class="tile">Swap used <b>{{ s.resources.memory.swap_used_mb | int }} MB</b></div>
+  <div class="tile">Disk used <b>{{ s.disk.volume.used_pct }}%</b><span class="muted">{{ (s.disk.volume.avail_kb / gb) | round(1) }} GB free</span></div>
+  <div class="tile">Processes <b>{{ s.processes | length }}</b></div>
+</div>
+<p class="muted mono">{{ s.resources.memory.physmem | e }}</p>
+
+<h3>Processes</h3>
+<details><summary>All {{ s.processes | length }} processes, by CPU</summary>
+<div class="scroll"><table>
+<tr><th>PID</th><th>PPID</th><th>User</th><th>CPU %</th><th>Mem %</th><th>RSS MB</th><th>Elapsed</th><th>Command</th></tr>
+{% for p in s.processes %}
+<tr><td class="n">{{ p.pid }}</td><td class="n">{{ p.ppid }}</td><td>{{ p.user | e }}</td><td class="n">{{ p.cpu_pct }}</td><td class="n">{{ p.mem_pct }}</td><td class="n">{{ (p.rss_kb / 1024) | round(1) }}</td><td class="n">{{ p.elapsed }}</td><td class="mono">{{ p.args | e }}</td></tr>
+{% endfor %}
+</table></div></details>
+<details><summary>Top 25 by memory</summary>
+<div class="scroll"><table>
+<tr><th>PID</th><th>User</th><th>RSS MB</th><th>Mem %</th><th>Executable</th></tr>
+{% for p in (s.processes | sort(attribute='rss_kb', reverse=true))[:25] %}
+<tr><td class="n">{{ p.pid }}</td><td>{{ p.user | e }}</td><td class="n">{{ (p.rss_kb / 1024) | round(1) }}</td><td class="n">{{ p.mem_pct }}</td><td class="mono">{{ p.path | e }}</td></tr>
+{% endfor %}
+</table></div></details>
+
+<h3>Disk</h3>
+<details><summary>{{ s.disk.folders | length }} folders by size</summary>
+<div class="scroll"><table>
+<tr><th>Folder</th><th>GB</th><th></th></tr>
+{% for f in s.disk.folders | sort(attribute='kb', reverse=true) %}
+<tr><td class="mono">{{ f.path | e }}</td><td class="n">{{ (f.kb / gb) | round(2) }}</td><td class="muted">{{ '' if f.complete else 'partly not readable' }}</td></tr>
+{% endfor %}
+</table></div></details>
+{% if s.disk.unreadable %}<p class="muted">Not readable without Full Disk Access: {{ s.disk.unreadable | map('e') | join(', ') }}</p>{% endif %}
+{% if s.disk.local_snapshots %}<p class="muted">{{ s.disk.local_snapshots | length }} local Time Machine snapshots</p>{% endif %}
+
+<h3>Network exposure</h3>
+<p>Remote Login {{ 'on' if s.exposure.remote_login else 'off' }} ·
+Firewall {{ 'on' if s.exposure.firewall.enabled else 'OFF' }}{{ ', stealth mode' if s.exposure.firewall.stealth else '' }} ·
+{% for name, ok in s.exposure.security.items() %}{{ name }} {{ 'on' if ok else 'OFF' }}{{ ' · ' if not loop.last else '' }}{% endfor %}</p>
+<details><summary>{{ s.exposure.listeners | length }} listening sockets ({{ s.exposure.listeners | rejectattr('loopback') | list | length }} not on loopback)</summary>
+<div class="scroll"><table>
+<tr><th>Proto</th><th>Address</th><th>Port</th><th>Process</th><th>PID</th><th>User</th></tr>
+{% for l in s.exposure.listeners %}
+<tr><td>{{ l.proto }}</td><td class="mono">{{ l.address | e }}</td><td class="n">{{ l.port }}</td><td>{{ l.process | e }}</td><td class="n">{{ l.pid }}</td><td>{{ l.user | e }}</td></tr>
+{% endfor %}
+</table></div></details>
+
+<h3>Persistence and accounts</h3>
+<p>Accounts: {{ s.accounts.users | map(attribute='name') | map('e') | join(', ') }} · Admins: {{ s.accounts.admins | map('e') | join(', ') }}<br>
+Configuration profiles: {{ s.persistence.profiles | map('e') | join(', ') or 'none' }}<br>
+System extensions: {{ s.persistence.system_extensions | map('e') | join('; ') or 'none' }}<br>
+Third-party kernel extensions: {{ s.persistence.kernel_extensions | map('e') | join(', ') or 'none' }}</p>
+<details><summary>{{ s.persistence.background_items | length }} login and background items</summary>
+<div class="scroll"><table>
+<tr><th>UID</th><th>Name</th><th>Type</th><th>Disposition</th><th>Developer</th><th>Team</th><th>Location</th></tr>
+{% for b in s.persistence.background_items %}
+<tr><td>{{ b.uid }}</td><td>{{ b.name | e }}</td><td>{{ b.type | e }}</td><td>{{ b.disposition | e }}</td><td>{{ b.developer | e }}</td><td>{{ b.team_id | e }}</td><td class="mono">{{ (b.executable or b.url or b.identifier) | e }}</td></tr>
+{% endfor %}
+</table></div></details>
+<details><summary>{{ s.persistence.launchd | length }} third-party launchd jobs</summary>
+<div class="scroll"><table>
+<tr><th>File</th><th>Label</th><th>Runs</th><th>At load</th><th>Keep alive</th></tr>
+{% for j in s.persistence.launchd %}
+<tr><td class="mono">{{ j.path | e }}</td><td>{{ j.label | e }}</td><td class="mono">{{ (j.arguments | join(' ') if j.arguments else j.program) | e }}</td><td>{{ j.run_at_load }}</td><td>{{ j.keep_alive }}</td></tr>
+{% endfor %}
+</table></div></details>
+
+<h3>Software</h3>
+{% set apps = s.software.apps | rejectattr('system') | list %}
+<details><summary>{{ apps | length }} apps outside /System ({{ s.software.apps | selectattr('system') | list | length }} system apps not listed)</summary>
+<div class="scroll"><table>
+<tr><th>App</th><th>Version</th><th>Source</th><th>Signer</th><th>Path</th></tr>
+{% for a in apps %}
+<tr><td>{{ a.name | e }}</td><td>{{ a.version | e }}</td><td>{{ a.obtained_from | e }}</td><td>{{ a.signer | e }}</td><td class="mono">{{ a.path | e }}</td></tr>
+{% endfor %}
+</table></div></details>
+{% if s.software.homebrew.formulae or s.software.homebrew.casks %}
+<details><summary>Homebrew: {{ s.software.homebrew.formulae | length }} formulae, {{ s.software.homebrew.casks | length }} casks</summary>
+<p class="mono">{{ (s.software.homebrew.formulae + s.software.homebrew.casks) | map('e') | join(' · ') }}</p></details>
+{% endif %}
+<details><summary>Install history (last 30)</summary>
+<div class="scroll"><table>
+<tr><th>Date</th><th>Name</th><th>Version</th><th>Source</th></tr>
+{% for i in (s.software.installs | reverse | list)[:30] %}
+<tr><td class="n">{{ i.date[:16] | replace('T', ' ') }}</td><td>{{ i.name | e }}</td><td>{{ i.version | e }}</td><td>{{ i.source | replace('package_source_', '') | e }}</td></tr>
+{% endfor %}
+</table></div></details>
+{% if s.pending_updates %}<p>Pending Apple updates: {{ s.pending_updates | map('e') | join(', ') }}</p>{% endif %}
+
+<h3>Stability</h3>
+<p>Booted {{ s.usability.booted_at | e }} · {{ s.usability.boot_history | selectattr('unexpected') | list | length }} unexpected restarts in the recorded history ·
+battery {{ s.battery.sppower_battery_health | default('n/a') | e }}, {{ s.battery.sppower_battery_cycle_count | default('?') }} cycles, {{ s.battery.sppower_battery_health_maximum_capacity | default('') | e }} · SMART {{ s.smart_status | e }}</p>
+<details><summary>{{ s.usability.diagnostics | length }} diagnostic reports in the past 7 days</summary>
+<div class="scroll"><table>
+<tr><th>Time</th><th>Process</th><th>Kind</th><th>Scope</th><th>File</th></tr>
+{% for d in s.usability.diagnostics %}
+<tr><td class="n">{{ d.modified[:16] | replace('T', ' ') }}</td><td>{{ d.process | e }}</td><td>{{ d.kind | e }}</td><td>{{ d.scope | e }}</td><td class="mono">{{ d.file | e }}</td></tr>
+{% endfor %}
+</table></div></details>
+<details><summary>Boot history</summary>
+<div class="scroll"><table>
+<tr><th>Event</th><th>Time</th><th></th></tr>
+{% for b in s.usability.boot_history %}
+<tr><td>{{ b.event }}</td><td>{{ b.time | e }}</td><td>{{ 'unexpected restart' if b.unexpected else '' }}</td></tr>
+{% endfor %}
+</table></div></details>
+{% endif %}
+{% endfor %}
+</body>
+</html>

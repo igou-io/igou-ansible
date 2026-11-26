@@ -1,0 +1,57 @@
+---
+# CPU, memory, swap and load at report time. top takes two samples one second
+# apart because its first sample covers the time since boot.
+- name: Read load, swap and memory size
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - -n
+      - vm.loadavg
+      - vm.swapusage
+      - hw.memsize
+  register: macos_snapshot_sysctl
+  changed_when: false
+
+- name: Read the free memory percentage
+  ansible.builtin.command:
+    argv:
+      - memory_pressure
+      - -Q
+  register: macos_snapshot_memory_pressure
+  changed_when: false
+  failed_when: false
+
+- name: Sample CPU and physical memory use
+  ansible.builtin.command:
+    argv:
+      - top
+      - -l
+      - "2"
+      - -n
+      - "0"
+      - -s
+      - "1"
+  register: macos_snapshot_top
+  changed_when: false
+
+- name: Parse the resource use
+  vars:
+    __macos_cpu: "{{ macos_snapshot_top.stdout_lines | select('match', 'CPU usage:') | list | last | default('') }}"
+    __macos_physmem: "{{ macos_snapshot_top.stdout_lines | select('match', 'PhysMem:') | list | last | default('') }}"
+    __macos_load: "{{ macos_snapshot_sysctl.stdout_lines[0] | regex_findall('[0-9.]+') | map('float') | list }}"
+    __macos_swap: "{{ macos_snapshot_sysctl.stdout_lines[1] | regex_findall('(total|used|free) = ([0-9.]+)M') | community.general.dict }}"
+  ansible.builtin.set_fact:
+    macos_snapshot_resources:
+      load: "{{ __macos_load }}"
+      cpu_pct:
+        user: "{{ __macos_cpu | regex_findall('([0-9.]+)% user') | first | default(0) | float }}"
+        sys: "{{ __macos_cpu | regex_findall('([0-9.]+)% sys') | first | default(0) | float }}"
+        idle: "{{ __macos_cpu | regex_findall('([0-9.]+)% idle') | first | default(0) | float }}"
+      memory:
+        total_mb: "{{ (macos_snapshot_sysctl.stdout_lines[2] | int / 1048576) | int }}"
+        free_pct: >-
+          {{ macos_snapshot_memory_pressure.stdout | regex_findall('free percentage: ([0-9]+)%')
+             | first | default(-1) | int }}
+        physmem: "{{ __macos_physmem | regex_replace('^PhysMem: *', '') | trim }}"
+        swap_used_mb: "{{ __macos_swap.used | default(0) | float }}"
+        swap_total_mb: "{{ __macos_swap.total | default(0) | float }}"
