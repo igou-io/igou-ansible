@@ -1,10 +1,12 @@
 ---
-- name: Reimage board-a
-  ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
-  vars:
-    target_hosts: board-a
-
+# board-b first: it is the stand-in control plane, and board-a's reimage ends
+# by asking it for board-a's stale k3s identity.
 - name: Reimage board-b
   ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
   vars:
     target_hosts: board-b
+
+- name: Reimage board-a
+  ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
+  vars:
+    target_hosts: board-a

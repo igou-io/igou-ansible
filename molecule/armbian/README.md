@@ -19,6 +19,21 @@ end.
   router log shows its pin but no kernel or initrd request during that boot.
 - A second reimage of board-a keeps the preserved partition's data, replaces
   the root filesystem, and does not reboot board-b.
+- That second reimage runs the way production reimages its control plane
+  (cm3588-nas-01): through `transport/power_cycle_warm_reboot.yml`, a reboot
+  over SSH. Before it, `tasks/assert_dkms_built.yml` passes with a module
+  built for the kernel and refuses one that is not; the reimage then starts
+  from the refused state, so its first reboot (into `nfs`) proves the guard
+  never blocks a reimage. `dkms` is a two-line stand-in, not the package.
+- `reimage.yaml`'s k3s cleanup: board-b is the stand-in control plane
+  (`rk8s_control_plane`). Its own reimage skips the cleanup, board-a's first
+  reimage finds no k3s there, and the second asks a stand-in `k3s` for
+  exactly board-a's node and node-password secret.
+- A kernel whose checksum changed on the router is fetched again, and three
+  stages and pins leave one TFTP row per directory and one checksum sidecar,
+  equal to the staged kernel.
+- Each board's final boot is served its own pin, not prepare's fallback
+  `pxelinux.cfg/default`, and its root is partition 1 of the local disk.
 
 ## What it cannot prove
 
@@ -27,8 +42,15 @@ end.
   "carrier" disk (written in `prepare.yml`) that boots `/vmlinuz` from the
   disk labelled `armbi_root_local`.
 - Rockchip kernels and device trees: the x86 board has no dtb.
-- PoE: `transport/power_cycle_poe.yml` is not exercised; the boards use
+- PoE: `transport/power_cycle_poe.yml` is not exercised; converge uses
   `tasks/power_cycle_vm.yml` (VM off and on).
+- Real DKMS, ZFS, k3s or an apt kernel upgrade: the guard and the cleanup
+  run against stand-ins, and no pool has to survive the reimage.
+- Boot timing: an `nfs` boot is dominated by the CHR's TFTP rate, so the
+  waits are the scenario's own and say nothing about a real board's.
+- The published-image manifest: prepare publishes the upstream image on the
+  netboot server and `board_config_rootfs_src_override` points staging at it;
+  the collection's `board_config` scenario covers manifest resolution.
 - rb5009 itself: CHR 7.23.8 on the plain API (8728) rather than api-ssl,
   with a free licence that caps what it sends at about 1 Mbit/s.
 
@@ -41,7 +63,7 @@ end.
   it, and `destroy.yml` removes it after the guests.
 - `sshpass` on the controller (the bootstrap logs in with the image's root
   password).
-- Egress from the cluster to `dl.armbian.com` (about 1 GiB per run) and
+- Egress from the cluster to `fi.mirror.armbian.de` (about 1 GiB, once, in prepare) and
   `download.mikrotik.com` (the pinned CHR image, 45 MiB).
 
 ## Run
@@ -57,7 +79,7 @@ While developing, keep the guests and run `molecule create`, `prepare`,
 initrd through the CHR's TFTP at about 1 Mbit/s and takes about 14 minutes.
 
 A full run reimages three times and takes about 70 minutes (67 on Casval,
-2026-11-24).
+2026-11-26).
 
 ## Topology
 

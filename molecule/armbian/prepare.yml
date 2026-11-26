@@ -59,6 +59,45 @@
         - /usr/lib/PXELINUX/pxelinux.0
         - /usr/lib/syslinux/modules/bios/ldlinux.c32
 
+    # Production stages from an image published on the netboot server. One
+    # download here, instead of one request per stage to a mirror redirector
+    # that can change its answer during a run.
+    - name: Create the published image directory on the exports disk
+      ansible.builtin.file:
+        path: "{{ armbian_test_images_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Serve it under the HTTP root
+      ansible.builtin.file:
+        src: "{{ armbian_test_images_dir }}"
+        dest: "{{ armbian_nfs_assets_export }}/images"
+        state: link
+
+    - name: Download the upstream image
+      ansible.builtin.get_url:
+        url: "{{ armbian_test_upstream_image }}"
+        dest: "{{ armbian_test_images_dir }}/{{ armbian_test_upstream_image | basename }}"
+        checksum: "sha256:{{ armbian_test_upstream_image }}.sha"
+        mode: "0644"
+        timeout: 60
+      register: __prepare_image
+      until: __prepare_image is succeeded
+      retries: 5
+      delay: 60
+
+    - name: Hash the downloaded image
+      ansible.builtin.stat:
+        path: "{{ __prepare_image.dest }}"
+        checksum_algorithm: sha256
+      register: __prepare_image_stat
+
+    - name: Publish its checksum beside it
+      ansible.builtin.copy:
+        dest: "{{ __prepare_image.dest }}.sha"
+        content: "{{ __prepare_image_stat.stat.checksum }}  {{ armbian_test_upstream_image | basename }}\n"
+        mode: "0644"
+
   handlers:
     - name: Reload the NFS exports
       ansible.builtin.command:

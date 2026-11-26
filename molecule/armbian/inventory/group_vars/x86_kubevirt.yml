@@ -4,4 +4,5 @@
 board_config_model:
   armbian_board_name: uefi-x86
   local_kernel:
-    verify_match: ^/dev/vdd
+    # Partition 1: the real boards' U-Boot loads the kernel from partition 1.
+    verify_match: ^/dev/vdd1$
