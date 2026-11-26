@@ -1,0 +1,5 @@
+---
+minor_changes:
+  - macos - ``health_report.yaml`` records a full snapshot of each Mac every run (all processes with redacted arguments, resources, disk use by folder, login and background items, launchd jobs, profiles, extensions, accounts, apps and their signers, install history, Homebrew, listening sockets, security settings, diagnostic reports and boot history) to ``s3://macos-reports/<host>/<date>.json``.
+  - macos - ``health_report.yaml`` compares each snapshot with the previous one and reports the changes (new admins, profiles, background items, launchd jobs, listeners, unsigned apps, disabled security settings, folder growth, installs, unexpected restarts) in Slack and in the findings.
+  - macos - ``health_report.yaml`` publishes the latest report as a web page (``macos_report_web``) and flags swap use, low free memory, kernel panics, low-memory kills and frequent crash reports. ``macos_report_store=false`` skips the S3 history and the page for a dry run.

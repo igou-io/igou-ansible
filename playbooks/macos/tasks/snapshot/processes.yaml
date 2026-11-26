@@ -1,0 +1,63 @@
+---
+# Every running process. ps prints args last, so a second ps maps each PID to
+# its executable path (comm), which may contain spaces. Arguments are stored
+# with the values of common secret flags masked (macos_snapshot_redactions).
+# Run as root: without it macOS hides other users' arguments. The collector's
+# own Ansible and sudo processes are left out.
+# no_log keeps the unredacted arguments out of the AAP job events.
+- name: List every process with its arguments
+  ansible.builtin.command:
+    argv:
+      - ps
+      - -axww
+      - -o
+      - pid=,ppid=,uid=,pcpu=,pmem=,rss=,state=,etime=,args=
+  become: true
+  register: macos_snapshot_ps
+  changed_when: false
+  no_log: true
+
+- name: List every process with its executable path
+  ansible.builtin.command:
+    argv:
+      - ps
+      - -axo
+      - pid=,comm=
+  become: true
+  register: macos_snapshot_ps_comm
+  changed_when: false
+
+- name: Parse the processes
+  vars:
+    __macos_users: >-
+      {%- set ns = namespace(out={}) -%}
+      {%- for line in macos_snapshot_dscl_users.stdout_lines -%}
+      {%- set f = line.split() -%}
+      {%- if f | length == 2 -%}{%- set ns.out = ns.out | combine({f[1]: f[0]}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ ns.out }}
+    __macos_paths: >-
+      {{ macos_snapshot_ps_comm.stdout_lines | map('trim') | map('regex_findall', '^([0-9]+) (.*)$')
+         | select | map('first') | community.general.dict }}
+  ansible.builtin.set_fact:
+    macos_snapshot_processes: >-
+      {%- set ns = namespace(rows=[]) -%}
+      {%- for line in macos_snapshot_ps.stdout_lines -%}
+      {%- set m = line | regex_findall('^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s(.*)$')
+                       | first | default([]) -%}
+      {%- if m and 'AnsiballZ_' not in m[8] and 'BECOME-SUCCESS-' not in m[8] -%}
+      {%- set ns.args = m[8] -%}
+      {%- for r in macos_snapshot_redactions -%}
+      {%- set ns.args = ns.args | regex_replace(r.pattern, r.replace) -%}
+      {%- endfor -%}
+      {%- set ns.rows = ns.rows + [{
+            'pid': m[0] | int, 'ppid': m[1] | int,
+            'user': __macos_users[m[2]] | default(m[2]),
+            'cpu_pct': m[3] | float, 'mem_pct': m[4] | float, 'rss_kb': m[5] | int,
+            'state': m[6], 'elapsed': m[7],
+            'path': __macos_paths[m[0]] | default(''),
+            'args': ns.args[:macos_snapshot_args_max | int]}] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.rows | sort(attribute='cpu_pct', reverse=true) }}
+  no_log: true

@@ -1,0 +1,70 @@
+---
+# What the Mac exposes to the network: every TCP listener and bound UDP
+# socket with its process, Remote Login, and the firewall. Sharing services
+# (Screen Sharing, File Sharing, AirPlay Receiver, Remote Management) show up
+# as listeners on their well-known ports; macos_snapshot_service_ports names
+# them.
+- name: List listening sockets
+  ansible.builtin.command:
+    argv: "{{ ['lsof', '-nP'] + item + ['-FpcuLn'] }}"
+  loop:
+    - - -iTCP
+      - -sTCP:LISTEN
+    - - -iUDP
+  become: true
+  register: macos_snapshot_lsof
+  changed_when: false
+  failed_when: false
+
+- name: Read the Remote Login setting
+  ansible.builtin.command:
+    argv:
+      - systemsetup
+      - -getremotelogin
+  become: true
+  register: macos_snapshot_remote_login
+  changed_when: false
+  failed_when: false
+
+- name: Read the application firewall state
+  ansible.builtin.command:
+    argv:
+      - /usr/libexec/ApplicationFirewall/socketfilterfw
+      - --getglobalstate
+      - --getstealthmode
+  register: macos_snapshot_firewall
+  changed_when: false
+  failed_when: false
+
+- name: Parse the network exposure
+  ansible.builtin.set_fact:
+    macos_snapshot_exposure:
+      listeners: >-
+        {%- set ns = namespace(out=[], pid='', cmd='', user='') -%}
+        {%- for r in macos_snapshot_lsof.results -%}
+        {%- set proto = 'tcp' if '-iTCP' in r.item else 'udp' -%}
+        {%- for line in r.stdout_lines -%}
+        {%- if line.startswith('p') -%}{%- set ns.pid = line[1:] | int -%}
+        {%- elif line.startswith('c') -%}{%- set ns.cmd = line[1:] -%}
+        {%- elif line.startswith('L') -%}{%- set ns.user = line[1:] -%}
+        {%- elif line.startswith('n') and '->' not in line -%}
+        {%- set addr = line[1:] | regex_findall('^(.*):([0-9]+|[*])$') | first | default([]) -%}
+        {%- if addr -%}
+        {%- set ns.out = ns.out + [{'proto': proto, 'address': addr[0], 'port': addr[1],
+                                    'process': ns.cmd, 'pid': ns.pid, 'user': ns.user,
+                                    'loopback': addr[0] in ['127.0.0.1', '[::1]', 'localhost']}] -%}
+        {%- endif -%}
+        {%- endif -%}
+        {%- endfor -%}
+        {%- endfor -%}
+        {{ ns.out | unique | sort(attribute='port') }}
+      remote_login: "{{ 'On' in macos_snapshot_remote_login.stdout }}"
+      firewall:
+        enabled: "{{ 'enabled' in macos_snapshot_firewall.stdout_lines | first | default('') }}"
+        stealth: "{{ 'stealth mode is on' in macos_snapshot_firewall.stdout | lower }}"
+      security: >-
+        {%- set ns = namespace(out={}) -%}
+        {%- for r in macos_security.results -%}
+        {%- set ns.out = ns.out | combine({r.item.name: r.item.expect in (r.stdout ~ r.stderr)}) -%}
+        {%- endfor -%}
+        {{ ns.out }}
