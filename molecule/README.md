@@ -60,7 +60,7 @@ provisioner smoke test. Run expensive or credentialed scenarios explicitly.
 | `windows-image-build` | Build, generalize, clone, boot, and guest management connection. |
 | `grafana-kiosk` | Browser/kiosk deployment and dashboard navigation against a small HTTP fixture. |
 | `upsmonitor` | NUT packages and configuration, running exporters, and host metrics without attached UPSes. |
-| `armbian` | Two BIOS "boards" behind a RouterOS CHR and a Debian netboot server: production `reimage.yaml` twice (NFS boot, bootstrap, local disk, `local_kernel` boot), then a repeat reimage through the warm-reboot hook and its DKMS guard that keeps the preserved partition, removes the board's k3s identity and leaves the other board running. See `armbian/README.md`. |
+| `armbian` | Two BIOS "boards" behind a RouterOS CHR and a Debian netboot server, built from zero with production `reimage.yaml` (NFS boot, bootstrap, local disk, `local_kernel` boot): a control plane with a real ZFS datastore, a worker, and k3s on both. Then both again: the worker reimaged as a cluster member, the control plane reimaged through the warm-reboot hook from a state the DKMS guard refuses, the pool imported with the cluster's state, and a kernel upgrade by the nightly update booted with the pool and both nodes back. See `armbian/README.md`. |
 
 No Molecule scenario enrolls Tailscale. The Kubernetes scenarios do not install GitOps or applications. The k3s and VPS
 scenarios also exercise the focused upgrade path, with upgrade and recovery checks

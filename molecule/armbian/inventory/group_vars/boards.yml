@@ -50,12 +50,12 @@ ansible_ssh_private_key_file: "{{ molecule_ephemeral_directory }}/identity_file"
 # Every reimage regenerates the host keys.
 ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
 
-# Written by side_effect.yml before board-a's second reimage; the recorded
-# boot identity switches verify.yml to its second pass.
-armbian_test_boot_id_file: "{{ molecule_ephemeral_directory }}/board-b-boot-id"
+# Written by side_effect.yml before board-b's second reimage; the recorded
+# boot identity (board-a's) switches verify.yml to its second pass.
+armbian_test_boot_id_file: "{{ molecule_ephemeral_directory }}/board-a-boot-id"
 armbian_test_second_pass: "{{ lookup('ansible.builtin.file', armbian_test_boot_id_file, errors='ignore') | default('', true) | length > 0 }}"
 armbian_test_markers:
   preserved: /srv/data/armbian-test-marker
   root: /armbian-test-marker
-# side_effect.yml's stand-in for k3s on board-b appends its arguments here.
-armbian_test_k3s_log: /var/log/armbian-test-k3s.log
+  # A ConfigMap, kept in the pool with the rest of the cluster's state.
+  cluster: armbian-test-marker

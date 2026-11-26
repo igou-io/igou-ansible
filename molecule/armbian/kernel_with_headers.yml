@@ -1,0 +1,23 @@
+---
+# Production's control-plane image carries the headers of its kernel
+# (INSTALL_HEADERS) and its kernel is older than the next one in apt. The
+# upstream image has no headers, and apt.armbian.com has none for its kernel:
+# put the control plane on a kernel from apt that has them, and that the
+# nightly update will replace.
+- name: Install an apt kernel and its headers on the control plane
+  hosts: rk8s_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install the kernel and its headers
+      ansible.builtin.apt:
+        name:
+          - "linux-image-current-x86={{ armbian_test_kernel_version }}"
+          - "linux-headers-current-x86={{ armbian_test_kernel_version }}"
+        allow_downgrade: true
+        update_cache: true
+
+- name: Boot that kernel
+  ansible.builtin.import_playbook: ../../playbooks/armbian/cycle_board.yaml
+  vars:
+    target_hosts: rk8s_control_plane

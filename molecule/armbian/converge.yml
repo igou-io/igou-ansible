@@ -1,12 +1,31 @@
 ---
-# board-b first: it is the stand-in control plane, and board-a's reimage ends
-# by asking it for board-a's stale k3s identity.
+# A rebuild from zero in the fleet runbook's order: the control plane
+# (board-b) and its ZFS datastore, the worker (board-a), then k3s on both.
+# k3s is installed once per stage: xanmanning.k3s keeps its list of control
+# nodes in a fact and counts board-b twice on a second run in one process.
+
+# A blank board has no OS for its warm-reboot hook to reboot.
 - name: Reimage board-b
   ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
   vars:
     target_hosts: board-b
+    armbian_power_cycle_tasks: ../../molecule/armbian/tasks/power_cycle_vm.yml
+
+- name: Give board-b a kernel with headers
+  ansible.builtin.import_playbook: kernel_with_headers.yml
+
+- name: Create board-b's ZFS pool
+  ansible.builtin.import_playbook: ../../playbooks/kubernetes/prepare-k3s-datastore.yml
+  vars:
+    ansible_limit: rk8s_control_plane  # noqa: var-naming[read-only] -- target this imported play only
+    zfs_pool_wipe: true
 
 - name: Reimage board-a
   ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
   vars:
     target_hosts: board-a
+
+- name: Install k3s on both boards
+  ansible.builtin.import_playbook: ../../playbooks/kubernetes/install-k3s-cluster.yml
+  vars:
+    ansible_limit: rk8s  # noqa: var-naming[read-only] -- target this imported play only
