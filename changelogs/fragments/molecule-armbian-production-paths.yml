@@ -1,0 +1,5 @@
+---
+minor_changes:
+  - armbian Molecule runs the repeat reimage through the warm-reboot hook and its DKMS guard, exercises the k3s node-identity cleanup against a stand-in control plane, checks the router's TFTP rows and checksum sidecars, and stages from an image published on its netboot server.
+bugfixes:
+  - armbian Molecule - a task delegated from one test board to the other connected back to its own board, because the boards' SSH port was looked up by ``inventory_hostname``.

@@ -15,8 +15,9 @@ armbian_boot_wait_timeouts:
   fresh_port: 1500
   ssh: 300
 
-# The unmodified upstream image instead of a published build.
-board_config_rootfs_src_override: https://dl.armbian.com/uefi-x86/archive/Armbian_26.11.2_Uefi-x86_trixie_current_6.18.64_minimal.img.xz
+# The image prepare.yml published on the netboot server, where production
+# keeps its builds. The override skips only the manifest lookup.
+board_config_rootfs_src_override: "{{ armbian_assets_base_url }}/images/{{ armbian_test_upstream_image | basename }}"
 board_config_rootfs_checksum_override: "sha256:{{ board_config_rootfs_src_override }}.sha"
 
 # The data partition comes second so a reimage must preserve it in place.
@@ -38,10 +39,13 @@ armbian_local_disks:
         mount: /srv/data
         preserve_on_reprovision: true
 
-# Reached only through the router's forward to the board's sshd.
+# Reached only through the router's forward to the board's sshd. Each host
+# names its forward (armbian_test_forward) instead of using
+# inventory_hostname: under delegate_to that is the delegating host, and a
+# task delegated to the other board would connect back to its own.
 ansible_user: "{{ armbian_bootstrap_user }}"
-ansible_host: "{{ hostvars['router'].mp_kubevirt_endpoints[inventory_hostname].host }}"
-ansible_port: "{{ hostvars['router'].mp_kubevirt_endpoints[inventory_hostname].port }}"
+ansible_host: "{{ hostvars['router'].mp_kubevirt_endpoints[armbian_test_forward].host }}"
+ansible_port: "{{ hostvars['router'].mp_kubevirt_endpoints[armbian_test_forward].port }}"
 ansible_ssh_private_key_file: "{{ molecule_ephemeral_directory }}/identity_file"
 # Every reimage regenerates the host keys.
 ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
@@ -53,3 +57,5 @@ armbian_test_second_pass: "{{ lookup('ansible.builtin.file', armbian_test_boot_i
 armbian_test_markers:
   preserved: /srv/data/armbian-test-marker
   root: /armbian-test-marker
+# side_effect.yml's stand-in for k3s on board-b appends its arguments here.
+armbian_test_k3s_log: /var/log/armbian-test-k3s.log
