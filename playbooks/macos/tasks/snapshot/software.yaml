@@ -1,0 +1,65 @@
+---
+# Installed apps with their source and signer, the install history (macOS
+# updates, App Store installs and package installers, with dates) and, where
+# Homebrew exists, its formulae and casks.
+- name: Read the apps and the install history
+  ansible.builtin.command:
+    argv:
+      - system_profiler
+      - -json
+      - -detailLevel
+      - mini
+      - SPApplicationsDataType
+      - SPInstallHistoryDataType
+  become: true
+  register: macos_snapshot_profiler_software
+  changed_when: false
+
+- name: Find Homebrew
+  ansible.builtin.stat:
+    path: "{{ macos_brew_path | default('/opt/homebrew/bin/brew') }}"
+  register: macos_snapshot_brew
+
+- name: List Homebrew packages
+  ansible.builtin.command:
+    argv:
+      - "{{ macos_brew_path | default('/opt/homebrew/bin/brew') }}"
+      - list
+      - --versions
+      - "{{ item }}"
+  loop:
+    - --formula
+    - --cask
+  register: macos_snapshot_brew_list
+  changed_when: false
+  failed_when: false
+  when: macos_snapshot_brew.stat.exists
+
+- name: Parse the software inventory
+  vars:
+    __macos_profile: "{{ macos_snapshot_profiler_software.stdout | from_json }}"
+  ansible.builtin.set_fact:
+    macos_snapshot_software:
+      apps: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for a in __macos_profile.SPApplicationsDataType | default([]) -%}
+        {%- set signer = (a.signed_by | default([''])) | first -%}
+        {%- set ns.out = ns.out + [{
+              'name': a._name, 'path': a.path, 'version': a.version | default(''),
+              'obtained_from': a.obtained_from | default('unknown'),
+              'signer': signer,
+              'team_id': signer | regex_findall('\(([A-Z0-9]{10})\)$') | first | default(''),
+              'modified': a.lastModified | default(''),
+              'system': a.path.startswith('/System/')}] -%}
+        {%- endfor -%}
+        {{ ns.out | sort(attribute='path') }}
+      installs: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for i in __macos_profile.SPInstallHistoryDataType | default([]) -%}
+        {%- set ns.out = ns.out + [{'name': i._name, 'version': i.install_version | default(''),
+                                    'date': i.install_date | default(''), 'source': i.package_source | default('')}] -%}
+        {%- endfor -%}
+        {{ ns.out | sort(attribute='date') }}
+      homebrew:
+        formulae: "{{ (macos_snapshot_brew_list.results | default([]) | selectattr('item', 'equalto', '--formula') | map(attribute='stdout_lines') | first | default([])) }}"
+        casks: "{{ (macos_snapshot_brew_list.results | default([]) | selectattr('item', 'equalto', '--cask') | map(attribute='stdout_lines') | first | default([])) }}"

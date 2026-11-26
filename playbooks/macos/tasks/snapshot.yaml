@@ -1,0 +1,57 @@
+---
+# Collect the full weekly snapshot, one task file per area, and assemble
+# macos_snapshot (schema_version 1). Runs after the health checks, whose
+# parsed facts (hardware, battery, security, pending updates) it reuses.
+# The snapshot is complete raw state; the diff, Slack and the web page are
+# summaries of it.
+- name: Collect the accounts
+  ansible.builtin.import_tasks: snapshot/accounts.yaml
+
+- name: Collect the processes
+  ansible.builtin.import_tasks: snapshot/processes.yaml
+
+- name: Collect the resource use
+  ansible.builtin.import_tasks: snapshot/resources.yaml
+
+- name: Collect the disk use
+  ansible.builtin.import_tasks: snapshot/disk.yaml
+
+- name: Collect the persistence state
+  ansible.builtin.import_tasks: snapshot/persistence.yaml
+
+- name: Collect the software inventory
+  ansible.builtin.import_tasks: snapshot/software.yaml
+
+- name: Collect the network exposure
+  ansible.builtin.import_tasks: snapshot/exposure.yaml
+
+- name: Collect the usability state
+  ansible.builtin.import_tasks: snapshot/usability.yaml
+
+- name: Assemble the snapshot
+  ansible.builtin.set_fact:
+    macos_snapshot:
+      schema_version: 1
+      host: "{{ inventory_hostname }}"
+      collected_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+      macos:
+        version: "{{ ansible_facts['distribution_version'] }}"
+        build: "{{ ansible_facts['distribution_release'] | default('') }}"
+      hardware:
+        model: "{{ macos_hardware.machine_name | default('') }}"
+        model_id: "{{ macos_hardware.machine_model | default('') }}"
+        chip: "{{ macos_hardware.chip_type | default(macos_hardware.cpu_type | default('')) }}"
+        memory: "{{ macos_hardware.physical_memory | default('') }}"
+        serial: "{{ macos_hardware.serial_number | default('') }}"
+      battery: "{{ macos_battery }}"
+      smart_status: "{{ macos_smart_status }}"
+      pending_updates: "{{ macos_pending_updates }}"
+      accounts: "{{ macos_snapshot_accounts }}"
+      processes: "{{ macos_snapshot_processes }}"
+      resources: "{{ macos_snapshot_resources }}"
+      disk: "{{ macos_snapshot_disk }}"
+      persistence: "{{ macos_snapshot_persistence }}"
+      software: "{{ macos_snapshot_software }}"
+      exposure: "{{ macos_snapshot_exposure }}"
+      usability: "{{ macos_snapshot_usability }}"
+  no_log: true

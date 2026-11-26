@@ -1,0 +1,41 @@
+---
+# Local accounts (UID >= 500, no service accounts) and admin group members.
+# Sets macos_snapshot_accounts; the disk and usability collectors read the
+# home folders from it.
+- name: List local accounts
+  ansible.builtin.command:
+    argv:
+      - dscl
+      - .
+      - -list
+      - /Users
+      - UniqueID
+  register: macos_snapshot_dscl_users
+  changed_when: false
+
+- name: List admin group members
+  ansible.builtin.command:
+    argv:
+      - dscl
+      - .
+      - -read
+      - /Groups/admin
+      - GroupMembership
+  register: macos_snapshot_dscl_admins
+  changed_when: false
+  failed_when: false
+
+- name: Parse the accounts
+  ansible.builtin.set_fact:
+    macos_snapshot_accounts:
+      users: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for line in macos_snapshot_dscl_users.stdout_lines -%}
+        {%- set f = line.split() -%}
+        {%- if f | length == 2 and f[1] | int >= 500 and not f[0].startswith('_') -%}
+        {%- set ns.out = ns.out + [{'name': f[0], 'uid': f[1] | int, 'home': '/Users/' ~ f[0]}] -%}
+        {%- endif -%}
+        {%- endfor -%}
+        {{ ns.out }}
+      admins: >-
+        {{ macos_snapshot_dscl_admins.stdout | regex_replace('^GroupMembership:', '') | split | reject('equalto', 'root') | sort }}

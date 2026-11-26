@@ -1,0 +1,69 @@
+---
+# Crash, hang, panic and resource reports from the past week, and the boot
+# history. `last` lists newest first; a reboot with no shutdown just before it
+# is an unexpected restart (crash, panic or power loss).
+- name: List this week's diagnostic reports
+  ansible.builtin.find:
+    paths: >-
+      {{ ['/Library/Logs/DiagnosticReports']
+         + (macos_snapshot_accounts.users | map(attribute='home')
+            | map('regex_replace', '$', '/Library/Logs/DiagnosticReports') | list) }}
+    age: -7d
+    recurse: false
+  become: true
+  register: macos_snapshot_diag
+
+- name: Read the boot time
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - -n
+      - kern.boottime
+  register: macos_snapshot_boottime
+  changed_when: false
+
+- name: Read the boot and shutdown history
+  ansible.builtin.command:
+    argv:
+      - last
+      - "-{{ macos_snapshot_boot_history }}"
+      - reboot
+      - shutdown
+  register: macos_snapshot_last
+  changed_when: false
+
+- name: Parse the usability state
+  vars:
+    __macos_events: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for line in macos_snapshot_last.stdout_lines -%}
+      {%- set m = line | regex_findall('^(reboot|shutdown) time\s+(.+?)\s*$') | first | default([]) -%}
+      {%- if m -%}{%- set ns.out = ns.out + [{'event': m[0], 'time': m[1]}] -%}{%- endif -%}
+      {%- endfor -%}
+      {{ ns.out }}
+  ansible.builtin.set_fact:
+    macos_snapshot_usability:
+      booted_at: >-
+        {{ '%Y-%m-%dT%H:%M:%SZ' | strftime(macos_snapshot_boottime.stdout | regex_findall('sec = ([0-9]+)') | first | int, utc=true) }}
+      boot_history: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for e in __macos_events -%}
+        {%- set older = __macos_events[loop.index] | default({}) -%}
+        {%- set ns.out = ns.out + [e | combine({'unexpected': e.event == 'reboot' and older.event | default('') == 'reboot'})] -%}
+        {%- endfor -%}
+        {{ ns.out }}
+      diagnostics: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for f in macos_snapshot_diag.files | sort(attribute='mtime', reverse=true) -%}
+        {%- set name = f.path | basename -%}
+        {%- set ns.out = ns.out + [{
+              'file': name,
+              'scope': 'system' if f.path.startswith('/Library/') else f.path.split('/')[2],
+              'process': name | regex_replace('[-_]\d{4}-\d{2}-\d{2}-\d{6}.*$', '') | regex_replace('^(ExcUserFault|panic-full)_', ''),
+              'kind': 'panic' if (name is search('^panic|\.panic$|Kernel')) else
+                      ('jetsam' if name.startswith('JetsamEvent') else
+                      (name | regex_findall('\.([a-z_]+)(?:\.diag)?$') | first | default('other'))),
+              'modified': '%Y-%m-%dT%H:%M:%SZ' | strftime(f.mtime | int, utc=true),
+              'size': f.size}] -%}
+        {%- endfor -%}
+        {{ ns.out }}

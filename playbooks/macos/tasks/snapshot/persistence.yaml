@@ -1,0 +1,117 @@
+---
+# Everything that starts by itself or changes how the Mac is managed: login
+# and background items, launchd jobs, configuration profiles, system and
+# kernel extensions.
+- name: Read the background task database
+  ansible.builtin.command:
+    argv:
+      - sfltool
+      - dumpbtm
+  become: true
+  register: macos_snapshot_btm
+  changed_when: false
+  failed_when: false
+
+- name: Find launchd job definitions
+  ansible.builtin.find:
+    paths: >-
+      {{ ['/Library/LaunchAgents', '/Library/LaunchDaemons']
+         + (macos_snapshot_accounts.users | map(attribute='home') | map('regex_replace', '$', '/Library/LaunchAgents') | list) }}
+    patterns: "*.plist"
+  become: true
+  register: macos_snapshot_launchd_files
+
+- name: Read the launchd job definitions
+  ansible.builtin.command:
+    argv:
+      - plutil
+      - -convert
+      - json
+      - -o
+      - "-"
+      - "{{ item }}"
+  loop: "{{ macos_snapshot_launchd_files.files | map(attribute='path') | sort }}"
+  become: true
+  register: macos_snapshot_launchd_raw
+  changed_when: false
+  failed_when: false
+
+- name: List configuration profiles
+  ansible.builtin.command:
+    argv:
+      - profiles
+      - list
+      - -all
+  become: true
+  register: macos_snapshot_profiles
+  changed_when: false
+  failed_when: false
+
+- name: List system extensions
+  ansible.builtin.command:
+    argv:
+      - systemextensionsctl
+      - list
+  register: macos_snapshot_sysext
+  changed_when: false
+  failed_when: false
+
+- name: List loaded kernel extensions
+  ansible.builtin.command:
+    argv:
+      - kmutil
+      - showloaded
+      - --list-only
+  register: macos_snapshot_kmutil
+  changed_when: false
+  failed_when: false
+
+- name: Parse the persistence state
+  vars:
+    __macos_btm_fields:
+      name: Name
+      developer: Developer Name
+      team_id: Team Identifier
+      type: Type
+      disposition: Disposition
+      identifier: Identifier
+      url: URL
+      executable: Executable Path
+  ansible.builtin.set_fact:
+    macos_snapshot_persistence:
+      background_items: >-
+        {%- set ns = namespace(out=[], uid='') -%}
+        {%- for block in macos_snapshot_btm.stdout | default('') | split('\n\n') -%}
+        {%- set uid = block | regex_findall('Records for UID (-?[0-9]+)') -%}
+        {%- if uid -%}{%- set ns.uid = uid | first -%}{%- endif -%}
+        {%- if 'UUID:' in block -%}
+        {%- set ns.item = {'uid': ns.uid} -%}
+        {%- for key, label in __macos_btm_fields.items() -%}
+        {%- set v = block | regex_findall('(?m)^ *' ~ label ~ ': (.*)$') -%}
+        {%- set ns.item = ns.item | combine({key: ((v | first | trim) if v else '') | regex_replace('^[(]null[)]$', '')}) -%}
+        {%- endfor -%}
+        {%- set ns.out = ns.out + [ns.item] -%}
+        {%- endif -%}
+        {%- endfor -%}
+        {{ ns.out }}
+      launchd: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for r in macos_snapshot_launchd_raw.results -%}
+        {%- set job = (r.stdout | from_json) if r.rc == 0 else {} -%}
+        {%- set ns.out = ns.out + [{
+              'path': r.item,
+              'label': job.Label | default(''),
+              'program': job.Program | default((job.ProgramArguments | default([])) | first | default('')),
+              'arguments': job.ProgramArguments | default([]),
+              'run_at_load': job.RunAtLoad | default(false),
+              'keep_alive': job.KeepAlive | default(false) is not false,
+              'disabled': job.Disabled | default(false),
+              'readable': r.rc == 0}] -%}
+        {%- endfor -%}
+        {{ ns.out }}
+      profiles: "{{ macos_snapshot_profiles.stdout | regex_findall('profileIdentifier: ([!-~]+)') | unique | sort }}"
+      system_extensions: >-
+        {{ macos_snapshot_sysext.stdout_lines | select('search', '\t[A-Z0-9]{10}\t') | map('trim') | list }}
+      kernel_extensions: >-
+        {{ macos_snapshot_kmutil.stdout_lines | map('regex_findall', '([^ ]+) [(][^)]*[)]') | select | map('first')
+           | reject('match', 'com[.]apple[.]') | unique | sort }}

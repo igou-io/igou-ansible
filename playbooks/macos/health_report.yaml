@@ -7,12 +7,22 @@
 # A Mac that is asleep or off the network is reported as unreachable instead
 # of failing the job.
 #
+# Each run also records a full snapshot of every Mac (tasks/snapshot.yaml:
+# all processes, resources, disk, persistence, software, exposure, usability)
+# to s3://macos-reports/<host>/<YYYY-MM-DD>.json, compares it with the
+# previous one (tasks/snapshot_diff.yaml), and publishes the latest report as
+# a web page (macos_report_web). Settings: igou-inventory
+# group_vars/all/macos_report.yml.
+#
 # Requires the onepassword-connect-token credential on the job template: the
-# become password and the Slack token resolve through 1Password Connect.
+# become password, the S3 keys and the Slack token resolve through 1Password
+# Connect. Publishing the page uses the template's SSH key on TrueNAS.
 #
 # Variables (inventory or extra_vars):
 #   ansible_limit               host or group, default macos
 #   macos_report_slack          post the summary to Slack, default true
+#   macos_report_store          store the snapshot and publish the web page,
+#                               default true (false for a local dry run)
 #   slack_channel               default #igoucloud-aap-logs
 #   macos_disk_used_warn_pct    default 85
 #   macos_uptime_warn_days      default 30
@@ -24,6 +34,32 @@
 - name: Collect macOS health and security state
   hosts: "{{ ansible_limit | default('macos') }}"
   gather_facts: false
+  vars:
+    # Mask secret values in process arguments before the snapshot is stored.
+    macos_snapshot_redactions:
+      - pattern: '(?i)(--?[a-z0-9_-]*(token|passw(or)?d|secret|api[-_]?key|access[-_]?key|auth|credential|cookie|session)[a-z0-9_-]*[= ])\S+'
+        replace: '\1<redacted>'
+      - pattern: '(?i)([?&;][a-z0-9_-]*(token|key|secret|sig|signature|auth|password|code)[a-z0-9_-]*=)[^&\s]+'
+        replace: '\1<redacted>'
+      - pattern: '(?i)(authorization:?\s*(bearer|basic|token)?\s*)\S+'
+        replace: '\1<redacted>'
+      - pattern: '\b(xox[a-z]-|gh[opsu]_|github_pat_|glpat-|sk-|AKIA|ASIA)[A-Za-z0-9._/+=-]{8,}'
+        replace: '<redacted>'
+      # JWTs only: Apple services pass base64 JSON (also eyJ...) with -X.
+      - pattern: '\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+'
+        replace: '<redacted>'
+    macos_snapshot_args_max: 2048
+    macos_snapshot_system_folders:
+      - /Applications
+      - /Library
+      - /private/var
+      - /Users/Shared
+    macos_snapshot_boot_history: 50
+    macos_snapshot_growth_warn_kb: 5242880
+    macos_snapshot_growth_warn_pct: 20
+    macos_swap_warn_mb: 2048
+    macos_memory_free_warn_pct: 20
+    macos_crash_warn_count: 5
   tasks:
     - name: Check whether the Mac is awake
       ansible.builtin.ping:
@@ -176,6 +212,23 @@
         macos_critical: []
         macos_warnings: []
 
+    - name: Collect the weekly snapshot
+      ansible.builtin.import_tasks: tasks/snapshot.yaml
+
+    - name: Fetch the previous snapshot
+      ansible.builtin.include_tasks: tasks/snapshot_history.yaml
+      vars:
+        macos_snapshot_history_action: fetch
+      when: macos_report_store | default(true) | bool
+
+    - name: Default to no previous snapshot
+      ansible.builtin.set_fact:
+        macos_snapshot_previous: "{{ macos_snapshot_previous | default({}) }}"
+      no_log: true
+
+    - name: Compare with the previous snapshot
+      ansible.builtin.import_tasks: tasks/snapshot_diff.yaml
+
     - name: Record failed security checks
       ansible.builtin.set_fact:
         macos_critical: "{{ macos_critical + [item.item.name ~ ': ' ~ (item.stdout ~ item.stderr) | trim] }}"
@@ -214,6 +267,20 @@
           message: "screen locks {{ macos_screen_lock_delay }}s after sleep or screen saver"
           found: "{{ macos_screen_lock_delay | int > macos_screen_lock_max_delay | default(0) | int }}"
         - level: warn
+          message: "swap at {{ macos_snapshot.resources.memory.swap_used_mb | int }} MB"
+          found: "{{ macos_snapshot.resources.memory.swap_used_mb | float >= macos_swap_warn_mb | float }}"
+        - level: warn
+          message: "only {{ macos_snapshot.resources.memory.free_pct }}% memory free"
+          found: >-
+            {{ macos_snapshot.resources.memory.free_pct | int >= 0
+               and macos_snapshot.resources.memory.free_pct | int < macos_memory_free_warn_pct | int }}
+        - level: critical
+          message: "kernel panic this week: {{ macos_snapshot.usability.diagnostics | selectattr('kind', 'equalto', 'panic') | map(attribute='file') | join(', ') }}"
+          found: "{{ macos_snapshot.usability.diagnostics | selectattr('kind', 'equalto', 'panic') | list | length > 0 }}"
+        - level: warn
+          message: "{{ macos_snapshot.usability.diagnostics | selectattr('kind', 'equalto', 'jetsam') | list | length }} low-memory kills (Jetsam) this week"
+          found: "{{ macos_snapshot.usability.diagnostics | selectattr('kind', 'equalto', 'jetsam') | list | length > 0 }}"
+        - level: warn
           message: "up {{ macos_uptime_days }} days, restart to finish updates"
           found: "{{ macos_uptime_days | int >= macos_uptime_warn_days | default(30) | int }}"
         - level: warn
@@ -234,6 +301,23 @@
         label: "{{ item.message }}"
       when: item.found | bool
 
+    - name: Record frequent crash and hang reports
+      ansible.builtin.set_fact:
+        macos_warnings: "{{ macos_warnings + [item.key ~ ': ' ~ item.value ~ ' crash or resource reports this week'] }}"
+      loop: >-
+        {{ macos_snapshot.usability.diagnostics | rejectattr('kind', 'in', ['panic', 'jetsam'])
+           | map(attribute='process') | community.general.counter | dict2items
+           | selectattr('value', 'gt', macos_crash_warn_count | int) | list }}
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Record this week's warning and critical changes
+      ansible.builtin.set_fact:
+        macos_critical: "{{ macos_critical + (macos_changes | selectattr('level', 'equalto', 'critical') | map(attribute='text') | list) }}"
+        macos_warnings: >-
+          {{ macos_warnings + (macos_changes | selectattr('level', 'equalto', 'warn') | map(attribute='text') | list)
+             + (macos_snapshot_history_errors | default([])) }}
+
     - name: Summarize the Mac
       ansible.builtin.set_fact:
         macos_health:
@@ -250,6 +334,19 @@
             {{ macos_pending_updates | length }} updates pending
             ({{ macos_restart_updates | length }} need a restart),
             last backup {{ macos_backup_date | default('unknown', true) }}
+          changes: "{{ macos_changes | selectattr('level', 'equalto', 'info') | map(attribute='text') | list }}"
+          previous: "{{ macos_snapshot_previous.collected_at | default('') }}"
+
+    - name: Add the findings to the snapshot
+      ansible.builtin.set_fact:
+        macos_snapshot: "{{ macos_snapshot | combine({'health': macos_health, 'changes': macos_changes}) }}"
+      no_log: true
+
+    - name: Store the snapshot
+      ansible.builtin.include_tasks: tasks/snapshot_history.yaml
+      vars:
+        macos_snapshot_history_action: store
+      when: macos_report_store | default(true) | bool
 
 - name: Report macOS health
   hosts: localhost
@@ -257,6 +354,9 @@
   gather_facts: false
   vars:
     macos_report_hosts: "{{ query('inventory_hostnames', ansible_limit | default('macos')) }}"
+    macos_report_changes_max: 10
+    macos_report_history_errors: >-
+      {{ macos_report_hosts | map('extract', hostvars, 'macos_snapshot_history_errors') | select('defined') | flatten }}
     macos_report_emoji:
       ok: ":large_green_circle:"
       warn: ":large_yellow_circle:"
@@ -273,7 +373,25 @@
           {% for finding in r.findings %}
               • {{ finding }}
           {% endfor %}
+          {% if r.status != 'unreachable' %}
+          {% if r.previous %}
+          {% if r.changes %}
+              _{{ r.changes | length }} other changes since {{ r.previous[:10] }}:_
+          {% for change in r.changes[:macos_report_changes_max] %}
+              ◦ {{ change }}
           {% endfor %}
+          {% if r.changes | length > macos_report_changes_max %}
+              ◦ … and {{ r.changes | length - macos_report_changes_max }} more
+          {% endif %}
+          {% endif %}
+          {% else %}
+              _first snapshot recorded; changes are reported from next week_
+          {% endif %}
+          {% endif %}
+          {% endfor %}
+          {% if macos_report_store | default(true) | bool %}
+          <{{ macos_report_web.url }}|Full report>
+          {% endif %}
 
     - name: Show the report
       ansible.builtin.debug:
@@ -286,3 +404,21 @@
         msg: "{{ macos_report }}"
       no_log: true
       when: macos_report_slack | default(true) | bool
+
+    - name: Publish the report page
+      ansible.builtin.template:
+        src: templates/macos_report.html.j2
+        dest: "{{ macos_report_web.dir }}/index.html"
+        owner: "{{ macos_report_web.owner }}"
+        group: "{{ macos_report_web.group }}"
+        mode: "0644"
+      delegate_to: "{{ macos_report_web.host }}"
+      connection: ssh
+      become: true
+      when: macos_report_store | default(true) | bool
+      no_log: true
+
+    - name: Fail when the snapshot history could not be used
+      ansible.builtin.fail:
+        msg: "{{ macos_report_history_errors | join('; ') }}"
+      when: macos_report_history_errors | length > 0
