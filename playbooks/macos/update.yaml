@@ -17,6 +17,22 @@
   hosts: "{{ ansible_limit | default('macos') }}"
   gather_facts: false
   tasks:
+    # Apple updates first: they include the Command Line Tools, which Homebrew
+    # refuses to build with once they fall behind the OS.
+    - name: List pending updates
+      ansible.builtin.import_tasks: tasks/pending_updates.yaml
+
+    - name: Install Apple updates that need no restart
+      ansible.builtin.command:
+        argv: "{{ ['softwareupdate', '--install', '--agree-to-license'] + macos_install_updates }}"
+      vars:
+        macos_install_updates: "{{ macos_pending_updates | difference(macos_restart_updates) }}"
+      become: true
+      changed_when: true
+      when:
+        - macos_update_apple | default(true) | bool
+        - macos_install_updates | length > 0
+
     - name: Find Homebrew
       ansible.builtin.stat:
         path: "{{ macos_brew_path | default('/opt/homebrew/bin/brew') }}"
@@ -46,20 +62,6 @@
       environment:
         PATH: "{{ macos_brew.stat.path | default('/opt/homebrew/bin/brew') | dirname }}:/usr/bin:/bin"
       when: macos_update_mas | default(false) | bool
-
-    - name: List pending updates
-      ansible.builtin.import_tasks: tasks/pending_updates.yaml
-
-    - name: Install Apple updates that need no restart
-      ansible.builtin.command:
-        argv: "{{ ['softwareupdate', '--install', '--agree-to-license'] + macos_install_updates }}"
-      vars:
-        macos_install_updates: "{{ macos_pending_updates | difference(macos_restart_updates) }}"
-      become: true
-      changed_when: true
-      when:
-        - macos_update_apple | default(true) | bool
-        - macos_install_updates | length > 0
 
     - name: Report updates left for macOS to install
       ansible.builtin.debug:
