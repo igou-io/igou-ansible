@@ -1,6 +1,6 @@
 ---
 # Runs after converge and again after side_effect. The side_effect checks
-# run once side_effect has recorded board-b's boot identity.
+# run once side_effect has recorded board-a's boot identity.
 - name: Verify each board runs local_kernel from its local disk
   hosts: boards
   become: true
@@ -38,6 +38,23 @@
           {{ ansible_facts.mounts | selectattr('mount', 'equalto', '/srv/data') | map(attribute='device') | list }}, cmdline
           {{ ansible_facts.proc_cmdline }}, running {{ ansible_facts.kernel }}, installed
           {{ __verify_kernels.files | map(attribute='path') | list }}
+
+    - name: Look for side_effect's markers
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        get_checksum: false
+      loop:
+        - "{{ armbian_test_markers.preserved }}"
+        - "{{ armbian_test_markers.root }}"
+      register: __verify_markers
+      when: armbian_test_second_pass
+
+    - name: Assert the second reimage kept the preserved partition and replaced the root
+      ansible.builtin.assert:
+        that:
+          - __verify_markers.results[0].stat.exists
+          - not __verify_markers.results[1].stat.exists
+      when: armbian_test_second_pass
 
     - name: Read root's password entry
       ansible.builtin.getent:
@@ -156,7 +173,7 @@
           - __verify_pin_file.msg[0].contents is search('kernel armbian/' ~ inventory_hostname ~ '/vmlinuz')
         fail_msg: "Requests since the last PXE start: {{ __verify_last_boot }}"
 
-    # Three stages and pins per run: a re-run must update its rows and
+    # Several stages and pins per run: a re-run must update its rows and
     # sidecars in place, not append to them.
     - name: Assert the router holds one row per directory and the staged kernel's checksum
       ansible.builtin.assert:
@@ -170,58 +187,93 @@
         - armbian/.*
         - pxelinux\.cfg/.*
 
-- name: Verify that the second reimage kept board-a's preserved data only
-  hosts: board-a
+- name: Verify the control plane's module, datastore and cluster
+  hosts: rk8s_control_plane
   become: true
   gather_facts: false
   tasks:
-    - name: Look for the markers
-      ansible.builtin.stat:
-        path: "{{ item }}"
-        get_checksum: false
-      loop:
-        - "{{ armbian_test_markers.preserved }}"
-        - "{{ armbian_test_markers.root }}"
-      register: __verify_markers
-      when: armbian_test_second_pass
+    - name: Gather the installed packages
+      ansible.builtin.package_facts:
 
-    - name: Assert the preserved partition kept its marker and the root lost it
-      ansible.builtin.assert:
-        that:
-          - __verify_markers.results[0].stat.exists
-          - not __verify_markers.results[1].stat.exists
-      when: armbian_test_second_pass
-
-- name: Verify that the second reimage of board-a left board-b running
-  hosts: board-b
-  gather_facts: false
-  tasks:
-    - name: Read what the k3s stand-in was asked
-      ansible.builtin.slurp:
-        src: "{{ armbian_test_k3s_log }}"
-      register: __verify_k3s
-      when: armbian_test_second_pass
-
-    - name: Assert reimage.yaml removed board-a's node and node-password secret, once
+    # After side_effect the nightly update has replaced the kernel, and the
+    # boards play above has shown that the installed kernel is the running one.
+    - name: Assert the kernel is the one this pass expects
       ansible.builtin.assert:
         that:
           - >-
-            (__verify_k3s.content | b64decode).splitlines() == [
-              'kubectl delete node board-a --ignore-not-found',
-              'kubectl --namespace kube-system delete secret board-a.node-password.k3s --ignore-not-found'
-            ]
-        fail_msg: "{{ __verify_k3s.content | b64decode }}"
+            ansible_facts.packages['linux-image-current-x86'][0].version
+            is version(armbian_test_kernel_version, '>' if armbian_test_second_pass else '==')
+        fail_msg: "linux-image-current-x86 is {{ ansible_facts.packages['linux-image-current-x86'][0].version }}"
+
+    - name: Run the reboot guard against the real module
+      ansible.builtin.include_tasks:
+        file: ../../playbooks/tasks/assert_dkms_built.yml
+
+    - name: Read the pool's health
+      ansible.builtin.command:
+        argv:
+          - zpool
+          - list
+          - -H
+          - -o
+          - health
+          - "{{ zfs_pool_name }}"
+      register: __verify_pool
+      changed_when: false
+
+    # Ansible's mount facts leave out ZFS datasets.
+    - name: Read the mounted datasets
+      ansible.builtin.command:
+        argv:
+          - findmnt
+          - --raw
+          - --noheadings
+          - --types
+          - zfs
+          - --output
+          - SOURCE,TARGET
+      register: __verify_datasets
+      changed_when: false
+
+    - name: Assert the pool is online and holds the k3s directories
+      ansible.builtin.assert:
+        that:
+          - __verify_pool.stdout == 'ONLINE'
+          - >-
+            __verify_datasets.stdout_lines | sort
+            == zfs_pool_datasets | map(attribute='name')
+               | zip(zfs_pool_datasets | map(attribute='mount.where')) | map('join', ' ') | sort
+        fail_msg: "{{ __verify_pool.stdout }}; {{ __verify_datasets.stdout_lines }}"
+
+    - name: Wait for both nodes to be Ready
+      ansible.builtin.command:
+        argv: "{{ ['k3s', 'kubectl', 'wait', '--for=condition=Ready', '--timeout=300s'] + groups['rk8s'] | map('regex_replace', '^', 'node/') }}"
+      changed_when: false
+
+    - name: Read the cluster marker from before the second reimage
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - configmap
+          - "{{ armbian_test_markers.cluster }}"
+      changed_when: false
       when: armbian_test_second_pass
 
+- name: Verify that board-b's second life left board-a running
+  hosts: board-a
+  gather_facts: false
+  tasks:
     - name: Read the boot identity
       ansible.builtin.slurp:
         src: /proc/sys/kernel/random/boot_id
       register: __verify_boot_id
       when: armbian_test_second_pass
 
-    - name: Assert board-b did not reboot
+    - name: Assert board-a did not reboot
       ansible.builtin.assert:
         that:
           - __verify_boot_id.content | b64decode | trim == lookup('ansible.builtin.file', armbian_test_boot_id_file)
-        fail_msg: "board-b's boot id changed: {{ __verify_boot_id.content | b64decode | trim }}"
+        fail_msg: "board-a's boot id changed: {{ __verify_boot_id.content | b64decode | trim }}"
       when: armbian_test_second_pass

@@ -128,14 +128,54 @@ armbian_test_board_overrides:
       boot_order: 4
       storage_class: "{{ molecule_storage_class }}"
 
+# board-b stands in for cm3588-nas-01: it also carries the pool's four member
+# disks (production: four NVMe drives) and the cores for the zfs DKMS build.
+# The members are SCSI disks because zfs_pool wants /dev/disk/by-id paths
+# and a virtio disk has one only with a serial, which the provisioner's
+# data_disks cannot set.
+armbian_test_control_plane_vm: >-
+  {{ armbian_test_board_vm | combine(armbian_test_control_plane_overrides) }}
+armbian_test_control_plane_overrides:
+  memory: 4Gi
+  cpu:
+    cores: 8
+  data_disks: "{{ armbian_test_board_overrides.data_disks + armbian_test_pool_disks }}"
+armbian_test_pool_disks:
+  - name: pool-a
+    size: 1Gi
+    bus: scsi
+    storage_class: "{{ molecule_storage_class }}"
+  - name: pool-b
+    size: 1Gi
+    bus: scsi
+    storage_class: "{{ molecule_storage_class }}"
+  - name: pool-c
+    size: 1Gi
+    bus: scsi
+    storage_class: "{{ molecule_storage_class }}"
+  - name: pool-d
+    size: 1Gi
+    bus: scsi
+    storage_class: "{{ molecule_storage_class }}"
+
+# One Armbian-run mirror for the image and for the boards' apt.armbian.com,
+# not Armbian's redirectors: those answer each request with a mirror of
+# their choosing, which after a release may not have synced and at any time
+# may be slow.
+armbian_test_mirror: fi.mirror.armbian.de
+
+# The linux-image-current-x86 version kernel_with_headers.yml installs on the
+# control plane: the second newest in apt.armbian.com, so the update in
+# side_effect.yml finds a newer one. Move it up when Armbian drops it:
+#   apt-cache madison linux-image-current-x86
+armbian_test_kernel_version: 26.8.14
+
 # The unmodified upstream image, downloaded once by prepare.yml and published
-# from the netboot server. Taken from an Armbian-run mirror, not the
-# dl.armbian.com redirector: after a release that can point at a mirror that
-# has not synced yet. Armbian removes a point release from the archive when
-# it publishes the next one: on a 404, take the current
+# from the netboot server. Armbian removes a point release from the archive
+# when it publishes the next one: on a 404, take the current
 # trixie_current_*_minimal name from the listing at
 # https://dl.armbian.com/uefi-x86/archive/.
-armbian_test_upstream_image: https://fi.mirror.armbian.de/dl/uefi-x86/archive/Armbian_26.11.3_Uefi-x86_trixie_current_6.18.65_minimal.img.xz
+armbian_test_upstream_image: "https://{{ armbian_test_mirror }}/dl/uefi-x86/archive/Armbian_26.11.3_Uefi-x86_trixie_current_6.18.65_minimal.img.xz"
 armbian_test_images_dir: /srv/images
 
 # Netboot server layout (production: group_vars/all/main.yml). The HTTP

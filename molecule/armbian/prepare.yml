@@ -24,6 +24,7 @@
     - name: Install the NFS server, HTTP server and the PXELINUX loader
       ansible.builtin.apt:
         name:
+          - iptables
           - nfs-kernel-server
           - nginx
           - pxelinux
@@ -31,6 +32,38 @@
           - syslinux-common
           - xz-utils
         update_cache: true
+
+    # The boards' gateway to the internet. Through the router they would
+    # download at the free CHR licence's 1 Mbit/s; the server is on their
+    # network and has no such limit.
+    - name: Forward packets
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_set: true
+
+    - name: Masquerade what the private network sends out
+      ansible.builtin.iptables:
+        table: nat
+        chain: POSTROUTING
+        source: 192.0.2.0/24
+        destination: "!192.0.2.0/24"
+        jump: MASQUERADE
+
+    # The router's DNS gives the boards this server for apt.armbian.com.
+    - name: Serve apt.armbian.com from the mirror
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/apt-armbian.conf
+        content: |
+          server {
+            listen 80;
+            server_name apt.armbian.com;
+            location / {
+              proxy_pass http://{{ armbian_test_mirror }}/apt/;
+            }
+          }
+        mode: "0644"
+      notify: Reload nginx
 
     - name: Create the NFS root parent, exports.d and the loader directory
       ansible.builtin.file:
@@ -99,6 +132,11 @@
         mode: "0644"
 
   handlers:
+    - name: Reload nginx
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: reloaded
+
     - name: Reload the NFS exports
       ansible.builtin.command:
         argv:
@@ -259,18 +297,27 @@
         - path: ip dhcp-server network
           data:
             - address: 192.0.2.0/24
-              gateway: 192.0.2.1
+              gateway: 192.0.2.10
               dns-server: 192.0.2.1
               next-server: 192.0.2.1
               boot-file-name: pxelinux.0
         - path: ip dns
           data:
             - allow-remote-requests: true
+        - path: ip dns static
+          data:
+            - name: apt.armbian.com
+              address: 192.0.2.10
         - path: ip firewall nat
           data:
             - chain: srcnat
               action: masquerade
               out-interface: ether1
+            # The boards' gateway is the server, so a forwarded SSH session
+            # must appear to come from the router to find its way back.
+            - chain: srcnat
+              action: masquerade
+              out-interface: ether2
         # The private network's MTU is 1400.
         - path: ip tftp settings
           data:
