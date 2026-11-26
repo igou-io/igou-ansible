@@ -1,0 +1,53 @@
+---
+# Pick the address to reach this Mac on: the first entry of
+# macos_ssh_candidates (igou-inventory group_vars/macos.yml: the LAN
+# address, then Tailscale) that accepts TCP on port 22 from the controller
+# (the AAP job pod or the local runner). Sets ansible_host and
+# macos_ssh_path.
+#
+# When no address answers, or SSH answers but the Mac doesn't, the host ends
+# when macos_skip_unreachable is true (reported as asleep or off the
+# network) and fails otherwise.
+- name: Probe the Mac's addresses
+  ansible.builtin.wait_for:
+    host: "{{ item.address }}"
+    port: 22
+    timeout: "{{ macos_ssh_probe_timeout | default(5) }}"
+  loop: "{{ macos_ssh_candidates }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.address }}"
+  delegate_to: localhost
+  connection: local
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  register: macos_ssh_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Use the first address that answers
+  vars:
+    __macos_open: "{{ macos_ssh_probe.results | selectattr('state', 'defined') | map(attribute='item') | list }}"
+  ansible.builtin.set_fact:
+    ansible_host: "{{ (__macos_open | first).address if __macos_open else ansible_host }}"
+    macos_ssh_path: "{{ (__macos_open | first).name if __macos_open else 'none' }}"
+
+- name: Check that the Mac answers over {{ macos_ssh_path }}
+  ansible.builtin.ping:
+  register: macos_ping
+  ignore_unreachable: true
+  when: macos_ssh_path != 'none'
+
+- name: Fail when the Mac is unreachable
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} did not answer on
+      {{ macos_ssh_candidates | map(attribute='name') | join(' or ') }};
+      it is asleep or off the network
+  when:
+    - macos_ssh_path == 'none' or macos_ping.unreachable | default(false)
+    - not macos_skip_unreachable | default(false) | bool
+
+- name: Skip a Mac that is asleep or off the network
+  ansible.builtin.meta: end_host
+  when: macos_ssh_path == 'none' or macos_ping.unreachable | default(false)

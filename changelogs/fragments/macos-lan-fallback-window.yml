@@ -1,0 +1,4 @@
+---
+minor_changes:
+  - macos - All four playbooks connect through ``tasks/connect.yaml``, which tries each address in ``macos_ssh_candidates`` (the LAN address, then Tailscale) and uses the first that accepts SSH. ``configure.yaml`` and ``cleanup.yaml`` fail with a clear message when no address answers; ``health_report.yaml`` and ``update.yaml`` skip the Mac as before.
+  - macos - The settings baseline manages sshd ``AllowUsers`` from ``macos_sshd_allow_from`` (validated with ``sshd -t`` before it is written) and a weekly maintenance window from ``macos_maintenance_window`` (a repeating ``pmset`` wake plus a launchd job running ``caffeinate -s``), and the health report flags drift in both.
