@@ -1,9 +1,23 @@
 ---
 # Data volume use and folder sizes: the system folders, each home folder and
 # the folders directly inside it (names and sizes only, never the files
-# inside). macOS privacy protection hides some folders in other users' homes
-# (Desktop, Documents, Downloads) even from root unless sshd has Full Disk
-# Access; those are recorded as not readable.
+# inside). Without Full Disk Access for remote users (System Settings >
+# General > Sharing > Remote Login), macOS privacy protection (TCC) hides app
+# containers, Desktop, Documents, Downloads and more even from root; those are
+# recorded as not readable and summarized by folder. iCloud Drive folders
+# (~/Library/Mobile Documents) stay unreadable even with Full Disk Access and
+# are listed separately: their evicted files take no local space.
+- name: Check whether SSH has Full Disk Access
+  ansible.builtin.command:
+    argv:
+      - ls
+      - /Library/Application Support/com.apple.TCC
+  become: true
+  register: macos_snapshot_fda
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
 - name: List the folders in each home folder
   ansible.builtin.find:
     paths: "{{ macos_snapshot_accounts.users | map(attribute='home') | list }}"
@@ -38,7 +52,9 @@
 - name: Parse the disk use
   vars:
     __macos_df: "{{ macos_df.stdout_lines[-1].split() }}"
-    __macos_unreadable: "{{ macos_snapshot_du.stderr_lines | map('regex_findall', '^du: (.+?): ') | select | map('first') | unique | list }}"
+    __macos_unreadable_all: "{{ macos_snapshot_du.stderr_lines | map('regex_findall', '^du: (.+?): ') | select | map('first') | unique | list }}"
+    __macos_icloud: "{{ __macos_unreadable_all | select('search', '/Library/Mobile Documents/') | list }}"
+    __macos_unreadable: "{{ __macos_unreadable_all | difference(__macos_icloud) }}"
   ansible.builtin.set_fact:
     macos_snapshot_disk:
       volume:
@@ -56,8 +72,19 @@
                                                 | select | list | length == 0}] -%}
         {%- endfor -%}
         {{ ns.out }}
-      # Protected folders in the home folders; SIP-protected system folders
-      # are only counted.
+      full_disk_access: "{{ macos_snapshot_fda.rc == 0 }}"
+      # Protected folders in the home folders, also counted per folder
+      # (~/Library/<name> or ~/<name>); SIP-protected system folders are
+      # only counted.
       unreadable: "{{ __macos_unreadable | select('match', '/Users/') | sort }}"
+      unreadable_summary: >-
+        {%- set ns = namespace(out={}) -%}
+        {%- for p in __macos_unreadable | select('match', '/Users/') -%}
+        {%- set parts = p.split('/') -%}
+        {%- set key = parts[:5] | join('/') if parts[3:4] == ['Library'] else parts[:4] | join('/') -%}
+        {%- set ns.out = ns.out | combine({key: ns.out[key] | default(0) + 1}) -%}
+        {%- endfor -%}
+        {{ ns.out | dict2items(key_name='path', value_name='count') | sort(attribute='count', reverse=true) }}
       unreadable_system_count: "{{ __macos_unreadable | reject('match', '/Users/') | list | length }}"
+      icloud_unreadable: "{{ __macos_icloud | sort }}"
       local_snapshots: "{{ macos_snapshot_tm_local.stdout_lines | select('match', 'com.apple') | list }}"
