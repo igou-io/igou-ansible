@@ -18,6 +18,9 @@
 #   macos_uptime_warn_days      default 30
 #   macos_battery_cycles_warn   default 800
 #   macos_backup_age_warn_days  default 7, checked only when Time Machine has a backup
+#   macos_screen_lock_max_delay seconds; checks the SSH user's screen lock
+#                               delay, so set it only where that user is the
+#                               one at the keyboard
 - name: Collect macOS health and security state
   hosts: "{{ ansible_limit | default('macos') }}"
   gather_facts: false
@@ -100,6 +103,51 @@
       changed_when: false
       failed_when: false
 
+    - name: Check the Command Line Tools
+      ansible.builtin.command:
+        argv:
+          - xcrun
+          - --find
+          - clang
+      register: macos_clt
+      changed_when: false
+      failed_when: false
+
+    - name: Read the packet capture group
+      ansible.builtin.command:
+        argv:
+          - dscl
+          - .
+          - -read
+          - /Groups/access_bpf
+          - GroupMembership
+      register: macos_bpf
+      changed_when: false
+      failed_when: false
+
+    - name: Find an AirPlay Receiver listener
+      ansible.builtin.command:
+        argv:
+          - lsof
+          - -nP
+          - -iTCP:7000
+          - -sTCP:LISTEN
+      become: true
+      register: macos_airplay
+      changed_when: false
+      failed_when: false
+
+    - name: Read the screen lock delay
+      ansible.builtin.command:
+        argv:
+          - sysadminctl
+          - -screenLock
+          - status
+      register: macos_screen_lock
+      changed_when: false
+      failed_when: false
+      when: macos_screen_lock_max_delay is defined
+
     - name: Check the settings baseline for drift
       ansible.builtin.import_tasks: tasks/baseline.yaml
       check_mode: true
@@ -121,6 +169,10 @@
         macos_smart_status: "{{ macos_diskutil.stdout | regex_search('SMART Status:\\s*(.+)', '\\1') | default(['unknown'], true) | first | trim }}"
         macos_uptime_days: "{{ ((ansible_facts['uptime_seconds'] | default(0)) / 86400) | int }}"
         macos_backup_date: "{{ macos_tmutil.stdout | regex_search('\\d{4}-\\d{2}-\\d{2}') | default('', true) }}"
+        macos_bpf_members: "{{ macos_bpf.stdout | regex_replace('^GroupMembership:', '') | trim if macos_bpf.rc == 0 else '' }}"
+        macos_screen_lock_delay: >-
+          {{ ((macos_screen_lock.stdout | default('')) ~ (macos_screen_lock.stderr | default('')))
+             | regex_findall('delay is ([0-9]+) seconds') | default(['0'], true) | first }}
         macos_critical: []
         macos_warnings: []
 
@@ -149,6 +201,18 @@
         - level: warn
           message: "disk {{ macos_disk_used_pct }}% used"
           found: "{{ macos_disk_used_pct | int >= macos_disk_used_warn_pct | default(85) | int }}"
+        - level: warn
+          message: Command Line Tools broken (xcrun cannot find clang)
+          found: "{{ macos_clt.rc != 0 }}"
+        - level: warn
+          message: "access_bpf lets {{ macos_bpf_members }} capture packets without sudo (Wireshark ChmodBPF)"
+          found: "{{ macos_bpf_members | length > 0 }}"
+        - level: warn
+          message: AirPlay Receiver listening on tcp/7000
+          found: "{{ macos_airplay.stdout | trim | length > 0 }}"
+        - level: warn
+          message: "screen locks {{ macos_screen_lock_delay }}s after sleep or screen saver"
+          found: "{{ macos_screen_lock_delay | int > macos_screen_lock_max_delay | default(0) | int }}"
         - level: warn
           message: "up {{ macos_uptime_days }} days, restart to finish updates"
           found: "{{ macos_uptime_days | int >= macos_uptime_warn_days | default(30) | int }}"

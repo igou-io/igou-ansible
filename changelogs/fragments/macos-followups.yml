@@ -1,0 +1,5 @@
+---
+minor_changes:
+  - macos - ``health_report.yaml`` also flags a broken Command Line Tools install, members of the ``access_bpf`` packet-capture group, an AirPlay Receiver listener, and a screen lock delay above ``macos_screen_lock_max_delay``.
+  - macos - The settings baseline accepts ``macos_pmset_ac`` for charger-only power settings and an optional ``host`` key on defaults entries for ByHost preferences.
+  - macos - ``update.yaml`` skips a Mac that is asleep instead of failing, so it can run on a schedule.

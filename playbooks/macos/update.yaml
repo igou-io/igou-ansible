@@ -17,6 +17,16 @@
   hosts: "{{ ansible_limit | default('macos') }}"
   gather_facts: false
   tasks:
+    # Scheduled runs (macos_update_weekly) skip a Mac that is asleep.
+    - name: Check whether the Mac is awake
+      ansible.builtin.ping:
+      register: macos_ping
+      ignore_unreachable: true
+
+    - name: Skip a Mac that is asleep or off the network
+      ansible.builtin.meta: end_host
+      when: macos_ping.unreachable | default(false)
+
     # Apple updates first: they include the Command Line Tools, which Homebrew
     # refuses to build with once they fall behind the OS.
     - name: List pending updates
