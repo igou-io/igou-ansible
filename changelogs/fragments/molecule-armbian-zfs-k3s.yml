@@ -1,0 +1,3 @@
+---
+minor_changes:
+  - armbian Molecule builds its control plane with a real ZFS pool and k3s, reimages it with the pool and the cluster's state kept, takes it through a kernel upgrade by ``system-update.yaml`` and a reboot behind the DKMS guard, and joins the worker to that k3s after ``reimage.yaml`` removed a stale node-password secret.

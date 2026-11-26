@@ -1,11 +1,35 @@
 ---
-# Reimage board-a again, the way production reimages its control plane:
-# through the warm-reboot hook, with a DKMS module that is not built for the
-# installed kernel, with data on its preserved partition and root filesystem,
-# with a stale kernel checksum on the router and with k3s on the control
-# plane. verify then checks what survived and that board-b was left alone.
-- name: Record board-b's boot identity and stand in for its k3s
-  hosts: board-b
+# Both boards' second lives. The worker (board-a) is reimaged as a cluster
+# member. The control plane (board-b) follows as production ran it on
+# 2026-11-25: reimaged through its warm-reboot hook with a DKMS module that
+# is not installed, with state in the cluster and a stale kernel checksum on
+# the router; its pool is imported and k3s reinstalled on both boards; then it
+# takes the nightly update's kernel and reboots into it. verify checks what
+# survived and that board-b's part left board-a running.
+- name: Leave data on both boards
+  hosts: boards
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Mark the preserved partition and the root filesystem
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        content: "before the second reimage\n"
+        mode: "0644"
+      loop:
+        - "{{ armbian_test_markers.preserved }}"
+        - "{{ armbian_test_markers.root }}"
+
+# Its last play deletes board-a's node and node-password secret from k3s.
+# Without that the reinstall below could not join it: its new password would
+# not match the secret kept in the pool.
+- name: Reimage board-a again
+  ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
+  vars:
+    target_hosts: board-a
+
+- name: Record board-a's boot identity
+  hosts: board-a
   gather_facts: false
   tasks:
     - name: Read the boot identity
@@ -20,19 +44,8 @@
         mode: "0600"
       delegate_to: localhost
 
-    # reimage.yaml deletes the reimaged board's node and node-password secret
-    # through the control plane's k3s; this one only records what it is asked.
-    - name: Install a k3s that logs its arguments
-      ansible.builtin.copy:
-        dest: /usr/local/bin/k3s
-        content: |
-          #!/bin/sh
-          echo "$*" >> {{ armbian_test_k3s_log }}
-        mode: "0755"
-      become: true
-
-- name: Run the DKMS reboot guard on board-a's local root
-  hosts: board-a
+- name: Leave cluster state and a broken module on board-b
+  hosts: board-b
   become: true
   gather_facts: false
   tasks:
@@ -41,35 +54,53 @@
         gather_subset:
           - min
 
-    - name: Create the DKMS tree
-      ansible.builtin.file:
-        path: /var/lib/dkms
-        state: directory
-        mode: "0755"
+    - name: Mark the cluster's datastore
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - create
+          - configmap
+          - "{{ armbian_test_markers.cluster }}"
+      changed_when: true
 
-    - name: Stand in for dkms with a module built for the kernel
-      ansible.builtin.copy:
-        dest: /usr/local/sbin/dkms
-        content: |
-          #!/bin/sh
-          echo 'zfs/2.4.4, {{ ansible_facts.kernel }}, {{ ansible_facts.architecture }}: installed'
-        mode: "0755"
+    # The fleet runbook's manual step: the reimage wipes the node's password
+    # file while its secret survives in the pool, and k3s would then reject
+    # its own node.
+    - name: Delete the control plane's node-password secret
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - kube-system
+          - delete
+          - secret
+          - "{{ inventory_hostname }}.node-password.k3s"
+      changed_when: true
 
-    - name: Run the guard with the module built
-      ansible.builtin.include_tasks:
-        file: ../../playbooks/tasks/assert_dkms_built.yml
+    - name: Read the DKMS build state
+      ansible.builtin.command:
+        argv:
+          - dkms
+          - status
+      register: __side_effect_dkms
+      changed_when: false
 
-    # Left in place: the reimage below starts from this state, and its first
-    # reboot (into nfs) must not be refused.
-    - name: Stand in for dkms with a module that is not built
-      ansible.builtin.copy:
-        dest: /usr/local/sbin/dkms
-        content: |
-          #!/bin/sh
-          echo 'zfs/2.4.4: added'
-        mode: "0755"
+    # What a failed build leaves: the module known to DKMS and missing from
+    # the kernel. Left in place: the reimage below starts from this state,
+    # and its first reboot (into nfs) must not be refused.
+    - name: Take the zfs module out of the running kernel's tree
+      ansible.builtin.command:
+        argv:
+          - dkms
+          - uninstall
+          - "{{ __side_effect_dkms.stdout | regex_search('zfs/[^,:]+') }}"
+          - -k
+          - "{{ ansible_facts.kernel }}"
+      changed_when: true
 
-    - name: Run the guard with the module not built
+    - name: Run the reboot guard
       block:
         - name: Include the guard
           ansible.builtin.include_tasks:
@@ -79,25 +110,16 @@
           ansible.builtin.set_fact:
             __side_effect_guard_refusal: "{{ ansible_failed_task.name }}"
 
-    - name: Assert the guard refused because of the unbuilt module
+    - name: Assert the guard refused because of the missing module
       ansible.builtin.assert:
         that:
           - __side_effect_guard_refusal | default('') == 'Assert every DKMS module is built for every installed kernel'
-        fail_msg: "The guard did not refuse the unbuilt module: {{ __side_effect_guard_refusal | default('it passed') }}"
-
-    - name: Mark the preserved partition and the root filesystem
-      ansible.builtin.copy:
-        dest: "{{ item }}"
-        content: "before the second reimage\n"
-        mode: "0644"
-      loop:
-        - "{{ armbian_test_markers.preserved }}"
-        - "{{ armbian_test_markers.root }}"
+        fail_msg: "The guard did not refuse the missing module: {{ __side_effect_guard_refusal | default('it passed') }}"
 
 # A new image changes the kernel's checksum; staging must then fetch it
 # again and update the sidecar in place.
-- name: Make the router's copy of board-a's kernel look stale
-  hosts: board-a
+- name: Make the router's copy of board-b's kernel look stale
+  hosts: board-b
   gather_facts: false
   tasks:
     - name: Overwrite the kernel's checksum sidecar
@@ -117,8 +139,32 @@
         require_matches_max: 1
       delegate_to: localhost
 
-- name: Reimage board-a again through the warm-reboot hook
+- name: Reimage board-b again
   ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
   vars:
-    target_hosts: board-a
-    armbian_power_cycle_tasks: transport/power_cycle_warm_reboot.yml
+    target_hosts: board-b
+
+- name: Give board-b a kernel with headers
+  ansible.builtin.import_playbook: kernel_with_headers.yml
+
+# No zfs_pool_wipe: the pool has to be found on its drives.
+- name: Import board-b's ZFS pool
+  ansible.builtin.import_playbook: ../../playbooks/kubernetes/prepare-k3s-datastore.yml
+  vars:
+    ansible_limit: rk8s_control_plane  # noqa: var-naming[read-only] -- target this imported play only
+
+- name: Reinstall k3s on both boards
+  ansible.builtin.import_playbook: ../../playbooks/kubernetes/install-k3s-cluster.yml
+  vars:
+    ansible_limit: rk8s  # noqa: var-naming[read-only] -- target this imported play only
+
+# The nightly update_all_linux schedule, then a reboot into what it installed.
+- name: Update board-b's packages
+  ansible.builtin.import_playbook: ../../playbooks/system-update.yaml
+  vars:
+    ansible_limit: rk8s_control_plane  # noqa: var-naming[read-only] -- target this imported play only
+
+- name: Boot board-b's new kernel
+  ansible.builtin.import_playbook: ../../playbooks/armbian/cycle_board.yaml
+  vars:
+    target_hosts: rk8s_control_plane

@@ -1,0 +1,20 @@
+---
+# Production's k3s settings (igou-inventory group_vars/rk8s.yml), without the
+# control plane's public name.
+cluster_name: molecule-armbian
+k3s_publish_kubeconfig: false
+k3s_release_version: v1.37.2+k3s1
+k3s_become: true
+k3s_become_for_all: true
+k3s_install_hard_links: true
+# The boards' SSH address is the router's forward; the cluster talks on the
+# private network.
+k3s_registration_address: "{{ hostvars[groups['rk8s_control_plane'] | first].armbian_test_ip }}"
+k3s_server:
+  cluster-cidr: 10.72.0.0/16
+  service-cidr: 10.73.0.0/16
+  write-kubeconfig-mode: "644"
+  disable:
+    - traefik
+    - servicelb
+k3s_agent: {}
