@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+# From macos_sshd_allow_from (igou-inventory group_vars/macos.yml), applied by
+# igou-ansible playbooks/macos/tasks/baseline.yaml. Read before Apple's
+# 100-macos.conf, and sshd keeps the first value it reads.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AllowUsers {{ macos_sshd_allow_from | map('regex_replace', '^', ansible_user ~ '@') | join(' ') }}

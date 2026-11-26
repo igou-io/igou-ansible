@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- {{ ansible_managed }} -->
+<!-- Weekly maintenance window: pmset wakes the Mac at the same time, and
+     caffeinate -s holds it awake on the charger so scheduled jobs reach it. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>systems.igou.maintenance-window</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-s</string>
+    <string>-t</string>
+    <string>{{ (macos_maintenance_window.minutes | int) * 60 }}</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>{{ macos_maintenance_window.weekday | int }}</integer>
+    <key>Hour</key>
+    <integer>{{ macos_maintenance_window.start.split(':')[0] | int }}</integer>
+    <key>Minute</key>
+    <integer>{{ macos_maintenance_window.start.split(':')[1] | int }}</integer>
+  </dict>
+</dict>
+</plist>
