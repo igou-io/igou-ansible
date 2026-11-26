@@ -47,6 +47,11 @@
              or (debian_reboot_required.stat.exists | default(false))
              or (rhel_reboot_required.rc | default(0)) == 1 }}
 
+    - name: Refuse to reboot into a kernel that lacks a DKMS module
+      ansible.builtin.include_tasks:
+        file: tasks/assert_dkms_built.yml
+      when: host_needs_reboot
+
     - name: Reboot the host
       ansible.builtin.reboot:
         reboot_timeout: "{{ reboot_timeout }}"

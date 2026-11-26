@@ -1,0 +1,51 @@
+---
+# Include before rebooting a host. Fails when a DKMS module is not built
+# for an installed kernel: the host would come back without the module
+# (for zfs on the rk8s control plane: no pool and no k3s datastore).
+# Hosts without DKMS pass.
+
+- name: Stat the DKMS tree
+  ansible.builtin.stat:
+    path: /var/lib/dkms
+  register: __dkms_tree
+
+- name: Check DKMS modules against the installed kernels
+  when: __dkms_tree.stat.exists
+  become: true
+  block:
+    - name: Read the DKMS build state
+      ansible.builtin.command:
+        argv:
+          - dkms
+          - status
+      register: __dkms_status
+      changed_when: false
+
+    # Only a packaged kernel ships modules.builtin; a directory left behind
+    # by a removed kernel does not.
+    - name: List the installed kernels
+      ansible.builtin.find:
+        paths: /lib/modules
+        patterns: modules.builtin
+        recurse: true
+        depth: 2
+      register: __dkms_kernels
+
+    - name: Assert every DKMS module is built for every installed kernel
+      ansible.builtin.assert:
+        that:
+          - __dkms_built | length == __dkms_modules | length
+        fail_msg: >-
+          Kernel {{ item }} has {{ __dkms_built | join(', ') | default('no DKMS module', true) }}
+          installed, but DKMS manages {{ __dkms_modules | join(', ') }}.
+          Rebooting would lose the missing module. Fix the build
+          (dkms autoinstall -k {{ item }}) or go back to a supported kernel.
+        quiet: true
+      loop: "{{ __dkms_kernels.files | map(attribute='path') | map('dirname') | map('basename') | sort }}"
+      vars:
+        __dkms_modules: >-
+          {{ __dkms_status.stdout_lines | map('regex_replace', '[,:].*$', '') | unique }}
+        __dkms_built: >-
+          {{ __dkms_status.stdout_lines
+             | select('search', ', ' ~ (item | regex_escape) ~ ', .*: installed')
+             | map('regex_replace', '[,:].*$', '') | unique }}
