@@ -1,0 +1,3 @@
+---
+bugfixes:
+  - armbian - the warm-reboot hook checks DKMS modules only when the board boots its local root again (``local_kernel`` or ``local``). It also ran on the first reboot of a reimage, where it would have refused to reimage a board whose module build was broken.
