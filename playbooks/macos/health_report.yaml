@@ -1,0 +1,224 @@
+---
+# Weekly health report and security audit for the Macs (AAP template:
+# macos_health_report, schedule macos_health_report_weekly). Read-only: the
+# settings baseline runs in check mode, so drift is reported, not fixed (run
+# configure.yaml to fix it).
+#
+# A Mac that is asleep or off the network is reported as unreachable instead
+# of failing the job.
+#
+# Requires the onepassword-connect-token credential on the job template: the
+# become password and the Slack token resolve through 1Password Connect.
+#
+# Variables (inventory or extra_vars):
+#   ansible_limit               host or group, default macos
+#   macos_report_slack          post the summary to Slack, default true
+#   slack_channel               default #igoucloud-aap-logs
+#   macos_disk_used_warn_pct    default 85
+#   macos_uptime_warn_days      default 30
+#   macos_battery_cycles_warn   default 800
+#   macos_backup_age_warn_days  default 7, checked only when Time Machine has a backup
+- name: Collect macOS health and security state
+  hosts: "{{ ansible_limit | default('macos') }}"
+  gather_facts: false
+  tasks:
+    - name: Check whether the Mac is awake
+      ansible.builtin.ping:
+      register: macos_ping
+      ignore_unreachable: true
+
+    - name: Skip a Mac that is asleep or off the network
+      ansible.builtin.meta: end_host
+      when: macos_ping.unreachable | default(false)
+
+    - name: Gather facts
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+          - hardware
+
+    - name: Read hardware and battery details
+      ansible.builtin.command:
+        argv:
+          - system_profiler
+          - -json
+          - SPHardwareDataType
+          - SPPowerDataType
+      register: macos_profiler
+      changed_when: false
+
+    - name: Read data volume usage
+      ansible.builtin.command:
+        argv:
+          - df
+          - -Pk
+          - /System/Volumes/Data
+      register: macos_df
+      changed_when: false
+
+    - name: Read internal disk SMART status
+      ansible.builtin.command:
+        argv:
+          - diskutil
+          - info
+          - disk0
+      register: macos_diskutil
+      changed_when: false
+
+    - name: Read the latest Time Machine backup
+      ansible.builtin.command:
+        argv:
+          - tmutil
+          - latestbackup
+      become: true
+      register: macos_tmutil
+      changed_when: false
+      failed_when: false
+
+    - name: Read the security settings
+      ansible.builtin.command:
+        argv: "{{ item.argv }}"
+      loop:
+        - name: FileVault
+          argv:
+            - fdesetup
+            - status
+          expect: FileVault is On
+        - name: SIP
+          argv:
+            - csrutil
+            - status
+          expect: "status: enabled"
+        - name: Gatekeeper
+          argv:
+            - spctl
+            - --status
+          expect: assessments enabled
+      loop_control:
+        label: "{{ item.name }}"
+      register: macos_security
+      changed_when: false
+      failed_when: false
+
+    - name: Check the settings baseline for drift
+      ansible.builtin.import_tasks: tasks/baseline.yaml
+      check_mode: true
+
+    - name: List pending updates
+      ansible.builtin.import_tasks: tasks/pending_updates.yaml
+
+
+    - name: Parse the collected state
+      vars:
+        macos_profile: "{{ macos_profiler.stdout | from_json }}"
+      ansible.builtin.set_fact:
+        macos_hardware: "{{ macos_profile.SPHardwareDataType | first }}"
+        macos_battery: >-
+          {{ macos_profile.SPPowerDataType
+             | selectattr('sppower_battery_health_info', 'defined')
+             | map(attribute='sppower_battery_health_info') | first | default({}) }}
+        macos_disk_used_pct: "{{ macos_df.stdout_lines[-1].split()[4] | replace('%', '') | int }}"
+        macos_smart_status: "{{ macos_diskutil.stdout | regex_search('SMART Status:\\s*(.+)', '\\1') | default(['unknown'], true) | first | trim }}"
+        macos_uptime_days: "{{ ((ansible_facts['uptime_seconds'] | default(0)) / 86400) | int }}"
+        macos_backup_date: "{{ macos_tmutil.stdout | regex_search('\\d{4}-\\d{2}-\\d{2}') | default('', true) }}"
+        macos_critical: []
+        macos_warnings: []
+
+    - name: Record failed security checks
+      ansible.builtin.set_fact:
+        macos_critical: "{{ macos_critical + [item.item.name ~ ': ' ~ (item.stdout ~ item.stderr) | trim] }}"
+      loop: "{{ macos_security.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.item.expect not in (item.stdout ~ item.stderr)
+
+    - name: Record other findings
+      ansible.builtin.set_fact:
+        macos_critical: "{{ macos_critical + ([item.message] if item.level == 'critical' else []) }}"
+        macos_warnings: "{{ macos_warnings + ([item.message] if item.level == 'warn' else []) }}"
+      loop:
+        - level: critical
+          message: "SMART status {{ macos_smart_status }}"
+          found: "{{ macos_smart_status != 'Verified' }}"
+        - level: warn
+          message: "battery {{ macos_battery.sppower_battery_health | default('unknown') }}"
+          found: "{{ macos_battery | length > 0 and macos_battery.sppower_battery_health not in ['Good', 'Normal'] }}"
+        - level: warn
+          message: "battery at {{ macos_battery.sppower_battery_cycle_count | default(0) }} cycles"
+          found: "{{ macos_battery.sppower_battery_cycle_count | default(0) | int >= macos_battery_cycles_warn | default(800) | int }}"
+        - level: warn
+          message: "disk {{ macos_disk_used_pct }}% used"
+          found: "{{ macos_disk_used_pct | int >= macos_disk_used_warn_pct | default(85) | int }}"
+        - level: warn
+          message: "up {{ macos_uptime_days }} days, restart to finish updates"
+          found: "{{ macos_uptime_days | int >= macos_uptime_warn_days | default(30) | int }}"
+        - level: warn
+          message: "last Time Machine backup {{ macos_backup_date }}"
+          found: >-
+            {{ macos_backup_date | length > 0
+               and (now() - (macos_backup_date | to_datetime('%Y-%m-%d'))).days
+                   >= macos_backup_age_warn_days | default(7) | int }}
+        - level: warn
+          message: >-
+            settings drift: {{ (macos_baseline_system_defaults.results + macos_baseline_user_defaults.results)
+            | selectattr('changed') | map(attribute='item.key')
+            | union(macos_baseline_drift | map(attribute='name')) | join(', ') }}
+          found: >-
+            {{ (macos_baseline_system_defaults.results + macos_baseline_user_defaults.results)
+               | selectattr('changed') | list | length > 0 or macos_baseline_drift | length > 0 }}
+      loop_control:
+        label: "{{ item.message }}"
+      when: item.found | bool
+
+    - name: Summarize the Mac
+      ansible.builtin.set_fact:
+        macos_health:
+          status: "{{ 'critical' if macos_critical else ('warn' if macos_warnings else 'ok') }}"
+          findings: "{{ macos_critical + macos_warnings }}"
+          summary: >-
+            macOS {{ ansible_facts['distribution_version'] }} on
+            {{ macos_hardware.machine_name }} ({{ macos_hardware.chip_type | default(macos_hardware.cpu_type | default('')) }}),
+            serial {{ macos_hardware.serial_number }}, up {{ macos_uptime_days }}d,
+            disk {{ macos_disk_used_pct }}%, battery
+            {{ macos_battery.sppower_battery_health | default('n/a') }}
+            {{ macos_battery.sppower_battery_cycle_count | default('?') }} cycles
+            {{ macos_battery.sppower_battery_health_maximum_capacity | default('') }},
+            {{ macos_pending_updates | length }} updates pending
+            ({{ macos_restart_updates | length }} need a restart),
+            last backup {{ macos_backup_date | default('unknown', true) }}
+
+- name: Report macOS health
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    macos_report_hosts: "{{ query('inventory_hostnames', ansible_limit | default('macos')) }}"
+    macos_report_emoji:
+      ok: ":large_green_circle:"
+      warn: ":large_yellow_circle:"
+      critical: ":red_circle:"
+      unreachable: ":white_circle:"
+  tasks:
+    - name: Build the report
+      ansible.builtin.set_fact:
+        macos_report: |-
+          *macOS health report*
+          {% for host in macos_report_hosts %}
+          {% set r = hostvars[host].macos_health | default({'status': 'unreachable', 'summary': 'asleep or off the network', 'findings': []}) %}
+          {{ macos_report_emoji[r.status] }} *{{ host }}*: {{ r.summary }}
+          {% for finding in r.findings %}
+              • {{ finding }}
+          {% endfor %}
+          {% endfor %}
+
+    - name: Show the report
+      ansible.builtin.debug:
+        msg: "{{ macos_report.split('\n') }}"
+
+    - name: Post the report to Slack
+      community.general.slack:
+        token: "{{ slack_notification_token }}"
+        channel: "{{ slack_channel | default('#igoucloud-aap-logs') }}"
+        msg: "{{ macos_report }}"
+      no_log: true
+      when: macos_report_slack | default(true) | bool

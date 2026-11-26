@@ -1,0 +1,103 @@
+---
+# Settings baseline shared by configure.yaml, which applies it, and
+# health_report.yaml, which imports it with check_mode: true to report drift.
+# Reads run even in check mode; changes are queued in macos_baseline_drift
+# and applied by the final task, which check mode skips.
+#
+# Inputs (inventory):
+#   macos_system_defaults  list of {domain, key, type, value} written as root
+#   macos_user_defaults    same shape, written as the SSH user
+#   macos_pmset            map of pmset setting -> value, applied with -a
+# The application firewall and its stealth mode are always turned on.
+- name: Set system preferences
+  community.general.osx_defaults:
+    domain: "{{ item.domain }}"
+    key: "{{ item.key }}"
+    type: "{{ item.type }}"
+    value: "{{ item.value }}"
+    state: present
+  become: true
+  loop: "{{ macos_system_defaults | default([]) }}"
+  loop_control:
+    label: "{{ item.domain | basename }} {{ item.key }}"
+  register: macos_baseline_system_defaults
+
+- name: Set user preferences
+  community.general.osx_defaults:
+    domain: "{{ item.domain }}"
+    key: "{{ item.key }}"
+    type: "{{ item.type }}"
+    value: "{{ item.value }}"
+    state: present
+  loop: "{{ macos_user_defaults | default([]) }}"
+  loop_control:
+    label: "{{ item.domain | basename }} {{ item.key }}"
+  register: macos_baseline_user_defaults
+
+- name: Read the application firewall state
+  ansible.builtin.command:
+    argv:
+      - /usr/libexec/ApplicationFirewall/socketfilterfw
+      - "{{ item.query }}"
+  loop:
+    - name: firewall
+      query: --getglobalstate
+      enable: --setglobalstate
+    - name: firewall stealth mode
+      query: --getstealthmode
+      enable: --setstealthmode
+  loop_control:
+    label: "{{ item.name }}"
+  register: macos_baseline_firewall
+  changed_when: false
+  check_mode: false
+
+- name: Read the power settings
+  ansible.builtin.command:
+    argv:
+      - pmset
+      - -g
+      - custom
+  register: macos_baseline_pmset
+  changed_when: false
+  check_mode: false
+  when: macos_pmset | default({}) | length > 0
+
+- name: Reset the queued changes
+  ansible.builtin.set_fact:
+    macos_baseline_drift: []
+
+- name: Queue firewall changes
+  ansible.builtin.set_fact:
+    macos_baseline_drift: >-
+      {{ macos_baseline_drift + [{
+           'name': item.item.name ~ ' on',
+           'argv': ['/usr/libexec/ApplicationFirewall/socketfilterfw', item.item.enable, 'on']}] }}
+  loop: "{{ macos_baseline_firewall.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.stdout is not search('enabled|is on')
+
+- name: Queue power setting changes
+  ansible.builtin.set_fact:
+    macos_baseline_drift: >-
+      {{ macos_baseline_drift + [{
+           'name': 'pmset ' ~ item.key ~ ' ' ~ item.value,
+           'argv': ['pmset', '-a', item.key, item.value | string]}] }}
+  loop: "{{ macos_pmset | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: >-
+    macos_baseline_pmset.stdout
+    | regex_findall('(?m)^\s*' ~ item.key ~ '\s+(\S+)')
+    | difference([item.value | string])
+    | length > 0
+
+- name: Apply the queued changes
+  ansible.builtin.command:
+    argv: "{{ item.argv }}"
+  become: true
+  loop: "{{ macos_baseline_drift }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
