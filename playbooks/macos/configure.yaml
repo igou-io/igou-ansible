@@ -9,9 +9,10 @@
 # Variables (inventory or extra_vars):
 #   ansible_limit          host or group, default macos
 #   macos_hostname         set HostName, LocalHostName and ComputerName; unset leaves them alone
-#   macos_system_defaults  system preferences, list of {domain, key, type, value}
+#   macos_system_defaults  system preferences, list of {domain, key, type, value, host}
 #   macos_user_defaults    preferences of the SSH user, same shape
 #   macos_pmset            power settings, map of pmset setting -> value
+#   macos_pmset_ac         power settings on the charger only (pmset -c)
 - name: Apply the macOS settings baseline
   hosts: "{{ ansible_limit | default('macos') }}"
   gather_facts: false

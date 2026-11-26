@@ -5,9 +5,11 @@
 # and applied by the final task, which check mode skips.
 #
 # Inputs (inventory):
-#   macos_system_defaults  list of {domain, key, type, value} written as root
+#   macos_system_defaults  list of {domain, key, type, value, host} written as
+#                          root; host is optional (currentHost for ByHost prefs)
 #   macos_user_defaults    same shape, written as the SSH user
 #   macos_pmset            map of pmset setting -> value, applied with -a
+#   macos_pmset_ac         same, applied with -c (on the charger only)
 # The application firewall and its stealth mode are always turned on.
 - name: Set system preferences
   community.general.osx_defaults:
@@ -15,6 +17,7 @@
     key: "{{ item.key }}"
     type: "{{ item.type }}"
     value: "{{ item.value }}"
+    host: "{{ item.host | default(omit) }}"
     state: present
   become: true
   loop: "{{ macos_system_defaults | default([]) }}"
@@ -28,6 +31,7 @@
     key: "{{ item.key }}"
     type: "{{ item.type }}"
     value: "{{ item.value }}"
+    host: "{{ item.host | default(omit) }}"
     state: present
   loop: "{{ macos_user_defaults | default([]) }}"
   loop_control:
@@ -61,7 +65,7 @@
   register: macos_baseline_pmset
   changed_when: false
   check_mode: false
-  when: macos_pmset | default({}) | length > 0
+  when: (macos_pmset | default({}) | combine(macos_pmset_ac | default({}))) | length > 0
 
 - name: Reset the queued changes
   ansible.builtin.set_fact:
@@ -89,6 +93,21 @@
     label: "{{ item.key }}"
   when: >-
     macos_baseline_pmset.stdout
+    | regex_findall('(?m)^\s*' ~ item.key ~ '\s+(\S+)')
+    | difference([item.value | string])
+    | length > 0
+
+- name: Queue charger power setting changes
+  ansible.builtin.set_fact:
+    macos_baseline_drift: >-
+      {{ macos_baseline_drift + [{
+           'name': 'pmset -c ' ~ item.key ~ ' ' ~ item.value,
+           'argv': ['pmset', '-c', item.key, item.value | string]}] }}
+  loop: "{{ macos_pmset_ac | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: >-
+    macos_baseline_pmset.stdout.split('AC Power:') | last
     | regex_findall('(?m)^\s*' ~ item.key ~ '\s+(\S+)')
     | difference([item.value | string])
     | length > 0
