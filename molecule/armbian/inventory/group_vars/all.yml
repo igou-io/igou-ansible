@@ -128,6 +128,16 @@ armbian_test_board_overrides:
       boot_order: 4
       storage_class: "{{ molecule_storage_class }}"
 
+# The unmodified upstream image, downloaded once by prepare.yml and published
+# from the netboot server. Taken from an Armbian-run mirror, not the
+# dl.armbian.com redirector: after a release that can point at a mirror that
+# has not synced yet. Armbian removes a point release from the archive when
+# it publishes the next one: on a 404, take the current
+# trixie_current_*_minimal name from the listing at
+# https://dl.armbian.com/uefi-x86/archive/.
+armbian_test_upstream_image: https://fi.mirror.armbian.de/dl/uefi-x86/archive/Armbian_26.11.3_Uefi-x86_trixie_current_6.18.65_minimal.img.xz
+armbian_test_images_dir: /srv/images
+
 # Netboot server layout (production: group_vars/all/main.yml). The HTTP
 # root is nginx's default; everything large lives on the exports disk.
 armbian_nfs_assets_export: /var/www/html

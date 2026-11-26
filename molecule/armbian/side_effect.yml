@@ -1,8 +1,10 @@
 ---
-# Reimage board-a again with data on its preserved partition and its root
-# filesystem; verify then checks what survived and that board-b was left
-# alone.
-- name: Record board-b's boot identity
+# Reimage board-a again, the way production reimages its control plane:
+# through the warm-reboot hook, with a DKMS module that is not built for the
+# installed kernel, with data on its preserved partition and root filesystem,
+# with a stale kernel checksum on the router and with k3s on the control
+# plane. verify then checks what survived and that board-b was left alone.
+- name: Record board-b's boot identity and stand in for its k3s
   hosts: board-b
   gather_facts: false
   tasks:
@@ -18,12 +20,72 @@
         mode: "0600"
       delegate_to: localhost
 
-- name: Mark board-a's preserved partition and root filesystem
+    # reimage.yaml deletes the reimaged board's node and node-password secret
+    # through the control plane's k3s; this one only records what it is asked.
+    - name: Install a k3s that logs its arguments
+      ansible.builtin.copy:
+        dest: /usr/local/bin/k3s
+        content: |
+          #!/bin/sh
+          echo "$*" >> {{ armbian_test_k3s_log }}
+        mode: "0755"
+      become: true
+
+- name: Run the DKMS reboot guard on board-a's local root
   hosts: board-a
   become: true
   gather_facts: false
   tasks:
-    - name: Write the markers
+    - name: Gather the running kernel
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+
+    - name: Create the DKMS tree
+      ansible.builtin.file:
+        path: /var/lib/dkms
+        state: directory
+        mode: "0755"
+
+    - name: Stand in for dkms with a module built for the kernel
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/dkms
+        content: |
+          #!/bin/sh
+          echo 'zfs/2.4.4, {{ ansible_facts.kernel }}, {{ ansible_facts.architecture }}: installed'
+        mode: "0755"
+
+    - name: Run the guard with the module built
+      ansible.builtin.include_tasks:
+        file: ../../playbooks/tasks/assert_dkms_built.yml
+
+    # Left in place: the reimage below starts from this state, and its first
+    # reboot (into nfs) must not be refused.
+    - name: Stand in for dkms with a module that is not built
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/dkms
+        content: |
+          #!/bin/sh
+          echo 'zfs/2.4.4: added'
+        mode: "0755"
+
+    - name: Run the guard with the module not built
+      block:
+        - name: Include the guard
+          ansible.builtin.include_tasks:
+            file: ../../playbooks/tasks/assert_dkms_built.yml
+      rescue:
+        - name: Record which task refused
+          ansible.builtin.set_fact:
+            __side_effect_guard_refusal: "{{ ansible_failed_task.name }}"
+
+    - name: Assert the guard refused because of the unbuilt module
+      ansible.builtin.assert:
+        that:
+          - __side_effect_guard_refusal | default('') == 'Assert every DKMS module is built for every installed kernel'
+        fail_msg: "The guard did not refuse the unbuilt module: {{ __side_effect_guard_refusal | default('it passed') }}"
+
+    - name: Mark the preserved partition and the root filesystem
       ansible.builtin.copy:
         dest: "{{ item }}"
         content: "before the second reimage\n"
@@ -32,7 +94,31 @@
         - "{{ armbian_test_markers.preserved }}"
         - "{{ armbian_test_markers.root }}"
 
-- name: Reimage board-a again
+# A new image changes the kernel's checksum; staging must then fetch it
+# again and update the sidecar in place.
+- name: Make the router's copy of board-a's kernel look stale
+  hosts: board-a
+  gather_facts: false
+  tasks:
+    - name: Overwrite the kernel's checksum sidecar
+      community.routeros.api_find_and_modify:
+        hostname: "{{ hostvars[armbian_router].routeros_api_connection.hostname }}"
+        port: "{{ hostvars[armbian_router].routeros_api_connection.port }}"
+        tls: "{{ hostvars[armbian_router].routeros_api_connection.tls }}"
+        validate_certs: "{{ hostvars[armbian_router].routeros_api_connection.validate_certs }}"
+        username: "{{ hostvars[armbian_router].routeros_api_credentials.username }}"
+        password: "{{ hostvars[armbian_router].routeros_api_credentials.password }}"
+        path: file
+        find:
+          name: "{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}/vmlinuz.sha256"
+        values:
+          contents: stale
+        require_matches_min: 1
+        require_matches_max: 1
+      delegate_to: localhost
+
+- name: Reimage board-a again through the warm-reboot hook
   ansible.builtin.import_playbook: ../../playbooks/armbian/reimage.yaml
   vars:
     target_hosts: board-a
+    armbian_power_cycle_tasks: transport/power_cycle_warm_reboot.yml

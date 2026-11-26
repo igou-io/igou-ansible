@@ -31,9 +31,11 @@
           - ansible_facts.proc_cmdline.root == 'LABEL=armbi_root_local'
           - __verify_kernels.files | length == 1
           - (__verify_kernels.files | first).path == '/boot/vmlinuz-' ~ ansible_facts.kernel
-          - ansible_facts.mounts | selectattr('mount', 'equalto', '/srv/data') | list | length == 1
+          - ansible_facts.mounts | selectattr('mount', 'equalto', '/srv/data') | map(attribute='device') | list == ['/dev/vdd2']
+          - ansible_facts.nodename == inventory_hostname
         fail_msg: >-
-          root {{ __verify_root.device }} ({{ __verify_root.fstype }}), cmdline
+          {{ ansible_facts.nodename }}: root {{ __verify_root.device }} ({{ __verify_root.fstype }}), /srv/data on
+          {{ ansible_facts.mounts | selectattr('mount', 'equalto', '/srv/data') | map(attribute='device') | list }}, cmdline
           {{ ansible_facts.proc_cmdline }}, running {{ ansible_facts.kernel }}, installed
           {{ __verify_kernels.files | map(attribute='path') | list }}
 
@@ -66,10 +68,13 @@
       ignore_unreachable: true
       register: __verify_root_login
 
+    # Unreachable alone would also be a dead sshd.
     - name: Assert the root password login was refused
       ansible.builtin.assert:
         that:
           - __verify_root_login.unreachable | default(false)
+          - __verify_root_login.msg is search('Permission denied')
+        fail_msg: "{{ __verify_root_login.msg | default('the login worked') }}"
 
 - name: Verify the router served each board its own pin and no network kernel at the last boot
   hosts: boards
@@ -113,15 +118,57 @@
                   value: "{{ armbian_tftp_flash_dir }}/{{ __verify_pin }}"
           register: __verify_pin_file
 
+        - name: Read the router's TFTP rows
+          community.routeros.api:
+            path: ip tftp
+          register: __verify_tftp
+
+        - name: Read the board's kernel checksum sidecar
+          community.routeros.api:
+            path: file
+            extended_query:
+              attributes:
+                - name
+                - contents
+              where:
+                - attribute: name
+                  is: "=="
+                  value: "{{ armbian_tftp_flash_dir }}/armbian/{{ inventory_hostname }}/vmlinuz.sha256"
+          register: __verify_sidecar
+
+    - name: Hash the staged kernel on the netboot server
+      ansible.builtin.stat:
+        path: "{{ armbian_tftp_staging_dir }}/{{ inventory_hostname }}/vmlinuz"
+        checksum_algorithm: sha256
+      delegate_to: "{{ groups['netboot_server'] | first }}"
+      register: __verify_staged
+
+    # PXELINUX asks for pxelinux.cfg/default only when the pin is missing or
+    # unreadable, and prepare's default would boot the local disk all the same.
     - name: Assert the last boot fetched the board's own local_kernel pin and no kernel
       ansible.builtin.assert:
         that:
           - "'pxelinux.0' in __verify_requests"
           - __verify_pin in __verify_last_boot
+          - "'pxelinux.cfg/default' not in __verify_last_boot"
           - __verify_last_boot | select('search', 'vmlinuz|initrd') | list | length == 0
           - __verify_pin_file.msg[0].contents is search('(?m)^default local_kernel$')
           - __verify_pin_file.msg[0].contents is search('kernel armbian/' ~ inventory_hostname ~ '/vmlinuz')
         fail_msg: "Requests since the last PXE start: {{ __verify_last_boot }}"
+
+    # Three stages and pins per run: a re-run must update its rows and
+    # sidecars in place, not append to them.
+    - name: Assert the router holds one row per directory and the staged kernel's checksum
+      ansible.builtin.assert:
+        that:
+          - __verify_tftp.msg | selectattr('req-filename', 'equalto', item) | list | length == 1
+          - __verify_sidecar.msg | map(attribute='contents') | list == [__verify_staged.stat.checksum]
+        fail_msg: >-
+          {{ item }} rows: {{ __verify_tftp.msg | selectattr('req-filename', 'equalto', item) | list }};
+          sidecar {{ __verify_sidecar.msg }}, staged {{ __verify_staged.stat.checksum | default('missing') }}
+      loop:
+        - armbian/.*
+        - pxelinux\.cfg/.*
 
 - name: Verify that the second reimage kept board-a's preserved data only
   hosts: board-a
@@ -149,6 +196,23 @@
   hosts: board-b
   gather_facts: false
   tasks:
+    - name: Read what the k3s stand-in was asked
+      ansible.builtin.slurp:
+        src: "{{ armbian_test_k3s_log }}"
+      register: __verify_k3s
+      when: armbian_test_second_pass
+
+    - name: Assert reimage.yaml removed board-a's node and node-password secret, once
+      ansible.builtin.assert:
+        that:
+          - >-
+            (__verify_k3s.content | b64decode).splitlines() == [
+              'kubectl delete node board-a --ignore-not-found',
+              'kubectl --namespace kube-system delete secret board-a.node-password.k3s --ignore-not-found'
+            ]
+        fail_msg: "{{ __verify_k3s.content | b64decode }}"
+      when: armbian_test_second_pass
+
     - name: Read the boot identity
       ansible.builtin.slurp:
         src: /proc/sys/kernel/random/boot_id
