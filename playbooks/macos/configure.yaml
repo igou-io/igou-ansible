@@ -17,6 +17,9 @@
   hosts: "{{ ansible_limit | default('macos') }}"
   gather_facts: false
   tasks:
+    - name: Connect over the LAN or Tailscale
+      ansible.builtin.import_tasks: tasks/connect.yaml
+
     - name: Set the hostname
       ansible.builtin.hostname:
         name: "{{ macos_hostname }}"

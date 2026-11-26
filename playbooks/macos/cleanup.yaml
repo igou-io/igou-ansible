@@ -14,6 +14,9 @@
   hosts: "{{ ansible_limit | default('macos') }}"
   gather_facts: false
   tasks:
+    - name: Connect over the LAN or Tailscale
+      ansible.builtin.import_tasks: tasks/connect.yaml
+
     - name: Find Homebrew
       ansible.builtin.stat:
         path: "{{ macos_brew_path | default('/opt/homebrew/bin/brew') }}"
