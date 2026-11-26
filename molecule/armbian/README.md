@@ -105,7 +105,7 @@ While developing, keep the guests and run `molecule create`, `prepare`,
 initrd through the CHR's TFTP at about 1 Mbit/s and takes about 14 minutes.
 During one, SSH to the other board through the same router stalls.
 
-A full run reimages three times and takes about 70 minutes (67 on Casval,
+A full run reimages four times and takes about 110 minutes (106 on Casval,
 2026-11-26).
 
 ## Topology
