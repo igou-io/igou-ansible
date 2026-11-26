@@ -6,9 +6,13 @@
 # waits to log in again, and after a reimage the rebooted image may not
 # have the automation user yet. The board must be up and reachable.
 
+# Only when the board boots this root again. In nfs and sd mode it boots
+# another root, and a reimage (nfs) is how a board with a broken module gets
+# fixed.
 - name: Refuse to reboot into a kernel that lacks a DKMS module
   ansible.builtin.include_tasks:
     file: ../../tasks/assert_dkms_built.yml
+  when: armbian_boot_mode in ['local_kernel', 'local']
 
 - name: Reboot the running OS
   ansible.builtin.command:
