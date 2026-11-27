@@ -21,6 +21,10 @@
 #                          `minutes` (caffeinate -s), so scheduled jobs reach
 #                          a Mac with its lid closed. On battery the Mac
 #                          wakes briefly and sleeps again.
+#   macos_printers         list of {name, uri, description}: driverless (IPP
+#                          Everywhere) print queues added with lpadmin when no
+#                          queue of that name has that URI. lpadmin queries
+#                          the printer, so adding one fails while it is off.
 # The application firewall and its stealth mode are always turned on.
 - name: Set system preferences
   community.general.osx_defaults:
@@ -81,6 +85,7 @@
 - name: Reset the queued changes
   ansible.builtin.set_fact:
     macos_baseline_drift: []
+    macos_baseline_printers_missing: []
 
 - name: Queue firewall changes
   ansible.builtin.set_fact:
@@ -248,6 +253,49 @@
     - macos_maintenance_window is defined
     - macos_maintenance_window.state | default('present') == 'present'
     - macos_baseline_window_plist is changed or macos_baseline_window_loaded.rc != 0
+
+- name: Read the print queues
+  ansible.builtin.command:
+    argv:
+      - lpstat
+      - -v
+  register: macos_baseline_lpstat
+  changed_when: false
+  # lpstat exits non-zero when no queue exists yet.
+  failed_when: false
+  check_mode: false
+  when: macos_printers is defined
+
+- name: Find the missing print queues
+  ansible.builtin.set_fact:
+    macos_baseline_printers_missing: "{{ macos_baseline_printers_missing + [item] }}"
+  loop: "{{ macos_printers | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    ('device for ' ~ item.name ~ ': ' ~ item.uri) not in macos_baseline_lpstat.stdout
+
+# Runs after the other settings so an offline printer fails only this step.
+- name: Add the missing print queues
+  ansible.builtin.command:
+    argv:
+      - lpadmin
+      - -p
+      - "{{ item.name }}"
+      - -D
+      - "{{ item.description | default(item.name) }}"
+      - -v
+      - "{{ item.uri }}"
+      - -m
+      - everywhere
+      - -o
+      - printer-is-shared=false
+      - -E
+  become: true
+  loop: "{{ macos_baseline_printers_missing }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
 
 - name: Record the changed baseline files
   ansible.builtin.set_fact:
