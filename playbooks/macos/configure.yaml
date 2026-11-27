@@ -13,6 +13,7 @@
 #   macos_user_defaults    preferences of the SSH user, same shape
 #   macos_pmset            power settings, map of pmset setting -> value
 #   macos_pmset_ac         power settings on the charger only (pmset -c)
+#   macos_printers         print queues, list of {name, uri, description}
 - name: Apply the macOS settings baseline
   hosts: "{{ ansible_limit | default('macos') }}"
   gather_facts: false

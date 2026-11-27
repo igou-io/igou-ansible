@@ -314,11 +314,13 @@
             settings drift: {{ (macos_baseline_system_defaults.results + macos_baseline_user_defaults.results)
             | selectattr('changed') | map(attribute='item.key')
             | union(macos_baseline_drift | map(attribute='name'))
-            | union(macos_baseline_changed_files | default([])) | join(', ') }}
+            | union(macos_baseline_changed_files | default([]))
+            | union(macos_baseline_printers_missing | default([]) | map(attribute='name') | map('regex_replace', '^', 'printer ')) | join(', ') }}
           found: >-
             {{ (macos_baseline_system_defaults.results + macos_baseline_user_defaults.results)
                | selectattr('changed') | list | length > 0 or macos_baseline_drift | length > 0
-               or macos_baseline_changed_files | default([]) | length > 0 }}
+               or macos_baseline_changed_files | default([]) | length > 0
+               or macos_baseline_printers_missing | default([]) | length > 0 }}
       loop_control:
         label: "{{ item.message }}"
       when: item.found | bool
